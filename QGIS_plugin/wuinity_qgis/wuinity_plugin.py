@@ -158,7 +158,15 @@ class WUInityPlugin:
         from .layers import get_project_folder
         import os
         folder = get_project_folder()
-        xml_path = os.path.join(folder, osm.OSM_XML_FILENAME) if folder else None
+        if folder:
+            xml_path = os.path.join(folder, osm.OSM_XML_FILENAME)
+        else:
+            xml_path = None
+            self.iface.messageBar().pushWarning(
+                "WUInity",
+                "No project folder set — OSM XML will not be saved to disk. "
+                "Run 'New WUInity Project' first if you need population generation."
+            )
 
         self._osm_task = osm.start_download(
             domain_layer=domain,

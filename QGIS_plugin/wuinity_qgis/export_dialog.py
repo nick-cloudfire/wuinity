@@ -99,6 +99,11 @@ class ExportDialog(QDialog):
 
         form.addRow(QLabel("<b>Population generation (GPW + PREACTcli)</b>"))
 
+        self.osm_xml_edit = self._file_row(
+            form, "OSM XML file:",
+            "OSM XML files (*.xml *.osm *.osm.xml);;All files (*)"
+        )
+
         self.gpw_folder_edit = self._file_row(form, "GPW folder:", None, folder=True)
 
         self.preact_exe_edit = self._file_row(
@@ -371,9 +376,18 @@ class ExportDialog(QDialog):
     # ------------------------------------------------------------------
 
     def _generate_population(self):
-        gpw    = self.gpw_folder_edit.text().strip()
-        preact = self.preact_exe_edit.text().strip()
+        osm_path = self.osm_xml_edit.text().strip()
+        gpw      = self.gpw_folder_edit.text().strip()
+        preact   = self.preact_exe_edit.text().strip()
 
+        if not osm_path or not os.path.isfile(osm_path):
+            QMessageBox.warning(
+                self, "WUInity",
+                "OSM XML file not found.\n\n"
+                "Either run 'Import OSM Roads' first (it saves the file automatically "
+                "when a project folder is set), or browse to an existing .osm.xml file."
+            )
+            return
         if not gpw or not os.path.isdir(gpw):
             QMessageBox.warning(self, "WUInity", "Please select a valid GPW folder.")
             return
@@ -381,30 +395,15 @@ class ExportDialog(QDialog):
             QMessageBox.warning(self, "WUInity", "Please select the PREACTcli executable.")
             return
 
-        folder = get_project_folder()
-        if not folder:
-            QMessageBox.warning(
-                self, "WUInity",
-                "No project folder set. Run 'New WUInity Project' first."
-            )
-            return
+        # Output CSV next to the OSM file (or project folder if available)
+        folder = get_project_folder() or os.path.dirname(osm_path)
+        pop_csv = os.path.join(folder, "population.csv")
 
         # Persist settings for next session
-        QgsProject.instance().writeEntry("wuinity", "gpw_folder",  gpw)
-        QgsProject.instance().writeEntry("wuinity", "preact_exe",  preact)
-        QgsProject.instance().writeEntry("wuinity", "pop_minhh",   str(self.pop_minhh.value()))
-        QgsProject.instance().writeEntry("wuinity", "pop_maxhh",   str(self.pop_maxhh.value()))
-
-        from . import osm as osm_mod
-        osm_path = os.path.join(folder, osm_mod.OSM_XML_FILENAME)
-        pop_csv  = os.path.join(folder, "population.csv")
-
-        if not os.path.isfile(osm_path):
-            self.pop_status_label.setText(
-                "OSM file not found — run 'Import OSM Roads' first, then retry."
-            )
-            self.pop_status_label.setStyleSheet("color: red; font-size: 11px;")
-            return
+        QgsProject.instance().writeEntry("wuinity", "gpw_folder", gpw)
+        QgsProject.instance().writeEntry("wuinity", "preact_exe", preact)
+        QgsProject.instance().writeEntry("wuinity", "pop_minhh",  str(self.pop_minhh.value()))
+        QgsProject.instance().writeEntry("wuinity", "pop_maxhh",  str(self.pop_maxhh.value()))
 
         self.pop_status_label.setText("Running PREACTcli…")
         self.pop_status_label.setStyleSheet("color: #555; font-size: 11px;")
@@ -501,12 +500,16 @@ class ExportDialog(QDialog):
         except ValueError:
             pass
 
-        # Pre-fill population CSV if it already exists in the project folder
+        # Pre-fill OSM XML and population CSV from project folder if they exist
         folder = get_project_folder()
         if folder:
-            candidate = os.path.join(folder, "population.csv")
-            if os.path.isfile(candidate):
-                self.pop_file_edit.setText(candidate)
+            from . import osm as osm_mod
+            osm_candidate = os.path.join(folder, osm_mod.OSM_XML_FILENAME)
+            if os.path.isfile(osm_candidate):
+                self.osm_xml_edit.setText(osm_candidate)
+            pop_candidate = os.path.join(folder, "population.csv")
+            if os.path.isfile(pop_candidate):
+                self.pop_file_edit.setText(pop_candidate)
 
     def _browse_output_folder(self):
         start = self.folder_edit.text() or os.path.expanduser("~")
