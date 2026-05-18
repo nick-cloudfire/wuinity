@@ -9,6 +9,7 @@ from PyQt5.QtWidgets import (
     QDialog, QDialogButtonBox, QFormLayout, QVBoxLayout, QHBoxLayout,
     QLineEdit, QDoubleSpinBox, QSpinBox, QCheckBox, QPushButton,
     QFileDialog, QLabel, QMessageBox, QTabWidget, QWidget, QComboBox,
+    QStackedWidget,
 )
 from PyQt5.QtCore import Qt
 from qgis.core import QgsProject, QgsTask, QgsApplication, Qgis, QgsMessageLog
@@ -144,203 +145,225 @@ class ExportDialog(QDialog):
 
     def _build_pedestrian_tab(self):
         w = QWidget()
-        form = QFormLayout(w)
-        form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        vbox = QVBoxLayout(w)
+        vbox.setContentsMargins(8, 8, 8, 8)
 
+        fixed = QFormLayout()
+        fixed.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
         self.ped_enabled = QCheckBox()
-        form.addRow("Enabled:", self.ped_enabled)
-
+        fixed.addRow("Enabled:", self.ped_enabled)
         self.ped_module_combo = QComboBox()
         self.ped_module_combo.addItems(["MacroHouseholdSim"])
-        form.addRow("Module:", self.ped_module_combo)
+        fixed.addRow("Module:", self.ped_module_combo)
+        vbox.addLayout(fixed)
 
+        self._ped_stack = QStackedWidget()
+        vbox.addWidget(self._ped_stack)
+        vbox.addStretch()
+
+        # Page 0: MacroHouseholdSim
+        p = QWidget(); pf = QFormLayout(p); pf.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
         speed_row = QHBoxLayout()
         self.ped_speed_min = QDoubleSpinBox()
-        self.ped_speed_min.setRange(0.1, 10.0)
-        self.ped_speed_min.setValue(0.5)
-        self.ped_speed_min.setDecimals(2)
-        self.ped_speed_min.setSuffix(" m/s")
+        self.ped_speed_min.setRange(0.1, 10.0); self.ped_speed_min.setValue(0.5)
+        self.ped_speed_min.setDecimals(2); self.ped_speed_min.setSuffix(" m/s")
         self.ped_speed_max = QDoubleSpinBox()
-        self.ped_speed_max.setRange(0.1, 10.0)
-        self.ped_speed_max.setValue(1.5)
-        self.ped_speed_max.setDecimals(2)
-        self.ped_speed_max.setSuffix(" m/s")
-        speed_row.addWidget(QLabel("min"))
-        speed_row.addWidget(self.ped_speed_min)
-        speed_row.addWidget(QLabel("max"))
-        speed_row.addWidget(self.ped_speed_max)
-        form.addRow("Walking speed:", speed_row)
-
+        self.ped_speed_max.setRange(0.1, 10.0); self.ped_speed_max.setValue(1.5)
+        self.ped_speed_max.setDecimals(2); self.ped_speed_max.setSuffix(" m/s")
+        speed_row.addWidget(QLabel("min")); speed_row.addWidget(self.ped_speed_min)
+        speed_row.addWidget(QLabel("max")); speed_row.addWidget(self.ped_speed_max)
+        pf.addRow("Walking speed:", speed_row)
         self.ped_speed_mod = QDoubleSpinBox()
-        self.ped_speed_mod.setRange(0.0, 10.0)
-        self.ped_speed_mod.setValue(1.0)
-        self.ped_speed_mod.setDecimals(2)
-        form.addRow("Speed modifier:", self.ped_speed_mod)
-
+        self.ped_speed_mod.setRange(0.0, 10.0); self.ped_speed_mod.setValue(1.0); self.ped_speed_mod.setDecimals(2)
+        pf.addRow("Speed modifier:", self.ped_speed_mod)
         self.ped_dist_mod = QDoubleSpinBox()
-        self.ped_dist_mod.setRange(0.0, 10.0)
-        self.ped_dist_mod.setValue(1.0)
-        self.ped_dist_mod.setDecimals(2)
-        form.addRow("Distance modifier:", self.ped_dist_mod)
+        self.ped_dist_mod.setRange(0.0, 10.0); self.ped_dist_mod.setValue(1.0); self.ped_dist_mod.setDecimals(2)
+        pf.addRow("Distance modifier:", self.ped_dist_mod)
+        self._ped_stack.addWidget(p)
 
+        self.ped_module_combo.currentIndexChanged.connect(self._ped_stack.setCurrentIndex)
         return w
 
     # ── Traffic tab ───────────────────────────────────────────────────
 
     def _build_traffic_tab(self):
         w = QWidget()
-        form = QFormLayout(w)
-        form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        vbox = QVBoxLayout(w)
+        vbox.setContentsMargins(8, 8, 8, 8)
 
+        fixed = QFormLayout()
+        fixed.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
         self.traffic_enabled = QCheckBox()
-        form.addRow("Enabled:", self.traffic_enabled)
-
+        fixed.addRow("Enabled:", self.traffic_enabled)
         self.traffic_module_combo = QComboBox()
         self.traffic_module_combo.addItems(["SUMO", "MacroTrafficSim", "CityFlow"])
-        form.addRow("Module:", self.traffic_module_combo)
-
+        fixed.addRow("Module:", self.traffic_module_combo)
         self.traffic_visibility = QCheckBox()
-        form.addRow("Visibility affects speed:", self.traffic_visibility)
+        fixed.addRow("Visibility affects speed:", self.traffic_visibility)
+        vbox.addLayout(fixed)
 
-        form.addRow(QLabel("<b>SUMO settings</b>"))
+        self._traffic_stack = QStackedWidget()
+        vbox.addWidget(self._traffic_stack)
+        vbox.addStretch()
 
-        self.sumo_cfg_edit = self._file_row(
-            form, "SUMO config file:",
-            "SUMO configuration (*.sumocfg);;All files (*)"
-        )
-
+        # Page 0: SUMO
+        p = QWidget(); pf = QFormLayout(p); pf.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        self.sumo_cfg_edit = self._file_row(pf, "SUMO config file:", "SUMO configuration (*.sumocfg);;All files (*)")
         self.sumo_smoke_alpha = QDoubleSpinBox()
-        self.sumo_smoke_alpha.setRange(0.0, 100.0)
-        self.sumo_smoke_alpha.setValue(0.5)
-        self.sumo_smoke_alpha.setDecimals(4)
-        form.addRow("Smoke alpha:", self.sumo_smoke_alpha)
-
+        self.sumo_smoke_alpha.setRange(0.0, 100.0); self.sumo_smoke_alpha.setValue(0.5); self.sumo_smoke_alpha.setDecimals(4)
+        pf.addRow("Smoke alpha:", self.sumo_smoke_alpha)
         self.sumo_smoke_beta = QDoubleSpinBox()
-        self.sumo_smoke_beta.setRange(0.0, 100.0)
-        self.sumo_smoke_beta.setValue(0.012)
-        self.sumo_smoke_beta.setDecimals(4)
-        form.addRow("Smoke beta:", self.sumo_smoke_beta)
+        self.sumo_smoke_beta.setRange(0.0, 100.0); self.sumo_smoke_beta.setValue(0.012); self.sumo_smoke_beta.setDecimals(4)
+        pf.addRow("Smoke beta:", self.sumo_smoke_beta)
+        self._traffic_stack.addWidget(p)
 
+        # Page 1: MacroTrafficSim
+        self._traffic_stack.addWidget(_info_page("No additional settings for MacroTrafficSim."))
+        # Page 2: CityFlow
+        self._traffic_stack.addWidget(_info_page("No additional settings for CityFlow."))
+
+        self.traffic_module_combo.currentIndexChanged.connect(self._traffic_stack.setCurrentIndex)
         return w
 
     # ── Wildfire tab ──────────────────────────────────────────────────
 
     def _build_wildfire_tab(self):
         w = QWidget()
-        form = QFormLayout(w)
-        form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        vbox = QVBoxLayout(w)
+        vbox.setContentsMargins(8, 8, 8, 8)
 
+        fixed = QFormLayout()
+        fixed.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
         self.fire_enabled = QCheckBox()
-        form.addRow("Enabled:", self.fire_enabled)
-
+        fixed.addRow("Enabled:", self.fire_enabled)
         self.fire_module_combo = QComboBox()
         self.fire_module_combo.addItems(["AscImport", "FireCell", "CellParticleHybrid"])
-        form.addRow("Module:", self.fire_module_combo)
+        fixed.addRow("Module:", self.fire_module_combo)
+        vbox.addLayout(fixed)
 
-        self.fire_lcp_edit = self._file_row(
-            form, "LCP file (FireCell):",
-            "Landscape files (*.lcp);;All files (*)"
-        )
+        self._fire_stack = QStackedWidget()
+        vbox.addWidget(self._fire_stack)
+        vbox.addStretch()
 
-        form.addRow(QLabel("<b>AscImport file paths</b>"))
+        # Page 0: AscImport
+        p = QWidget(); pf = QFormLayout(p); pf.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        self.asc_root_edit = self._file_row(pf, "Root folder:", None, folder=True)
+        self.asc_toa_edit  = self._file_row(pf, "Time of arrival:", "ASC files (*.asc);;All files (*)")
+        self.asc_ros_edit  = self._file_row(pf, "Rate of spread:", "ASC files (*.asc);;All files (*)")
+        self.asc_sd_edit   = self._file_row(pf, "Spread direction:", "ASC files (*.asc);;All files (*)")
+        self.asc_fi_edit   = self._file_row(pf, "Fireline intensity:", "ASC files (*.asc);;All files (*)")
+        self.asc_wx_edit   = self._file_row(pf, "Weather stream:", "ASC files (*.asc);;All files (*)")
+        self._fire_stack.addWidget(p)
 
-        self.asc_root_edit  = self._file_row(form, "Root folder:", None, folder=True)
-        self.asc_toa_edit   = self._file_row(form, "Time of arrival:", "ASC files (*.asc);;All files (*)")
-        self.asc_ros_edit   = self._file_row(form, "Rate of spread:", "ASC files (*.asc);;All files (*)")
-        self.asc_sd_edit    = self._file_row(form, "Spread direction:", "ASC files (*.asc);;All files (*)")
-        self.asc_fi_edit    = self._file_row(form, "Fireline intensity:", "ASC files (*.asc);;All files (*)")
-        self.asc_wx_edit    = self._file_row(form, "Weather stream:", "ASC files (*.asc);;All files (*)")
+        # Page 1: FireCell
+        p = QWidget(); pf = QFormLayout(p); pf.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        self.fire_lcp_edit = self._file_row(pf, "LCP file:", "Landscape files (*.lcp);;All files (*)")
+        self._fire_stack.addWidget(p)
 
+        # Page 2: CellParticleHybrid
+        p = QWidget(); pf = QFormLayout(p); pf.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        self.fire_lcp_hybrid_edit = self._file_row(pf, "LCP file:", "Landscape files (*.lcp);;All files (*)")
+        self._fire_stack.addWidget(p)
+
+        self.fire_module_combo.currentIndexChanged.connect(self._fire_stack.setCurrentIndex)
         return w
 
     # ── Smoke tab ─────────────────────────────────────────────────────
 
     def _build_smoke_tab(self):
         w = QWidget()
-        form = QFormLayout(w)
-        form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        vbox = QVBoxLayout(w)
+        vbox.setContentsMargins(8, 8, 8, 8)
 
+        fixed = QFormLayout()
+        fixed.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
         self.smoke_enabled = QCheckBox()
-        form.addRow("Enabled:", self.smoke_enabled)
-
+        fixed.addRow("Enabled:", self.smoke_enabled)
         self.smoke_module_combo = QComboBox()
         self.smoke_module_combo.addItems([
             "GlobalSmoke", "AdvectDiffuseMixingLayer", "AdvectDiffuse3D", "Lagrangian"
         ])
-        form.addRow("Module:", self.smoke_module_combo)
+        fixed.addRow("Module:", self.smoke_module_combo)
+        vbox.addLayout(fixed)
 
-        form.addRow(QLabel("<b>GlobalSmoke</b>"))
-        self.smoke_extinction_edit = self._file_row(
-            form, "Extinction file:",
-            "ASC files (*.asc);;All files (*)"
-        )
+        self._smoke_stack = QStackedWidget()
+        vbox.addWidget(self._smoke_stack)
+        vbox.addStretch()
 
-        form.addRow(QLabel("<b>AdvectDiffuse settings</b>"))
+        # Page 0: GlobalSmoke
+        p = QWidget(); pf = QFormLayout(p); pf.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        self.smoke_extinction_edit = self._file_row(pf, "Extinction file:", "ASC files (*.asc);;All files (*)")
+        self._smoke_stack.addWidget(p)
+
+        # Page 1: AdvectDiffuseMixingLayer
+        p = QWidget(); pf = QFormLayout(p); pf.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
         self.smoke_mixing_height = QDoubleSpinBox()
-        self.smoke_mixing_height.setRange(1.0, 10000.0)
-        self.smoke_mixing_height.setValue(500.0)
-        self.smoke_mixing_height.setDecimals(1)
-        self.smoke_mixing_height.setSuffix(" m")
-        form.addRow("Mixing layer height:", self.smoke_mixing_height)
+        self.smoke_mixing_height.setRange(1.0, 10000.0); self.smoke_mixing_height.setValue(500.0)
+        self.smoke_mixing_height.setDecimals(1); self.smoke_mixing_height.setSuffix(" m")
+        pf.addRow("Mixing layer height:", self.smoke_mixing_height)
+        self._smoke_stack.addWidget(p)
 
-        form.addRow(QLabel("<b>Lagrangian settings</b>"))
+        # Page 2: AdvectDiffuse3D
+        p = QWidget(); pf = QFormLayout(p); pf.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        self.smoke_mixing_height_3d = QDoubleSpinBox()
+        self.smoke_mixing_height_3d.setRange(1.0, 10000.0); self.smoke_mixing_height_3d.setValue(500.0)
+        self.smoke_mixing_height_3d.setDecimals(1); self.smoke_mixing_height_3d.setSuffix(" m")
+        pf.addRow("Mixing layer height:", self.smoke_mixing_height_3d)
+        self._smoke_stack.addWidget(p)
+
+        # Page 3: Lagrangian
+        p = QWidget(); pf = QFormLayout(p); pf.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
         self.smoke_particles_spin = QSpinBox()
-        self.smoke_particles_spin.setRange(1, 100000)
-        self.smoke_particles_spin.setValue(100)
-        form.addRow("Particles per fire cell:", self.smoke_particles_spin)
+        self.smoke_particles_spin.setRange(1, 100000); self.smoke_particles_spin.setValue(100)
+        pf.addRow("Particles per fire cell:", self.smoke_particles_spin)
+        self._smoke_stack.addWidget(p)
 
+        self.smoke_module_combo.currentIndexChanged.connect(self._smoke_stack.setCurrentIndex)
         return w
 
     # ── Trigger Buffer tab ────────────────────────────────────────────
 
     def _build_trigger_tab(self):
         w = QWidget()
-        form = QFormLayout(w)
-        form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        vbox = QVBoxLayout(w)
+        vbox.setContentsMargins(8, 8, 8, 8)
 
+        fixed = QFormLayout()
+        fixed.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
         self.trig_enabled = QCheckBox()
-        form.addRow("Enabled:", self.trig_enabled)
-
+        fixed.addRow("Enabled:", self.trig_enabled)
         self.trig_module_combo = QComboBox()
         self.trig_module_combo.addItems(["kPERIL", "BackwardsFireCell2"])
-        form.addRow("Module:", self.trig_module_combo)
-
-        form.addRow(QLabel("<b>Evacuation settings</b>"))
-
+        fixed.addRow("Module:", self.trig_module_combo)
         self.evac_order_start = QDoubleSpinBox()
-        self.evac_order_start.setRange(0.0, 86400.0)
-        self.evac_order_start.setValue(0.0)
-        self.evac_order_start.setDecimals(0)
-        self.evac_order_start.setSuffix(" s")
-        form.addRow("Evac order start:", self.evac_order_start)
+        self.evac_order_start.setRange(0.0, 86400.0); self.evac_order_start.setValue(0.0)
+        self.evac_order_start.setDecimals(0); self.evac_order_start.setSuffix(" s")
+        fixed.addRow("Evac order start:", self.evac_order_start)
+        vbox.addLayout(fixed)
 
-        form.addRow(QLabel("<b>kPERIL settings</b>"))
+        self._trig_stack = QStackedWidget()
+        vbox.addWidget(self._trig_stack)
+        vbox.addStretch()
 
+        # Page 0: kPERIL
+        p = QWidget(); pf = QFormLayout(p); pf.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
         self.kperil_windspeed = QDoubleSpinBox()
-        self.kperil_windspeed.setRange(0.0, 200.0)
-        self.kperil_windspeed.setValue(5.0)
-        self.kperil_windspeed.setDecimals(2)
-        self.kperil_windspeed.setSuffix(" m/s")
-        form.addRow("Midflame windspeed:", self.kperil_windspeed)
-
+        self.kperil_windspeed.setRange(0.0, 200.0); self.kperil_windspeed.setValue(5.0)
+        self.kperil_windspeed.setDecimals(2); self.kperil_windspeed.setSuffix(" m/s")
+        pf.addRow("Midflame windspeed:", self.kperil_windspeed)
         self.kperil_ros_from_behave = QCheckBox()
-        form.addRow("Calculate ROS from Behave:", self.kperil_ros_from_behave)
+        pf.addRow("Calculate ROS from Behave:", self.kperil_ros_from_behave)
+        self.kperil_fuel_moisture_edit = self._file_row(pf, "Initial fuel moisture:", "ASC files (*.asc);;All files (*)")
+        self.kperil_output_name = QLineEdit(); self.kperil_output_name.setText("trigger_buffer")
+        pf.addRow("Output name:", self.kperil_output_name)
+        self._trig_stack.addWidget(p)
 
-        self.kperil_fuel_moisture_edit = self._file_row(
-            form, "Initial fuel moisture:",
-            "ASC files (*.asc);;All files (*)"
-        )
+        # Page 1: BackwardsFireCell2
+        p = QWidget(); pf = QFormLayout(p); pf.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        self.trig_buffer_file_edit = self._file_row(pf, "Trigger buffer file:", "ASC files (*.asc);;All files (*)")
+        self._trig_stack.addWidget(p)
 
-        self.kperil_output_name = QLineEdit()
-        self.kperil_output_name.setText("trigger_buffer")
-        form.addRow("Output name:", self.kperil_output_name)
-
-        form.addRow(QLabel("<b>BackwardsFireCell2 settings</b>"))
-        self.trig_buffer_file_edit = self._file_row(
-            form, "Trigger buffer file:",
-            "ASC files (*.asc);;All files (*)"
-        )
-
+        self.trig_module_combo.currentIndexChanged.connect(self._trig_stack.setCurrentIndex)
         return w
 
     # ------------------------------------------------------------------
@@ -551,7 +574,9 @@ class ExportDialog(QDialog):
             "wildfire": {
                 "enabled":           self.fire_enabled.isChecked(),
                 "module":            self.fire_module_combo.currentText(),
-                "lcp_file":          self.fire_lcp_edit.text().strip(),
+                "lcp_file":          (self.fire_lcp_hybrid_edit
+                                      if self.fire_module_combo.currentText() == "CellParticleHybrid"
+                                      else self.fire_lcp_edit).text().strip(),
                 "asc_root":          self.asc_root_edit.text().strip(),
                 "toa_file":          self.asc_toa_edit.text().strip(),
                 "ros_file":          self.asc_ros_edit.text().strip(),
@@ -563,7 +588,9 @@ class ExportDialog(QDialog):
                 "enabled":           self.smoke_enabled.isChecked(),
                 "module":            self.smoke_module_combo.currentText(),
                 "extinction_file":   self.smoke_extinction_edit.text().strip(),
-                "mixing_height":     self.smoke_mixing_height.value(),
+                "mixing_height":     (self.smoke_mixing_height_3d
+                                      if self.smoke_module_combo.currentText() == "AdvectDiffuse3D"
+                                      else self.smoke_mixing_height).value(),
                 "particles":         self.smoke_particles_spin.value(),
             },
             "trigger_buffer": {
@@ -577,6 +604,18 @@ class ExportDialog(QDialog):
                 "trigger_file":      self.trig_buffer_file_edit.text().strip(),
             },
         }
+
+
+def _info_page(text):
+    """Return a plain QWidget containing a single info label."""
+    w = QWidget()
+    vbox = QVBoxLayout(w)
+    vbox.setContentsMargins(4, 4, 4, 4)
+    lbl = QLabel(text)
+    lbl.setStyleSheet("color: #666;")
+    vbox.addWidget(lbl)
+    vbox.addStretch()
+    return w
 
 
 # ---------------------------------------------------------------------------
