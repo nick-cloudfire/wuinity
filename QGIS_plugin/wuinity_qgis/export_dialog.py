@@ -23,7 +23,8 @@ class ExportDialog(QDialog):
         self.setWindowTitle("Export WUInity Input Files")
         self.setMinimumWidth(500)
         self.setMinimumHeight(520)
-        self._pop_task = None  # keep alive until task finishes
+        self._pop_task  = None  # keep alive until task finishes
+        self._sumo_task = None
         self._build_ui()
         self._populate_defaults()
 
@@ -213,7 +214,21 @@ class ExportDialog(QDialog):
 
         # Page 0: SUMO
         p = QWidget(); pf = QFormLayout(p); pf.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+
+        pf.addRow(QLabel("<b>Generate network from OSM</b>"))
+        self.netconvert_exe_edit = self._file_row(pf, "netconvert exe:", "Executable (*.exe);;All files (*)")
+        self._sumo_gen_btn = QPushButton("Generate SUMO Network from OSM")
+        self._sumo_gen_btn.clicked.connect(self._generate_sumo_network)
+        pf.addRow("", self._sumo_gen_btn)
+        self._sumo_gen_status = QLabel("")
+        self._sumo_gen_status.setWordWrap(True)
+        self._sumo_gen_status.setStyleSheet("color: #555; font-size: 11px;")
+        pf.addRow("", self._sumo_gen_status)
+
+        pf.addRow(QLabel("<b>Config file</b>"))
         self.sumo_cfg_edit = self._file_row(pf, "SUMO config file:", "SUMO configuration (*.sumocfg);;All files (*)")
+
+        pf.addRow(QLabel("<b>Smoke visibility parameters</b>"))
         self.sumo_smoke_alpha = QDoubleSpinBox()
         self.sumo_smoke_alpha.setRange(0.0, 100.0); self.sumo_smoke_alpha.setValue(0.5); self.sumo_smoke_alpha.setDecimals(4)
         pf.addRow("Smoke alpha:", self.sumo_smoke_alpha)
@@ -500,7 +515,21 @@ class ExportDialog(QDialog):
         except ValueError:
             pass
 
-        # Pre-fill OSM XML and population CSV from project folder if they exist
+        # netconvert exe
+        netconvert = QgsProject.instance().readEntry("wuinity", "netconvert_exe", "")[0]
+        if not netconvert:
+            # Common SUMO install locations
+            for candidate in [
+                r"C:\Program Files (x86)\Eclipse\Sumo\bin\netconvert.exe",
+                r"C:\Program Files\Eclipse\Sumo\bin\netconvert.exe",
+            ]:
+                if os.path.isfile(candidate):
+                    netconvert = candidate
+                    break
+        if netconvert and os.path.isfile(netconvert):
+            self.netconvert_exe_edit.setText(netconvert)
+
+        # Pre-fill OSM XML, population CSV and SUMO config from project folder
         folder = get_project_folder()
         if folder:
             from . import osm as osm_mod
@@ -510,12 +539,69 @@ class ExportDialog(QDialog):
             pop_candidate = os.path.join(folder, "population.csv")
             if os.path.isfile(pop_candidate):
                 self.pop_file_edit.setText(pop_candidate)
+            sumo_candidate = os.path.join(folder, "sumo", "osm.sumocfg")
+            if os.path.isfile(sumo_candidate):
+                self.sumo_cfg_edit.setText(sumo_candidate)
 
     def _browse_output_folder(self):
         start = self.folder_edit.text() or os.path.expanduser("~")
         folder = QFileDialog.getExistingDirectory(self, "Select output folder", start)
         if folder:
             self.folder_edit.setText(folder)
+
+    # ------------------------------------------------------------------
+    # SUMO network generation
+    # ------------------------------------------------------------------
+
+    def _generate_sumo_network(self):
+        osm_path    = self.osm_xml_edit.text().strip()
+        netconvert  = self.netconvert_exe_edit.text().strip()
+
+        if not osm_path or not os.path.isfile(osm_path):
+            QMessageBox.warning(
+                self, "WUInity",
+                "OSM XML file not found.\n"
+                "Set the OSM XML path in the Population tab first."
+            )
+            return
+        if not netconvert or not os.path.isfile(netconvert):
+            QMessageBox.warning(
+                self, "WUInity",
+                "netconvert.exe not found.\n"
+                "Install SUMO (https://sumo.dlr.de) and point to netconvert.exe."
+            )
+            return
+
+        out_dir = os.path.join(
+            get_project_folder() or os.path.dirname(osm_path),
+            "sumo"
+        )
+        os.makedirs(out_dir, exist_ok=True)
+
+        QgsProject.instance().writeEntry("wuinity", "netconvert_exe", netconvert)
+
+        self._sumo_gen_status.setText("Running netconvert…")
+        self._sumo_gen_status.setStyleSheet("color: #555; font-size: 11px;")
+        self._sumo_gen_btn.setEnabled(False)
+
+        self._sumo_task = _NetconvertTask(
+            osm_path     = osm_path,
+            netconvert   = netconvert,
+            out_dir      = out_dir,
+            on_done      = self._on_sumo_gen_done,
+        )
+        QgsApplication.taskManager().addTask(self._sumo_task)
+
+    def _on_sumo_gen_done(self, success, message, sumocfg_path):
+        self._sumo_task = None
+        self._sumo_gen_btn.setEnabled(True)
+        if success:
+            self.sumo_cfg_edit.setText(sumocfg_path)
+            self._sumo_gen_status.setText(f"Done — {sumocfg_path}")
+            self._sumo_gen_status.setStyleSheet("color: green; font-size: 11px;")
+        else:
+            self._sumo_gen_status.setText(f"Failed: {message}")
+            self._sumo_gen_status.setStyleSheet("color: red; font-size: 11px;")
 
     # ------------------------------------------------------------------
     # Export
@@ -685,3 +771,94 @@ class _PopGenTask(QgsTask):
 
     def finished(self, success):
         self._on_done(success, self._error or "", self._pop_csv)
+
+
+# ---------------------------------------------------------------------------
+# Background task: netconvert OSM → SUMO network + sumocfg
+# ---------------------------------------------------------------------------
+
+class _NetconvertTask(QgsTask):
+    """
+    Runs netconvert to produce osm.net.xml.gz from the OSM XML file,
+    then writes a minimal osm.sumocfg pointing to it.
+    """
+    NETCONVERT_FLAGS = [
+        "--geometry.remove",
+        "--roundabouts.guess",
+        "--ramps.guess",
+        "--junctions.join",
+        "--tls.guess-signals",
+        "--tls.discard-simple",
+        "--tls.join",
+        "--output.original-names",
+        "--output.street-names",
+        "--osm.sidewalks", "false",
+        "--osm.crossings", "false",
+        "--keep-edges.by-type",
+        "highway.motorway,highway.trunk,highway.primary,highway.secondary,"
+        "highway.tertiary,highway.residential,highway.unclassified,highway.service,"
+        "highway.motorway_link,highway.trunk_link,highway.primary_link,"
+        "highway.secondary_link,highway.tertiary_link",
+    ]
+
+    SUMOCFG_TEMPLATE = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<sumoConfiguration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/sumoConfiguration.xsd">
+    <input>
+        <net-file value="osm.net.xml.gz"/>
+    </input>
+    <processing>
+        <ignore-route-errors value="true"/>
+    </processing>
+    <report>
+        <verbose value="true"/>
+        <no-step-log value="true"/>
+    </report>
+</sumoConfiguration>
+"""
+
+    def __init__(self, osm_path, netconvert, out_dir, on_done):
+        super().__init__("Generating SUMO network", QgsTask.CanCancel)
+        self._osm_path    = osm_path
+        self._netconvert  = netconvert
+        self._out_dir     = out_dir
+        self._on_done     = on_done
+        self._error       = None
+        self._sumocfg     = os.path.join(out_dir, "osm.sumocfg")
+
+    def run(self):
+        net_out = os.path.join(self._out_dir, "osm.net.xml.gz")
+        cmd = [
+            self._netconvert,
+            "--osm-files", self._osm_path,
+            "--output-file", net_out,
+        ] + self.NETCONVERT_FLAGS
+
+        QgsMessageLog.logMessage("Running netconvert…", "WUInity", Qgis.Info)
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=300
+            )
+        except FileNotFoundError:
+            self._error = f"netconvert not found: {self._netconvert}"
+            return False
+        except subprocess.TimeoutExpired:
+            self._error = "netconvert timed out after 5 minutes"
+            return False
+
+        if result.stdout:
+            QgsMessageLog.logMessage(result.stdout.strip(), "WUInity", Qgis.Info)
+        if result.returncode != 0:
+            self._error = result.stderr.strip() or f"netconvert exited with code {result.returncode}"
+            return False
+
+        with open(self._sumocfg, "w", encoding="utf-8") as f:
+            f.write(self.SUMOCFG_TEMPLATE)
+
+        QgsMessageLog.logMessage(f"SUMO network written to {self._out_dir}", "WUInity", Qgis.Info)
+        self.setProgress(100)
+        return True
+
+    def finished(self, success):
+        self._on_done(success, self._error or "", self._sumocfg)
