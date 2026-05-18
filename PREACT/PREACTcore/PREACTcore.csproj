@@ -1,10 +1,12 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>netstandard2.1</TargetFramework>
+    <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <RootNamespace>PREACT</RootNamespace>
-    <BaseOutputPath>..\..\WUInity\Assets\PREACT\</BaseOutputPath>
+    <!-- Release builds land in Unity Assets; Debug builds go to local bin/ -->
+    <BaseOutputPath Condition="'$(Configuration)' == 'Release'">..\..\WUInity\Assets\PREACT\</BaseOutputPath>
+    <BaseOutputPath Condition="'$(Configuration)' != 'Release'">bin\</BaseOutputPath>
   </PropertyGroup>
 
   <ItemGroup>
