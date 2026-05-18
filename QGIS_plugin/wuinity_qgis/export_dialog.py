@@ -23,8 +23,9 @@ class ExportDialog(QDialog):
         self.setWindowTitle("Export WUInity Input Files")
         self.setMinimumWidth(500)
         self.setMinimumHeight(520)
-        self._pop_task  = None  # keep alive until task finishes
+        self._pop_task  = None
         self._sumo_task = None
+        self._osm_full_task = None
         self._build_ui()
         self._populate_defaults()
 
@@ -104,6 +105,17 @@ class ExportDialog(QDialog):
             form, "OSM XML file:",
             "OSM XML files (*.xml *.osm *.osm.xml);;All files (*)"
         )
+        osm_dl_btn = QPushButton("Download OSM for Population…")
+        osm_dl_btn.setToolTip(
+            "Downloads roads + buildings + landuse from OpenStreetMap.\n"
+            "This is larger than the road-only download but required for population generation."
+        )
+        osm_dl_btn.clicked.connect(self._download_osm_for_population)
+        self._osm_dl_status = QLabel("")
+        self._osm_dl_status.setWordWrap(True)
+        self._osm_dl_status.setStyleSheet("color: #555; font-size: 11px;")
+        form.addRow("", osm_dl_btn)
+        form.addRow("", self._osm_dl_status)
 
         self.gpw_folder_edit = self._file_row(form, "GPW folder:", None, folder=True)
 
@@ -390,6 +402,43 @@ class ExportDialog(QDialog):
     # Population generation
     # ------------------------------------------------------------------
 
+    def _download_osm_for_population(self):
+        from .layers import get_domain_layer
+        from . import osm as osm_mod
+
+        domain = get_domain_layer()
+        if domain is None or domain.featureCount() == 0:
+            QMessageBox.warning(
+                self, "WUInity",
+                "No domain layer found. Run 'New WUInity Project' and draw the domain first."
+            )
+            return
+
+        folder = get_project_folder() or os.path.dirname(self.osm_xml_edit.text().strip())
+        if not folder:
+            QMessageBox.warning(self, "WUInity", "No project folder set — cannot determine where to save the file.")
+            return
+
+        save_path = os.path.join(folder, osm_mod.OSM_FULL_FILENAME)
+        self._osm_dl_status.setText("Downloading full OSM data (roads + buildings + landuse)…")
+        self._osm_dl_status.setStyleSheet("color: #555; font-size: 11px;")
+
+        self._osm_full_task = osm_mod.start_full_download(
+            domain_layer   = domain,
+            on_done        = self._on_osm_full_done,
+            save_xml_path  = save_path,
+        )
+
+    def _on_osm_full_done(self, success, message, saved_path):
+        self._osm_full_task = None
+        if success and saved_path:
+            self.osm_xml_edit.setText(saved_path)
+            self._osm_dl_status.setText(f"Done — {saved_path}")
+            self._osm_dl_status.setStyleSheet("color: green; font-size: 11px;")
+        else:
+            self._osm_dl_status.setText(f"Failed: {message}")
+            self._osm_dl_status.setStyleSheet("color: red; font-size: 11px;")
+
     def _generate_population(self):
         osm_path = self.osm_xml_edit.text().strip()
         gpw      = self.gpw_folder_edit.text().strip()
@@ -533,9 +582,12 @@ class ExportDialog(QDialog):
         folder = get_project_folder()
         if folder:
             from . import osm as osm_mod
-            osm_candidate = os.path.join(folder, osm_mod.OSM_XML_FILENAME)
-            if os.path.isfile(osm_candidate):
-                self.osm_xml_edit.setText(osm_candidate)
+            # Prefer the full OSM file for population; fall back to roads-only
+            for osm_name in (osm_mod.OSM_FULL_FILENAME, osm_mod.OSM_XML_FILENAME):
+                osm_candidate = os.path.join(folder, osm_name)
+                if os.path.isfile(osm_candidate):
+                    self.osm_xml_edit.setText(osm_candidate)
+                    break
             pop_candidate = os.path.join(folder, "population.csv")
             if os.path.isfile(pop_candidate):
                 self.pop_file_edit.setText(pop_candidate)

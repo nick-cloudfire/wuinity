@@ -2,11 +2,15 @@
 OSM road download, exit detection, and UTM offset computation.
 
 Download runs in a QgsTask (background thread) so the QGIS UI stays responsive.
-The download uses OSM XML format so the raw file can be reused by PREACTcli
-for population generation without a second Overpass request.
+
+Two download modes:
+  start_download()       — roads only (fast, used for road display and SUMO)
+  start_full_download()  — roads + buildings + landuse (for PREACTcli population)
 """
 
-import math
+import os
+import re
+import time
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -24,9 +28,10 @@ from PyQt5.QtGui import QColor
 from .compat import field_str
 
 LOG_TAG = "WUInity"
-LAYER_OSM_ROADS  = "OSM Roads"
-GPKG_LAYER_ROADS = "osm_roads"
-OSM_XML_FILENAME = "osm_bbox.osm.xml"
+LAYER_OSM_ROADS    = "OSM Roads"
+GPKG_LAYER_ROADS   = "osm_roads"
+OSM_XML_FILENAME   = "osm_bbox.osm.xml"       # roads only — for SUMO
+OSM_FULL_FILENAME  = "osm_population.osm.xml"  # full data  — for PREACTcli
 
 WGS84 = QgsCoordinateReferenceSystem("EPSG:4326")
 
@@ -71,29 +76,126 @@ def _log(msg, level=Qgis.Info):
 def start_download(domain_layer, on_success, on_failure, expand_pct=0.1,
                    save_xml_path=None):
     """
-    Kick off a background OSM download for the domain's bounding box.
-    Returns the task — caller MUST keep a reference to prevent GC.
-
-    The download uses OSM XML format. If save_xml_path is provided the raw
-    bytes are written there so PREACTcli can reuse them for population
-    generation without a second Overpass request.
+    Download roads only for the domain bbox (fast — no buildings/landuse).
+    Suitable for road display and SUMO network generation.
 
     on_success(roads_layer, exits, utm_offset)
-      roads_layer  : QgsVectorLayer (memory, in WGS84)
-      exits        : list of QgsPointXY — candidate exit locations
-      utm_offset   : (easting_m, northing_m, epsg) of domain lower-left
     on_failure(message: str)
+    Returns the task — caller must keep a reference.
     """
     south, west, north, east = _domain_bbox_wgs84(domain_layer, expand_pct)
-    _log(f"Starting OSM download: S={south:.4f} W={west:.4f} N={north:.4f} E={east:.4f}")
+    query = (
+        f"[out:xml][timeout:90]"
+        f"[bbox:{south:.6f},{west:.6f},{north:.6f},{east:.6f}];"
+        f'(way["highway"~"^({ROAD_FILTER})$"];);'
+        f"out geom;"
+    )
+    _log(f"Starting road download: S={south:.4f} W={west:.4f} N={north:.4f} E={east:.4f}")
     task = _OsmDownloadTask(
-        south, west, north, east,
-        domain_layer,
-        on_success, on_failure,
+        query, domain_layer, on_success, on_failure,
+        task_name="Downloading OSM roads",
         save_xml_path=save_xml_path,
+        build_layer=True,
     )
     QgsApplication.taskManager().addTask(task)
     return task
+
+
+def start_full_download(domain_layer, on_done, expand_pct=0.1,
+                        save_xml_path=None):
+    """
+    Download roads + buildings + landuse (larger — for PREACTcli population).
+
+    on_done(success: bool, message: str, saved_path: str | None)
+    Returns the task — caller must keep a reference.
+    """
+    south, west, north, east = _domain_bbox_wgs84(domain_layer, expand_pct)
+    query = (
+        f"[out:xml][timeout:240]"
+        f"[bbox:{south:.6f},{west:.6f},{north:.6f},{east:.6f}];"
+        f'(way["highway"~"^({ROAD_FILTER})$"];'
+        f'way["building"];'
+        f'way["landuse"];'
+        f'relation["building"];);'
+        f"out geom;"
+    )
+    _log(f"Starting full OSM download for population generation")
+    task = _OsmDownloadTask(
+        query, domain_layer,
+        on_success=lambda *_: on_done(True, "", save_xml_path),
+        on_failure=lambda msg: on_done(False, msg, None),
+        task_name="Downloading full OSM (population)",
+        save_xml_path=save_xml_path,
+        build_layer=False,
+    )
+    QgsApplication.taskManager().addTask(task)
+    return task
+
+
+# ---------------------------------------------------------------------------
+# HTTP helpers
+# ---------------------------------------------------------------------------
+
+def _fetch_overpass(url, data, timeout=120):
+    """
+    POST to one Overpass mirror.
+    Returns (bytes, None) on success, (None, error_str) on any failure.
+    Validates HTTP status, non-XML responses, and Overpass error remarks.
+    """
+    try:
+        req = urllib.request.Request(
+            url, data=data,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            code = resp.getcode()
+            if code == 429:
+                return None, "Rate limited (HTTP 429) — server busy, try again later"
+            if code != 200:
+                return None, f"HTTP {code}"
+            raw = resp.read()
+    except urllib.error.HTTPError as e:
+        if e.code == 429:
+            return None, "Rate limited (HTTP 429)"
+        return None, f"HTTP {e.code}: {e.reason}"
+    except urllib.error.URLError as e:
+        return None, f"Connection failed: {e.reason}"
+    except TimeoutError:
+        return None, "Timed out waiting for server"
+    except OSError as e:
+        return None, f"Network error: {e}"
+
+    if not raw:
+        return None, "Empty response"
+
+    # Must be XML, not an HTML error page
+    if not raw.lstrip()[:5].startswith(b"<"):
+        snippet = raw[:200].decode("utf-8", errors="replace").strip()
+        return None, f"Non-XML response: {snippet!r}"
+
+    # Check for Overpass server-side errors embedded in the XML
+    overpass_err = _parse_overpass_remark(raw)
+    if overpass_err:
+        return None, f"Overpass error: {overpass_err}"
+
+    return raw, None
+
+
+def _parse_overpass_remark(raw):
+    """Return the remark text if Overpass signalled an error, else None."""
+    try:
+        header = raw[:8192].decode("utf-8", errors="replace")
+    except Exception:
+        return None
+    if "<remark>" not in header:
+        return None
+    m = re.search(r"<remark>(.*?)</remark>", header, re.DOTALL)
+    if not m:
+        return None
+    text = m.group(1).strip()
+    if any(w in text.lower() for w in ("error", "timeout", "memory", "exceeded", "killed")):
+        return text
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -101,65 +203,68 @@ def start_download(domain_layer, on_success, on_failure, expand_pct=0.1,
 # ---------------------------------------------------------------------------
 
 class _OsmDownloadTask(QgsTask):
-    def __init__(self, south, west, north, east, domain_layer,
-                 on_success, on_failure, save_xml_path=None):
-        super().__init__("Downloading OSM roads", QgsTask.CanCancel)
-        self._south         = south
-        self._west          = west
-        self._north         = north
-        self._east          = east
+    def __init__(self, query, domain_layer, on_success, on_failure,
+                 task_name, save_xml_path=None, build_layer=True):
+        super().__init__(task_name, QgsTask.CanCancel)
+        self._query         = query
         self._domain_geom   = _snapshot_domain(domain_layer)
         self._domain_crs    = domain_layer.crs()
         self._on_success    = on_success
         self._on_failure    = on_failure
         self._save_xml_path = save_xml_path
+        self._build_layer   = build_layer
         self._xml_bytes     = None
         self._error         = None
 
     def run(self):
-        # Single XML download: roads + buildings + landuse — reusable by PREACTcli
-        query = (
-            f"[out:xml][timeout:180]"
-            f"[bbox:{self._south:.6f},{self._west:.6f},{self._north:.6f},{self._east:.6f}];"
-            f'(way["highway"~"^({ROAD_FILTER})$"];'
-            f'way["building"];'
-            f'way["landuse"];'
-            f'relation["building"];);'
-            f"out geom;"
-        )
-        data = urllib.parse.urlencode({"data": query}).encode()
+        data = urllib.parse.urlencode({"data": self._query}).encode()
 
-        for url in OVERPASS_MIRRORS:
+        for i, url in enumerate(OVERPASS_MIRRORS):
             if self.isCanceled():
                 _log("OSM download cancelled")
                 return False
-            _log(f"Trying mirror: {url}")
-            try:
-                req = urllib.request.Request(
-                    url, data=data,
-                    headers={"Content-Type": "application/x-www-form-urlencoded"},
-                )
-                with urllib.request.urlopen(req, timeout=240) as resp:
-                    raw = resp.read()
+
+            if i > 0:
+                pause = min(5 * i, 15)
+                _log(f"Waiting {pause}s before next mirror…")
+                time.sleep(pause)
+
+            _log(f"Trying mirror {i + 1}/{len(OVERPASS_MIRRORS)}: {url}")
+            raw, error = _fetch_overpass(url, data, timeout=150)
+
+            if raw is not None:
                 _log(f"Downloaded {len(raw):,} bytes from {url}")
                 self._xml_bytes = raw
                 if self._save_xml_path:
-                    with open(self._save_xml_path, "wb") as f:
-                        f.write(raw)
-                    _log(f"OSM XML saved to {self._save_xml_path}")
+                    self._save(raw)
                 return True
-            except Exception as e:
-                self._error = str(e)
-                _log(f"Mirror failed ({url}): {e}", Qgis.Warning)
-                continue
+
+            self._error = error
+            _log(f"Mirror failed: {error}", Qgis.Warning)
 
         return False
+
+    def _save(self, raw):
+        try:
+            folder = os.path.dirname(self._save_xml_path)
+            if folder:
+                os.makedirs(folder, exist_ok=True)
+            with open(self._save_xml_path, "wb") as f:
+                f.write(raw)
+            _log(f"OSM XML saved to {self._save_xml_path}")
+        except OSError as e:
+            _log(f"Warning: could not save OSM XML: {e}", Qgis.Warning)
 
     def finished(self, success):
         if not success or self._xml_bytes is None:
             msg = self._error or "All Overpass mirrors failed"
             _log(f"OSM download failed: {msg}", Qgis.Critical)
             self._on_failure(msg)
+            return
+
+        if not self._build_layer:
+            # Full download — caller only needs the saved file
+            self._on_success(None, [], (0, 0, 32633))
             return
 
         try:
@@ -174,12 +279,13 @@ class _OsmDownloadTask(QgsTask):
 
             self._on_success(roads_layer, exits, utm_offset)
         except Exception as e:
-            _log(f"Post-processing error: {e}", Qgis.Critical)
+            import traceback
+            _log(f"Post-processing error: {traceback.format_exc()}", Qgis.Critical)
             self._on_failure(f"Post-processing failed: {e}")
 
 
 # ---------------------------------------------------------------------------
-# Exit detection  (mirrors getDomainExits.py logic without SUMO)
+# Exit detection
 # ---------------------------------------------------------------------------
 
 def find_domain_exits(roads_layer, domain_geom_wgs84, domain_crs,
@@ -187,7 +293,6 @@ def find_domain_exits(roads_layer, domain_geom_wgs84, domain_crs,
     """
     Find points where driveable roads cross the domain boundary.
     Nearby crossings within collapse_tol_m are merged into one exit.
-
     Returns a list of QgsPointXY in WGS84.
     """
     geom = QgsGeometry(domain_geom_wgs84)
@@ -221,7 +326,6 @@ def find_domain_exits(roads_layer, domain_geom_wgs84, domain_crs,
 
 
 def _extract_points(geom):
-    """Yield all QgsPointXY from a geometry (point, multipoint, or collection)."""
     if geom.isEmpty():
         return
     gtype = geom.type()
@@ -236,10 +340,6 @@ def _extract_points(geom):
 
 
 def _collapse_exits(points, tol_m):
-    """
-    Greedy single-pass clustering: merge any point within tol_m of an
-    already-formed cluster centre into that cluster.
-    """
     if not points:
         return []
 
@@ -248,7 +348,6 @@ def _collapse_exits(points, tol_m):
     da.setSourceCrs(WGS84, QgsProject.instance().transformContext())
 
     clusters = []
-
     for pt in points:
         merged = False
         for i, (centre, members) in enumerate(clusters):
@@ -270,10 +369,6 @@ def _collapse_exits(points, tol_m):
 # ---------------------------------------------------------------------------
 
 def compute_utm_offset(domain_geom_wgs84, domain_crs):
-    """
-    Compute the UTM easting/northing of the domain lower-left corner.
-    Returns (easting_m, northing_m, utm_epsg).
-    """
     geom = QgsGeometry(domain_geom_wgs84)
     if domain_crs != WGS84:
         xform = QgsCoordinateTransform(domain_crs, WGS84, QgsProject.instance())
@@ -310,20 +405,27 @@ def _build_layer_from_xml(xml_bytes):
     ])
     layer.updateFields()
 
-    root = ET.fromstring(xml_bytes)
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError as e:
+        raise RuntimeError(f"Invalid XML in OSM response: {e}")
+
     features = []
     for way in root.findall("way"):
-        tags = {tag.get("k"): tag.get("v") for tag in way.findall("tag")}
+        tags    = {tag.get("k"): tag.get("v") for tag in way.findall("tag")}
         highway = tags.get("highway", "")
         if not highway:
-            continue  # skip buildings/landuse ways
+            continue
 
         pts = []
         for nd in way.findall("nd"):
             lat = nd.get("lat")
             lon = nd.get("lon")
             if lat and lon:
-                pts.append(QgsPointXY(float(lon), float(lat)))
+                try:
+                    pts.append(QgsPointXY(float(lon), float(lat)))
+                except ValueError:
+                    continue
 
         if len(pts) < 2:
             continue
