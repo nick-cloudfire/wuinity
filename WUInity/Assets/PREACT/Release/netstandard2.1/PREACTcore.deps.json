@@ -1,0 +1,465 @@
+{
+  "runtimeTarget": {
+    "name": ".NETStandard,Version=v2.1/",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETStandard,Version=v2.1": {},
+    ".NETStandard,Version=v2.1/": {
+      "PREACTcore/1.0.0": {
+        "dependencies": {
+          "GeoTimeZone": "6.1.0",
+          "ILGPU": "1.5.3",
+          "ILGPU.Algorithms": "1.5.3",
+          "Itinero": "1.5.1",
+          "Itinero.IO.Osm": "1.5.1",
+          "OsmSharp.IO.API": "1.0.5",
+          "SGP.NET": "1.4.0",
+          "System.Text.Json": "10.0.5",
+          "TimeZoneConverter": "7.2.0",
+          "gdalconst_csharp": "3.9.3.0",
+          "gdal_csharp": "3.9.3.0",
+          "kPERILcore": "1.0.0.0",
+          "ogr_csharp": "3.9.3.0",
+          "OpenMeteo": "0.0.1.0",
+          "osr_csharp": "3.9.3.0"
+        },
+        "runtime": {
+          "PREACTcore.dll": {}
+        }
+      },
+      "GeoTimeZone/6.1.0": {
+        "runtime": {
+          "lib/netstandard2.1/GeoTimeZone.dll": {
+            "assemblyVersion": "6.1.0.0",
+            "fileVersion": "6.1.0.0"
+          }
+        }
+      },
+      "ILGPU/1.5.3": {
+        "dependencies": {
+          "System.Collections.Immutable": "7.0.0",
+          "System.Reflection.Metadata": "7.0.2"
+        },
+        "runtime": {
+          "lib/netstandard2.1/ILGPU.dll": {
+            "assemblyVersion": "1.5.3.0",
+            "fileVersion": "1.5.3.0"
+          }
+        }
+      },
+      "ILGPU.Algorithms/1.5.3": {
+        "dependencies": {
+          "ILGPU": "1.5.3"
+        },
+        "runtime": {
+          "lib/netstandard2.1/ILGPU.Algorithms.dll": {
+            "assemblyVersion": "1.5.3.0",
+            "fileVersion": "1.5.3.0"
+          }
+        }
+      },
+      "Itinero/1.5.1": {
+        "dependencies": {
+          "Reminiscence": "1.3.0"
+        },
+        "runtime": {
+          "lib/netstandard2.0/Itinero.dll": {
+            "assemblyVersion": "0.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      },
+      "Itinero.IO.Osm/1.5.1": {
+        "dependencies": {
+          "Itinero": "1.5.1",
+          "OsmSharp": "7.0.0-pre022"
+        },
+        "runtime": {
+          "lib/netstandard2.0/Itinero.IO.Osm.dll": {
+            "assemblyVersion": "1.5.1.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      },
+      "Microsoft.Bcl.AsyncInterfaces/10.0.5": {
+        "runtime": {
+          "lib/netstandard2.1/Microsoft.Bcl.AsyncInterfaces.dll": {
+            "assemblyVersion": "10.0.0.5",
+            "fileVersion": "10.0.526.15411"
+          }
+        }
+      },
+      "Microsoft.Extensions.Logging.Abstractions/2.0.2": {
+        "runtime": {
+          "lib/netstandard2.0/Microsoft.Extensions.Logging.Abstractions.dll": {
+            "assemblyVersion": "2.0.2.0",
+            "fileVersion": "2.0.2.18114"
+          }
+        }
+      },
+      "OsmSharp/7.0.0-pre022": {
+        "dependencies": {
+          "System.Text.Json": "10.0.5",
+          "protobuf-net": "3.1.25"
+        },
+        "runtime": {
+          "lib/netstandard2.0/OsmSharp.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      },
+      "OsmSharp.IO.API/1.0.5": {
+        "dependencies": {
+          "Microsoft.Extensions.Logging.Abstractions": "2.0.2",
+          "OsmSharp": "7.0.0-pre022"
+        },
+        "runtime": {
+          "lib/netstandard2.0/OsmSharp.IO.API.dll": {
+            "assemblyVersion": "1.0.5.0",
+            "fileVersion": "1.0.5.0"
+          }
+        }
+      },
+      "protobuf-net/3.1.25": {
+        "dependencies": {
+          "protobuf-net.Core": "3.1.25"
+        },
+        "runtime": {
+          "lib/netstandard2.1/protobuf-net.dll": {
+            "assemblyVersion": "3.0.0.0",
+            "fileVersion": "3.1.25.24892"
+          }
+        }
+      },
+      "protobuf-net.Core/3.1.25": {
+        "dependencies": {
+          "System.Collections.Immutable": "7.0.0"
+        },
+        "runtime": {
+          "lib/netstandard2.1/protobuf-net.Core.dll": {
+            "assemblyVersion": "3.0.0.0",
+            "fileVersion": "3.1.25.24892"
+          }
+        }
+      },
+      "Reminiscence/1.3.0": {
+        "dependencies": {
+          "System.Runtime.CompilerServices.Unsafe": "6.1.2"
+        },
+        "runtime": {
+          "lib/netstandard2.0/Reminiscence.dll": {
+            "assemblyVersion": "0.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      },
+      "SGP.NET/1.4.0": {
+        "runtime": {
+          "lib/netstandard2.0/SGP.NET.dll": {
+            "assemblyVersion": "1.4.0.0",
+            "fileVersion": "1.4.0.0"
+          }
+        }
+      },
+      "System.Collections.Immutable/7.0.0": {
+        "dependencies": {
+          "System.Runtime.CompilerServices.Unsafe": "6.1.2"
+        },
+        "runtime": {
+          "lib/netstandard2.0/System.Collections.Immutable.dll": {
+            "assemblyVersion": "7.0.0.0",
+            "fileVersion": "7.0.22.51805"
+          }
+        }
+      },
+      "System.IO.Pipelines/10.0.5": {
+        "runtime": {
+          "lib/netstandard2.0/System.IO.Pipelines.dll": {
+            "assemblyVersion": "10.0.0.0",
+            "fileVersion": "10.0.526.15411"
+          }
+        }
+      },
+      "System.Reflection.Metadata/7.0.2": {
+        "dependencies": {
+          "System.Collections.Immutable": "7.0.0"
+        },
+        "runtime": {
+          "lib/netstandard2.0/System.Reflection.Metadata.dll": {
+            "assemblyVersion": "7.0.0.0",
+            "fileVersion": "7.0.723.27404"
+          }
+        }
+      },
+      "System.Runtime.CompilerServices.Unsafe/6.1.2": {
+        "runtime": {
+          "lib/netstandard2.0/System.Runtime.CompilerServices.Unsafe.dll": {
+            "assemblyVersion": "6.0.0.0",
+            "fileVersion": "6.100.225.20307"
+          }
+        }
+      },
+      "System.Text.Encodings.Web/10.0.5": {
+        "dependencies": {
+          "System.Runtime.CompilerServices.Unsafe": "6.1.2"
+        },
+        "runtime": {
+          "lib/netstandard2.0/System.Text.Encodings.Web.dll": {
+            "assemblyVersion": "10.0.0.0",
+            "fileVersion": "10.0.526.15411"
+          }
+        }
+      },
+      "System.Text.Json/10.0.5": {
+        "dependencies": {
+          "Microsoft.Bcl.AsyncInterfaces": "10.0.5",
+          "System.IO.Pipelines": "10.0.5",
+          "System.Runtime.CompilerServices.Unsafe": "6.1.2",
+          "System.Text.Encodings.Web": "10.0.5"
+        },
+        "runtime": {
+          "lib/netstandard2.0/System.Text.Json.dll": {
+            "assemblyVersion": "10.0.0.0",
+            "fileVersion": "10.0.526.15411"
+          }
+        }
+      },
+      "TimeZoneConverter/7.2.0": {
+        "runtime": {
+          "lib/netstandard2.0/TimeZoneConverter.dll": {
+            "assemblyVersion": "7.2.0.0",
+            "fileVersion": "7.2.0.0"
+          }
+        }
+      },
+      "gdalconst_csharp/3.9.3.0": {
+        "runtime": {
+          "gdalconst_csharp.dll": {
+            "assemblyVersion": "3.9.3.0",
+            "fileVersion": "3.9.3.0"
+          }
+        }
+      },
+      "gdal_csharp/3.9.3.0": {
+        "runtime": {
+          "gdal_csharp.dll": {
+            "assemblyVersion": "3.9.3.0",
+            "fileVersion": "3.9.3.0"
+          }
+        }
+      },
+      "kPERILcore/1.0.0.0": {
+        "runtime": {
+          "kPERILcore.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      },
+      "ogr_csharp/3.9.3.0": {
+        "runtime": {
+          "ogr_csharp.dll": {
+            "assemblyVersion": "3.9.3.0",
+            "fileVersion": "3.9.3.0"
+          }
+        }
+      },
+      "OpenMeteo/0.0.1.0": {
+        "runtime": {
+          "OpenMeteo.dll": {
+            "assemblyVersion": "0.0.1.0",
+            "fileVersion": "0.0.1.0"
+          }
+        }
+      },
+      "osr_csharp/3.9.3.0": {
+        "runtime": {
+          "osr_csharp.dll": {
+            "assemblyVersion": "3.9.3.0",
+            "fileVersion": "3.9.3.0"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "PREACTcore/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "GeoTimeZone/6.1.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-HB3OJcaI2NNfB253co3XY0dUFllCtdR8Jn0kS7GR/m8XMhvEgurDfvgebNeac384S+OOvrgb7HEGbZXOps/8Mw==",
+      "path": "geotimezone/6.1.0",
+      "hashPath": "geotimezone.6.1.0.nupkg.sha512"
+    },
+    "ILGPU/1.5.3": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-VhAfQqnp/qTcQla5zcBPQIoUJox8T1EuZLuKrynFFE1BQvOOUCksiCb9IQAJa2MSJf6QDi5YIoG45K0I+GWcgg==",
+      "path": "ilgpu/1.5.3",
+      "hashPath": "ilgpu.1.5.3.nupkg.sha512"
+    },
+    "ILGPU.Algorithms/1.5.3": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-KySqYhghiJKkf77NTLcxebFzD2hz/hpO1Dxz/B0IpnowhwKD3i+PVaGa3E+TXahGHY6711HVOWpKr07wV6qEOg==",
+      "path": "ilgpu.algorithms/1.5.3",
+      "hashPath": "ilgpu.algorithms.1.5.3.nupkg.sha512"
+    },
+    "Itinero/1.5.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-vSCovcSa1AVWtQynOKdOvnontnb3z7uKPS2+vW1/b18AR/x1gMU5H+fQEGZG9BdeSzVFDf505blE9E7pAtVdnw==",
+      "path": "itinero/1.5.1",
+      "hashPath": "itinero.1.5.1.nupkg.sha512"
+    },
+    "Itinero.IO.Osm/1.5.1": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-PcWxWbXx9M7E/9yf1OI+HqhoPSC/VDpgSXZz3mAAsCeDGBfYHQz2E1rTCsc32CNvWU2RFQTHiKVUDl4/s/9EgQ==",
+      "path": "itinero.io.osm/1.5.1",
+      "hashPath": "itinero.io.osm.1.5.1.nupkg.sha512"
+    },
+    "Microsoft.Bcl.AsyncInterfaces/10.0.5": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-hQB3Hq1LlF0NkGVNyZIvwIQIY3LM7Cw1oYjNiTvdNqmzzipVAWEK1c5sj2H5aFX0udnjgPLxSYKq2fupueS8ow==",
+      "path": "microsoft.bcl.asyncinterfaces/10.0.5",
+      "hashPath": "microsoft.bcl.asyncinterfaces.10.0.5.nupkg.sha512"
+    },
+    "Microsoft.Extensions.Logging.Abstractions/2.0.2": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-xH49DgYQWwxB4r18Yc3SyYCXXrFpcLnVfxJlp4WktMfYHtNRbqd2Phdf6XQ0G91whVlKb2XZsOAY6be2AMWE+g==",
+      "path": "microsoft.extensions.logging.abstractions/2.0.2",
+      "hashPath": "microsoft.extensions.logging.abstractions.2.0.2.nupkg.sha512"
+    },
+    "OsmSharp/7.0.0-pre022": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-ldDp4XGVqz7LQyhFmUF5RoTBKwKj5zVoqO9Y/iWN+YL0oe9g+qjSdmXfPXYdS0hLj1pD7pjZaJK9KJuFpAt3Tw==",
+      "path": "osmsharp/7.0.0-pre022",
+      "hashPath": "osmsharp.7.0.0-pre022.nupkg.sha512"
+    },
+    "OsmSharp.IO.API/1.0.5": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-9g3SHCwHeWRTN+wqVk6jV20CFGPC6u0cEGAm3FPzZ6JWZbwoXp+UPNP9WVdnVk31JEtaYkr1MwNzGRVIccX5sQ==",
+      "path": "osmsharp.io.api/1.0.5",
+      "hashPath": "osmsharp.io.api.1.0.5.nupkg.sha512"
+    },
+    "protobuf-net/3.1.25": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-vej8g3+5KpwuwA20xoOMJK9nUM/hr7maSu56pIqItmX28JbXF0co1/pD6Mg84+mhLYRQpKiSlOxIDvtaYojKWA==",
+      "path": "protobuf-net/3.1.25",
+      "hashPath": "protobuf-net.3.1.25.nupkg.sha512"
+    },
+    "protobuf-net.Core/3.1.25": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-LqDpeU+rbzO/uD2iYUBIGCgaeCBrxwmCDGVmUNZ67yShrGLlLJHwFMcDsGZUCxE2iHdRJawMUkTfs3HYIXiqWg==",
+      "path": "protobuf-net.core/3.1.25",
+      "hashPath": "protobuf-net.core.3.1.25.nupkg.sha512"
+    },
+    "Reminiscence/1.3.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-A7ryQqW9RCXg1ricQIz2s0wGcPxDPwaeTLuM/0YovpNW0Zwifdy5kuak/KpidAx+VnoEgGRqg3T9ptiMYpyLzQ==",
+      "path": "reminiscence/1.3.0",
+      "hashPath": "reminiscence.1.3.0.nupkg.sha512"
+    },
+    "SGP.NET/1.4.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-fGKIkw0Af0ZBUHoAnDZ3JVSaSnMSpBF8ferW0RskfW0VC+tHYktt/OhcBNhrsbmdPopiUYJqAdVHJFIM+uZFLQ==",
+      "path": "sgp.net/1.4.0",
+      "hashPath": "sgp.net.1.4.0.nupkg.sha512"
+    },
+    "System.Collections.Immutable/7.0.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-dQPcs0U1IKnBdRDBkrCTi1FoajSTBzLcVTpjO4MBCMC7f4pDOIPzgBoX8JjG7X6uZRJ8EBxsi8+DR1JuwjnzOQ==",
+      "path": "system.collections.immutable/7.0.0",
+      "hashPath": "system.collections.immutable.7.0.0.nupkg.sha512"
+    },
+    "System.IO.Pipelines/10.0.5": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-8/ZHN/j2y1t+7McdCf1wXku2/c7wtrGLz3WQabIoPuLAn3bHDWT6YOJYreJq8sCMPSo6c8iVYXUdLlFGX5PEqw==",
+      "path": "system.io.pipelines/10.0.5",
+      "hashPath": "system.io.pipelines.10.0.5.nupkg.sha512"
+    },
+    "System.Reflection.Metadata/7.0.2": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-eDRR3/gdnAx0lRhZssc3y32+iCalFgQzaw/5ZNtqtkZ1hMnRFvazcuojYeRo0MH1DrnBAH4rrwJgeXc2KfkP+A==",
+      "path": "system.reflection.metadata/7.0.2",
+      "hashPath": "system.reflection.metadata.7.0.2.nupkg.sha512"
+    },
+    "System.Runtime.CompilerServices.Unsafe/6.1.2": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-2hBr6zdbIBTDE3EhK7NSVNdX58uTK6iHW/P/Axmm9sl1xoGSLqDvMtpecn226TNwHByFokYwJmt/aQQNlO5CRw==",
+      "path": "system.runtime.compilerservices.unsafe/6.1.2",
+      "hashPath": "system.runtime.compilerservices.unsafe.6.1.2.nupkg.sha512"
+    },
+    "System.Text.Encodings.Web/10.0.5": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-opvD/nKTzGKA7GVntZ9L823kN6IxgHQfuxY+VI9gv8VE1Y7CSKoi/QS1EYDQiA63MqtZsD7X6zkISd2ZQJohTQ==",
+      "path": "system.text.encodings.web/10.0.5",
+      "hashPath": "system.text.encodings.web.10.0.5.nupkg.sha512"
+    },
+    "System.Text.Json/10.0.5": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-vW2zhkWziyfhoSXNf42mTWyilw+vfwBGOsODDsHSFtOIY6LCgfRVUyaAilLEL4Kc1fzhaxcep5pS0VWYPSDW0w==",
+      "path": "system.text.json/10.0.5",
+      "hashPath": "system.text.json.10.0.5.nupkg.sha512"
+    },
+    "TimeZoneConverter/7.2.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-4Poqu79dTmacVETqUJ53g3x4U21V/cmWPSlehdsVE4Q00akavvlRq+SRjcg/CmfO9ibOCjRl6TeUV7hkC5RC4w==",
+      "path": "timezoneconverter/7.2.0",
+      "hashPath": "timezoneconverter.7.2.0.nupkg.sha512"
+    },
+    "gdalconst_csharp/3.9.3.0": {
+      "type": "reference",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "gdal_csharp/3.9.3.0": {
+      "type": "reference",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "kPERILcore/1.0.0.0": {
+      "type": "reference",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "ogr_csharp/3.9.3.0": {
+      "type": "reference",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "OpenMeteo/0.0.1.0": {
+      "type": "reference",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "osr_csharp/3.9.3.0": {
+      "type": "reference",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}
