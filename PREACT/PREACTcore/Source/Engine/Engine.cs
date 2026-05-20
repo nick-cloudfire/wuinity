@@ -136,14 +136,13 @@ namespace PREACT
                 }
             }
 
-            //now some GDAL/PROJ stuff
-            _projLibPath = Environment.GetEnvironmentVariable("PROJ_LIB", EnvironmentVariableTarget.Machine);
-            _projDataPath = Environment.GetEnvironmentVariable("PROJ_DATA", EnvironmentVariableTarget.Machine);
-            //Engine.Message(null, LogType.Debug, $"PROJ_LIB variable is: {projLib}");
-            //Engine.Message(null, LogType.Debug, $"PROJ_DATA variable is: {projData}");
-            //OSGeo.GDAL.Gdal.SetConfigOption("PROJ_LIB", projLib); //should not be needed
-            //OSGeo.GDAL.Gdal.SetConfigOption("PROJ_DATA", projData);
-            OSGeo.OSR.Osr.SetPROJSearchPaths(new string[] { _projLibPath, _projDataPath });
+            // Find a compatible proj.db by searching PATH entries for a sibling share/proj directory.
+            // Prometheus sets machine PROJ_LIB/PROJ_DATA to its own proj_nad which has an incompatible
+            // proj.db, so we never use those. Instead we look for the proj.db that ships with whichever
+            // native gdal.dll is on PATH (typically SUMO's).
+            _projLibPath = FindProjDataDir(variables);
+            _projDataPath = _projLibPath;
+            OSGeo.OSR.Osr.SetPROJSearchPaths(new string[] { _projLibPath });
 
             try
             {
@@ -162,6 +161,24 @@ namespace PREACT
             {
                 throw e;
             }
+        }
+
+        // Search PATH entries for a share/proj/proj.db that is NOT Prometheus's.
+        // gdal_wrap.dll links against whichever gdal.dll appears first on PATH, so the
+        // corresponding PROJ data lives in ../share/proj relative to that bin directory.
+        private static string FindProjDataDir(string[] pathEntries)
+        {
+            foreach (string entry in pathEntries)
+            {
+                if (string.IsNullOrWhiteSpace(entry)) continue;
+                // Skip known-bad Prometheus directories.
+                if (entry.IndexOf("Prometheus", StringComparison.OrdinalIgnoreCase) >= 0) continue;
+
+                string candidate = Path.Combine(Path.GetDirectoryName(entry.TrimEnd('\\', '/')), "share", "proj");
+                if (File.Exists(Path.Combine(candidate, "proj.db")))
+                    return candidate;
+            }
+            return null;
         }
 
         public async void RunSimulations(EngineTask engineTask, int startIndexOffset = 0)

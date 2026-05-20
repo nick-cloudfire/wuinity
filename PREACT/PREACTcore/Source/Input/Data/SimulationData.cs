@@ -5,7 +5,6 @@
 //MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
 //You should have received a copy of the GNU General Public License along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-using System;
 using PREACT.Utility;
 using PREACT.Math;
 
@@ -78,12 +77,6 @@ namespace PREACT.Input
 
         private static (double easting, double northing) Wgs84ToUtm(double lat, double lon, string utmEpsg)
         {
-            // Prometheus sets its own PROJ_LIB/PROJ_DATA machine env vars, causing GDAL to find
-            // the wrong proj.db. Force the correct paths before any EPSG lookup.
-            string projLib = Environment.GetEnvironmentVariable("PROJ_LIB", EnvironmentVariableTarget.Machine);
-            string projData = Environment.GetEnvironmentVariable("PROJ_DATA", EnvironmentVariableTarget.Machine);
-            OSGeo.OSR.Osr.SetPROJSearchPaths(new string[] { projLib, projData });
-
             var src = new OSGeo.OSR.SpatialReference("");
             src.ImportFromEPSG(4326); // WGS84
 
