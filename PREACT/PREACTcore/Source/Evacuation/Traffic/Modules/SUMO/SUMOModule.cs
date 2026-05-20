@@ -264,7 +264,7 @@ namespace PREACT.Traffic
                     //TODO:do we find route based on empty network/pure speed limits or do we take into account current state of network
                     if(true)
                     {
-                        route = LIBSUMO.Simulation.findRoute(startRoad.edgeID, destinationRoad.edgeID, "", -1.0);
+                        route = LIBSUMO.Simulation.findRoute(startRoad.edgeID, destinationRoad.edgeID);
                     }
                     else
                     {
@@ -282,7 +282,7 @@ namespace PREACT.Traffic
                     {
                         int randomStart = Math.Random.Range(0, _validStartPositions.Count);   
                         //TODO: actually save start/goal pairs as we might try to generate route from a random start position to a non-reachable current goal of the car
-                        route = LIBSUMO.Simulation.findRoute(_validStartPositions[randomStart].edgeID, destinationRoad.edgeID, "", -1.0);
+                        route = LIBSUMO.Simulation.findRoute(_validStartPositions[randomStart].edgeID, destinationRoad.edgeID);    
                         if(route.edges.Count > 0)
                         {
                             foundRoute = true;
