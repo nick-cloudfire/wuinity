@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Threading.Tasks;
 using PREACT.Utility;
 
 namespace PREACTcli
@@ -9,13 +10,25 @@ namespace PREACTcli
     /// <summary>
     /// Convergence-driven probabilistic trigger-boundary driver (docs/probabilistic-trigger-convergence.md).
     ///
-    /// Runs realizations one at a time (same per-realization mechanics as
-    /// <see cref="ProbabilisticTrigger"/>: evacuation + k-PERIL boundary via PREACT.exe) and
-    /// aggregates them into a running per-cell probability raster. Instead of a fixed count it
-    /// stops once the probability raster's decile-area footprint has stabilized: for a streak of
-    /// consecutive realizations, every decile's area changed by less than a tolerance from the
-    /// previous realization. --max bounds how many pre-generated realizations may be consumed
-    /// (this driver does not run ELMFIRE itself; realizations must already exist on disk).
+    /// Runs realizations (same per-realization mechanics as <see cref="ProbabilisticTrigger"/>:
+    /// evacuation + k-PERIL boundary via PREACT.exe) and aggregates them into a running per-cell
+    /// probability raster. Instead of a fixed count it stops once the probability raster's
+    /// decile-area footprint has stabilized: for a streak of consecutive realizations, every
+    /// decile's area changed by less than a tolerance from the previous realization. --max bounds
+    /// how many pre-generated realizations may be consumed (this driver does not run ELMFIRE
+    /// itself; realizations must already exist on disk).
+    ///
+    /// Up to <c>--parallel</c> realizations run concurrently, each as its own PREACT.exe OS
+    /// process. This is deliberate, not incidental: WUInity's evacuation step runs on SUMO via
+    /// libsumo, a native library with process-global state that cannot safely run more than one
+    /// simulation per process (see <c>Engine.RunSimulationsParallel</c>'s own code comment on
+    /// this) — so genuine concurrency across realizations only works at the OS-process level,
+    /// which is exactly what <see cref="RealizationRunner"/> already does per realization. Since
+    /// SUMO dominates a realization's wall-clock time (an ELMFIRE run is comparatively quick),
+    /// this is where parallelism actually pays off. Aggregation itself stays single-threaded and
+    /// order-independent — realizations are i.i.d. Monte Carlo draws, so folding them into the
+    /// running probability/streak state in completion order (not launch order) is statistically
+    /// equivalent to the strictly-serial version.
     /// </summary>
     internal static class ConvergeTrigger
     {
@@ -46,6 +59,11 @@ namespace PREACTcli
                 Console.Error.WriteLine("ERROR: --streak and --tolerance must be positive.");
                 return 1;
             }
+            if (opts.Parallelism <= 0)
+            {
+                Console.Error.WriteLine("ERROR: --parallel must be positive.");
+                return 1;
+            }
 
             string caseDir = Path.GetDirectoryName(Path.GetFullPath(opts.BaseWui));
             string outputDir = Path.Combine(caseDir, "_output");
@@ -62,6 +80,38 @@ namespace PREACTcli
             string[] baseLines = File.ReadAllLines(opts.BaseWui);
 
             string diagnosticsPath = opts.DiagnosticsPath ?? Path.Combine(outputDir, "trigger_convergence.csv");
+
+            return RunAsync(opts, caseDir, outputDir, preactExe, baseName, baseLines, diagnosticsPath).GetAwaiter().GetResult();
+        }
+
+        private class RealizationOutcome
+        {
+            public bool Ok;
+            public string Idx;
+            public float[,] Boundary;
+            public AscRaster.Header Header;
+        }
+
+        private static RealizationOutcome RunRealization(string preactExe, string caseDir, string baseName, string[] baseLines,
+            int index, Options opts, string outputDir)
+        {
+            string idx = index.ToString().PadLeft(opts.Pad, '0');
+            string toa = Path.Combine(opts.RasterDir, opts.ToaPattern.Replace("{i}", idx));
+            string ros = Path.Combine(opts.RasterDir, opts.RosPattern.Replace("{i}", idx));
+            string sd  = Path.Combine(opts.RasterDir, opts.SdPattern.Replace("{i}", idx));
+            string fi  = Path.Combine(opts.RasterDir, opts.FiPattern.Replace("{i}", idx));
+
+            bool ok = RealizationRunner.TryRun(
+                preactExe, caseDir, baseName, baseLines, idx, toa, ros, sd, fi,
+                outputDir, opts.Resume, opts.ResumeOnly,
+                out float[,] boundary, out AscRaster.Header h);
+
+            return new RealizationOutcome { Ok = ok, Idx = idx, Boundary = boundary, Header = h };
+        }
+
+        private static async Task<int> RunAsync(Options opts, string caseDir, string outputDir, string preactExe,
+            string baseName, string[] baseLines, string diagnosticsPath)
+        {
             using var diag = new StreamWriter(diagnosticsPath);
             WriteDiagnosticsHeader(diag);
 
@@ -71,27 +121,33 @@ namespace PREACTcli
             int nFailed = 0;
             int streak = 0;
             bool converged = false;
+            int launched = 0;
+            int completed = 0;
 
             //previous realization's decile areas; null until that decile has a non-zero baseline
             double?[] previousArea = new double?[Deciles.Length];
 
-            for (int n = 0; n < opts.MaxRealizations; ++n)
+            var pending = new List<Task<RealizationOutcome>>();
+
+            while (true)
             {
-                int index = opts.Start + n;
-                string idx = index.ToString().PadLeft(opts.Pad, '0');
+                while (pending.Count < opts.Parallelism && launched < opts.MaxRealizations && !converged)
+                {
+                    int index = opts.Start + launched;
+                    ++launched;
+                    pending.Add(Task.Run(() => RunRealization(preactExe, caseDir, baseName, baseLines, index, opts, outputDir)));
+                }
 
-                Console.WriteLine($"PROGRESS {n}/{opts.MaxRealizations} realization {idx}");
+                if (pending.Count == 0) break;
 
-                string toa = Path.Combine(opts.RasterDir, opts.ToaPattern.Replace("{i}", idx));
-                string ros = Path.Combine(opts.RasterDir, opts.RosPattern.Replace("{i}", idx));
-                string sd  = Path.Combine(opts.RasterDir, opts.SdPattern.Replace("{i}", idx));
-                string fi  = Path.Combine(opts.RasterDir, opts.FiPattern.Replace("{i}", idx));
+                Task<RealizationOutcome> finishedTask = await Task.WhenAny(pending);
+                pending.Remove(finishedTask);
+                RealizationOutcome result = await finishedTask;
+                ++completed;
 
-                bool ok = RealizationRunner.TryRun(
-                    preactExe, caseDir, baseName, baseLines, idx, toa, ros, sd, fi,
-                    outputDir, opts.Resume, opts.ResumeOnly,
-                    out float[,] boundary, out AscRaster.Header h);
-                if (!ok)
+                Console.WriteLine($"PROGRESS {completed}/{opts.MaxRealizations} realization {result.Idx}");
+
+                if (!result.Ok)
                 {
                     ++nFailed;
                     continue;
@@ -99,16 +155,17 @@ namespace PREACTcli
 
                 if (insideCount == null)
                 {
-                    header = h;
-                    insideCount = new int[h.Ncols, h.Nrows];
+                    header = result.Header;
+                    insideCount = new int[header.Ncols, header.Nrows];
                 }
-                else if (h.Ncols != header.Ncols || h.Nrows != header.Nrows)
+                else if (result.Header.Ncols != header.Ncols || result.Header.Nrows != header.Nrows)
                 {
-                    Console.Error.WriteLine($"[{idx}] boundary dimensions {h.Ncols}x{h.Nrows} differ from {header.Ncols}x{header.Nrows}, skipping.");
+                    Console.Error.WriteLine($"[{result.Idx}] boundary dimensions {result.Header.Ncols}x{result.Header.Nrows} differ from {header.Ncols}x{header.Nrows}, skipping.");
                     ++nFailed;
                     continue;
                 }
 
+                float[,] boundary = result.Boundary;
                 for (int x = 0; x < header.Ncols; ++x)
                 {
                     for (int y = 0; y < header.Nrows; ++y)
@@ -154,19 +211,18 @@ namespace PREACTcli
                     previousArea[t] = area[t];
                 }
 
-                //the first realization (and any run where every decile is still awaiting its
-                //baseline) has nothing to compare against yet, so it must not count toward the
-                //streak in either direction
+                //the first realization aggregated (and any run where every decile is still
+                //awaiting its baseline) has nothing to compare against yet, so it must not count
+                //toward the streak in either direction
                 if (anyDeltaChecked) streak = allWithinTolerance ? streak + 1 : 0;
-                WriteDiagnosticsRow(diag, index, nSuccess, area, delta, streak);
+                WriteDiagnosticsRow(diag, nSuccess, result.Idx, nSuccess, area, delta, streak);
 
-                Console.WriteLine($"[{idx}] streak {streak}/{opts.Streak} (nSuccess={nSuccess}).");
+                Console.WriteLine($"[{result.Idx}] streak {streak}/{opts.Streak} (nSuccess={nSuccess}).");
 
                 if (streak >= opts.Streak)
                 {
                     converged = true;
                     Console.WriteLine($"Converged after {nSuccess} realizations ({streak} consecutive within {opts.Tolerance:P0} per decile).");
-                    break;
                 }
             }
 
@@ -206,15 +262,15 @@ namespace PREACTcli
 
         private static void WriteDiagnosticsHeader(StreamWriter w)
         {
-            var cols = new List<string> { "run", "nSuccess", "streak" };
+            var cols = new List<string> { "run", "realization_id", "nSuccess", "streak" };
             foreach (double tau in Deciles) cols.Add("area_p" + (int)Math.Round(tau * 100));
             foreach (double tau in Deciles) cols.Add("delta_p" + (int)Math.Round(tau * 100));
             w.WriteLine(string.Join(",", cols));
         }
 
-        private static void WriteDiagnosticsRow(StreamWriter w, int run, int nSuccess, double[] area, double?[] delta, int streak)
+        private static void WriteDiagnosticsRow(StreamWriter w, int run, string realizationId, int nSuccess, double[] area, double?[] delta, int streak)
         {
-            var cols = new List<string> { run.ToString(), nSuccess.ToString(), streak.ToString() };
+            var cols = new List<string> { run.ToString(), realizationId, nSuccess.ToString(), streak.ToString() };
             foreach (double a in area) cols.Add(a.ToString(CultureInfo.InvariantCulture));
             foreach (double? d in delta) cols.Add(d.HasValue ? d.Value.ToString(CultureInfo.InvariantCulture) : "");
             w.WriteLine(string.Join(",", cols));
@@ -241,6 +297,7 @@ namespace PREACTcli
             public double Tolerance = 0.02;
             public bool Resume;
             public bool ResumeOnly;
+            public int Parallelism = Environment.ProcessorCount;
         }
 
         private static Options ParseArgs(string[] args)
@@ -264,6 +321,7 @@ namespace PREACTcli
                     case "--diagnostics": o.DiagnosticsPath = Next(args, ref i); break;
                     case "--streak":      int.TryParse(Next(args, ref i), out o.Streak); break;
                     case "--tolerance":   double.TryParse(Next(args, ref i), NumberStyles.Any, CultureInfo.InvariantCulture, out o.Tolerance); break;
+                    case "--parallel":    int.TryParse(Next(args, ref i), out o.Parallelism); break;
                     case "--resume":      o.Resume = true; break;
                     case "--resume-only": o.Resume = true; o.ResumeOnly = true; break;
                 }
@@ -282,7 +340,7 @@ namespace PREACTcli
             Console.WriteLine("      [--start <n=1>] [--pad <width=4>]");
             Console.WriteLine("      [--toa TOA_{i}.tif] [--ros ROS_{i}.tif] [--sd SD_{i}.tif] [--fi FI_{i}.tif]");
             Console.WriteLine("      [--preact <PREACT.exe>] [--out <probability.asc>] [--diagnostics <convergence.csv>]");
-            Console.WriteLine("      [--streak <runs=20>] [--tolerance <fraction=0.02>] [--resume] [--resume-only]");
+            Console.WriteLine("      [--streak <runs=20>] [--tolerance <fraction=0.02>] [--parallel <N=cpuCount>] [--resume] [--resume-only]");
         }
     }
 }

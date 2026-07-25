@@ -49,6 +49,26 @@ per-decile area and its Δ vs. the previous realization, plus the running streak
 the aggregated `trigger_probability.asc`. A decile only starts counting toward the streak
 once its area has an established non-zero baseline, matching the exclusion rule above.
 
+**Runs `--parallel` realizations concurrently** (default: CPU count), each still its own
+PREACT.exe OS process via `RealizationRunner` — aggregation (the decile/streak state above)
+stays single-threaded and folds in whichever realization completes next, which is valid
+because realizations are i.i.d. Monte Carlo draws (order doesn't matter, only count does).
+This is deliberate, not incidental: SUMO (the evacuation engine each realization spends most
+of its wall-clock time in) runs via libsumo, a native library with process-global state —
+`Engine.RunSimulationsParallel`'s own code comment already documents that in-process
+multithreaded SUMO "can only run one instance per process" and doesn't work. The engine's
+existing `RunSimulationsParallelProcess` mode (`Engine.cs`) works around exactly this by
+spawning one OS process per simulation, which is the same shape `RealizationRunner` already
+uses per realization — so `converge-trigger` overlapping several of those processes is safe
+by the same reasoning already proven elsewhere in this codebase, and is where the real
+wall-clock win is (an ELMFIRE run is comparatively quick; SUMO dominates). Verified with
+synthetic realizations under concurrent scheduling: convergence triggers at the identical
+`nSuccess` and decile-area/delta values as the strictly-serial version, and a streak-reset
+(simulated by perturbing one realization) still resets/rebuilds correctly. Once converged,
+already-in-flight realizations (up to `--parallel - 1` beyond the one that triggered
+convergence) are allowed to finish rather than being killed, so a run may aggregate a few
+more realizations than the strict minimum — not incorrect, just not maximally lean.
+
 ## Climatology sampling — annual fire-weather maxima
 
 Uses the existing Open-Meteo historical archive client
@@ -271,14 +291,23 @@ patched namelist — the shape `ElmfireRealizationWriter` currently produces),
 ELMFIRE could run the **whole realization ensemble in one process** via
 `NUM_ENSEMBLE_MEMBERS`/`RANDOM_IGNITIONS`/`METEOROLOGY_BAND_*`, and our driver
 would just read the resulting numbered rasters — which
-`ProbabilisticTrigger`/`ConvergeTrigger` already do today, unchanged. This
-wasn't pursued further without checking which approach is wanted: per-
-realization external orchestration (what's built) is simpler to reason about
-and matches the outer "one WUInity+k-PERIL run per realization" loop 1:1, but
-running ELMFIRE as one ensemble could be significantly more efficient
-(one process startup, one set of static inputs loaded once) at the cost of
-building the climatology weather stack and ignition mask ELMFIRE's native
-mode expects instead of the per-realization files this writer produces now.
+`ProbabilisticTrigger`/`ConvergeTrigger` already do today, unchanged.
+
+**Decided (for now): keep per-realization external orchestration.** Each
+realization still needs its own full WUInity+SUMO+k-PERIL run regardless of
+how ELMFIRE's share of the work is organized, and SUMO (via libsumo) is both
+the dominant cost per realization and only safely parallelizable as separate
+OS processes — which is exactly the shape `RealizationRunner`/
+`ConvergeTrigger --parallel` already uses (see Convergence criterion). Since
+that per-process shape is required for the SUMO/evacuation half no matter
+what, and since it already lets multiple realizations run concurrently today
+(each just currently *waits* for its ELMFIRE rasters to already exist rather
+than producing them), collapsing ELMFIRE's part into one native ensemble
+process wouldn't remove the need for N separate PREACT.exe processes — it
+would only save ELMFIRE's own (comparatively small) per-run overhead. Revisit
+this if ELMFIRE's per-process startup/static-input-loading cost turns out to
+be large relative to a SUMO run once the runner is actually built and
+measured; the option above is still there if so.
 
 ## Global automation: data sourcing & preprocessing
 
@@ -330,6 +359,35 @@ coverage, replace the **topography** half with a global DEM:
 Fuel model + canopy (fbfm, cc, ch, cbh, cbd) remain **user-supplied** — outside
 the US there is no clean global equivalent to LANDFIRE.
 
+**Implemented**: `OpenTopographyDownloader`
+(`PREACT/PREACTcore/Source/Utility/Downloaders/OpenTopographyDownloader.cs`) —
+same async/retry shape as `LandfireLandscapeDownloader`/`WorldPopDownloader`,
+takes the API key as a plain parameter (URL-building is factored out and unit-
+tested separately from the network call). `SlopeAspect`
+(`PREACT/PREACTcore/Source/Utility/SlopeAspect.cs`) is a standalone Horn's-
+method implementation — k-PERIL's own copy (`kPERILcore/source/perilData.cs`,
+`interpolateSlope()`) is private and bound to that vendored engine's instance
+state, so this is a fresh implementation of the same formula rather than a
+reach into third-party internals; verified against synthetic ramps (a 1:1
+gradient plane gives exactly 45°, a flat plane gives exactly 0°, and
+perpendicular ramps give different, correct aspect angles).
+
+The **API key** is wired the same way WUInity already handles its Mapbox
+token: a gitignored JSON file under a Unity `Resources` folder
+(`WUInity/Assets/Resources/OpenTopography/OpenTopographyConfiguration.txt`,
+mirroring `Assets/Resources/Mapbox/MapboxConfiguration.txt`), read at runtime
+via `OpenTopographyAccess.ApiKey`
+(`WUInity/Assets/WUInity/Core/OpenTopographyAccess.cs`), with a committed
+`OpenTopographyConfigurationTemplate.txt` showing the `{"ApiKey":""}` shape to
+copy and fill in. `WUInity/.gitignore` gained the matching
+`[Oo]pen[Tt]opography[Cc]onfiguration.txt` rule.
+
+Not yet built: the orchestration step that actually calls
+`OpenTopographyDownloader.Download` with a domain's lat/lon and
+`OpenTopographyAccess.ApiKey`, then feeds the result through `SlopeAspect` and
+`RasterHarmonizer` to produce the case's `dem`/`slp`/`asp` inputs — the pieces
+exist, wiring them into one "build this case's topography" call doesn't yet.
+
 ### 2. Reprojection / harmonization step
 
 Given the master grid, a GDAL warp step reprojects + clips + resamples each
@@ -376,16 +434,16 @@ produce grid-aligned inputs and invoke the runner.
 
 | Phase | Component | Status |
 |-------|-----------|--------|
-| 0 | Global DEM downloader (Copernicus GLO-30 / SRTM) + slope/aspect | new — replaces LANDFIRE outside US |
+| 0 | Global DEM downloader (Copernicus GLO-30 / SRTM) + slope/aspect | ✅ built (`OpenTopographyDownloader`, `SlopeAspect`); API key wired via the Mapbox-token pattern; not yet wired into a "build case topography" orchestration step |
 | 0 | Raster harmonization (auto-UTM warp/clip/resample to master grid) | ✅ built, ⚠️ warp untested at runtime (`MasterGrid`, `RasterHarmonizer`, `UtmUtility` — see Master-grid principle) |
 | 0 | Climatology sampler (ERA5, 20-day conditioning, annual FWI-max distribution) | ✅ built (annual-maxima half; conditioning window still TBD — see `ClimatologySampler`) |
 | 0 | Nelson wrapper for dead moisture (weather → m1/m10/m100) | new — call the existing in-process engine directly (WildfireAV's exe/BSQ plumbing doesn't apply, see ELMFIRE runner contract) |
 | 0 | ECMWF fuel-dataset reader for live moisture (NetCDF, by-date LFMC) | new — dataset stored in repo |
-| 0 | WindNinja step (terrain wind → ws/wd on master grid) | new (port from WildfireAV) |
+| 0 | WindNinja step (terrain wind → ws/wd on master grid) | new (port from WildfireAV; confirmed invoked via `conda run -n <env> WindNinja_cli <config>`) |
 | 0 | Ignition sampler (mask → point) | ✅ built (`IgnitionSampler`: uniform mask + weighted-raster sampling); valid-fuel snapping not yet ported |
-| 1 | ELMFIRE realization runner + namelist writer | 🟡 namelist writer built with keys verified against the real WildfireAV template; runner (invoking `elmfire`) still new — see ELMFIRE runner contract |
+| 1 | ELMFIRE realization runner + namelist writer | 🟡 namelist writer built with keys verified against the real WildfireAV template *and* ELMFIRE's own docs; runner (invoking `elmfire`) still new — see ELMFIRE runner contract |
 | 2 | WUInity + k-PERIL per realization | ✅ built |
-| 3 | Convergence controller (decile-area, 20-run/<2% streak) | ✅ built (`converge-trigger`) |
+| 3 | Convergence controller (decile-area, 20-run/<2% streak) | ✅ built (`converge-trigger`), now runs realizations `--parallel`-wide as concurrent OS processes (see Convergence criterion) |
 | 4 | CLI `converge-trigger` | ✅ built | 
 | 4 | Unity UI (ignition picker, climatology settings, live convergence view) | new — `ProbabilisticTriggerWindow.cs` only wraps the fixed-count `probabilistic-trigger` today |
 
@@ -405,7 +463,15 @@ curves — human planning inputs).
   it (see ELMFIRE runner contract). All must be present for "any location" to
   hold end-to-end.
 - Wall-clock: every realization is one ELMFIRE run **plus** a full SUMO
-  evacuation; convergence may need hundreds of runs.
+  evacuation; convergence may need hundreds of runs. **Partially addressed**:
+  `converge-trigger --parallel` (default: CPU count) runs multiple
+  realizations' PREACT.exe processes concurrently — safe because SUMO/libsumo
+  can only run one instance per process anyway (confirmed via
+  `Engine.RunSimulationsParallel`'s own code comment), so each realization
+  was always going to be its own OS process; this just lets several run at
+  once instead of strictly one at a time. Still bounded by machine core count
+  and by SUMO itself being slow per-run — this reduces wall-clock, it doesn't
+  remove the fundamental cost.
 - Nelson conditioning window = 20 days (per WildfireAV `CONDITIONING_DAYS`).
 - ECMWF fuel dataset: stored in-repo (NetCDF, potentially large); covers only
   2003–2021 at ~9 km, so LFMC is domain-uniform for Mati and the annual-maxima
