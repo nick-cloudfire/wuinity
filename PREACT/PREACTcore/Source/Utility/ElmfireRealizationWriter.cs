@@ -4,33 +4,43 @@ using System.IO;
 namespace PREACT.Utility
 {
     /// <summary>
-    /// Namelist keys ELMFIRE's <c>elmfire.data</c> is patched with per realization.
+    /// Namelist groups/keys ELMFIRE's <c>elmfire.data</c> is patched with per realization —
+    /// verified against <c>WildfireAV/pipeline/createElmfireInputFiles.py</c> (the real writer
+    /// this pipeline is modeled on) and <c>pipelineConfig.py</c>. Two things that earlier
+    /// (unverified) guesses got wrong, now corrected:
     ///
-    /// UNVERIFIED — the doc's ELMFIRE runner contract (docs/probabilistic-trigger-convergence.md,
-    /// "ELMFIRE runner contract") says the real template comes from the sibling
-    /// <c>nick-cloudfire/WildfireAV</c> repo, which was not accessible when this was written.
-    /// <see cref="LhMoistureContent"/>/<see cref="LwMoistureContent"/> are already named in that
-    /// doc; every other key here is inferred from public ELMFIRE documentation/example namelists
-    /// and MUST be checked against the real template before this is pointed at an actual ELMFIRE
-    /// run. A wrong key name here is a safe failure mode — ELMFIRE (like other Fortran namelist
-    /// readers) rejects unrecognized variables at read time rather than silently misconfiguring —
-    /// but that also means none of these have been exercised against the real engine.
+    /// - There is no computational-domain group at all: ELMFIRE reads EPSG/cellsize/xll/yll
+    ///   directly from <c>DEM_FILENAME</c>'s own georeferencing, not from namelist keys.
+    /// - Ignition is <c>NUM_IGNITIONS</c> + indexed <c>X_IGN(1)</c>/<c>Y_IGN(1)</c>/<c>T_IGN(1)</c>
+    ///   in <c>&amp;SIMULATOR</c>, not scalar <c>X_IGNITION</c>/<c>Y_IGNITION</c>.
+    ///
+    /// Filenames in <c>&amp;INPUTS</c> are stems only (no directory, no extension) — the
+    /// directory comes from <c>FUELS_AND_TOPOGRAPHY_DIRECTORY</c>/<c>WEATHER_DIRECTORY</c> and
+    /// ELMFIRE appends its own extension.
     /// </summary>
     public static class ElmfireNamelistKeys
     {
-        public const string ComputationalDomainGroup = "COMPUTATIONAL_DOMAIN";
         public const string InputsGroup = "INPUTS";
+        public const string OutputsGroup = "OUTPUTS";
         public const string TimeControlGroup = "TIME_CONTROL";
+        public const string SimulatorGroup = "SIMULATOR";
+        public const string MonteCarloGroup = "MONTE_CARLO";
+        public const string MiscellaneousGroup = "MISCELLANEOUS";
 
-        public const string Srs = "A_SRS";
-        public const string CellSize = "COMPUTATIONAL_DOMAIN_CELLSIZE";
-        public const string XllCorner = "COMPUTATIONAL_DOMAIN_XLLCORNER";
-        public const string YllCorner = "COMPUTATIONAL_DOMAIN_YLLCORNER";
-        public const string Cols = "COMPUTATIONAL_DOMAIN_COLS";
-        public const string Rows = "COMPUTATIONAL_DOMAIN_ROWS";
-        public const string XIgnition = "X_IGNITION";
-        public const string YIgnition = "Y_IGNITION";
-
+        // &INPUTS
+        public const string FuelsAndTopographyDirectory = "FUELS_AND_TOPOGRAPHY_DIRECTORY";
+        public const string DemFilename = "DEM_FILENAME";
+        public const string SlpFilename = "SLP_FILENAME";
+        public const string AspFilename = "ASP_FILENAME";
+        public const string FbfmFilename = "FBFM_FILENAME";
+        public const string CcFilename = "CC_FILENAME";
+        public const string ChFilename = "CH_FILENAME";
+        public const string CbhFilename = "CBH_FILENAME";
+        public const string CbdFilename = "CBD_FILENAME";
+        public const string AdjFilename = "ADJ_FILENAME";
+        public const string PhiFilename = "PHI_FILENAME";
+        public const string DtMeteorology = "DT_METEOROLOGY";
+        public const string WeatherDirectory = "WEATHER_DIRECTORY";
         public const string WsFilename = "WS_FILENAME";
         public const string WdFilename = "WD_FILENAME";
         public const string M1Filename = "M1_FILENAME";
@@ -38,92 +48,191 @@ namespace PREACT.Utility
         public const string M100Filename = "M100_FILENAME";
         public const string LhMoistureContent = "LH_MOISTURE_CONTENT";
         public const string LwMoistureContent = "LW_MOISTURE_CONTENT";
+        public const string UseBarriers = "USE_BARRIERS";
+        public const string WsAt10m = "WS_AT_10M";
+        public const string BarrierFilename = "BARRIER_FILENAME";
 
+        // &OUTPUTS
+        public const string OutputsDirectory = "OUTPUTS_DIRECTORY";
+        public const string Dtdump = "DTDUMP";
+        public const string DumpTimeOfArrival = "DUMP_TIME_OF_ARRIVAL";
+        public const string ConvertToGeotiff = "CONVERT_TO_GEOTIFF";
+
+        // &TIME_CONTROL
+        public const string SimulationDt = "SIMULATION_DT";
+        public const string TargetCfl = "TARGET_CFL";
         public const string SimulationTstop = "SIMULATION_TSTOP";
+        public const string CurrentYear = "CURRENT_YEAR";
+        public const string HourOfYear = "HOUR_OF_YEAR";
+
+        // &SIMULATOR
+        public const string NumIgnitions = "NUM_IGNITIONS";
+        public const string XIgn1 = "X_IGN(1)";
+        public const string YIgn1 = "Y_IGN(1)";
+        public const string TIgn1 = "T_IGN(1)";
+        public const string DebugLevel = "DEBUG_LEVEL";
+        public const string CleanScratch = "CLEAN_SCRATCH";
+
+        // &MONTE_CARLO
+        public const string NumMeteorologyTimes = "NUM_METEOROLOGY_TIMES";
+
+        // &MISCELLANEOUS
+        public const string PathToGdal = "PATH_TO_GDAL";
+        public const string Scratch = "SCRATCH";
     }
 
-    /// <summary>One realization's sampled inputs, ready to be patched into a base elmfire.data template.</summary>
+    /// <summary>
+    /// One realization's sampled inputs, ready to be patched into a base elmfire.data template.
+    /// Static per-case rasters (DEM/slope/aspect/fuel/canopy/adj/phi — the "master grid" and its
+    /// LANDFIRE-equivalent layers) are assumed already prepared in
+    /// <see cref="FuelsAndTopographyDirectory"/>; this writer only owns the per-realization
+    /// weather/moisture/ignition/timing values.
+    /// </summary>
     public class ElmfireRealization
     {
         public string RunId;
         public MasterGrid Grid;
 
-        /// <summary>Ignition location in the master grid's own coordinate units (e.g. UTM meters).</summary>
+        /// <summary>Directory (relative to the case folder) holding the static DEM/slope/aspect/
+        /// fuel/canopy/adj/phi rasters — WildfireAV's "inputs/" folder.</summary>
+        public string FuelsAndTopographyDirectory = "./inputs";
+
+        /// <summary>Directory (relative to the case folder) this realization's weather rasters are written to.</summary>
+        public string WeatherDirectory = "./inputs";
+
+        public string OutputsDirectory = "./outputs";
+        public string ScratchDirectory = "./scratch";
+        public string PathToGdal;
+
+        /// <summary>Ignition location in the master grid's own coordinate units (matches DEM_FILENAME's CRS).</summary>
         public double IgnitionX, IgnitionY;
+
+        /// <summary>Seconds between weather timesteps (WildfireAV default: 3600 = hourly).</summary>
+        public double DtMeteorologySeconds = 3600.0;
 
         public double WindSpeedMps;
         public double WindDirDeg;
         public double M1Percent, M10Percent, M100Percent;
 
-        /// <summary>Live (forest/shrub) fuel moisture, % of dry mass; null to leave the template's own value.</summary>
-        public double? LiveMoisturePercent;
+        /// <summary>Live herbaceous moisture, % of dry mass (WildfireAV default: 60).</summary>
+        public double LiveHerbaceousMoisturePercent = 60.0;
 
-        /// <summary>Simulation stop time in seconds; 0 leaves the template's own value untouched.</summary>
+        /// <summary>Live woody moisture, % of dry mass (WildfireAV default: 90).</summary>
+        public double LiveWoodyMoisturePercent = 90.0;
+
+        /// <summary>Simulation length in seconds (SIMULATION_TSTOP).</summary>
         public double SimulationStopSeconds;
+
+        public double SimulationDtSeconds = 30.0;
+        public double TargetCfl = 0.2;
+        public double DtdumpSeconds = 7200.0;
+
+        public int CurrentYear;
+        public int HourOfYear;
+
+        /// <summary>Relative path (from the case folder) to a road/water barrier raster; null to
+        /// leave USE_BARRIERS/BARRIER_FILENAME/WS_AT_10M untouched (no barrier data prepared —
+        /// WildfireAV always generates one from OSM roads/waterways, which this pipeline does
+        /// not yet do for arbitrary global domains).</summary>
+        public string BarrierFilenameStem;
     }
 
     /// <summary>
     /// Patches a base <c>elmfire.data</c> template with one realization's sampled inputs,
     /// following the same "clone template, patch known keys, write out" convention
     /// <see cref="ProbabilisticTrigger"/> already uses for <c>.wui</c> files. Wind/moisture are
-    /// written as uniform "constant transient rasters" (docs/probabilistic-trigger-convergence.md)
-    /// via <see cref="ConstantRasterWriter"/> rather than scalars, since ELMFIRE takes gridded
-    /// inputs, until the WindNinja/Nelson steps produce spatially-varying ones.
+    /// written as constant-value multi-band GeoTIFFs via <see cref="GeoTiffRasterWriter"/> — one
+    /// band per <see cref="ElmfireRealization.DtMeteorologySeconds"/> step, all bands holding the
+    /// same Monte Carlo-sampled value (docs/probabilistic-trigger-convergence.md's "constant
+    /// transient rasters" fallback) — rather than a real time-varying series, until the
+    /// WindNinja/Nelson steps produce one.
     /// </summary>
     public static class ElmfireRealizationWriter
     {
-        public static string[] Write(string[] baseTemplateLines, ElmfireRealization r, string rasterOutputDir)
+        public static string[] Write(string[] baseTemplateLines, ElmfireRealization r, string rasterOutputDir, int numMeteorologyTimes = 1)
         {
             Directory.CreateDirectory(rasterOutputDir);
 
-            string wsPath = Path.Combine(rasterOutputDir, $"ws_{r.RunId}.asc");
-            string wdPath = Path.Combine(rasterOutputDir, $"wd_{r.RunId}.asc");
-            string m1Path = Path.Combine(rasterOutputDir, $"m1_{r.RunId}.asc");
-            string m10Path = Path.Combine(rasterOutputDir, $"m10_{r.RunId}.asc");
-            string m100Path = Path.Combine(rasterOutputDir, $"m100_{r.RunId}.asc");
+            string wsStem = $"ws_{r.RunId}";
+            string wdStem = $"wd_{r.RunId}";
+            string m1Stem = $"m1_{r.RunId}";
+            string m10Stem = $"m10_{r.RunId}";
+            string m100Stem = $"m100_{r.RunId}";
 
-            ConstantRasterWriter.WriteConstant(r.Grid, (float)r.WindSpeedMps, wsPath);
-            ConstantRasterWriter.WriteConstant(r.Grid, (float)r.WindDirDeg, wdPath);
-            ConstantRasterWriter.WriteConstant(r.Grid, (float)r.M1Percent, m1Path);
-            ConstantRasterWriter.WriteConstant(r.Grid, (float)r.M10Percent, m10Path);
-            ConstantRasterWriter.WriteConstant(r.Grid, (float)r.M100Percent, m100Path);
+            GeoTiffRasterWriter.WriteConstantTimeSeries(r.Grid, (float)r.WindSpeedMps, numMeteorologyTimes, Path.Combine(rasterOutputDir, wsStem + ".tif"));
+            GeoTiffRasterWriter.WriteConstantTimeSeries(r.Grid, (float)r.WindDirDeg, numMeteorologyTimes, Path.Combine(rasterOutputDir, wdStem + ".tif"));
+            GeoTiffRasterWriter.WriteConstantTimeSeries(r.Grid, (float)r.M1Percent, numMeteorologyTimes, Path.Combine(rasterOutputDir, m1Stem + ".tif"));
+            GeoTiffRasterWriter.WriteConstantTimeSeries(r.Grid, (float)r.M10Percent, numMeteorologyTimes, Path.Combine(rasterOutputDir, m10Stem + ".tif"));
+            GeoTiffRasterWriter.WriteConstantTimeSeries(r.Grid, (float)r.M100Percent, numMeteorologyTimes, Path.Combine(rasterOutputDir, m100Stem + ".tif"));
 
             string[] lines = (string[])baseTemplateLines.Clone();
+            var k = new PatchHelper(lines);
 
-            lines = Set(lines, ElmfireNamelistKeys.ComputationalDomainGroup, ElmfireNamelistKeys.Srs, r.Grid.Epsg, quoted: true);
-            lines = Set(lines, ElmfireNamelistKeys.ComputationalDomainGroup, ElmfireNamelistKeys.CellSize, D(r.Grid.Header.CellSize));
-            lines = Set(lines, ElmfireNamelistKeys.ComputationalDomainGroup, ElmfireNamelistKeys.XllCorner, D(r.Grid.XMin));
-            lines = Set(lines, ElmfireNamelistKeys.ComputationalDomainGroup, ElmfireNamelistKeys.YllCorner, D(r.Grid.YMin));
-            lines = Set(lines, ElmfireNamelistKeys.ComputationalDomainGroup, ElmfireNamelistKeys.Cols, r.Grid.Header.Ncols.ToString(CultureInfo.InvariantCulture));
-            lines = Set(lines, ElmfireNamelistKeys.ComputationalDomainGroup, ElmfireNamelistKeys.Rows, r.Grid.Header.Nrows.ToString(CultureInfo.InvariantCulture));
-            lines = Set(lines, ElmfireNamelistKeys.ComputationalDomainGroup, ElmfireNamelistKeys.XIgnition, D(r.IgnitionX));
-            lines = Set(lines, ElmfireNamelistKeys.ComputationalDomainGroup, ElmfireNamelistKeys.YIgnition, D(r.IgnitionY));
-
-            lines = Set(lines, ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.WsFilename, wsPath, quoted: true);
-            lines = Set(lines, ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.WdFilename, wdPath, quoted: true);
-            lines = Set(lines, ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.M1Filename, m1Path, quoted: true);
-            lines = Set(lines, ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.M10Filename, m10Path, quoted: true);
-            lines = Set(lines, ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.M100Filename, m100Path, quoted: true);
-            if (r.LiveMoisturePercent.HasValue)
+            // &INPUTS
+            k.Set(ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.FuelsAndTopographyDirectory, r.FuelsAndTopographyDirectory, quoted: true);
+            k.Set(ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.DtMeteorology, D(r.DtMeteorologySeconds));
+            k.Set(ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.WeatherDirectory, r.WeatherDirectory, quoted: true);
+            k.Set(ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.WsFilename, wsStem, quoted: true);
+            k.Set(ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.WdFilename, wdStem, quoted: true);
+            k.Set(ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.M1Filename, m1Stem, quoted: true);
+            k.Set(ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.M10Filename, m10Stem, quoted: true);
+            k.Set(ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.M100Filename, m100Stem, quoted: true);
+            k.Set(ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.LhMoistureContent, D(r.LiveHerbaceousMoisturePercent));
+            k.Set(ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.LwMoistureContent, D(r.LiveWoodyMoisturePercent));
+            if (r.BarrierFilenameStem != null)
             {
-                string lm = D(r.LiveMoisturePercent.Value);
-                lines = Set(lines, ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.LhMoistureContent, lm);
-                lines = Set(lines, ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.LwMoistureContent, lm);
+                k.Set(ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.UseBarriers, ".TRUE.");
+                k.Set(ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.BarrierFilename, r.BarrierFilenameStem, quoted: true);
             }
 
+            // &OUTPUTS
+            k.Set(ElmfireNamelistKeys.OutputsGroup, ElmfireNamelistKeys.OutputsDirectory, r.OutputsDirectory, quoted: true);
+            k.Set(ElmfireNamelistKeys.OutputsGroup, ElmfireNamelistKeys.Dtdump, D(r.DtdumpSeconds));
+            k.Set(ElmfireNamelistKeys.OutputsGroup, ElmfireNamelistKeys.DumpTimeOfArrival, ".TRUE.");
+            k.Set(ElmfireNamelistKeys.OutputsGroup, ElmfireNamelistKeys.ConvertToGeotiff, ".TRUE.");
+
+            // &TIME_CONTROL
+            k.Set(ElmfireNamelistKeys.TimeControlGroup, ElmfireNamelistKeys.SimulationDt, D(r.SimulationDtSeconds));
+            k.Set(ElmfireNamelistKeys.TimeControlGroup, ElmfireNamelistKeys.TargetCfl, D(r.TargetCfl));
             if (r.SimulationStopSeconds > 0)
             {
-                lines = Set(lines, ElmfireNamelistKeys.TimeControlGroup, ElmfireNamelistKeys.SimulationTstop, D(r.SimulationStopSeconds));
+                k.Set(ElmfireNamelistKeys.TimeControlGroup, ElmfireNamelistKeys.SimulationTstop, D(r.SimulationStopSeconds));
             }
+            k.Set(ElmfireNamelistKeys.TimeControlGroup, ElmfireNamelistKeys.CurrentYear, r.CurrentYear.ToString(CultureInfo.InvariantCulture));
+            k.Set(ElmfireNamelistKeys.TimeControlGroup, ElmfireNamelistKeys.HourOfYear, r.HourOfYear.ToString(CultureInfo.InvariantCulture));
 
-            return lines;
-        }
+            // &SIMULATOR
+            k.Set(ElmfireNamelistKeys.SimulatorGroup, ElmfireNamelistKeys.NumIgnitions, "1");
+            k.Set(ElmfireNamelistKeys.SimulatorGroup, ElmfireNamelistKeys.XIgn1, D(r.IgnitionX));
+            k.Set(ElmfireNamelistKeys.SimulatorGroup, ElmfireNamelistKeys.YIgn1, D(r.IgnitionY));
+            k.Set(ElmfireNamelistKeys.SimulatorGroup, ElmfireNamelistKeys.TIgn1, "0.00");
+            k.Set(ElmfireNamelistKeys.SimulatorGroup, ElmfireNamelistKeys.DebugLevel, "0");
+            k.Set(ElmfireNamelistKeys.SimulatorGroup, ElmfireNamelistKeys.CleanScratch, ".TRUE.");
 
-        private static string[] Set(string[] lines, string group, string key, string value, bool quoted = false)
-        {
-            return ElmfireNamelist.SetKeyInGroup(lines, group, key, value, quoted);
+            // &MONTE_CARLO
+            k.Set(ElmfireNamelistKeys.MonteCarloGroup, ElmfireNamelistKeys.NumMeteorologyTimes, numMeteorologyTimes.ToString(CultureInfo.InvariantCulture));
+
+            // &MISCELLANEOUS
+            if (r.PathToGdal != null)
+            {
+                k.Set(ElmfireNamelistKeys.MiscellaneousGroup, ElmfireNamelistKeys.PathToGdal, r.PathToGdal, quoted: true);
+            }
+            k.Set(ElmfireNamelistKeys.MiscellaneousGroup, ElmfireNamelistKeys.Scratch, r.ScratchDirectory, quoted: true);
+
+            return k.Lines;
         }
 
         private static string D(double v) => v.ToString(CultureInfo.InvariantCulture);
+
+        /// <summary>Threads the growing line array through repeated SetKeyInGroup calls without a wall of reassignments.</summary>
+        private class PatchHelper
+        {
+            public string[] Lines;
+            public PatchHelper(string[] lines) { Lines = lines; }
+            public void Set(string group, string key, string value, bool quoted = false)
+            {
+                Lines = ElmfireNamelist.SetKeyInGroup(Lines, group, key, value, quoted);
+            }
+        }
     }
 }

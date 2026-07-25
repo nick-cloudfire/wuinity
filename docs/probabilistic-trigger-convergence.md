@@ -119,37 +119,91 @@ bounds the annual-maxima sample size.
 
 ## ELMFIRE runner contract
 
-WUInity provides the per-realization sampled inputs; a user-provided script runs
-one ELMFIRE case and returns the rasters. Proposed contract (to finalize with
-the script author):
+WUInity provides the per-realization sampled inputs; a script runs one
+ELMFIRE case and returns the rasters. Verified against WildfireAV's actual
+`pipeline/createElmfireInputFiles.py` (namelist writer) and
+`pipeline/runElmfireCase.py` (runner) — an earlier version of this section
+was inferred from public ELMFIRE docs and got several things wrong; this
+replaces that with what the real pipeline does:
 
-- **Input**: a run id, ignition location (grid x,y or lat/lon), wind speed
-  (m/s @10 m), wind direction (deg), m1/m10/m100 (%), and optional live-fuel
-  moisture — passed either as CLI args or as a WUInity-written per-run
-  `elmfire.data` + constant transient rasters.
-- **Action**: run the native `elmfire` binary on the case `.data` (WildfireAV's
-  `runElmfireCase` pattern) for a single ignition / single meteorology.
-- **Output**: `time_of_arrival_<id>.tif`, `vs_<id>.tif`, `spread_dir_<id>.tif`,
-  `flin_<id>.tif` in a known folder (matching the existing mati naming so the
-  downstream driver consumes them unchanged).
+- **The namelist has no computational-domain group at all.** ELMFIRE reads
+  EPSG/cellsize/xll/yll straight from `DEM_FILENAME`'s own georeferencing —
+  `_build_namelist`'s `epsg_str`/`cellsize`/`xll`/`yll` parameters are computed
+  by `_compute_domain` but never actually written to the file. There is no
+  `A_SRS`/`COMPUTATIONAL_DOMAIN_*` key.
+- **Ignition is `&SIMULATOR`'s `NUM_IGNITIONS` + indexed `X_IGN(1)`/`Y_IGN(1)`/
+  `T_IGN(1)`**, not scalar `X_IGNITION`/`Y_IGNITION`. WildfireAV also **snaps**
+  the raw ignition point to the nearest cell with a valid (burnable) fuel code
+  (`_snap_to_valid_fuel`, threshold `>= 101` for Anderson FBFM40) before writing
+  it — worth doing for any ignition sampler, though that exact threshold is
+  LANDFIRE/FBFM40-specific and doesn't port directly to arbitrary global fuel
+  models.
+- **`&INPUTS` filenames are stems only** (no directory, no extension) —
+  `FUELS_AND_TOPOGRAPHY_DIRECTORY`/`WEATHER_DIRECTORY` supply the directory and
+  ELMFIRE appends its own extension. Full key set: `DEM_FILENAME`,
+  `SLP_FILENAME`, `ASP_FILENAME`, `FBFM_FILENAME`, `CC_FILENAME`,
+  `CH_FILENAME`, `CBH_FILENAME`, `CBD_FILENAME`, `ADJ_FILENAME`,
+  `PHI_FILENAME` (static per-case), `WS_FILENAME`/`WD_FILENAME`/`M1_FILENAME`/
+  `M10_FILENAME`/`M100_FILENAME` (per-realization weather), plus
+  `DT_METEOROLOGY`, `LH_MOISTURE_CONTENT`/`LW_MOISTURE_CONTENT`, and
+  `USE_BARRIERS`/`WS_AT_10M`/`BARRIER_FILENAME`.
+- **`ADJ_FILENAME`/`PHI_FILENAME` are trivial**: `makePhiAndAdjFiles.py` just
+  fills two rasters with `1.0`, same shape/CRS as the DEM. They are not
+  related to ignition.
+- **`WS_FILENAME`/`WD_FILENAME`/`M1_FILENAME`/`M10_FILENAME`/`M100_FILENAME`
+  are real multi-band GeoTIFFs, one band per `DT_METEOROLOGY` step**
+  (`wn_to_geotiff.py` stacks WindNinja's per-hour ASCII outputs with
+  `gdalbuildvrt -separate`) — not the single-value scalar this doc originally
+  assumed. `&MONTE_CARLO`'s `NUM_METEOROLOGY_TIMES` tells ELMFIRE the band
+  count (this is just "how many weather timesteps", unrelated to our
+  realization Monte Carlo).
+- **`&OUTPUTS`** needs `OUTPUTS_DIRECTORY`, `DTDUMP`, `DUMP_TIME_OF_ARRIVAL =
+  .TRUE.`, `CONVERT_TO_GEOTIFF = .TRUE.` — WildfireAV only turns on
+  time-of-arrival dumping; the `vs_`/`spread_dir_`/`flin_` outputs our own
+  runner contract wants are **not** exercised by WildfireAV's validation use
+  case, so their exact `DUMP_*` key names are still unconfirmed.
+- **`&TIME_CONTROL`**: `SIMULATION_DT`, `TARGET_CFL`, `SIMULATION_TSTOP`,
+  `CURRENT_YEAR`, `HOUR_OF_YEAR` (hours since Jan 1 of `CURRENT_YEAR`).
+- **`&MISCELLANEOUS`**: `PATH_TO_GDAL`, `SCRATCH`.
+- **Runner**: `elmfire <case>.data`, executed with the case folder as the
+  working directory; resumes by checking whether
+  `outputs/time_of_arrival_*.tif` already exists (`run_elmfire`) — confirms
+  what this doc already assumed.
+- **Barriers** (`USE_BARRIERS`/`BARRIER_FILENAME`) are always populated in
+  WildfireAV from rasterized OSM roads/waterways (`getBarrierFile.py`, US-only
+  data sources) — this pipeline has no equivalent step yet, so barriers are
+  left off by default rather than guessed.
+- **WildfireAV does not do climatology/annual-maxima sampling at all** — its
+  `downloadWeatherData.py` fetches ERA5 for a fixed window around one real
+  historical fire's actual (satellite-derived) start/end time, for validating
+  ELMFIRE against real fires. The "Climatology sampling" section above is a
+  genuine WUInity-specific addition on top of the same building blocks
+  (Open-Meteo, Nelson), not something to look for in WildfireAV.
+- Nelson dead-fuel moisture in WildfireAV is a separate compiled C# exe
+  (`applyNelsonModel.py`: GeoTIFF → ENVI/BSQ → `nelson_csharp <wxs> <dem.bsq>
+  <slp.bsq> <asp.bsp> <cc.bsq> <conditioning_days>` → BSQ → GeoTIFF) producing
+  real per-cell (not scalar) moisture from actual terrain. WUInity already has
+  this same Nelson engine in-process (`Source/Hazards/Wildfire/
+  DeadFuelMoisture/`) — the Phase 0 "Nelson wrapper" should call that
+  directly rather than reimplement WildfireAV's exe/BSQ plumbing.
 
-**Partially implemented**: `ElmfireRealizationWriter`/`ElmfireNamelist`
-(`PREACT/PREACTcore/Source/Utility/ElmfireRealizationWriter.cs`,
-`ElmfireNamelist.cs`) patch a base `elmfire.data` template with one
-realization's inputs (domain/grid, ignition x/y, and constant wind/moisture
-rasters written via the new `ConstantRasterWriter`), following the same
+**Implemented**: `ElmfireRealizationWriter`/`ElmfireNamelistKeys`
+(`PREACT/PREACTcore/Source/Utility/ElmfireRealizationWriter.cs`) patch a base
+`elmfire.data` template with the real key/group set above, via the generic
+`ElmfireNamelist.SetKeyInGroup` patcher (`ElmfireNamelist.cs`) — same
 "clone template, patch known keys" convention `ProbabilisticTrigger` already
-uses for `.wui` files, adapted to ELMFIRE's `&GROUP ... /` namelist syntax.
-**The patch mechanics are tested and solid; the actual key names
-(`ElmfireNamelistKeys`) are not** — `nick-cloudfire/WildfireAV`, which has the
-real template, wasn't accessible when this was written, so every key besides
-`LH_MOISTURE_CONTENT`/`LW_MOISTURE_CONTENT` (already named above) is inferred
-from public ELMFIRE documentation and needs checking against the real
-template before use. A wrong key is a safe failure (ELMFIRE, like other
-Fortran namelist readers, rejects unrecognized variables at read time rather
-than silently misconfiguring), but that also means none of this has been
-exercised against the real engine. The runner itself (invoking the `elmfire`
-binary) is still unimplemented.
+uses for `.wui` files, adapted to ELMFIRE's `&GROUP ... /` syntax. Wind/
+moisture are written as constant-value multi-band GeoTIFFs via the new
+`GeoTiffRasterWriter` (one band per `NUM_METEOROLOGY_TIMES`, all bands
+holding the same Monte Carlo-sampled value) — correctly shaped as a real
+ELMFIRE input, though content-wise still the "constant transient raster"
+simplification rather than a genuine time-varying series. The namelist-patch
+mechanics were runtime-verified against a template built from the real
+`_build_namelist` output shape, including the parenthesized `X_IGN(1)`-style
+keys (correct in-place replacement, no duplicate keys/groups). The multi-band
+GeoTIFF writer itself shares the same GDAL-runtime caveat as
+`RasterHarmonizer` below — compiles, not runtime-tested in this sandbox. The
+runner (invoking the `elmfire` binary itself) is still unimplemented.
 
 ## Global automation: data sourcing & preprocessing
 
@@ -250,11 +304,11 @@ produce grid-aligned inputs and invoke the runner.
 | 0 | Global DEM downloader (Copernicus GLO-30 / SRTM) + slope/aspect | new — replaces LANDFIRE outside US |
 | 0 | Raster harmonization (auto-UTM warp/clip/resample to master grid) | ✅ built, ⚠️ warp untested at runtime (`MasterGrid`, `RasterHarmonizer`, `UtmUtility` — see Master-grid principle) |
 | 0 | Climatology sampler (ERA5, 20-day conditioning, annual FWI-max distribution) | ✅ built (annual-maxima half; conditioning window still TBD — see `ClimatologySampler`) |
-| 0 | Nelson wrapper for dead moisture (weather → m1/m10/m100) | new (engine exists; WildfireAV exe) |
+| 0 | Nelson wrapper for dead moisture (weather → m1/m10/m100) | new — call the existing in-process engine directly (WildfireAV's exe/BSQ plumbing doesn't apply, see ELMFIRE runner contract) |
 | 0 | ECMWF fuel-dataset reader for live moisture (NetCDF, by-date LFMC) | new — dataset stored in repo |
 | 0 | WindNinja step (terrain wind → ws/wd on master grid) | new (port from WildfireAV) |
-| 0 | Ignition sampler (mask → point) | ✅ built (`IgnitionSampler`: uniform mask + weighted-raster sampling) |
-| 1 | ELMFIRE realization runner + namelist writer | 🟡 namelist writer built, keys unverified; runner (invoking `elmfire`) still new — see ELMFIRE runner contract |
+| 0 | Ignition sampler (mask → point) | ✅ built (`IgnitionSampler`: uniform mask + weighted-raster sampling); valid-fuel snapping not yet ported |
+| 1 | ELMFIRE realization runner + namelist writer | 🟡 namelist writer built with keys verified against the real WildfireAV template; runner (invoking `elmfire`) still new — see ELMFIRE runner contract |
 | 2 | WUInity + k-PERIL per realization | ✅ built |
 | 3 | Convergence controller (decile-area, 20-run/<2% streak) | ✅ built (`converge-trigger`) |
 | 4 | CLI `converge-trigger` | ✅ built | 
@@ -271,8 +325,10 @@ curves — human planning inputs).
   `time_of_arrival_*`); Docker is not used. Requires a working native ELMFIRE
   install (conda env) on the machine.
 - Extra runtime dependencies for the global pipeline: a global DEM source
-  (OpenTopography key), **WindNinja** (CLI), and the Nelson exe — on top of
-  SUMO/GDAL. All must be present for "any location" to hold end-to-end.
+  (OpenTopography key) and **WindNinja** (CLI) — on top of SUMO/GDAL. Nelson
+  does not need a separate dependency; WUInity's own in-process engine covers
+  it (see ELMFIRE runner contract). All must be present for "any location" to
+  hold end-to-end.
 - Wall-clock: every realization is one ELMFIRE run **plus** a full SUMO
   evacuation; convergence may need hundreds of runs.
 - Nelson conditioning window = 20 days (per WildfireAV `CONDITIONING_DAYS`).
