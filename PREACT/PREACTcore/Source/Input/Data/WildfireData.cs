@@ -70,7 +70,7 @@ namespace PREACT.Input
             //filePath = Path.Combine(rootFolder, wildfireInput.GraphicalFireInputFile);
             //LoadGraphicalFireInput(wildfireInput, filePath, _lcpData, false, out success);
 
-            if (wildfireInput.Module == WildfireModuleInput.WildfireModules.SimpleWildfireCA || wildfireInput.Module == WildfireModuleInput.WildfireModules.ElmClone)
+            if (wildfireInput.Module == WildfireModuleInput.WildfireModules.ElmClone)
             {
                 int issues = 0;
 

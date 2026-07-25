@@ -10,11 +10,35 @@ using System.IO;
 using Itinero.IO.Osm;
 using Itinero.Osm.Vehicles;
 using OsmSharp.Streams;
+using PREACT.Math;
 
 namespace PREACT.Input
 {
     public static class RoutingData
     {
+        /// <summary>
+        /// Resolve a lat/lon to the nearest valid point on the road network, searching
+        /// within the diagonal radius of a cell. Returns null if nothing is within range.
+        /// </summary>
+        public static RouterPoint GetValidRouterPoint(Router router, Vector2d latLon, Itinero.Profiles.Profile p, float cellSize)
+        {
+            //check within the radius of the diagonal of the cell (so complete cell plus some parts of neighboring cells)
+            RouterPoint start = null;
+            try
+            {
+                start = router.Resolve(p, (float)latLon.x, (float)latLon.y, cellSize * 0.70711f); //half cell size * sqrt 2
+                //for some reason Itinero does not return the actual point on the network, so we have to get it and overwrite
+                Itinero.LocalGeo.Coordinate temp = start.LocationOnNetwork(router.Db);
+                start = new RouterPoint(temp.Latitude, temp.Longitude, start.EdgeId, start.Offset);
+            }
+            catch (Itinero.Exceptions.ResolveFailedException)
+            {
+                //point is too far from the road network
+            }
+
+            return start;
+        }
+
         public static RouterDb LoadRouterDb(string filePath, out bool success)
         {
             success = false;

@@ -13,32 +13,26 @@ namespace PREACT.Input
     [System.Serializable]
     public class SmokeInput
     {
-        public enum SmokeModules { None, GlobalSmoke, BoxModel, AdvectDiffuseMixingLayer, AdvectDiffuse3D, Lagrangian, GaussianPuff, GaussianPlume, FFD }
+        public enum SmokeModules { None, GlobalSmoke }
 
         private SmokeData _data;
         private GlobalSmokeInput _globalSmokeInput;
-        private AdvectDiffuseInput _advectDiffuseInput;
-        private LagrangianInput _lagrangianInput;
 
         public bool Enabled = false;
-        public SmokeData Data { get =>  _data; } 
+        public SmokeData Data { get =>  _data; }
         public SmokeModules Module = SmokeModules.None;
         public GlobalSmokeInput GlobalSmokeInput { get => _globalSmokeInput; }
-        public AdvectDiffuseInput AdvectDiffuseInput { get => _advectDiffuseInput; }
-        public LagrangianInput LagrangianInput {  get => _lagrangianInput; }
 
         public SmokeInput()
         {
             _data = new SmokeData();
             _globalSmokeInput = new GlobalSmokeInput();
-            _advectDiffuseInput = new AdvectDiffuseInput();
-            _lagrangianInput = new LagrangianInput();
         }
 
         public void Parse(string[] inputLines, int startIndex, Dictionary<string, int> headerLineIndex, WeatherInput weatherInput, string rootFolder, out bool success)
         {
             success = false;
-            int issues = 0;            
+            int issues = 0;
             Dictionary<string, string> inputToParse = PREACTInput.GetHeaderInput(inputLines, startIndex);
             string nameOfInput, userInput;
 
@@ -66,15 +60,6 @@ namespace PREACT.Input
                     case nameof(SmokeModules.GlobalSmoke):
                         Module = SmokeModules.GlobalSmoke;
                         break;
-                    case nameof(SmokeModules.AdvectDiffuseMixingLayer):
-                        Module = SmokeModules.AdvectDiffuseMixingLayer;
-                        break;
-                    case nameof(SmokeModules.AdvectDiffuse3D):
-                        Module = SmokeModules.AdvectDiffuse3D;
-                        break;
-                    case nameof(SmokeModules.Lagrangian):
-                        Module = SmokeModules.Lagrangian;
-                        break;
                     default:
                         ++issues;
                         PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
@@ -91,14 +76,6 @@ namespace PREACT.Input
                 success = false;
                 return;
             }
-
-            //check if weather exists
-            /*if (weatherInput.WeatherFile == string.Empty && (Module != SmokeModules.None || Module != SmokeModules.GlobalSmoke))
-            {
-                success = false;
-                PREACTInput.CriticalDependency(nameof(weatherInput.WeatherFile));
-                return;
-            }*/
 
             //critical
             if (Module == SmokeModules.GlobalSmoke)
@@ -121,73 +98,8 @@ namespace PREACT.Input
                 }
             }
 
-            //critical
-            if (Module == SmokeModules.AdvectDiffuseMixingLayer)
-            {
-                int lineIndex;
-                nameOfInput = nameof(SmokeModules.AdvectDiffuseMixingLayer);
-                if (headerLineIndex.TryGetValue(nameOfInput, out lineIndex))
-                {
-                    PREACTInput.ReadingInputMessage(nameOfInput);
-                    _advectDiffuseInput = AdvectDiffuseInput.Parse(inputLines, lineIndex, out success);
-                }
-                else
-                {
-                    success = false;
-                    PREACTInput.InputNotFoundMessage(nameOfInput, true);
-                }
-                if (!success)
-                {
-                    return;
-                }
-            }
-
-            if (Module == SmokeModules.AdvectDiffuse3D)
-            {
-                int lineIndex;
-                nameOfInput = nameof(SmokeModules.AdvectDiffuse3D);
-                if (headerLineIndex.TryGetValue(nameOfInput, out lineIndex))
-                {
-                    PREACTInput.ReadingInputMessage(nameOfInput);
-                    _advectDiffuseInput = AdvectDiffuseInput.Parse(inputLines, lineIndex, out success);
-                }
-                else
-                {
-                    success = false;
-                    PREACTInput.InputNotFoundMessage(nameOfInput, true);
-                }
-                if (!success)
-                {
-                    Engine.Message(null, Engine.LogType.InputError, "The AdvectDiffuse3D model cannot find all needed input parameters.");
-                    return;
-                }
-            }
-
-            //critical
-            if (Module == SmokeModules.Lagrangian)
-            {
-                int lineIndex;
-                nameOfInput = nameof(SmokeModules.Lagrangian);
-                if (headerLineIndex.TryGetValue(nameOfInput, out lineIndex))
-                {
-                    PREACTInput.ReadingInputMessage(nameOfInput);
-                    _lagrangianInput = LagrangianInput.Parse(inputLines, lineIndex, out success);
-                }
-                else
-                {                    
-                    success = false;
-                    PREACTInput.InputNotFoundMessage(nameOfInput, true);
-                }
-                if (!success)
-                {
-                    return;
-                }
-            }
-
             _data.LoadAll(this, rootFolder, out success);
             return;
         }
-    }    
+    }
 }
-
-    

@@ -1,5 +1,4 @@
 ﻿using PREACT.Math;
-using PREACT.Math;
 using System.Collections.Generic;
 using PREACT.Input;
 using PREACT.Pedestrian;
@@ -53,10 +52,11 @@ namespace PREACT.Evacuation
         public void PostStep()
         {
             //check for distance to wildfire front, affect evacuees
-            if(_simulation.Hazards.Wildfire != null)
+            //(_pedestrianModule is null when no pedestrian module is enabled)
+            if(_simulation.Hazards.Wildfire != null && _pedestrianModule != null)
             {
                 _pedestrianModule.ReactToWildfire(_simulation.Time.SimulationTime);
-            }            
+            }
 
             //handle all damage/impact on road network
             AffectRoadNetwork();
@@ -128,14 +128,10 @@ namespace PREACT.Evacuation
 
             if (_input.PedestrianModule.Enabled)
             {
-                if (_input.PedestrianModule.Module == PedestrianModuleInput.PedestrianModules.JupedSimSUMO)
+                if (_input.PedestrianModule.Module == PedestrianModuleInput.PedestrianModules.MacroHouseholdSim)
                 {
-                    //placeholder for JupedSim
-                }
-                else if (_input.PedestrianModule.Module == PedestrianModuleInput.PedestrianModules.MacroHouseholdSim)
-                {
-                    _pedestrianModule = new MacroHouseholdSim(simulation);                    
-                    Engine.Message(simulation, Engine.LogType.Log, "Pedestrian module MacroPedestrianSim initiated.");
+                    _pedestrianModule = new MacroHouseholdSim(simulation);
+                    Engine.Message(simulation, Engine.LogType.Log, "Pedestrian module MacroHouseholdSim initiated.");
                 }
             }
             else
@@ -170,8 +166,7 @@ namespace PREACT.Evacuation
                 }
                 else
                 {
-                    _trafficModule = new MacroTrafficSim(simulation);
-                    Engine.Message(simulation, Engine.LogType.Log, "Traffic module MacroTrafficSim initiated.");
+                    Engine.Message(simulation, Engine.LogType.SimulationError, "No valid traffic module was specified.");
                 }
             }
             else
@@ -184,6 +179,66 @@ namespace PREACT.Evacuation
             {
                 success = true;
             }
+        }
+
+        /// <summary>
+        /// WRSET = the last-arrival (100%) evacuation time for this run, in minutes:
+        /// the moment the final vehicle reaches safety. Fed to k-PERIL as the RSET.
+        /// </summary>
+        private float CalculateWRSETMinutes(Simulation simulation)
+        {
+            System.Collections.Generic.List<double> arrivals = simulation.Output.GetTrafficArrivalData();
+            double lastArrivalSeconds = 0.0;
+            if (arrivals != null)
+            {
+                for (int i = 0; i < arrivals.Count; i++)
+                {
+                    if (arrivals[i] > lastArrivalSeconds)
+                    {
+                        lastArrivalSeconds = arrivals[i];
+                    }
+                }
+            }
+            return (float)(lastArrivalSeconds / 60.0);
+        }
+
+        /// <summary>
+        /// Load a WUI-area mask (.asc or .tif, 1 = protected cell) into a bool[] flattened
+        /// as index = x + y*xCount, aligned with the fire ROS grid. Returns null if no file
+        /// was given, it could not be read, or its dimensions do not match the ROS grid.
+        /// </summary>
+        private bool[] LoadWuiAreaMask(string wuiAreaFile, string rootFolder, int xCount, int yCount)
+        {
+            if (string.IsNullOrEmpty(wuiAreaFile))
+            {
+                return null;
+            }
+
+            string path = System.IO.Path.Combine(rootFolder, wuiAreaFile);
+            float[,] mask = Utility.AscRaster.Read(path, out Utility.AscRaster.Header header, out bool ok);
+            if (!ok || mask == null)
+            {
+                return null;
+            }
+
+            if (header.Ncols != xCount || header.Nrows != yCount)
+            {
+                Engine.Message(null, Engine.LogType.Warning, $"WUI mask dimensions ({header.Ncols}x{header.Nrows}) do not match the fire grid ({xCount}x{yCount}); ignoring the mask.");
+                return null;
+            }
+
+            //Any positive value marks a WUI cell. This accepts both a crisp 1/0 mask and a
+            //fractional raster such as ELMFIRE's bldg_footprint_frac (0 = no buildings).
+            bool[] wuiArea = new bool[xCount * yCount];
+            for (int y = 0; y < yCount; y++)
+            {
+                for (int x = 0; x < xCount; x++)
+                {
+                    float v = mask[x, y];
+                    wuiArea[x + y * xCount] = v > 0f && v != (float)header.NoDataValue;
+                }
+            }
+            return wuiArea;
         }
 
         public void CreateAndRunTriggerBufferModule(Simulation simulation, PREACTInput input, WeatherManager weather, TimeManager time)
@@ -199,13 +254,27 @@ namespace PREACT.Evacuation
                     }
                     else
                     {
+                        //WRSET = the required safe egress time this run produced: the last-arrival
+                        //(100%) evacuation time, in minutes. This is what k-PERIL back-propagates.
+                        float wrsetMinutes = CalculateWRSETMinutes(simulation);
+                        Engine.Message(simulation, Engine.LogType.Log, "WRSET (last-arrival evacuation time) = " + wrsetMinutes + " minutes.");
+
+                        float midflameWindspeed = _input.TriggerBufferModule.kPERILInput.MidflameWindspeed;
+                        int xCount = simulation.Hazards.Wildfire.GetCellCountX();
+                        int yCount = simulation.Hazards.Wildfire.GetCellCountY();
+
+                        //Prefer an explicit WUI-area mask (.asc/.tif) when supplied; otherwise
+                        //fall back to whatever WuiArea the wildfire data carried.
+                        bool[] wuiArea = LoadWuiAreaMask(_input.TriggerBufferModule.kPERILInput.WuiAreaFile, _input.RootFolder, xCount, yCount)
+                                         ?? _input.WildfireModule.Data.WuiArea;
+
                         if (_input.TriggerBufferModule.kPERILInput.CalculateROSFromBehave)
                         {
-                            _triggerBufferModule = new kPERIL(_input.WildfireModule.Data.LandscapeData, time.SimulationTime, _input.WildfireModule.Data.WuiArea, _input.TriggerBufferModule.kPERILInput.MidflameWindspeed, 0f, _input.WildfireModule.Data.InitialFuelMoistureData, _input.WildfireModule.Data.FuelModelsData);
+                            _triggerBufferModule = new kPERIL(_input.WildfireModule.Data.LandscapeData, wrsetMinutes, wuiArea, midflameWindspeed, 0f, _input.WildfireModule.Data.InitialFuelMoistureData, _input.WildfireModule.Data.FuelModelsData);
                         }
                         else
                         {
-                            _triggerBufferModule = new kPERIL(time.SimulationTime, _input.WildfireModule.Data.WuiArea, _input.TriggerBufferModule.kPERILInput.MidflameWindspeed, 0f, simulation.Hazards.Wildfire.GetMaxROS(), simulation.Hazards.Wildfire.GetMaxROSAzimuth());
+                            _triggerBufferModule = new kPERIL(wrsetMinutes, wuiArea, midflameWindspeed, 0f, simulation.Hazards.Wildfire.GetMaxROS(), simulation.Hazards.Wildfire.GetMaxROSAzimuth(), simulation.Hazards.Wildfire.GetCellSizeX());
                         }
                         _triggerBufferModule.Run();
                         string outputFilePath = Path.Combine(simulation.Engine.OutputFolder, simulation.SimulationIndex + "_" + _input.TriggerBufferModule.kPERILInput.OutputName);
@@ -224,7 +293,7 @@ namespace PREACT.Evacuation
             }
             else
             {
-                Engine.Message(simulation, Engine.LogType.Log, "Trigger buffer module was enabled.");
+                Engine.Message(simulation, Engine.LogType.Log, "No trigger buffer module was enabled.");
             }
         }
 
@@ -289,7 +358,7 @@ namespace PREACT.Evacuation
             }
             else
             {
-                Engine.Message(_simulation, Engine.LogType.Event, $"Could not block the destination {eD.Name} as it does not exist.");
+                Engine.Message(_simulation, Engine.LogType.Event, $"Could not block the destination {destinationName} as it does not exist.");
             }
         }
 

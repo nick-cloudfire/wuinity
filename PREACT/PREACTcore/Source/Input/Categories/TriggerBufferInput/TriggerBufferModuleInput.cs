@@ -12,7 +12,7 @@ namespace PREACT.Input
     [System.Serializable]
     public class TriggerBufferModuleInput
     {
-        public enum TriggerBufferModules { None, kPERIL, BackwardsFireCell2 }
+        public enum TriggerBufferModules { None, kPERIL }
 
         private kPERILInput _kPERILInput;
 
@@ -58,9 +58,6 @@ namespace PREACT.Input
                     {
                         case nameof(TriggerBufferModules.kPERIL):
                             Module = TriggerBufferModules.kPERIL;
-                            break;
-                        case nameof(TriggerBufferModules.BackwardsFireCell2):
-                            Module = TriggerBufferModules.BackwardsFireCell2;
                             break;
                         default:
                             ++issues;

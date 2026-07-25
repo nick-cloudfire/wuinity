@@ -78,6 +78,96 @@ namespace PREACT.Tools
             }
         }
 
+        /// <summary>
+        /// End-to-end population CSV generation from a global GPW dataset folder plus an OSM
+        /// road-network file. The simulation domain is taken from the OSM file's node bounds,
+        /// the GPW data is clipped to that domain, a routing database is built from the OSM
+        /// roads, and each populated cell is placed and snapped to the road network.
+        /// Uses no GDAL, so it can run from the command line without SUMO installed.
+        /// </summary>
+        public static void CreatePopulationFromGPW(string gpwFolder, string osmFilePath, string outputFilePath, int minHouseholdSize, int maxHouseholdSize, out bool success)
+        {
+            success = false;
+
+            if (!TryGetOsmBounds(osmFilePath, out Vector2d lowerLeftLatLon, out Vector2d domainSize))
+            {
+                Engine.Message(null, Engine.LogType.Warning, "Could not determine a bounding box from the OSM file: " + osmFilePath);
+                return;
+            }
+
+            LocalGPWData gpw = LocalGPWData.CreateLocalGPWData(lowerLeftLatLon, domainSize, gpwFolder, out bool gpwSuccess);
+            if (!gpwSuccess || gpw == null)
+            {
+                Engine.Message(null, Engine.LogType.Warning, "Could not build local GPW data from folder: " + gpwFolder);
+                return;
+            }
+
+            Itinero.RouterDb routerDb = RoutingData.CreateRouterDb(osmFilePath, out bool routerSuccess);
+            if (!routerSuccess || routerDb == null)
+            {
+                Engine.Message(null, Engine.LogType.Warning, "Could not build routing data from OSM file: " + osmFilePath);
+                return;
+            }
+
+            PopulationMap.CreatePopulationFromLocalGPW(gpw, routerDb, minHouseholdSize, maxHouseholdSize, outputFilePath, out success);
+        }
+
+        /// <summary>
+        /// Determine the WGS84 bounding box of an OSM file (.osm/.xml or .pbf) from its node
+        /// coordinates and return the lower-left corner (lat,lon) and domain size in metres.
+        /// </summary>
+        private static bool TryGetOsmBounds(string osmFilePath, out Vector2d lowerLeftLatLon, out Vector2d domainSize)
+        {
+            lowerLeftLatLon = new Vector2d();
+            domainSize = new Vector2d();
+
+            if (!File.Exists(osmFilePath))
+            {
+                return false;
+            }
+
+            double minLat = double.MaxValue, minLon = double.MaxValue;
+            double maxLat = double.MinValue, maxLon = double.MinValue;
+            bool anyNode = false;
+
+            using (FileStream stream = new FileInfo(osmFilePath).OpenRead())
+            {
+                OsmStreamSource source;
+                if (osmFilePath.ToLower().EndsWith("pbf"))
+                {
+                    source = new PBFOsmStreamSource(stream);
+                }
+                else
+                {
+                    source = new XmlOsmStreamSource(stream);
+                }
+
+                foreach (OsmSharp.OsmGeo element in source)
+                {
+                    OsmSharp.Node node = element as OsmSharp.Node;
+                    if (node != null && node.Latitude.HasValue && node.Longitude.HasValue)
+                    {
+                        anyNode = true;
+                        double lat = node.Latitude.Value;
+                        double lon = node.Longitude.Value;
+                        if (lat < minLat) minLat = lat;
+                        if (lat > maxLat) maxLat = lat;
+                        if (lon < minLon) minLon = lon;
+                        if (lon > maxLon) maxLon = lon;
+                    }
+                }
+            }
+
+            if (!anyNode)
+            {
+                return false;
+            }
+
+            lowerLeftLatLon = new Vector2d(minLat, minLon); // x = latitude, y = longitude
+            domainSize = LocalGPWData.DegreesToSize(lowerLeftLatLon, new Vector2d(maxLon - minLon, maxLat - minLat));
+            return true;
+        }
+
         public static void CreateAndSaveRouterDb(string osmInputFile, string outputFile, out bool success)
         {
             RoutingData.CreateAndSaveRouterDb(osmInputFile, outputFile, out success);

@@ -30,9 +30,7 @@ namespace PREACT
         private Simulation _mainSimulation; //this one talks to any visualizer         
         private PREACTInput _input;
         private DataStatus _dataStatus;
-        private EngineOutput _output;        
         private string _workingFile;
-        private Visualization.WUIShowCommunicator _wuiShow;
         private WorkingData _workingData;
 
         string _defaultWorkingDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
@@ -66,7 +64,6 @@ namespace PREACT
                 return path;
             }
         }
-        public Visualization.WUIShowCommunicator WUIShow { get => _wuiShow; }    
         public WorkingData WorkingData { get => _workingData; }
 
         public Engine(IExternalManager externalManager, bool mainEngine = true)
@@ -75,7 +72,6 @@ namespace PREACT
             System.Threading.Thread.CurrentThread.CurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
             _engineOutput = new EngineOutput(this);
             _dataStatus = new DataStatus();
-            _output = new EngineOutput(this);
             _workingData = new WorkingData();
             _externalManager = externalManager;
             if(mainEngine)
@@ -96,14 +92,13 @@ namespace PREACT
         {
             string root = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "Runtimes", "Native");
             string behave = Path.Combine(root, "Behave", "x64");
-            string cityFlow = Path.Combine(root, "CityFlow", "x64");
             string fofem = Path.Combine(root, "FOFEM", "x64");
             string gdal = Path.Combine(root, "GDAL", "x64");
             string nfdrs4 = Path.Combine(root, "NFDRS4", "x64");
 
             bool isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
             string NEXT = isWindows ? ";" : ":";
-            string runtimes = behave + NEXT + cityFlow + NEXT + fofem + NEXT + gdal + NEXT + nfdrs4;
+            string runtimes = behave + NEXT + fofem + NEXT + gdal + NEXT + nfdrs4;
 
             string machineEnvirtonmentVariables;
             if (isWindows)
@@ -149,18 +144,18 @@ namespace PREACT
             {
                 OSGeo.GDAL.Gdal.AllRegister();
             }
-            catch (Exception e)
+            catch (Exception)
             {
-                throw e;
+                throw;
             }
 
             try
             {
                 OSGeo.OGR.Ogr.RegisterAll();
             }
-            catch (Exception e)
+            catch (Exception)
             {
-                throw e;
+                throw;
             }
         }
 
@@ -202,9 +197,9 @@ namespace PREACT
                     _externalManager.SimulationsFinished();
                 }
             }
-            catch (Exception e)
+            catch (Exception)
             {
-                throw e;
+                throw;
             }
         }
 
@@ -221,7 +216,7 @@ namespace PREACT
                 _simulations[0] = _mainSimulation; 
                 SetMainSimulation(simulationIndex);
                 //only run wui show in serial mode
-                _mainSimulation.Run(true);
+                _mainSimulation.Run();
 
                 if (_mainSimulation.Evacuation.TrafficModule != null)
                 {
@@ -275,9 +270,9 @@ namespace PREACT
                             preactRun.UseShellExecute = true;
                             tasks[j] = Task.Run(() => Process.Start(preactRun).WaitForExit());
                         }
-                        catch (Exception e)
+                        catch (Exception)
                         {
-                            throw e;  
+                            throw;
                         }
                         
                     }
@@ -365,9 +360,9 @@ namespace PREACT
                     {                        
                         _simulations[index].Run();
                     }
-                    catch (Exception e)
+                    catch (Exception)
                     {
-                        throw e;
+                        throw;
                     }
                     ++simulationIndex;
                 });
@@ -399,32 +394,11 @@ namespace PREACT
             }      
         }  
         
-        public void StartWUIShow()
-        {
-            //only run WUI-show on serial runs
-            if (_input.WUIShow.SendDataToWUIShow && _input.TrafficModule.Enabled)
-            {
-                if (_wuiShow == null)
-                {
-                    _wuiShow = new Visualization.WUIShowCommunicator(this, _input.WUIShow.WuiShowServerIP, _input.WUIShow.WuiShowServerPort, 0, _input.Simulation.LowerLeftLatLon.y, _input.Simulation.LowerLeftLatLon.x);
-                }
-                else
-                {
-                    _wuiShow.Initiate(this, _input.WUIShow.WuiShowServerIP, _input.WUIShow.WuiShowServerPort, 0, _input.Simulation.LowerLeftLatLon.y, _input.Simulation.LowerLeftLatLon.x);
-                }
-            }
-        }
-        
         public void SetMainSimulation(int simulationIndex)
         {
             if (simulationIndex >= 0 && simulationIndex < _simulations.Length)
             {
-                for (int i = 0; i < _simulations.Length; ++i)
-                {
-                    _simulations[i].SetAsBackgroundSimulation();
-                }
                 _mainSimulation = _simulations[simulationIndex];
-                _mainSimulation.SetAsMainSimulation();
             }
         }
         

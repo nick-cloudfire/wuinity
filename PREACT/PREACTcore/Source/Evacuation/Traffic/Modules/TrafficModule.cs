@@ -51,9 +51,8 @@ namespace PREACT.Traffic
         }
 
         public abstract void HandleNewCars();
-        
-        public abstract void InsertNewTrafficEvent(TrafficEvent tE);
-        public abstract int GetTotalCarsSimulated();        
+
+        public abstract int GetTotalCarsSimulated();
         public abstract int GetNumberOfCarsInSystem();
         public abstract void UpdateDestinations();
         public Dictionary<uint, TrafficModuleVehicle> GetActiveVehicles()

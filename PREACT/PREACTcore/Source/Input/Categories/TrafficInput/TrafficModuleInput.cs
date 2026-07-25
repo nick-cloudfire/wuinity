@@ -12,28 +12,22 @@ namespace PREACT.Input
     [System.Serializable]
     public class TrafficModuleInput
     {
-        public enum TrafficModules { None, SUMO, MacroTrafficSim, CityFlow }
+        public enum TrafficModules { None, SUMO }
 
         private TrafficData _data;
         private SUMOInput _sumoInput;
-        private MacroTrafficSimInput _macroTrafficSimInput;
-        private CityFlowInput _cityFlowInput;
 
         public bool Enabled = false;
         public TrafficData Data { get => _data; }
         public SUMOInput SumoInput { get { return _sumoInput; } }
-        public MacroTrafficSimInput MacroTrafficSimInput { get => _macroTrafficSimInput; }
-        public CityFlowInput CityFlowInput { get => _cityFlowInput; }
         public TrafficModules Module = TrafficModules.SUMO;
-        public bool VisibilityAffectsSpeed = false;     
+        public bool VisibilityAffectsSpeed = false;
 
 
-        public TrafficModuleInput() 
+        public TrafficModuleInput()
         {
             _data = new TrafficData();
             _sumoInput = new SUMOInput();
-            _macroTrafficSimInput = new MacroTrafficSimInput();
-            _cityFlowInput = new CityFlowInput();
         }
 
         public void Parse(string[] inputLines, int startIndex, Dictionary<string, int> headerLineIndex, string rootFolder, out bool success)
@@ -66,9 +60,6 @@ namespace PREACT.Input
                 {
                     case nameof(TrafficModules.SUMO):
                         Module = TrafficModules.SUMO;
-                        break;
-                    case nameof(TrafficModules.MacroTrafficSim):
-                        Module = TrafficModules.MacroTrafficSim;
                         break;
                     default:
                         ++issues;
@@ -104,26 +95,6 @@ namespace PREACT.Input
                 {
                     PREACTInput.ReadingInputMessage(nameOfInput);
                     _sumoInput = SUMOInput.Parse(inputLines, lineIndex, rootFolder, out success);
-                }
-                else
-                {
-                    //critical
-                    Engine.Message(null, Engine.LogType.SimulationError, nameof(Simulation) + " header not found." + PREACTInput.pleaseCheckInput);
-                    return;
-                }
-            }
-            else if(Module == TrafficModules.MacroTrafficSim)
-            {
-
-            }
-            else if(Module == TrafficModules.CityFlow)
-            {
-                int lineIndex;
-                nameOfInput = nameof(TrafficModules.CityFlow);
-                if (headerLineIndex.TryGetValue(nameOfInput, out lineIndex))
-                {
-                    PREACTInput.ReadingInputMessage(nameOfInput);
-                    _cityFlowInput = CityFlowInput.Parse(inputLines, lineIndex, rootFolder, out success);
                 }
                 else
                 {

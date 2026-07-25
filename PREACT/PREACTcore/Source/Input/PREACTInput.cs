@@ -26,7 +26,6 @@ namespace PREACT.Input
         public WildfireModuleInput WildfireModule;        
         public SmokeInput SmokeModule;
         public TriggerBufferModuleInput TriggerBufferModule;
-        public WUIShowInput WUIShow;        
 
         public PREACTInput(string rootFolder)
         {
@@ -43,18 +42,14 @@ namespace PREACT.Input
             WildfireModule = new WildfireModuleInput();            
             SmokeModule = new SmokeInput();
             TriggerBufferModule = new TriggerBufferModuleInput();
-            WUIShow = new WUIShowInput();
         }
 
         public static void SaveToDisk(PREACTInput input, string saveFilePath)
         {
-            //TODO: fix new format save
-            //string json = UnityEngine.JsonUtility.ToJson(WUIEngine.INPUT, true);
-            //File.WriteAllText(WUIEngine.WORKING_FILE, json);
-            //EvacuationGroup.SaveEvacGroupIndices();
-            //GraphicalFireInput.SaveGraphicalFireInput();
-
-            Engine.Message(null, Engine.LogType.Log, " Input file " + saveFilePath + " saved.");       
+            //TODO: writing the new .wui format back to disk is not implemented yet.
+            //Until it is, do NOT claim the file was saved — that would mislead callers
+            //into thinking their changes were persisted.
+            Engine.Message(null, Engine.LogType.Warning, " Saving input files is not implemented yet; " + saveFilePath + " was NOT written.");
         }
 
         public static PREACTInput LoadFromDisk(string filePath, out bool success)
@@ -338,24 +333,6 @@ namespace PREACT.Input
             {
                 return null;
             }            
-
-            //WUIShow
-            nameOfInput = nameof(WUIShow);
-            if (headerLineIndices.TryGetValue(nameOfInput, out lineindex))
-            {
-                ReadingInputMessage(nameOfInput);
-                newInput.WUIShow.Parse(inputLines, lineindex, out success);
-            }
-            else
-            {
-                //does not matter
-                newInput.WUIShow = new WUIShowInput();
-                Engine.Message(null, Engine.LogType.Warning, nameOfInput + " header not found, using defaults (disabled).");
-            }
-            if (!success)
-            {
-                return null;
-            }
 
             success = true;
             return newInput;

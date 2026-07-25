@@ -8,14 +8,21 @@
 using PREACT.Wildfire.Behave;
 using PREACT.Wildfire;
 using PREACT.Math;
-using kPERIL;
 using System.IO;
+// The vendored k-PERIL engine (PREACT/kPERILcore). Aliased because its class name
+// (kPERIL.kPERIL) collides with this wrapper class (PREACT.kPERIL).
+using PerilCore = global::kPERIL.kPERIL;
 
 namespace PREACT
 {
+    /// <summary>
+    /// WUInity wrapper around the vendored k-PERIL trigger-boundary engine.
+    /// Pipeline: import ROS + direction, wind, topography and the WUI area, then
+    /// breakdownRateOfSpread -> getTravelTime -> getTriggerBoundary(RSET).
+    /// RSET (WRSET) is the evacuation time in MINUTES.
+    /// </summary>
     public class kPERIL : TriggerBufferModule
-    {        
-        //private const TwoFuelModelsMethod twoFuelModelsMethod = TwoFuelModelsMethod.NoMethod;
+    {
         private const BehaveUnits.MoistureUnits.MoistureUnitsEnum moistureUnits = BehaveUnits.MoistureUnits.MoistureUnitsEnum.Percent;
         private const WindHeightInputMode windHeightInputMode = WindHeightInputMode.DirectMidflame;
         private const BehaveUnits.SlopeUnits.SlopeUnitsEnum slopeUnits = BehaveUnits.SlopeUnits.SlopeUnitsEnum.Degrees;
@@ -25,98 +32,122 @@ namespace PREACT
         private const WindAndSpreadOrientationMode windAndSpreadOrientationMode = WindAndSpreadOrientationMode.RelativeToNorth;
 
         private int _xDim, _yDim;
-        private kPERILcore _peril;
         private bool _calculateROS;
         private LandscapeData? _lcpData;
-        private float _RSET;
+        private float _RSET; //minutes
         private bool[] _wuiArea;
         private float _midflameWindspeed;
         private float _windDirection;
+        private float _cellSize;
 
-        private float[,] _maxROS;
-        private float[,] _rosAzimuth;
-        private float[,] _elevation;
+        private float[,]? _maxROS;
+        private float[,]? _rosAzimuth;
+        private float[,]? _elevation;
+        private float[,]? _slope;
+        private float[,]? _aspect;
         private InitialFuelMoistureLibrary? _fuelMoisture;
         private FuelModelInput? _fuelModel;
 
-
-        public kPERIL(float RSET, bool[] wuiArea, float midflameWindspeed, float windDirection, float[,] maxROS, float[,] rosAzimuth)
+        /// <summary>
+        /// Use a rate-of-spread field (and azimuth) computed elsewhere (e.g. imported from
+        /// ELMFIRE via AscImport). Slope/aspect are used directly when supplied (ELMFIRE
+        /// provides slp/asp rasters); otherwise they are derived from elevation, or assumed
+        /// flat if neither is available.
+        /// </summary>
+        public kPERIL(float rsetMinutes, bool[] wuiArea, float midflameWindspeed, float windDirection, float[,] maxROS, float[,] rosAzimuth, float cellSize, float[,]? elevation = null, float[,]? slope = null, float[,]? aspect = null)
         {
             _calculateROS = false;
-            _peril = new kPERILcore();
             _xDim = maxROS.GetLength(0);
             _yDim = maxROS.GetLength(1);
-     
-            _RSET = RSET;
+
+            _RSET = rsetMinutes;
             _wuiArea = wuiArea;
             _midflameWindspeed = midflameWindspeed;
             _windDirection = windDirection;
+            _cellSize = cellSize;
 
             _maxROS = maxROS;
             _rosAzimuth = rosAzimuth;
+            _elevation = elevation;
+            _slope = slope;
+            _aspect = aspect;
         }
 
-        public kPERIL(LandscapeData lcpData, float RSET, bool[] wuiArea, float midflameWindspeed, float windDirection,  InitialFuelMoistureLibrary fuelMoisture, FuelModelInput fuelModel)
+        /// <summary>Compute the rate-of-spread field internally from the landscape using Behave.</summary>
+        public kPERIL(LandscapeData lcpData, float rsetMinutes, bool[] wuiArea, float midflameWindspeed, float windDirection, InitialFuelMoistureLibrary fuelMoisture, FuelModelInput fuelModel)
         {
             _calculateROS = true;
-            _peril = new kPERILcore();
             _xDim = lcpData.GetCellCountX();
-            _yDim = lcpData.GetCellCountY();           
+            _yDim = lcpData.GetCellCountY();
 
             _lcpData = lcpData;
-            _RSET = RSET;
+            _RSET = rsetMinutes;
             _wuiArea = wuiArea;
             _midflameWindspeed = midflameWindspeed;
             _windDirection = windDirection;
+            _cellSize = (float)lcpData.RasterCellResolutionX;
 
             _fuelMoisture = fuelMoisture;
             _fuelModel = fuelModel;
         }
 
         /// <summary>
-        /// Runs k-PERIL, should be called after a completed simulation
+        /// Runs k-PERIL. Should be called after a completed simulation, once the RSET is known.
         /// </summary>
-        /// <param name="_midflameWindspeed">User have to pick a representative mid flame wind speed as k-PERIL does not take changing weather into account</param>
         public override void Run()
         {
-            Engine.Message(null, Engine.LogType.Log, "Starting calculation of trigger buffer using k-PERIL.");            
+            Engine.Message(null, Engine.LogType.Log, "Starting calculation of trigger buffer using k-PERIL. RSET = " + _RSET + " minutes.");
 
-            //assume cell/raster is square
-            int cellSize = Mathf.RoundToInt((float)_lcpData.RasterCellResolutionX);
+            PerilCore peril = new PerilCore();
+
+            float[,] maxROS;
+            float[,] rosAzimuth;
+            float[,] slope = null;
+            float[,] aspect = null;
 
             if (_calculateROS)
             {
                 Engine.Message(null, Engine.LogType.Log, "k-PERIL is calculating ROS using Behave.");
-                bool[,] wuiArea2D = GetWUIArea2D(_wuiArea, _xDim, _yDim, false);
-                CalculateAllRateOfSpreadsAndDirections(_lcpData, out _maxROS, out _rosAzimuth, _midflameWindspeed, _windDirection, true, _fuelMoisture, wuiArea2D, _fuelModel);
+                bool[,] wuiArea2D = GetWUIArea2D(_wuiArea, _xDim, _yDim);
+                CalculateAllRateOfSpreadsAndDirections(_lcpData, out maxROS, out rosAzimuth, out slope, out aspect, _midflameWindspeed, _windDirection, _fuelMoisture, wuiArea2D, _fuelModel);
             }
             else
-            {    
-                Engine.Message(null, Engine.LogType.Log, "k-PERIL is using ROS (and azimuth) from provided data.");
-                _peril.perilData.importFireRastersByVariable(FlipOnYAxis(_maxROS), FlipOnYAxis(_rosAzimuth));
-                float[,] perilWUIArea = GetPerilWUIArea(_xDim, _yDim, _wuiArea);
-                _peril.perilData.importWuiRastersByVariable(FlipOnYAxis(perilWUIArea));
-                _peril.perilData.importTopographyRastersByVariable(FlipOnYAxis(_elevation));
-                _peril.perilData.rasteriseWindFromScalars(_midflameWindspeed, _windDirection);
+            {
+                Engine.Message(null, Engine.LogType.Log, "k-PERIL is using the provided ROS (and azimuth) field.");
+                maxROS = _maxROS;
+                rosAzimuth = _rosAzimuth;
+                slope = _slope;
+                aspect = _aspect;
             }
 
-            using (StringWriter output = new StringWriter())
+            //ROS must be imported first so perilData knows the raster dimensions.
+            peril.perilData.importFireRastersByVariable(maxROS, rosAzimuth);
+            peril.perilData.cellSize = _cellSize;
+            peril.perilData.noDataValue = -9999f;
+
+            //topography: use slope/aspect from the landscape when available, otherwise
+            //derive them from a (flat) elevation grid.
+            if (slope != null && aspect != null)
             {
-                _triggerBufferOutput = _peril.Run(_RSET);
-                Engine.Message(null, Engine.LogType.Log, "k-PERIL output, RSET= " + _RSET + " minutes.\n" + output.ToString());
+                peril.perilData.importTopographyRastersByFileName(new float[_xDim, _yDim], slope, aspect);
+            }
+            else
+            {
+                peril.perilData.importTopographyRastersByVariable(_elevation ?? new float[_xDim, _yDim]);
             }
 
-            //k-PERIL returns flipped x/y and inversed y, so fix this here
-            float[,] temp = _triggerBufferOutput;
-            _triggerBufferOutput = new float[_xDim, _yDim];
-            for (int y = 0; y < _yDim; ++y)
-            {
-                for (int x = 0; x < _xDim; ++x)
-                {
-                    _triggerBufferOutput[y, _yDim - 1 - x] = temp[x, y];
-                }
-            }            
-        }   
+            //wind must come after topography (it combines with slope). k-PERIL takes a single
+            //representative mid-flame wind as it does not model changing weather.
+            peril.perilData.rasteriseWindFromScalars(_midflameWindspeed, _windDirection);
+
+            peril.perilData.importWuiRastersByVariable(BuildWuiRaster(_wuiArea, _xDim, _yDim));
+
+            var brokenDownROS = peril.breakdownRateOfSpread();
+            var travelTime = peril.getTravelTimeFromBrokenDownRos(brokenDownROS);
+            _triggerBufferOutput = peril.getTriggerBoundary(travelTime, _RSET);
+
+            Engine.Message(null, Engine.LogType.Log, "k-PERIL trigger boundary calculated.");
+        }
 
         public static void SaveToFile(float[,] data, float cellsize, string outputFilePath)
         {
@@ -124,29 +155,22 @@ namespace PREACT
             {
                 using (StreamWriter outputWriter = new StreamWriter(outputFilePath))
                 {
-                    string line;
-                    int xDim = data.GetLength(0); 
-                    int yDim = data.GetLength(1);  
+                    int xDim = data.GetLength(0);
+                    int yDim = data.GetLength(1);
 
-                    line = "ncols " + xDim;
-                    outputWriter.WriteLine(line);
-                    line = "nrows " + yDim;
-                    outputWriter.WriteLine(line);
-                    line = "xllcorner " + 0;
-                    outputWriter.WriteLine(line);
-                    line = "yllcorner " + 0;
-                    outputWriter.WriteLine(line);
-                    line = "cellsize " + cellsize;
-                    outputWriter.WriteLine(line);
-                    line = "NODATA_value " + -9999;
-                    outputWriter.WriteLine(line);
+                    outputWriter.WriteLine("ncols " + xDim);
+                    outputWriter.WriteLine("nrows " + yDim);
+                    outputWriter.WriteLine("xllcorner " + 0);
+                    outputWriter.WriteLine("yllcorner " + 0);
+                    outputWriter.WriteLine("cellsize " + cellsize);
+                    outputWriter.WriteLine("NODATA_value " + -9999);
 
                     for (int y = 0; y < yDim; ++y)
                     {
-                        line = "";
+                        string line = "";
                         for (int x = 0; x < xDim; ++x)
                         {
-                            //flip y to follow asc standard
+                            //flip y to follow the .asc convention (lower-left origin)
                             line += data[x, yDim - 1 - y];
                             if (x < xDim - 1)
                             {
@@ -163,14 +187,15 @@ namespace PREACT
             }
         }
 
-        private static void CalculateAllRateOfSpreadsAndDirections(LandscapeData lcpData, out float[,] rateOfSpreads, out float[,] spreadDirections, float midFlameWindspeed, float windDirection, bool flipYaxis, InitialFuelMoistureLibrary initialFuelMoistureLibrary, bool[,]? wuiArea = null, FuelModelInput? fuelModelInputs = null)
+        private static void CalculateAllRateOfSpreadsAndDirections(LandscapeData lcpData, out float[,] rateOfSpreads, out float[,] spreadDirections, out float[,] slope, out float[,] aspect, float midFlameWindspeed, float windDirection, InitialFuelMoistureLibrary initialFuelMoistureLibrary, bool[,]? wuiArea = null, FuelModelInput? fuelModelInputs = null)
         {
             int xDim = lcpData.GetCellCountX();
             int yDim = lcpData.GetCellCountY();
             rateOfSpreads = new float[xDim, yDim];
             spreadDirections = new float[xDim, yDim];
+            slope = new float[xDim, yDim];
+            aspect = new float[xDim, yDim];
 
-            //we need to create and fill the fuel model set. TODO: create this data globally in RUNTIME_DATA.Fire
             FuelModelSet fuelModelSet = new FuelModelSet();
             if (fuelModelInputs != null)
             {
@@ -185,18 +210,22 @@ namespace PREACT
             {
                 for (int x = 0; x < xDim; ++x)
                 {
-                    //if WUI area specified we skip calc here
+                    LandscapeCellData cellData = lcpData.GetCellData(x, y);
+                    slope[x, y] = (float)cellData.slope;
+                    aspect[x, y] = (float)cellData.aspect;
+
+                    //if WUI area specified we skip ROS calc here (interior is protected)
                     if (wuiArea != null && wuiArea[x, y])
                     {
                         continue;
                     }
 
-                    //k-PERIL crashes if edges has non-zero data
+                    //k-PERIL crashes if edges have non-zero data
                     if (x < 1 || x > xDim - 2 || y < 1 || y > yDim - 2)
                     {
                         continue;
                     }
-                    LandscapeCellData cellData = lcpData.GetCellData(x, y);
+
                     InitialFuelMoisture moisture = initialFuelMoistureLibrary.GetInitialFuelMoisture(cellData.fuel_model);
                     double crownRatio = 1.5; //TODO: how to get this data? LCP does not seem to carry it
 
@@ -204,69 +233,33 @@ namespace PREACT
                         midFlameWindspeed, windSpeedUnits, windHeightInputMode, windDirection, windAndSpreadOrientationMode, cellData.slope, slopeUnits, cellData.aspect, cellData.canopy_cover, coverUnits, cellData.crown_canopy_height, lengthUnits, crownRatio);
 
                     surfaceFire.doSurfaceRunInDirectionOfMaxSpread();
-                    int yIndex = y;
-                    if(flipYaxis)
-                    {
-                        yIndex = yDim - 1 - y;
-                    }
-                    rateOfSpreads[x, yIndex] = (float)surfaceFire.getSpreadRate(BehaveUnits.SpeedUnits.SpeedUnitsEnum.MetersPerMinute);
-                    spreadDirections[x, yIndex] = (float)surfaceFire.getDirectionOfMaxSpread();
-
+                    rateOfSpreads[x, y] = (float)surfaceFire.getSpreadRate(BehaveUnits.SpeedUnits.SpeedUnitsEnum.MetersPerMinute);
+                    spreadDirections[x, y] = (float)surfaceFire.getDirectionOfMaxSpread();
                 }
             }
         }
 
-        private static bool[,] GetWUIArea2D(bool[] wuiArea, int xDim, int yDim, bool flipY)
+        private static bool[,] GetWUIArea2D(bool[] wuiArea, int xDim, int yDim)
         {
             bool[,] result = new bool[xDim, yDim];
             for (int i = 0; i < wuiArea.Length; i++)
             {
-                int xIndex = i % xDim;
-                int yIndex = i / xDim;
-                if (wuiArea[i] == true)
-                {
-                    if(flipY)
-                    {
-                        int yFlipped = yDim - 1 - yIndex;
-                    }
-                    result[xIndex, yIndex] = true;
-                }
+                result[i % xDim, i / xDim] = wuiArea[i];
             }
-
             return result;
         }
 
-        private static float[,] GetPerilWUIArea(int xDim, int yDim, bool[] wuiArea)
+        private static float[,] BuildWuiRaster(bool[] wuiArea, int xDim, int yDim)
         {
-            float[,] newWuiArea = new float[xDim, yDim];
+            float[,] result = new float[xDim, yDim];
             for (int i = 0; i < wuiArea.Length; i++)
             {
-                int xIndex = i % xDim;
-                int yIndex = i / xDim;
-                int yFlipped = yDim - 1 - yIndex;
                 if (wuiArea[i])
                 {
-                    newWuiArea[xIndex, yIndex] = 1f;
+                    result[i % xDim, i / xDim] = 1f;
                 }
             }
-            return newWuiArea;
+            return result;
         }
-
-        private static float[,] FlipOnYAxis(float[,] input)
-        {
-            int xDim = input.GetLength(0);
-            int yDim = input.GetLength(1);  
-
-            float[,] output = new float[xDim, yDim];
-            for (int y = 0; y < yDim; y++)
-            {
-                for (int x = 0; x < xDim; x++)
-                {
-                    int yFlipped = yDim - 1 - y;
-                    output[x, y] = input[x, yFlipped];
-                }
-            }
-            return output;
-        }
-    }    
+    }
 }

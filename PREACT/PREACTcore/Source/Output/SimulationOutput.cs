@@ -82,6 +82,7 @@ namespace PREACT.Output
         public void AddEvacTime(float totalEvacTime)
         {
             _averageEvacTimes.Add(totalEvacTime);
+            _totalAverageEvacTime = 0f;
             for (int i = 0; i < _averageEvacTimes.Count; i++)
             {
                 _totalAverageEvacTime += _averageEvacTimes[i];

@@ -349,11 +349,6 @@ namespace PREACT.Traffic
             return totalVehiclesInjected;
         }        
 
-        public override void InsertNewTrafficEvent(TrafficEvent tE)
-        {
-            //throw new System.NotImplementedException();
-        }
-
         public override void SaveToFile(int simulationIndex)
         {
             string filePath;
@@ -422,8 +417,17 @@ namespace PREACT.Traffic
                     {
                         for (int x = 0; x < xDim; ++x)
                         {
-                            row[x] = _accumulatedLevelOfService[x, y] / _carCount[x, y];
-                            if (row[x] == 0f)
+                            //guard against divide-by-zero for untravelled cells (would produce NaN,
+                            //which the == 0f check below does not catch, corrupting the raster).
+                            if (_carCount[x, y] > 0)
+                            {
+                                row[x] = _accumulatedLevelOfService[x, y] / _carCount[x, y];
+                                if (row[x] == 0f)
+                                {
+                                    row[x] = -9999f;
+                                }
+                            }
+                            else
                             {
                                 row[x] = -9999f;
                             }
@@ -440,8 +444,15 @@ namespace PREACT.Traffic
                     {
                         for (int x = 0; x < xDim; ++x)
                         {
-                            row[x] = _accumulatedWatingTime[x, y] / _carCount[x, y];
-                            if (row[x] == 0f)
+                            if (_carCount[x, y] > 0)
+                            {
+                                row[x] = _accumulatedWatingTime[x, y] / _carCount[x, y];
+                                if (row[x] == 0f)
+                                {
+                                    row[x] = -9999f;
+                                }
+                            }
+                            else
                             {
                                 row[x] = -9999f;
                             }
@@ -551,7 +562,7 @@ namespace PREACT.Traffic
                 double cellSizeX = _simulation.Hazards.Wildfire.GetCellSizeX();
                 double cellSizeY = _simulation.Hazards.Wildfire.GetCellSizeY();
 
-                _cellsWithEdges = EdgeCellIntersection.SortEdgesIntoCells(_sumoConfig.Network.Edges, minXPos, minYPos, cellSizeX, cellSizeY, _simulation.Hazards.Wildfire.GetCellCountX(), _simulation.Hazards.Wildfire.GetCellCountX());
+                _cellsWithEdges = EdgeCellIntersection.SortEdgesIntoCells(_sumoConfig.Network.Edges, minXPos, minYPos, cellSizeX, cellSizeY, _simulation.Hazards.Wildfire.GetCellCountX(), _simulation.Hazards.Wildfire.GetCellCountY());
                 Engine.Message(null, Engine.LogType.Log, "Number of fire cells that have road junctions and will affect traffic:" + _cellsWithEdges.Count);
             }
             catch (Exception e) 

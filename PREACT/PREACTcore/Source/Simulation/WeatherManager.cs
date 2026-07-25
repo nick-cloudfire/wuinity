@@ -258,8 +258,8 @@ namespace PREACT
                             //loop through all data
                             for (int i = 0; i < hourly.Time.Length; i++)
                             {
-                                DateTime.TryParse(hourly.Time[i], out DateTime dateTime);
-                                if(dateTime != null && dateTime.Hour == 12)
+                                bool timeParsed = DateTime.TryParse(hourly.Time[i], out DateTime dateTime);
+                                if(timeParsed && dateTime.Hour == 12)
                                 {
                                     fwi.CalculateDay(dateTime, hourly.Temperature_2m[i] ?? 0, hourly.Relativehumidity_2m[i] ?? 0, hourly.Windspeed_10m[i] ?? 0, hourly.Precipitation[i] ?? 0);
                                 }

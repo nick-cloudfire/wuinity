@@ -15,7 +15,7 @@ namespace PREACT.Input
         private MacroHouseholdSimInput _macroHouseholdSimInput;
 
         public bool Enabled = false;
-        public enum PedestrianModules { None, MacroHouseholdSim, JupedSimSUMO }
+        public enum PedestrianModules { None, MacroHouseholdSim }
         public PedestrianModules Module = PedestrianModules.MacroHouseholdSim;
 
         //module inputs
@@ -55,9 +55,6 @@ namespace PREACT.Input
                 {
                     case nameof(PedestrianModules.MacroHouseholdSim):
                         Module = PedestrianModules.MacroHouseholdSim;
-                        break;
-                    case nameof(PedestrianModules.JupedSimSUMO):
-                        Module = PedestrianModules.JupedSimSUMO;
                         break;
                     default:
                         ++issues;

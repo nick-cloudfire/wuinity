@@ -16,6 +16,7 @@ namespace PREACT.Input
         public bool CalculateROSFromBehave = true;
         public string InitialFuelMoistureFile = string.Empty;
         public string OutputName = string.Empty;
+        public string WuiAreaFile = string.Empty; //.asc mask, 1 = protected WUI cell
 
         public kPERILInput()
         {
@@ -97,6 +98,23 @@ namespace PREACT.Input
             if (!success)
             {
                 return newInput;
+            }
+
+            //optional: a .asc mask marking the WUI area to protect (1 = WUI). Without it,
+            //k-PERIL has no community to back-propagate from and the trigger boundary is empty.
+            nameOfInput = nameof(WuiAreaFile);
+            if (inputToParse.TryGetValue(nameOfInput, out userInput))
+            {
+                newInput.WuiAreaFile = userInput;
+                PREACTInput.CheckIfFileExist(nameOfInput, userInput, rootFolder, out bool wuiExists);
+                if (!wuiExists)
+                {
+                    Engine.Message(null, Engine.LogType.Warning, nameOfInput + " was specified but not found: " + userInput);
+                }
+            }
+            else
+            {
+                Engine.Message(null, Engine.LogType.Warning, nameOfInput + " was not specified; k-PERIL needs a WUI area to compute a trigger boundary.");
             }
 
             success = true;

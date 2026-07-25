@@ -85,11 +85,11 @@ namespace PREACT
         /// <summary>
         /// Starts and runs the simulation until completed or halted.
         /// </summary>
-        public void Run(bool startWUIshow = false)
+        public void Run()
         {
             _isRunning = true;
             _state = SimulationState.Initializing;
-            PreRun(startWUIshow);            
+            PreRun();
 
             //actual time step loop
             _state = SimulationState.Running;
@@ -111,27 +111,11 @@ namespace PREACT
             _isRunning = false;
         }
 
-        bool _talkToWUIShow = false;
-        public void SetAsMainSimulation()
-        {
-            _talkToWUIShow = true;
-        }
-
-        public void SetAsBackgroundSimulation()
-        {
-            _talkToWUIShow = false;
-        }
-
         /// <summary>
         /// Sets up all modules and timing of simulation.
         /// </summary>
-        private void PreRun(bool startWUIShow)
+        private void PreRun()
         {
-            if (startWUIShow)
-            {
-                _engine.StartWUIShow();
-            }
-
             _simulationStopwatch.Restart();
             _stopRun = false;
             _stoppedDueToError = false;
@@ -145,21 +129,6 @@ namespace PREACT
                 _state = SimulationState.Error;
                 return;
             }
-
-            //TODO: basically get rid of
-            //inject any traffic events into traffic module
-            if (_input.TrafficModule.Enabled && _input.TrafficModule.Module == TrafficModuleInput.TrafficModules.MacroTrafficSim)
-            {
-                for (int i = 0; i < _input.TrafficModule.MacroTrafficSimInput.TrafficAccidents.Count; i++)
-                {
-                    _evacuation.TrafficModule.InsertNewTrafficEvent(_input.TrafficModule.MacroTrafficSimInput.TrafficAccidents[i]);
-                }
-
-                for (int i = 0; i < _input.TrafficModule.MacroTrafficSimInput.ReverseLanes.Count; i++)
-                {
-                    _evacuation.TrafficModule.InsertNewTrafficEvent(_input.TrafficModule.MacroTrafficSimInput.ReverseLanes[i]);
-                }
-            }
         }
 
         bool _runRealtime = false;
@@ -172,11 +141,6 @@ namespace PREACT
             _weather.Update(_time.CurrentDateTime);
             _weatherStopwatch.Stop();
 
-            //this state represents the positions at the start of the time step
-            if (_talkToWUIShow && _input.WUIShow.SendDataToWUIShow && _evacuation.TrafficModule != null)
-            {
-                _engine.WUIShow.SendData(_time.SimulationTime);
-            }
 
             UpdateEvents();
 

@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Vendored from https://github.com/nick-cloudfire/kPERIL (kPERILdll), retargeted
+       to netstandard2.1 so PREACTcore and the Unity visualizer can consume it.
+       netstandard2.1 lacks PriorityQueue<,>, provided by source/PriorityQueueShim.cs.
+       GDAL is shared with PREACTcore (same wrappers) rather than the GDAL NuGet, so
+       there is a single GDAL in the build. -->
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>kPERIL</RootNamespace>
+    <AssemblyName>kPERILcore</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="gdal_csharp">
+      <HintPath>..\PREACTcore\Runtimes\Native\GDAL\gdal_csharp.dll</HintPath>
+    </Reference>
+    <Reference Include="gdalconst_csharp">
+      <HintPath>..\PREACTcore\Runtimes\Native\GDAL\gdalconst_csharp.dll</HintPath>
+    </Reference>
+    <Reference Include="ogr_csharp">
+      <HintPath>..\PREACTcore\Runtimes\Native\GDAL\ogr_csharp.dll</HintPath>
+    </Reference>
+    <Reference Include="osr_csharp">
+      <HintPath>..\PREACTcore\Runtimes\Native\GDAL\osr_csharp.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+</Project>

@@ -176,7 +176,12 @@ namespace PREACT.Pedestrian
 
                 if (evacDest != null && evacDest.Blocked)
                 {
-                    _simulation.Evacuation.GetBestAvailableDestination(household.EvacuationGroup, household.GetVehicleLatLon());
+                    //chosen destination is blocked — redirect to the best available one
+                    EvacuationDestination replacement = _simulation.Evacuation.GetBestAvailableDestination(household.EvacuationGroup, household.GetVehicleLatLon());
+                    if (replacement != null)
+                    {
+                        evacDest = replacement;
+                    }
                 }
 
                 Vector2d vehicleLatLon = household.GetVehicleLatLon();

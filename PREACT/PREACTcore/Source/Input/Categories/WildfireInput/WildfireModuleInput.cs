@@ -12,7 +12,7 @@ namespace PREACT.Input
     [System.Serializable]
     public class WildfireModuleInput
     {
-        public enum WildfireModules { None, AscImport, SimpleWildfireCA, ElmClone }
+        public enum WildfireModules { None, AscImport, ElmClone }
 
         private WildfireData _data;
         private AscImportInput _ascImportInput;
@@ -70,9 +70,6 @@ namespace PREACT.Input
                     case nameof(WildfireModules.AscImport):
                         Module = WildfireModules.AscImport;
                         break;
-                    case nameof(WildfireModules.SimpleWildfireCA):
-                        Module = WildfireModules.SimpleWildfireCA;
-                        break;
                     case nameof(WildfireModules.ElmClone):
                         Module = WildfireModules.ElmClone;
                         break;
@@ -125,22 +122,6 @@ namespace PREACT.Input
                 if (headerLineIndex.TryGetValue(nameOfInput, out lineindex))
                 {
                     _ascImportInput = AscImportInput.Parse(inputLines, lineindex, rootFolder, out success);
-                }
-                else
-                {
-                    //critical
-                    PREACTInput.InputNotFoundMessage(nameOfInput);
-                    return;
-                }
-            }
-            else if (Module == WildfireModules.SimpleWildfireCA)
-            {
-                nameOfInput = nameof(WildfireModules.SimpleWildfireCA);
-                PREACTInput.ReadingInputMessage(nameOfInput);
-                int lineindex;
-                if (headerLineIndex.TryGetValue(nameOfInput, out lineindex))
-                {
-                    _fireCellInput.Parse(inputLines, lineindex, this, rootFolder, out success);
                 }
                 else
                 {

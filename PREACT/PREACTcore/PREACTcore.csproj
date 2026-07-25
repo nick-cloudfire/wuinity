@@ -10,24 +10,18 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Remove="Source\Hazards\Dispersion\Modules\GaussianReleaseGPU - Copy\**" />
-    <EmbeddedResource Remove="Source\Hazards\Dispersion\Modules\GaussianReleaseGPU - Copy\**" />
-    <None Remove="Source\Hazards\Dispersion\Modules\GaussianReleaseGPU - Copy\**" />
-  </ItemGroup>
-
-  <ItemGroup>
     <Content Include="Source\Evacuation\Traffic\Modules\SUMO\Build_notes.txt" />
     <Content Include="Source\Evacuation\Traffic\Modules\SUMO\version_info.txt" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="GeoTimeZone" Version="6.1.0" />
-    <PackageReference Include="ILGPU" Version="1.5.3" />
-    <PackageReference Include="ILGPU.Algorithms" Version="1.5.3" />
     <PackageReference Include="Itinero" Version="1.5.1" />
     <PackageReference Include="Itinero.IO.Osm" Version="1.5.1" />
-    <PackageReference Include="OsmSharp.IO.API" Version="1.0.5" />
-    <PackageReference Include="SGP.NET" Version="1.4.0" />
+    <!-- Pin OsmSharp to the version Itinero.IO.Osm 1.5.1 links against (6.2.0.0).
+         The old OsmSharp.IO.API package (unused) pulled OsmSharp 7.0-pre, which is
+         binary-incompatible with Itinero.IO.Osm and broke OSM->routerDb builds. -->
+    <PackageReference Include="OsmSharp" Version="6.2.0" />
     <PackageReference Include="System.Text.Json" Version="10.0.5" />
     <PackageReference Include="TimeZoneConverter" Version="7.2.0" />
   </ItemGroup>
@@ -38,9 +32,6 @@
     </Reference>
     <Reference Include="gdal_csharp">
       <HintPath>ThirdParty\GDAL\x64\gdal_csharp.dll</HintPath>
-    </Reference>
-    <Reference Include="kPERILcore">
-      <HintPath>..\..\..\kperil\kPERILcore\bin\Release\netstandard2.1\kPERILcore.dll</HintPath>
     </Reference>
     <Reference Include="ogr_csharp">
       <HintPath>ThirdParty\GDAL\x64\ogr_csharp.dll</HintPath>
@@ -54,11 +45,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Vendored k-PERIL trigger-boundary engine (retargeted to netstandard2.1). -->
+    <ProjectReference Include="..\kPERILcore\kPERILcore.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Update="Runtimes\Native\Behave\x64\Behave.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="Runtimes\Native\CityFlow\x64\CityFlow.dll">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
     <None Update="Runtimes\Native\FOFEM\x64\FOFEM.dll">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
@@ -87,9 +80,6 @@
     <None Update="Runtimes\Native\GDAL\x64\osr_wrap.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Update="Runtimes\Managed\kPERIL\kPERILcore.dll">
-      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
-    </None>
     <None Update="Runtimes\Managed\Open-Meteo-DotNet\OpenMeteo.dll">
       <CopyToOutputDirectory>Never</CopyToOutputDirectory>
     </None>
@@ -104,7 +94,6 @@
   <ItemGroup>
     <Folder Include="Source\Evacuation\Consequence\Dose\" />
     <Folder Include="Source\Evacuation\Consequence\Concentration\" />
-    <Folder Include="Source\Hazards\Dispersion\Modules\GaussianReleaseGPU\" />
   </ItemGroup>
 
 </Project>

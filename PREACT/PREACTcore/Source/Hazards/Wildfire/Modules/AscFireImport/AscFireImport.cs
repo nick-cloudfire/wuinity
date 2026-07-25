@@ -126,7 +126,7 @@ namespace PREACT.Wildfire
                 for(int y = 0; y < nrows; ++y)
                 {
                     int yFlipped = nrows - 1 - y;
-                    for (int x = 0; x < nrows; ++x)
+                    for (int x = 0; x < ncols; ++x)
                     {
                         maxROS[x, y] = _data[x, yFlipped].RateOfSpread;
                     }
@@ -145,7 +145,7 @@ namespace PREACT.Wildfire
                 for (int y = 0; y < nrows; ++y)
                 {
                     int yFlipped = nrows - 1 - y;
-                    for (int x = 0; x < nrows; ++x)
+                    for (int x = 0; x < ncols; ++x)
                     {
                         maxROSAzimuth[x, y] = _data[x, yFlipped].SpreadDirection;
                     }
@@ -184,92 +184,66 @@ namespace PREACT.Wildfire
         /// <param name="SDFile">Spread direction, degrees from North = 0 and then clockwise.</param>
         private void ReadOutput(string TOAFile, string ROSFile, string FIFile, string SDFile)
         {
-            string[] TOALines, ROSLines, FILines, SDLines;
-
-            if (File.Exists(TOAFile))
+            //Read via the format-agnostic raster reader, so inputs may be .asc or GeoTIFF (.tif).
+            //All arrays come back as [ncols, nrows] with a lower-left origin.
+            float[,] toa = Utility.AscRaster.Read(TOAFile, out Utility.AscRaster.Header header, out bool toaOk);
+            if (!toaOk)
             {
-                TOALines = File.ReadAllLines(TOAFile);
-            }
-            else
-            {
-                Engine.Message(null, Engine.LogType.SimulationError, "Time of arrival file not found.");
+                Engine.Message(null, Engine.LogType.SimulationError, "Time of arrival raster could not be read: " + TOAFile);
                 return;
             }
-
-            if (File.Exists(ROSFile))
+            float[,] ros = Utility.AscRaster.Read(ROSFile, out _, out bool rosOk);
+            if (!rosOk)
             {
-                ROSLines = File.ReadAllLines(ROSFile);
-            }
-            else
-            {
-                Engine.Message(null, Engine.LogType.SimulationError, "Rate of spread file not found.");
+                Engine.Message(null, Engine.LogType.SimulationError, "Rate of spread raster could not be read: " + ROSFile);
                 return;
             }
-
-            if (File.Exists(FIFile))
+            float[,] sd = Utility.AscRaster.Read(SDFile, out _, out bool sdOk);
+            if (!sdOk)
             {
-                FILines = File.ReadAllLines(FIFile);
-            }
-            else
-            {
-                Engine.Message(null, Engine.LogType.SimulationError, "Fireline intensity file not found.");
+                Engine.Message(null, Engine.LogType.SimulationError, "Spread direction raster could not be read: " + SDFile);
                 return;
             }
-
-            if (File.Exists(SDFile))
+            //Fireline intensity is optional.
+            float[,] fi = null;
+            bool fiOk = false;
+            if (!string.IsNullOrEmpty(FIFile))
             {
-                SDLines = File.ReadAllLines(SDFile);
-            }
-            else
-            {
-                Engine.Message(null, Engine.LogType.SimulationError, "Fireline intensity file not found.");
-                return;
+                fi = Utility.AscRaster.Read(FIFile, out _, out fiOk);
+                if (!fiOk)
+                {
+                    Engine.Message(null, Engine.LogType.Warning, "Fireline intensity raster could not be read, using 0: " + FIFile);
+                }
             }
 
-            int.TryParse(TOALines[0].Split(" ", System.StringSplitOptions.RemoveEmptyEntries)[1], out ncols);
-            int.TryParse(TOALines[1].Split(" ", System.StringSplitOptions.RemoveEmptyEntries)[1], out nrows);
-            double.TryParse(TOALines[2].Split(" ", System.StringSplitOptions.RemoveEmptyEntries)[1], out _xllcorner);
-            double.TryParse(TOALines[3].Split(" ", System.StringSplitOptions.RemoveEmptyEntries)[1], out _yllcorner);
-            double.TryParse(TOALines[4].Split(" ", System.StringSplitOptions.RemoveEmptyEntries)[1], out _cellsize);
-            double.TryParse(TOALines[5].Split(" ", System.StringSplitOptions.RemoveEmptyEntries)[1], out _NODATA_VALUE);
+            ncols = header.Ncols;
+            nrows = header.Nrows;
+            _xllcorner = header.XllCorner;
+            _yllcorner = header.YllCorner;
+            _cellsize = header.CellSize;
+            _NODATA_VALUE = header.NoDataValue;
 
             _data = new FireRasterData[ncols, nrows];
 
             for (int y = 0; y < nrows; y++)
             {
-                string[] TOALine = TOALines[y + 6].Split(" ", System.StringSplitOptions.RemoveEmptyEntries);
-                string[] ROSLine = ROSLines[y + 6].Split(" ", System.StringSplitOptions.RemoveEmptyEntries);
-                string[] FILine = FILines[y + 6].Split(" ", System.StringSplitOptions.RemoveEmptyEntries);
-                string[] SDLine = SDLines[y + 6].Split(" ", System.StringSplitOptions.RemoveEmptyEntries);
-
                 for (int x = 0; x < ncols; x++)
                 {
-                    float TOAValue, ROSValue, FIValue, SDValue;
-
-                    float.TryParse(TOALine[x], out TOAValue);
-                    TOAValue *= 60f; //received in minutes, want seconds
+                    float TOAValue = toa[x, y] * 60f; //received in minutes, want seconds
                     if (TOAValue > _maxTimeOfArrival)
                     {
                         _maxTimeOfArrival = TOAValue;
                     }
-                    if(TOAValue < 0)
+                    if (TOAValue < 0)
                     {
                         TOAValue = float.MaxValue;
                     }
 
-                    float.TryParse(ROSLine[x], out ROSValue);
-
-                    float.TryParse(FILine[x], out FIValue);
-
-                    float.TryParse(SDLine[x], out SDValue);
-
-                    //flip y-axis
-                    int yIndex = nrows - 1 - y;
-                    _data[x, yIndex].TimeOfAArrival = TOAValue;
-                    _data[x, yIndex].RateOfSpread = ROSValue;
-                    _data[x, yIndex].FirelineIntensity = FIValue;
-                    _data[x, yIndex].SpreadDirection = SDValue;
-                    _data[x, yIndex].isActive = false; ;
+                    _data[x, y].TimeOfAArrival = TOAValue;
+                    _data[x, y].RateOfSpread = ros[x, y];
+                    _data[x, y].FirelineIntensity = fiOk ? fi[x, y] : 0f;
+                    _data[x, y].SpreadDirection = sd[x, y];
+                    _data[x, y].isActive = false;
                 }
             }
         }

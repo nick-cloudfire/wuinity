@@ -141,7 +141,7 @@ namespace PREACT.Population
                     int xIndex = i - yIndex * _cells.x;
                     Vector2d cellCenterPos = new Vector2d((xIndex + 0.5f) * _cellSize, (yIndex + 0.5) * _cellSize);
                     Vector2d coord = simulationData.GetWGS84FromSimulationPosition(cellCenterPos);
-                    Itinero.RouterPoint p = Traffic.RouteCreator.GetValidRouterPoint(router, coord, Itinero.Osm.Vehicles.Vehicle.Car.Fastest(), _cellSize);
+                    Itinero.RouterPoint p = RoutingData.GetValidRouterPoint(router, coord, Itinero.Osm.Vehicles.Vehicle.Car.Fastest(), _cellSize);
                     if(p != null)
                     {
                         _cellRoadAccessLatLon[i].x = p.Latitude;
@@ -500,7 +500,7 @@ namespace PREACT.Population
                         utmToWGS84.TransformPoint(inout);
                         Vector2d latLon =  new Vector2d(inout[0], inout[1]);
 
-                        Itinero.RouterPoint latLonOnNetwork = Traffic.RouteCreator.GetValidRouterPoint(router, latLon, Itinero.Osm.Vehicles.Vehicle.Car.Fastest(), (float)xSize);
+                        Itinero.RouterPoint latLonOnNetwork = RoutingData.GetValidRouterPoint(router, latLon, Itinero.Osm.Vehicles.Vehicle.Car.Fastest(), (float)xSize);
                         if (latLonOnNetwork != null)
                         {
                             totalPeopleOnGrid += rasterPopCount;
@@ -535,6 +535,104 @@ namespace PREACT.Population
 
                 Engine.Message(null, Engine.LogType.Log, $"Number of people found in raster: {totalPeople}. Number of people with access to road network: {totalPeopleOnGrid}.");
 
+                success = true;
+                Engine.Message(null, Engine.LogType.Log, "Generated and saved population to file " + outputFilePath);
+            }
+        }
+
+        /// <summary>
+        /// Writes a population CSV (OriginLat,OriginLon,AccessLat,AccessLon,People) from a
+        /// clipped local GPW density grid. Mirrors the WorldPop CreatePopulation above but
+        /// reads density from LocalGPWData (people/km^2) instead of a GeoTIFF, so it needs
+        /// no GDAL. Each populated cell is split into households and snapped to the nearest
+        /// point on the road network; cells with no road access are skipped.
+        /// </summary>
+        public static void CreatePopulationFromLocalGPW(LocalGPWData gpw, Itinero.RouterDb routerDb, int minHouseholdSize, int maxHouseholdSize, string outputFilePath, out bool success)
+        {
+            success = false;
+
+            if (gpw == null || routerDb == null)
+            {
+                Engine.Message(null, Engine.LogType.Warning, "Missing GPW data or routing data, cannot create population.");
+                return;
+            }
+
+            Vector2d origin = gpw.ActualOriginLatLon; // x = latitude, y = longitude
+            int xDim = gpw.CellCount.x;
+            int yDim = gpw.CellCount.y;
+            if (xDim <= 0 || yDim <= 0)
+            {
+                Engine.Message(null, Engine.LogType.Warning, "Local GPW data has no cells, cannot create population.");
+                return;
+            }
+
+            double cellSizeX = gpw.RealWorldSize.x / xDim; // metres, east-west
+            double cellSizeY = gpw.RealWorldSize.y / yDim; // metres, north-south
+            double cellArea = cellSizeX * cellSizeY / 1000000.0; // km^2 (density is people/km^2)
+
+            Itinero.Router router = new Itinero.Router(routerDb);
+
+            using (StreamWriter sW = new StreamWriter(outputFilePath))
+            {
+                sW.WriteLine("OriginLat,OriginLon,AccessLat,AccessLon,People");
+
+                int totalPeople = 0;
+                int totalPeopleOnGrid = 0;
+                for (int y = 0; y < yDim; ++y)
+                {
+                    for (int x = 0; x < xDim; ++x)
+                    {
+                        double density = gpw.GetDensity(x, y);
+                        if (density <= 0.0)
+                        {
+                            continue;
+                        }
+
+                        int cellPopCount = Mathf.Max(1, Mathf.RoundToInt((float)(cellArea * density)));
+                        totalPeople += cellPopCount;
+
+                        //cell centre as a metre offset from the data origin, converted to lat/lon
+                        double eastMetres = (x + 0.5) * cellSizeX;
+                        double northMetres = (y + 0.5) * cellSizeY;
+                        Vector2d centreDeg = LocalGPWData.SizeToDegrees(origin, new Vector2d(eastMetres, northMetres)); //(lonDeg, latDeg)
+                        Vector2d cellCentreLatLon = new Vector2d(origin.x + centreDeg.y, origin.y + centreDeg.x); //(lat, lon)
+
+                        Itinero.RouterPoint latLonOnNetwork = RoutingData.GetValidRouterPoint(router, cellCentreLatLon, Itinero.Osm.Vehicles.Vehicle.Car.Fastest(), (float)cellSizeX);
+                        if (latLonOnNetwork == null)
+                        {
+                            continue;
+                        }
+
+                        totalPeopleOnGrid += cellPopCount;
+
+                        int peopleWithoutHousehold = cellPopCount;
+                        List<int> householdCounts = new List<int>();
+                        while (peopleWithoutHousehold > 0)
+                        {
+                            int peopleInThisHousehold = Random.Range(minHouseholdSize, maxHouseholdSize + 1);
+                            if (peopleInThisHousehold > peopleWithoutHousehold)
+                            {
+                                peopleInThisHousehold = peopleWithoutHousehold;
+                            }
+                            householdCounts.Add(peopleInThisHousehold);
+                            peopleWithoutHousehold -= peopleInThisHousehold;
+                        }
+
+                        for (int j = 0; j < householdCounts.Count; ++j)
+                        {
+                            //jitter the household origin within the cell
+                            double jitterEast = eastMetres + cellSizeX * Random.Range(-0.5f, 0.5f);
+                            double jitterNorth = northMetres + cellSizeY * Random.Range(-0.5f, 0.5f);
+                            Vector2d jitterDeg = LocalGPWData.SizeToDegrees(origin, new Vector2d(jitterEast, jitterNorth));
+                            double householdLat = origin.x + jitterDeg.y;
+                            double householdLon = origin.y + jitterDeg.x;
+
+                            sW.WriteLine(householdLat + "," + householdLon + "," + latLonOnNetwork.Latitude + "," + latLonOnNetwork.Longitude + "," + householdCounts[j]);
+                        }
+                    }
+                }
+
+                Engine.Message(null, Engine.LogType.Log, $"Number of people found in GPW: {totalPeople}. Number of people with access to road network: {totalPeopleOnGrid}.");
                 success = true;
                 Engine.Message(null, Engine.LogType.Log, "Generated and saved population to file " + outputFilePath);
             }

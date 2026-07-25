@@ -35,7 +35,9 @@ namespace PREACT
                 
         private void CalculateWildfireDistanceTransform(float simulationTime)
         {
-            if(!_wildfire.Ignited() ||  (int)simulationTime % 300 != 0)
+            //_wildfire is null when no wildfire module is enabled (e.g. a
+            //traffic- or pedestrian-only run); PostStep still runs every step.
+            if(_wildfire == null || !_wildfire.Ignited() ||  (int)simulationTime % 300 != 0)
             {
                 return;
             }
@@ -109,12 +111,6 @@ namespace PREACT
                     _wildfire = new AscFireImport(simulation);
                     Engine.Message(simulation, Engine.LogType.Log, $"Wildfire module {nameof(AscFireImport)} initiated.");
                 }
-                else if (input.WildfireModule.Module == WildfireModuleInput.WildfireModules.SimpleWildfireCA)
-                {
-                    //_wildfireModule = new CellParticleHybrid(simulation, input.WildfireModule.Data.LandscapeData, input.WildfireModule.Data.WuiArea, input.WildfireModule.Data.FuelModelsData, input.WildfireModule.Data.InitialFuelMoistureData, input.WildfireModule.Data.IgnitionPoints);
-                    _wildfire = new SimpleWildfireCA(simulation, input.WildfireModule.Data.LandscapeData, input.WildfireModule.Data.IgnitionPoints, weather, time);
-                    Engine.Message(simulation, Engine.LogType.Log, $"Wildfire module {nameof(SimpleWildfireCA)} initiated.");
-                }
                 else if (input.WildfireModule.Module == WildfireModuleInput.WildfireModules.ElmClone)
                 {
                     _wildfire = new ElmClone(simulation, input.WildfireModule.Data.LandscapeData, input.WildfireModule.Data.IgnitionPoints, weather, time);
@@ -142,33 +138,11 @@ namespace PREACT
         {
             success = false;
 
-            //can only run together for now
             if (input.SmokeModule.Enabled)
             {
-                //simulation module does not need the fire
                 if (input.SmokeModule.Module == SmokeInput.SmokeModules.GlobalSmoke)
                 {
                     _smoke = new GlobalSmoke(simulation, input.SmokeModule.Data.ExtinctionRamp);
-                }
-                else if (!input.WildfireModule.Enabled)
-                {
-                    Engine.Message(simulation, Engine.LogType.SimulationError, "Smoke module that needs wildfire as source was enabled but no wildfire module was enabled, aborting.");
-                }
-                else
-                {
-                    if (input.SmokeModule.Module == SmokeInput.SmokeModules.AdvectDiffuseMixingLayer)
-                    {
-                        _smoke = new AdvectDiffuseMixingLayer(simulation);
-                    }
-                    else if (input.SmokeModule.Module == SmokeInput.SmokeModules.AdvectDiffuse3D)
-                    {
-                        _smoke = new AdvectDiffuse3D(simulation);
-                        Engine.Message(simulation, Engine.LogType.Log, "Smoke module AdvectDiffuse3D initiated.");
-                    }
-                    else if (input.SmokeModule.Module == SmokeInput.SmokeModules.BoxModel)
-                    {
-                        //smokeBoxDispersionModel = new Smoke.BoxDispersionModel(fireMesh);
-                    }
                 }
             }
             else

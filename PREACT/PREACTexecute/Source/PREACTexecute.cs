@@ -33,7 +33,8 @@ namespace PREACT
             }
             else if(!File.Exists(args[0]))
             {
-                Console.WriteLine("Specified file does not exist.");
+                Console.WriteLine("Specified file does not exist: " + args[0]);
+                return;
             }
 
             bool success;
@@ -46,8 +47,8 @@ namespace PREACT
                 {
                     engineTask = new EngineTask(EngineTask.ExecutionMode.Serial, 1, 0);
                 }
-                //parallel run and its following processes
-                else if(args.Length >= 3)
+                //parallel/batch run: PREACT <file> <numberOfRuns> <batchSize> <offset>
+                else if(args.Length >= 4)
                 {
                     int numberOfRuns, batchSize, simulationIndexOffset;
 
@@ -63,8 +64,12 @@ namespace PREACT
                     {
                         engineTask = new EngineTask(EngineTask.ExecutionMode.Serial, numberOfRuns, simulationIndexOffset, batchSize);
                     }
-                }                
-                 
+                }
+                else
+                {
+                    Console.WriteLine("Usage: PREACT <file.wui> [<numberOfRuns> <batchSize> <offset>]");
+                }
+
                 if(engineTask != null)
                 {
                     _isDone = false;

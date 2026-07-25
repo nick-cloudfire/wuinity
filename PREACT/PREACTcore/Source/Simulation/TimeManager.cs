@@ -35,7 +35,11 @@ namespace PREACT
             _startDateTime = dto.DateTime;
             _currentDateTime = _startDateTime;
             _currentUTCDateTime = dto.UtcDateTime;
-            _endDateTime = input.Simulation.EndDateTime.ToLocalTime();
+            //Interpret the end time in the simulation location's timezone too, so the
+            //run duration is (End - Start) as entered and does not depend on the host
+            //machine's timezone (ToLocalTime() shifted it by the host UTC offset).
+            DateTimeOffset endDto = new DateTimeOffset(input.Simulation.EndDateTime, tz.GetUtcOffset(input.Simulation.EndDateTime));
+            _endDateTime = endDto.DateTime;
             _simulationEndTime = (float)(_endDateTime - _startDateTime).TotalSeconds;
 
             Engine.Message(simulation, Engine.LogType.Debug, $"Simulation will run between {_startDateTime.ToString()} and {_endDateTime.ToString()} for a total of {_simulationEndTime} seconds (unless user has specified to exit early once evacuated.)");
