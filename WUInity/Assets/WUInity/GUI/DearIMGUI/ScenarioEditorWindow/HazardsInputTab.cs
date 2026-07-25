@@ -28,7 +28,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
             {
                 if (ImGui.Button("Module settings###1"))
                 {
-                    if (input.WildfireModule.Module == WildfireModuleInput.WildfireModules.SimpleWildfireCA) { }
+                    // per-module settings window not implemented yet
                 }
                 ImGui.SameLine();
             }

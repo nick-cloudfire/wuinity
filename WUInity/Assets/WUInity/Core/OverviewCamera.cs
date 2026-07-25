@@ -7,6 +7,7 @@
 
 using UnityEngine;
 using PREACT;
+using ImGuiNET;
 
 namespace WUInity
 {
@@ -80,7 +81,12 @@ namespace WUInity
                 return;
             }
 
-            if (Input.GetButtonDown("Fire3"))
+            // When the pointer is over an ImGui window/widget, let the GUI consume the
+            // mouse so scrolling inside a menu (or click-dragging on a window) does not
+            // also zoom/pan the map.
+            bool guiWantsMouse = ImGui.GetIO().WantCaptureMouse;
+
+            if (Input.GetButtonDown("Fire3") && !guiWantsMouse)
             {
                 dragging = true;
                 startMousePos = Input.mousePosition;
@@ -103,7 +109,7 @@ namespace WUInity
             else
             {
                 float d = Input.mouseScrollDelta.y;
-                if (d != 0.0f)
+                if (d != 0.0f && !guiWantsMouse)
                 {
                     float mod = cam.orthographicSize * 0.1f;
                     mod = Mathf.Max(1.0f, mod);

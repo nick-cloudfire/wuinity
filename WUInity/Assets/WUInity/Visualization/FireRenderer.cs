@@ -107,15 +107,8 @@ namespace WUInity.Visualization
 
                 sootMeshRenderer = CreateDataPlane(sootMaterial, "SootSpread", true, simulation);
 
-                if (simulation.Input.SmokeModule.Module == SmokeInput.SmokeModules.AdvectDiffuseMixingLayer)
-                {
-                    // arrives in soot density, * 8700.0 (kg/m2, mass specific ext. coeff.) for extinction coefficient
-                    sootMaterial.SetFloat("_DataMultiplier", 8700f); 
-                }
-                else
-                {
-                    sootMaterial.SetFloat("_DataMultiplier", 1f); // getting extinction coefficient directly
-                }
+                // GlobalSmoke provides the extinction coefficient directly.
+                sootMaterial.SetFloat("_DataMultiplier", 1f);
             }
             else
             {
@@ -326,23 +319,7 @@ namespace WUInity.Visualization
                 sootBuffer = null;
             }
 
-            if(!creationCall && simulation != null && simulation.Hazards.Smoke != null)
-            {
-                if (simulation.Input.SmokeModule.Module == SmokeInput.SmokeModules.AdvectDiffuseMixingLayer)
-                {
-                    /*AdvectDiffuseModel model = simulation.SmokeModule as AdvectDiffuseModel;
-                    if(model != null)
-                    {
-                        model.Release();
-                    }*/
-                }
-                else
-                {
-                    Engine.Message(null, Engine.LogType.SimulationError, "Unsupported smoke module, fire/smoke renderer failed to initialize.");
-                }
-
-                
-            }
+            // GlobalSmoke has no GPU buffers to release here.
             
         }
     }    

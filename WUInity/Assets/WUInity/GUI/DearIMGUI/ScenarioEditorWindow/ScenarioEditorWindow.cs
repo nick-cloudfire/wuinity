@@ -3,7 +3,6 @@ using ImGuiNET;
 using System;
 using System.Collections.Generic;
 using System.Text;
-using UnityEditor;
 
 namespace Assets.WUInity.GUI.DearIMGUI
 {

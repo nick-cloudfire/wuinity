@@ -11,7 +11,6 @@ using PREACT.Input;
 using PREACT.Traffic;                          
 using System.IO;
 using PREACT;
-using WUInity.UI;
 using PREACT.Population;
 using WUInity.Visualization;
 using Assets.WUInity.GUI.DearIMGUI;
@@ -242,18 +241,6 @@ namespace WUInity
                     }
                 }                
             }
-
-            //temp hack for changing height in smoke sim
-            /*if (Input.GetKey(KeyCode.KeypadPlus))
-            {
-                print("Going up.");
-                ((PREACT.Dispersion.AdvectDiffuse3D)_engine.Simulation.Hazards.Smoke).IncreaseOutputHeight();
-            }
-            else if (Input.GetKey(KeyCode.KeypadMinus))
-            {
-                print("Going down.");
-                ((PREACT.Dispersion.AdvectDiffuse3D)_engine.Simulation.Hazards.Smoke).DecreaseOutputHeight();
-            }*/
 
             //always update visuals, even when paused
             if (_engine.Simulation != null)
