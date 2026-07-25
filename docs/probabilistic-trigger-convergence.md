@@ -65,6 +65,20 @@ Uses the existing Open-Meteo historical archive client
 
 This focuses the Monte Carlo on the historic worst-day envelope for the area.
 
+**Implemented** as `ClimatologySampler` (`PREACT/PREACTcore/Source/Utility/ClimatologySampler.cs`):
+parses the CSV `OpenMeteoDownloader.Download` already writes, groups the noon
+(FWI-bearing) rows by year, and keeps each year's highest-FWI day as that
+year's peak. `ComputeStats` reports mean/std per variable (wind direction
+excluded — it's circular, a linear mean is meaningless); `Sample` draws a
+realization by uniformly resampling one of the actual historical peak days
+(via the new `MonteCarloRng`, see Risks), keeping wind/temp/RH/precip/solar
+physically consistent with each other rather than independently sampled.
+Caveat: `FireWeatherIndex.CalculateDay` hard-zeroes FWI for October–January
+(a Northern-Hemisphere fire-season assumption), which is fine for Mediterranean
+domains like Mati but would suppress genuine peaks in the Southern Hemisphere
+or tropical/dry-season climates — a real gap against "any location on Earth"
+that needs fixing in the FWI engine itself, not the sampler.
+
 ## Fuel moisture — Nelson (dead) + ECMWF dataset (live)
 
 Dead and live fuel moisture come from different sources, each playing to its
@@ -119,6 +133,24 @@ the script author):
   `flin_<id>.tif` in a known folder (matching the existing mati naming so the
   downstream driver consumes them unchanged).
 
+**Partially implemented**: `ElmfireRealizationWriter`/`ElmfireNamelist`
+(`PREACT/PREACTcore/Source/Utility/ElmfireRealizationWriter.cs`,
+`ElmfireNamelist.cs`) patch a base `elmfire.data` template with one
+realization's inputs (domain/grid, ignition x/y, and constant wind/moisture
+rasters written via the new `ConstantRasterWriter`), following the same
+"clone template, patch known keys" convention `ProbabilisticTrigger` already
+uses for `.wui` files, adapted to ELMFIRE's `&GROUP ... /` namelist syntax.
+**The patch mechanics are tested and solid; the actual key names
+(`ElmfireNamelistKeys`) are not** — `nick-cloudfire/WildfireAV`, which has the
+real template, wasn't accessible when this was written, so every key besides
+`LH_MOISTURE_CONTENT`/`LW_MOISTURE_CONTENT` (already named above) is inferred
+from public ELMFIRE documentation and needs checking against the real
+template before use. A wrong key is a safe failure (ELMFIRE, like other
+Fortran namelist readers, rejects unrecognized variables at read time rather
+than silently misconfiguring), but that also means none of this has been
+exercised against the real engine. The runner itself (invoking the `elmfire`
+binary) is still unimplemented.
+
 ## Global automation: data sourcing & preprocessing
 
 The vision is that a case can be built for **any location on Earth** from a
@@ -135,8 +167,24 @@ layer is reprojected/clipped/resampled to it, so ELMFIRE's "all rasters share
 one grid" requirement is met by construction. In WildfireAV the DEM/landscape
 defines the grid (`createElmfireInputFiles._compute_domain` reads epsg, cellsize,
 xll, yll straight from the DEM). We adopt the same: the **DEM is the master
-grid**, and its local UTM zone is picked from lat/lon (WUInity already has
-`SimulationData.GetUtmZone/GetUtmEpsg`).
+grid**, and its local UTM zone is picked from lat/lon.
+
+**Implemented**: `UtmUtility` (`PREACT/PREACTcore/Source/Utility/UtmUtility.cs`)
+is the single lat/lon → UTM EPSG lookup, consolidated from three previously
+separate copies (`SimulationData`, `WorldPopDownloader`, `LandfireDownloader`
+each had their own). `MasterGrid` (`MasterGrid.cs`) reads a warped raster's
+grid + EPSG back from disk; `RasterHarmonizer.BuildUtmMasterGrid` warps a
+freshly-downloaded (WGS84) DEM into that UTM zone to establish it, and
+`RasterHarmonizer.WarpToGrid` snaps any other raster onto it exactly (`-t_srs`/
+`-te`/`-ts`, extending the single existing `Gdal.Warp` call in the codebase,
+`WorldPopDownloader.ReprojectToUTM`, which only reprojects CRS without pinning
+extent/pixel count). Compiles and was runtime-verified for the CRS-lookup half
+(`UtmUtility`, matched Athens' known EPSG:32634); the warp calls themselves
+could **not** be runtime-tested in this sandbox — GDAL's checked-in C# bindings
+are built against GDAL 3.6's ABI (`libgdal.so.36`), and the only native GDAL
+available to install here was 3.8.4, which isn't binary-compatible (missing
+symbols) — so `WarpToGrid`/`BuildUtmMasterGrid` need a real run against a
+GDAL-3.6-compatible install before trusting them beyond code review.
 
 ### 1. Topography / DEM downloader (where LANDFIRE is unavailable)
 
@@ -200,13 +248,13 @@ produce grid-aligned inputs and invoke the runner.
 | Phase | Component | Status |
 |-------|-----------|--------|
 | 0 | Global DEM downloader (Copernicus GLO-30 / SRTM) + slope/aspect | new — replaces LANDFIRE outside US |
-| 0 | Raster harmonization (auto-UTM warp/clip/resample to master grid) | new (GDAL; UTM selection exists) |
-| 0 | Climatology sampler (ERA5, 20-day conditioning, annual FWI-max distribution) | new (Open-Meteo wrapped) |
+| 0 | Raster harmonization (auto-UTM warp/clip/resample to master grid) | ✅ built, ⚠️ warp untested at runtime (`MasterGrid`, `RasterHarmonizer`, `UtmUtility` — see Master-grid principle) |
+| 0 | Climatology sampler (ERA5, 20-day conditioning, annual FWI-max distribution) | ✅ built (annual-maxima half; conditioning window still TBD — see `ClimatologySampler`) |
 | 0 | Nelson wrapper for dead moisture (weather → m1/m10/m100) | new (engine exists; WildfireAV exe) |
 | 0 | ECMWF fuel-dataset reader for live moisture (NetCDF, by-date LFMC) | new — dataset stored in repo |
 | 0 | WindNinja step (terrain wind → ws/wd on master grid) | new (port from WildfireAV) |
-| 0 | Ignition sampler (mask → point) | new |
-| 1 | ELMFIRE realization runner + namelist writer | new — port from WildfireAV; user tunes template |
+| 0 | Ignition sampler (mask → point) | ✅ built (`IgnitionSampler`: uniform mask + weighted-raster sampling) |
+| 1 | ELMFIRE realization runner + namelist writer | 🟡 namelist writer built, keys unverified; runner (invoking `elmfire`) still new — see ELMFIRE runner contract |
 | 2 | WUInity + k-PERIL per realization | ✅ built |
 | 3 | Convergence controller (decile-area, 20-run/<2% streak) | ✅ built (`converge-trigger`) |
 | 4 | CLI `converge-trigger` | ✅ built | 
@@ -231,4 +279,10 @@ curves — human planning inputs).
 - ECMWF fuel dataset: stored in-repo (NetCDF, potentially large); covers only
   2003–2021 at ~9 km, so LFMC is domain-uniform for Mati and the annual-maxima
   sample is bounded to 19 years. Needs a GDAL-NetCDF reader + by-date join.
-- RNG seeding for reproducibility of a converged result.
+- RNG seeding for reproducibility of a converged result. **Addressed**:
+  `MonteCarloRng` (`PREACT/PREACTcore/Source/Utility/Math/MonteCarloRng.cs`) is
+  an explicitly-seeded RNG (verified to reproduce an identical draw sequence
+  given the same seed) used by `IgnitionSampler` and `ClimatologySampler`,
+  deliberately separate from the pre-existing `PREACT.Math.Random` (a single
+  unseeded process-wide instance with no reset/reproduction hook — still fine
+  for non-Monte-Carlo uses, just not this one).

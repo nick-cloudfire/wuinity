@@ -3,7 +3,6 @@ using System.IO;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
-using static System.Math;
 using PREACT.Math;
 using System.IO.Compression;
 
@@ -31,15 +30,9 @@ namespace PREACT.Tools
 
         private static int GetUtmEpsgFromAoi(Vector2d lowerLeftLatLon, Vector2d upperRighLatLon)
         {
-
             double centerLon = (lowerLeftLatLon.y + upperRighLatLon.y) / 2.0;
             double centerLat = (lowerLeftLatLon.x + upperRighLatLon.x) / 2.0;
-
-            int utmZone = (int)Floor((centerLon + 180) / 6) + 1;
-            bool north = centerLat >= 0;
-
-            int epsg = north ? 32600 + utmZone : 32700 + utmZone;
-            return epsg;
+            return PREACT.Utility.UtmUtility.GetUtmEpsgCode(centerLat, centerLon);
         }
 
         static string BuildLandscapeLayerList(int year, bool useAnderson13)

@@ -200,16 +200,8 @@ namespace PREACT.Tools
 
             Engine.Message(null, Engine.LogType.Log, "Clipping WorldPop to AIO complete.");
 
-            int zone = (int)Mathd.Floor(((east - west) * 0.5 + west + 180) / 6) + 1;
-            string epsg;
-            if (south >= 0.0)
-            {
-                epsg = "EPSG:" + (32600 + zone);   // northern hemisphere
-            }
-            else
-            {
-                epsg = "EPSG:" + (32700 + zone);   // southern hemisphere
-            }
+            double centerLon = (east - west) * 0.5 + west;
+            string epsg = PREACT.Utility.UtmUtility.GetUtmEpsg(south, centerLon);
 
             string utmFilePath = Path.Combine(Path.GetDirectoryName(clippedFilePath), Path.GetFileNameWithoutExtension(clippedFilePath) + "_UTM.tif");
             ReprojectToUTM(clippedFilePath, utmFilePath, epsg);

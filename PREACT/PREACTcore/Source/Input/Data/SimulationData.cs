@@ -52,27 +52,14 @@ namespace PREACT.Input
             LatLngUTMConverter.UTMResult utmPos = LatLngUTMConverter.WGS84.convertLatLngToUtm(latLon.x, latLon.y);
             if(utmPos.ZoneNumber != _utmData.ZoneNumber)
             {
-                int utmZone = GetUtmZone(_lowerLeftLatLon.y);
-                string utmEPSG = GetUtmEpsg(_lowerLeftLatLon.x, _lowerLeftLatLon.y);
+                string utmEPSG = UtmUtility.GetUtmEpsg(_lowerLeftLatLon.x, _lowerLeftLatLon.y);
                 (double easting, double northing) eastNorth = Wgs84ToUtm(latLon.x, latLon.y, utmEPSG);
                 return new Vector2d(eastNorth.easting, eastNorth.northing) - _utmOrigin;
             }
             else
             {
                 return new Vector2d(utmPos.Easting, utmPos.Northing) - _utmOrigin;
-            }            
-        }
-        private static int GetUtmZone(double longitude)
-        {
-            return (int)Mathd.Floor((longitude + 180.0) / 6.0) + 1;
-        }
-
-        private static string GetUtmEpsg(double latitude, double longitude)
-        {
-            int zone = GetUtmZone(longitude);
-            return latitude >= 0
-                ? "EPSG:" + (32600 + zone)   // North
-                : "EPSG:" + (32700 + zone);  // South
+            }
         }
 
         private static (double easting, double northing) Wgs84ToUtm(double lat, double lon, string utmEpsg)
