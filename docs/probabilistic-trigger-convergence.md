@@ -16,7 +16,7 @@ For each realization until converged:
    - Dead (m1/m10/m100) — Nelson model from the sampled weather (spin-up window).
    - Live (forest/shrub LFMC) — from the ECMWF derived fire-fuel dataset,
      read for the same historical day the weather sample was drawn from.
-3. **Run ELMFIRE** (Docker) for that single realization → `TOA/ROS/SD/FI` rasters.
+3. **Run ELMFIRE** (native binary, per WildfireAV) for that single realization → `TOA/ROS/SD/FI` rasters.
 4. **Run WUInity** — AscImport plays the fire back, evacuation runs, and the
    run's own last-arrival evacuation time gives **WRSET** (a full evacuation is
    run every realization).
@@ -102,7 +102,8 @@ the script author):
   (m/s @10 m), wind direction (deg), m1/m10/m100 (%), and optional live-fuel
   moisture — passed either as CLI args or as a WUInity-written per-run
   `elmfire.data` + constant transient rasters.
-- **Action**: run ELMFIRE in Docker for a single ignition / single meteorology.
+- **Action**: run the native `elmfire` binary on the case `.data` (WildfireAV's
+  `runElmfireCase` pattern) for a single ignition / single meteorology.
 - **Output**: `time_of_arrival_<id>.tif`, `vs_<id>.tif`, `spread_dir_<id>.tif`,
   `flin_<id>.tif` in a known folder (matching the existing mati naming so the
   downstream driver consumes them unchanged).
@@ -205,9 +206,10 @@ curves — human planning inputs).
 
 ## Risks
 
-- ELMFIRE invocation is the critical path. WildfireAV runs the native `elmfire`
-  binary (conda env) on the case `.data`; the earlier decision was Docker.
-  Reconcile these — reuse WildfireAV's runner or wrap it in Docker.
+- ELMFIRE invocation is the critical path. **Decided: reuse WildfireAV's native
+  `elmfire` runner** (run the binary on the case `.data`, resume via
+  `time_of_arrival_*`); Docker is not used. Requires a working native ELMFIRE
+  install (conda env) on the machine.
 - Extra runtime dependencies for the global pipeline: a global DEM source
   (OpenTopography key), **WindNinja** (CLI), and the Nelson exe — on top of
   SUMO/GDAL. All must be present for "any location" to hold end-to-end.
