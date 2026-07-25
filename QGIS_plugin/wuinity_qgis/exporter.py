@@ -3,6 +3,7 @@ Exports WUInity layers to a .wui file + group shapefiles.
 """
 
 import os
+from datetime import datetime, timedelta
 from qgis.core import (
     QgsProject, QgsDistanceArea, QgsPointXY,
     QgsCoordinateTransform, QgsCoordinateReferenceSystem,
@@ -31,8 +32,8 @@ class ExportError(Exception):
     pass
 
 
-def export(output_dir, sim_name, delta_time, max_sim_time, stop_when_evacuated,
-           module_config=None):
+def export(output_dir, sim_name, start_datetime, delta_time, max_sim_time,
+           stop_when_evacuated, module_config=None):
     """
     Main entry point. Returns the path to the written .wui file.
     Raises ExportError with a human-readable message on failure.
@@ -71,10 +72,21 @@ def export(output_dir, sim_name, delta_time, max_sim_time, stop_when_evacuated,
     destinations            = _read_destinations(dest_layer)
     groups, shp_paths       = _write_group_shapefiles(groups_layer, groups_dir)
 
+    # Generate .ign file from shapefile if an ElmClone ignition is specified
+    mc_fire = module_config.get("wildfire", {})
+    fire_module = mc_fire.get("module", "AscImport")
+    ign_shp = mc_fire.get("ign_shapefile", "")
+    if fire_module == "ElmClone" and ign_shp and os.path.isfile(ign_shp):
+        wildfire_dir = os.path.join(output_dir, "wildfire")
+        os.makedirs(wildfire_dir, exist_ok=True)
+        ign_out = os.path.join(wildfire_dir, f"{sim_name}.ign")
+        _generate_ign_file(ign_shp, mc_fire.get("ign_time", 0.0), ign_out)
+        module_config["wildfire"]["ign_file_rel"] = f"wildfire/{sim_name}.ign"
+
     wui_path = os.path.join(output_dir, f"{sim_name}.wui")
     _write_wui(
         wui_path, sim_name, lower_left, domain_size,
-        delta_time, max_sim_time, stop_when_evacuated,
+        start_datetime, delta_time, max_sim_time, stop_when_evacuated,
         destinations, groups, shp_paths, module_config,
     )
     return wui_path
@@ -126,11 +138,14 @@ def _read_destinations(layer):
         pt = feat.geometry().asPoint()
         if xform:
             pt = xform.transform(pt)
+        dest_type = feat["type"] or "Exit"
+        if dest_type not in ("Exit", "Shelter"):
+            dest_type = "Exit"
         dests.append({
             "name":         feat["name"] or f"dest_{feat.id()}",
             "lat":          pt.y(),
             "lon":          pt.x(),
-            "type":         feat["type"] or "Exit",
+            "type":         dest_type,
             "max_flow":     feat["max_flow"]     if feat["max_flow"]     is not None else -1,
             "max_vehicles": feat["max_vehicles"] if feat["max_vehicles"] is not None else -1,
             "max_people":   feat["max_people"]   if feat["max_people"]   is not None else -1,
@@ -188,7 +203,7 @@ def _write_group_shapefiles(layer, groups_dir):
             "dest_cdf":     (feat["dest_cdf"]     or "").strip(),
             "resp_curves":  (feat["resp_curves"]  or "default_curve").strip(),
             "resp_cdf":     (feat["resp_cdf"]     or "1.0").strip(),
-            "dest_choice":  (feat["dest_choice"]  or "EvacGroupWeighted").strip(),
+            "dest_choice":  (feat["dest_choice"]  or "EvacGroupCDF").strip(),
             "is_default":   bool(feat["is_default"]),
             "shp_path":     rel_path,
         })
@@ -197,11 +212,40 @@ def _write_group_shapefiles(layer, groups_dir):
 
 
 # ---------------------------------------------------------------------------
+# Ignition file generation
+# ---------------------------------------------------------------------------
+
+def _generate_ign_file(shp_path, ign_time_s, out_path):
+    """Write a .ign file (relative time) from the centroid of the first polygon in shp_path."""
+    layer = QgsVectorLayer(shp_path, "ign_src", "ogr")
+    if not layer.isValid():
+        raise ExportError(f"Cannot open ignition shapefile: {shp_path}")
+
+    feats = list(layer.getFeatures())
+    if not feats:
+        raise ExportError(f"Ignition shapefile has no features: {shp_path}")
+
+    geom = feats[0].geometry()
+    centroid = geom.centroid().asPoint()
+
+    src_crs = layer.crs()
+    if src_crs != WGS84:
+        xform = QgsCoordinateTransform(src_crs, WGS84, QgsProject.instance())
+        centroid = xform.transform(centroid)
+
+    # PREACT IgnitionPointInput expects: Latitude, Longitude, AbsoluteTime(bool), Time.
+    # The header line is skipped by the parser but should still describe the columns.
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("Latitude,Longitude,AbsoluteTime,IgnitionTime\n")
+        f.write(f"{centroid.y():.6f},{centroid.x():.6f},false,{ign_time_s:.1f}\n")
+
+
+# ---------------------------------------------------------------------------
 # .wui writer
 # ---------------------------------------------------------------------------
 
 def _write_wui(path, sim_name, lower_left, domain_size,
-               delta_time, max_sim_time, stop_when_evacuated,
+               start_datetime, delta_time, max_sim_time, stop_when_evacuated,
                destinations, groups, shp_paths, module_config):
 
     lat0, lon0    = lower_left
@@ -225,12 +269,23 @@ def _write_wui(path, sim_name, lower_left, domain_size,
     def _bool(v):
         return "true" if v else "false"
 
+    # Compute EndDateTime from start + duration
+    try:
+        _start = datetime.fromisoformat(start_datetime)
+        _end   = _start + timedelta(seconds=max_sim_time)
+        end_datetime = _end.strftime("%Y-%m-%dT%H:%M:%S")
+    except Exception:
+        end_datetime = ""
+
     # ── [Simulation] ──────────────────────────────────────────────────
     w("[Simulation]")
     w(f"Name={sim_name}")
     w(f"LowerLeftLatLon={lat0:.6f},{lon0:.6f}")
     w(f"DomainSize={width:.1f},{height:.1f}")
     w(f"DeltaTime={delta_time}")
+    w(f"StartDateTime={start_datetime}")
+    if end_datetime:
+        w(f"EndDateTime={end_datetime}")
     w(f"MaxSimTime={max_sim_time}")
     w(f"StopWhenEvacuated={_bool(stop_when_evacuated)}")
 
@@ -253,10 +308,6 @@ def _write_wui(path, sim_name, lower_left, domain_size,
     w(f"EvacuationOrderStart={int(mc_trig.get('evac_order_start', 0))}")
     use_trigger = mc_trig.get("enabled", False)
     w(f"UseTriggerBufferEvacuation={_bool(use_trigger)}")
-    if use_trigger and mc_trig.get("module") == "BackwardsFireCell2":
-        trig_file = mc_trig.get("trigger_file", "")
-        if trig_file:
-            w(f"TriggerBufferFile={trig_file}")
 
     # ── [Demographics] ────────────────────────────────────────────────
     demo_tbl   = get_demographics_table()
@@ -267,8 +318,9 @@ def _write_wui(path, sim_name, lower_left, domain_size,
             w("[Demographics]")
             w(f"Name={d['name']}")
             w(f"AllowMoreThanOneCar={_bool(d['allow_more_cars'])}")
-            w(f"MaxCars={d['max_cars'] or 2}")
-            w(f"MaxCarsProbability={d['max_cars_prob'] or 0.3}")
+            # Use explicit None checks so a legitimate 0 is not replaced by the default.
+            w(f"MaxCars={d['max_cars'] if d['max_cars'] is not None else 2}")
+            w(f"MaxCarsProbability={d['max_cars_prob'] if d['max_cars_prob'] is not None else 0.3}")
             if d["name"] == "default":
                 w("Default=true")
     else:
@@ -289,6 +341,7 @@ def _write_wui(path, sim_name, lower_left, domain_size,
             w()
             w("[ResponseCurve]")
             w(f"Name={c['name']}")
+            w("TimeInput=Relative")
             try:
                 points = _json.loads(c["data"] or "[]")
                 for t, p in points:
@@ -300,6 +353,7 @@ def _write_wui(path, sim_name, lower_left, domain_size,
         w()
         w("[ResponseCurve]")
         w("Name=default_curve")
+        w("TimeInput=Relative")
         for t, p in DEFAULT_RESPONSE_CURVE:
             w(f"{t},{p}")
 
@@ -366,15 +420,12 @@ def _write_wui(path, sim_name, lower_left, domain_size,
     w(f"SmokeAlpha={mc_traf.get('smoke_alpha', 0.5)}")
     w(f"SmokeBeta={mc_traf.get('smoke_beta', 0.012)}")
 
-    # ── [WildfireModule] / [AscImport] ───────────────────────────────
+    # ── [WildfireModule] / module-specific section ───────────────────
     w()
     w("[WildfireModule]")
     w(f"Enabled={_bool(mc_fire.get('enabled', False))}")
     fire_module = mc_fire.get("module", "AscImport")
     w(f"Module={fire_module}")
-    lcp = mc_fire.get("lcp_file", "")
-    if lcp:
-        w(f"LcpFile={lcp}")
 
     if fire_module == "AscImport":
         w()
@@ -391,6 +442,39 @@ def _write_wui(path, sim_name, lower_left, domain_size,
             w(f"FirelineIntensityFile={mc_fire['fi_file']}")
         if mc_fire.get("wx_file"):
             w(f"WeatherStreamFile={mc_fire['wx_file']}")
+    elif fire_module == "ElmClone":
+        w()
+        w(f"[{fire_module}]")
+        lcp = mc_fire.get("lcp_file", "")
+        if lcp:
+            w(f"LandscapeFile={lcp}")
+        spread_model = mc_fire.get("spread_model", "Behave")
+        w(f"SpreadRateModel={spread_model}")
+        if spread_model == "Behave":
+            if mc_fire.get("fuel_models_file"):
+                w(f"FuelModelsFile={mc_fire['fuel_models_file']}")
+            if mc_fire.get("fuel_moisture_file"):
+                w(f"InitialFuelMoistureFile={mc_fire['fuel_moisture_file']}")
+        elif spread_model == "CanadianFBP":
+            if mc_fire.get("fbp_lookup_file"):
+                w(f"FBPLookupTableFile={mc_fire['fbp_lookup_file']}")
+            w(f"StartDC={mc_fire.get('start_dc', 15.0):.1f}")
+            w(f"StartDMC={mc_fire.get('start_dmc', 6.0):.1f}")
+            w(f"StartFFMC={mc_fire.get('start_ffmc', 85.0):.1f}")
+            w(f"StartHourlyFFMC={mc_fire.get('start_hourly_ffmc', 85.0):.1f}")
+        elif spread_model == "LookupROS":
+            if mc_fire.get("ros_lookup_file"):
+                w(f"LookUpTableFile={mc_fire['ros_lookup_file']}")
+        w(f"CentroidMode={mc_fire.get('centroid_mode', 'Random')}")
+        w(f"RandomAmount={mc_fire.get('random_amount', 0.5):.3f}")
+        w(f"ThetaLimit={mc_fire.get('theta_limit', 5.0):.1f}")
+        w(f"SpreadMode={mc_fire.get('spread_mode', 'SixteenDirections')}")
+        ign_file = mc_fire.get("ign_file_rel", "")
+        if ign_file:
+            w(f"IgnitionPointsFile={ign_file}")
+        w("UseRandomIgnitionMap=false")
+        w("RandomIgnitionPoints=0")
+        w("UseInitialIgnitionMap=false")
 
     # ── [SmokeModule] + sub-section ───────────────────────────────────
     smoke_module = mc_smoke.get("module", "GlobalSmoke")
@@ -405,12 +489,6 @@ def _write_wui(path, sim_name, lower_left, domain_size,
         ext = mc_smoke.get("extinction_file", "")
         if ext:
             w(f"ExtinctionFile={ext}")
-    elif smoke_module in ("AdvectDiffuseMixingLayer", "AdvectDiffuse3D"):
-        w(f"[{smoke_module}]")
-        w(f"MixingLayerHeight={mc_smoke.get('mixing_height', 500.0)}")
-    elif smoke_module == "Lagrangian":
-        w("[Lagrangian]")
-        w(f"ParticlesPerFireCell={int(mc_smoke.get('particles', 100))}")
 
     # ── [TriggerBufferModule] / [kPERIL] ─────────────────────────────
     trig_module = mc_trig.get("module", "kPERIL")

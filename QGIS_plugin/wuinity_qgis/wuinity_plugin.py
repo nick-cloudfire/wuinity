@@ -2,7 +2,7 @@
 Main plugin class — registers the toolbar and actions.
 """
 
-from qgis.PyQt.QtWidgets import QAction, QMessageBox
+from qgis.PyQt.QtWidgets import QAction
 from qgis.core import QgsProject
 
 
@@ -326,10 +326,7 @@ class WUInityPlugin:
     def _enable_snapping(self, layer):
         """Turn on snapping to vertices and segments for the given layer."""
         try:
-            from qgis.core import (
-                QgsSnappingConfig, QgsTolerance,
-                QgsSnappingConfig as SC,
-            )
+            from qgis.core import QgsSnappingConfig, QgsTolerance
             cfg = QgsProject.instance().snappingConfig()
             cfg.setEnabled(True)
             cfg.setMode(QgsSnappingConfig.AdvancedConfiguration)

@@ -6,7 +6,7 @@ Each managed layer has a fixed name used to find it in the project.
 import os
 
 from qgis.core import (
-    QgsVectorLayer, QgsField, QgsProject,
+    QgsVectorLayer, QgsProject,
     QgsCoordinateReferenceSystem, QgsEditorWidgetSetup,
     QgsVectorFileWriter, QgsWkbTypes,
 )
@@ -291,7 +291,6 @@ def _make_schema_curves():
 
 
 def _add_default_demographics(layer):
-    import json
     from qgis.core import QgsFeature
     feat = QgsFeature(layer.fields())
     feat["name"]           = "default"
@@ -316,11 +315,13 @@ def _add_default_curve(layer):
 
 def _apply_widget_setups(layer, display_name):
     if display_name == LAYER_DESTINATIONS:
-        _setup_value_map(layer, "type", ["Exit", "Refugee"])
+        # Must match PREACT DestinationTypes enum (Exit | Shelter).
+        _setup_value_map(layer, "type", ["Exit", "Shelter"])
         _setup_checkbox(layer, "blocked")
     elif display_name == LAYER_GROUPS:
+        # Must match PREACT DestinationChoices enum.
         _setup_value_map(layer, "dest_choice", [
-            "EvacGroupWeighted",
+            "EvacGroupCDF",
             "EvacGroupClosestEuclidean",
             "Random",
             "ClosestEuclidean",

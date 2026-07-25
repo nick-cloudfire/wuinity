@@ -9,9 +9,9 @@ from PyQt5.QtWidgets import (
     QDialog, QDialogButtonBox, QFormLayout, QVBoxLayout, QHBoxLayout,
     QLineEdit, QDoubleSpinBox, QSpinBox, QCheckBox, QPushButton,
     QFileDialog, QLabel, QMessageBox, QTabWidget, QWidget, QComboBox,
-    QStackedWidget,
+    QStackedWidget, QDateTimeEdit,
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QDateTime
 from qgis.core import QgsProject, QgsTask, QgsApplication, Qgis, QgsMessageLog
 from .layers import get_domain_layer, get_project_folder
 from . import exporter
@@ -72,6 +72,12 @@ class ExportDialog(QDialog):
         self.name_edit = QLineEdit()
         form.addRow("Simulation name:", self.name_edit)
 
+        self.start_dt_edit = QDateTimeEdit()
+        self.start_dt_edit.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
+        self.start_dt_edit.setCalendarPopup(True)
+        self.start_dt_edit.setDateTime(QDateTime.currentDateTime().toUTC())
+        form.addRow("Start date/time (UTC):", self.start_dt_edit)
+
         self.delta_spin = QDoubleSpinBox()
         self.delta_spin.setRange(0.01, 60.0)
         self.delta_spin.setValue(1.0)
@@ -80,11 +86,11 @@ class ExportDialog(QDialog):
         form.addRow("Time step (ΔT):", self.delta_spin)
 
         self.maxtime_spin = QDoubleSpinBox()
-        self.maxtime_spin.setRange(60.0, 86400.0)
+        self.maxtime_spin.setRange(60.0, 86400.0 * 7)
         self.maxtime_spin.setValue(7200.0)
         self.maxtime_spin.setSuffix(" s")
         self.maxtime_spin.setDecimals(0)
-        form.addRow("Max sim time:", self.maxtime_spin)
+        form.addRow("Duration (max sim time):", self.maxtime_spin)
 
         self.stop_check = QCheckBox()
         self.stop_check.setChecked(True)
@@ -214,7 +220,7 @@ class ExportDialog(QDialog):
         self.traffic_enabled = QCheckBox()
         fixed.addRow("Enabled:", self.traffic_enabled)
         self.traffic_module_combo = QComboBox()
-        self.traffic_module_combo.addItems(["SUMO", "MacroTrafficSim", "CityFlow"])
+        self.traffic_module_combo.addItems(["SUMO"])
         fixed.addRow("Module:", self.traffic_module_combo)
         self.traffic_visibility = QCheckBox()
         fixed.addRow("Visibility affects speed:", self.traffic_visibility)
@@ -249,11 +255,6 @@ class ExportDialog(QDialog):
         pf.addRow("Smoke beta:", self.sumo_smoke_beta)
         self._traffic_stack.addWidget(p)
 
-        # Page 1: MacroTrafficSim
-        self._traffic_stack.addWidget(_info_page("No additional settings for MacroTrafficSim."))
-        # Page 2: CityFlow
-        self._traffic_stack.addWidget(_info_page("No additional settings for CityFlow."))
-
         self.traffic_module_combo.currentIndexChanged.connect(self._traffic_stack.setCurrentIndex)
         return w
 
@@ -269,7 +270,7 @@ class ExportDialog(QDialog):
         self.fire_enabled = QCheckBox()
         fixed.addRow("Enabled:", self.fire_enabled)
         self.fire_module_combo = QComboBox()
-        self.fire_module_combo.addItems(["AscImport", "FireCell", "CellParticleHybrid"])
+        self.fire_module_combo.addItems(["AscImport", "ElmClone"])
         fixed.addRow("Module:", self.fire_module_combo)
         vbox.addLayout(fixed)
 
@@ -287,16 +288,73 @@ class ExportDialog(QDialog):
         self.asc_wx_edit   = self._file_row(pf, "Weather stream:", "ASC files (*.asc);;All files (*)")
         self._fire_stack.addWidget(p)
 
-        # Page 1: FireCell
+        # Page 1: ElmClone (uses the FireCellInput parser)
         p = QWidget(); pf = QFormLayout(p); pf.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
         self.fire_lcp_edit = self._file_row(pf, "LCP file:", "Landscape files (*.lcp);;All files (*)")
+
+        pf.addRow(QLabel("<b>Spread rate model</b>"))
+        self.fire_spread_model_combo = QComboBox()
+        self.fire_spread_model_combo.addItems(["Behave", "CanadianFBP", "LookupROS"])
+        pf.addRow("Model:", self.fire_spread_model_combo)
+
+        self._fire_spread_stack = QStackedWidget()
+        pf.addRow(self._fire_spread_stack)
+
+        # Spread stack — page 0: Behave
+        sp = QWidget(); spf = QFormLayout(sp); spf.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        self.fire_fuel_models_edit   = self._file_row(spf, "Fuel models file:", "All files (*)")
+        self.fire_fuel_moisture_edit = self._file_row(spf, "Initial fuel moisture:", "Fuel moisture files (*.fmc);;All files (*)")
+        self._fire_spread_stack.addWidget(sp)
+
+        # Spread stack — page 1: CanadianFBP
+        sp = QWidget(); spf = QFormLayout(sp); spf.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        self.fire_fbp_lookup_edit = self._file_row(spf, "FBP lookup table:", "All files (*)")
+        self.fire_start_dc = QDoubleSpinBox()
+        self.fire_start_dc.setRange(0.0, 999.0); self.fire_start_dc.setValue(15.0); self.fire_start_dc.setDecimals(1)
+        spf.addRow("Start DC:", self.fire_start_dc)
+        self.fire_start_dmc = QDoubleSpinBox()
+        self.fire_start_dmc.setRange(0.0, 999.0); self.fire_start_dmc.setValue(6.0); self.fire_start_dmc.setDecimals(1)
+        spf.addRow("Start DMC:", self.fire_start_dmc)
+        self.fire_start_ffmc = QDoubleSpinBox()
+        self.fire_start_ffmc.setRange(0.0, 101.0); self.fire_start_ffmc.setValue(85.0); self.fire_start_ffmc.setDecimals(1)
+        spf.addRow("Start FFMC:", self.fire_start_ffmc)
+        self.fire_start_hourly_ffmc = QDoubleSpinBox()
+        self.fire_start_hourly_ffmc.setRange(0.0, 101.0); self.fire_start_hourly_ffmc.setValue(85.0); self.fire_start_hourly_ffmc.setDecimals(1)
+        spf.addRow("Start hourly FFMC:", self.fire_start_hourly_ffmc)
+        self._fire_spread_stack.addWidget(sp)
+
+        # Spread stack — page 2: LookupROS
+        sp = QWidget(); spf = QFormLayout(sp); spf.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        self.fire_ros_lookup_edit = self._file_row(spf, "ROS lookup table:", "CSV files (*.csv);;All files (*)")
+        self._fire_spread_stack.addWidget(sp)
+
+        self.fire_spread_model_combo.currentIndexChanged.connect(self._fire_spread_stack.setCurrentIndex)
+
+        pf.addRow(QLabel("<b>Spread settings</b>"))
+        self.fire_centroid_mode_combo = QComboBox()
+        self.fire_centroid_mode_combo.addItems(["Random", "Center", "RandomCross", "RandomCircle"])
+        pf.addRow("Centroid mode:", self.fire_centroid_mode_combo)
+        self.fire_random_amount_spin = QDoubleSpinBox()
+        self.fire_random_amount_spin.setRange(0.0, 1.0); self.fire_random_amount_spin.setValue(0.5); self.fire_random_amount_spin.setDecimals(3)
+        pf.addRow("Random amount:", self.fire_random_amount_spin)
+        self.fire_theta_limit_spin = QDoubleSpinBox()
+        self.fire_theta_limit_spin.setRange(0.0, 180.0); self.fire_theta_limit_spin.setValue(5.0); self.fire_theta_limit_spin.setDecimals(1); self.fire_theta_limit_spin.setSuffix(" °")
+        pf.addRow("Theta limit:", self.fire_theta_limit_spin)
+        self.fire_spread_mode_combo = QComboBox()
+        self.fire_spread_mode_combo.addItems(["SixteenDirections", "EightDirections", "FourDirections"])
+        pf.addRow("Spread mode:", self.fire_spread_mode_combo)
+
+        pf.addRow(QLabel("<b>Ignition</b>"))
+        self.fire_ign_shp_edit = self._file_row(pf, "Ignition shapefile:", "Shapefiles (*.shp);;All files (*)")
+        self.fire_ign_time_spin = QDoubleSpinBox()
+        self.fire_ign_time_spin.setRange(0.0, 86400.0)
+        self.fire_ign_time_spin.setValue(0.0)
+        self.fire_ign_time_spin.setDecimals(1)
+        self.fire_ign_time_spin.setSuffix(" s")
+        pf.addRow("Ignition time (relative):", self.fire_ign_time_spin)
         self._fire_stack.addWidget(p)
 
-        # Page 2: CellParticleHybrid
-        p = QWidget(); pf = QFormLayout(p); pf.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
-        self.fire_lcp_hybrid_edit = self._file_row(pf, "LCP file:", "Landscape files (*.lcp);;All files (*)")
-        self._fire_stack.addWidget(p)
-
+        # idx 0 = AscImport -> page 0, idx 1 = ElmClone -> page 1
         self.fire_module_combo.currentIndexChanged.connect(self._fire_stack.setCurrentIndex)
         return w
 
@@ -312,9 +370,7 @@ class ExportDialog(QDialog):
         self.smoke_enabled = QCheckBox()
         fixed.addRow("Enabled:", self.smoke_enabled)
         self.smoke_module_combo = QComboBox()
-        self.smoke_module_combo.addItems([
-            "GlobalSmoke", "AdvectDiffuseMixingLayer", "AdvectDiffuse3D", "Lagrangian"
-        ])
+        self.smoke_module_combo.addItems(["GlobalSmoke"])
         fixed.addRow("Module:", self.smoke_module_combo)
         vbox.addLayout(fixed)
 
@@ -325,29 +381,6 @@ class ExportDialog(QDialog):
         # Page 0: GlobalSmoke
         p = QWidget(); pf = QFormLayout(p); pf.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
         self.smoke_extinction_edit = self._file_row(pf, "Extinction file:", "ASC files (*.asc);;All files (*)")
-        self._smoke_stack.addWidget(p)
-
-        # Page 1: AdvectDiffuseMixingLayer
-        p = QWidget(); pf = QFormLayout(p); pf.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
-        self.smoke_mixing_height = QDoubleSpinBox()
-        self.smoke_mixing_height.setRange(1.0, 10000.0); self.smoke_mixing_height.setValue(500.0)
-        self.smoke_mixing_height.setDecimals(1); self.smoke_mixing_height.setSuffix(" m")
-        pf.addRow("Mixing layer height:", self.smoke_mixing_height)
-        self._smoke_stack.addWidget(p)
-
-        # Page 2: AdvectDiffuse3D
-        p = QWidget(); pf = QFormLayout(p); pf.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
-        self.smoke_mixing_height_3d = QDoubleSpinBox()
-        self.smoke_mixing_height_3d.setRange(1.0, 10000.0); self.smoke_mixing_height_3d.setValue(500.0)
-        self.smoke_mixing_height_3d.setDecimals(1); self.smoke_mixing_height_3d.setSuffix(" m")
-        pf.addRow("Mixing layer height:", self.smoke_mixing_height_3d)
-        self._smoke_stack.addWidget(p)
-
-        # Page 3: Lagrangian
-        p = QWidget(); pf = QFormLayout(p); pf.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
-        self.smoke_particles_spin = QSpinBox()
-        self.smoke_particles_spin.setRange(1, 100000); self.smoke_particles_spin.setValue(100)
-        pf.addRow("Particles per fire cell:", self.smoke_particles_spin)
         self._smoke_stack.addWidget(p)
 
         self.smoke_module_combo.currentIndexChanged.connect(self._smoke_stack.setCurrentIndex)
@@ -365,7 +398,7 @@ class ExportDialog(QDialog):
         self.trig_enabled = QCheckBox()
         fixed.addRow("Enabled:", self.trig_enabled)
         self.trig_module_combo = QComboBox()
-        self.trig_module_combo.addItems(["kPERIL", "BackwardsFireCell2"])
+        self.trig_module_combo.addItems(["kPERIL"])
         fixed.addRow("Module:", self.trig_module_combo)
         self.evac_order_start = QDoubleSpinBox()
         self.evac_order_start.setRange(0.0, 86400.0); self.evac_order_start.setValue(0.0)
@@ -388,11 +421,6 @@ class ExportDialog(QDialog):
         self.kperil_fuel_moisture_edit = self._file_row(pf, "Initial fuel moisture:", "ASC files (*.asc);;All files (*)")
         self.kperil_output_name = QLineEdit(); self.kperil_output_name.setText("trigger_buffer")
         pf.addRow("Output name:", self.kperil_output_name)
-        self._trig_stack.addWidget(p)
-
-        # Page 1: BackwardsFireCell2
-        p = QWidget(); pf = QFormLayout(p); pf.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
-        self.trig_buffer_file_edit = self._file_row(pf, "Trigger buffer file:", "ASC files (*.asc);;All files (*)")
         self._trig_stack.addWidget(p)
 
         self.trig_module_combo.currentIndexChanged.connect(self._trig_stack.setCurrentIndex)
@@ -670,10 +698,13 @@ class ExportDialog(QDialog):
             QMessageBox.warning(self, "WUInity", "Please enter a simulation name.")
             return
 
+        start_dt = self.start_dt_edit.dateTime().toString("yyyy-MM-ddTHH:mm:ss")
+
         try:
             wui_path = exporter.export(
                 output_dir          = folder,
                 sim_name            = name,
+                start_datetime      = start_dt,
                 delta_time          = self.delta_spin.value(),
                 max_sim_time        = self.maxtime_spin.value(),
                 stop_when_evacuated = self.stop_check.isChecked(),
@@ -713,26 +744,35 @@ class ExportDialog(QDialog):
                 "smoke_beta":        self.sumo_smoke_beta.value(),
             },
             "wildfire": {
-                "enabled":           self.fire_enabled.isChecked(),
-                "module":            self.fire_module_combo.currentText(),
-                "lcp_file":          (self.fire_lcp_hybrid_edit
-                                      if self.fire_module_combo.currentText() == "CellParticleHybrid"
-                                      else self.fire_lcp_edit).text().strip(),
-                "asc_root":          self.asc_root_edit.text().strip(),
-                "toa_file":          self.asc_toa_edit.text().strip(),
-                "ros_file":          self.asc_ros_edit.text().strip(),
-                "sd_file":           self.asc_sd_edit.text().strip(),
-                "fi_file":           self.asc_fi_edit.text().strip(),
-                "wx_file":           self.asc_wx_edit.text().strip(),
+                "enabled":              self.fire_enabled.isChecked(),
+                "module":               self.fire_module_combo.currentText(),
+                "lcp_file":             self.fire_lcp_edit.text().strip(),
+                "spread_model":         self.fire_spread_model_combo.currentText(),
+                "centroid_mode":        self.fire_centroid_mode_combo.currentText(),
+                "random_amount":        self.fire_random_amount_spin.value(),
+                "theta_limit":          self.fire_theta_limit_spin.value(),
+                "spread_mode":          self.fire_spread_mode_combo.currentText(),
+                "fuel_models_file":     self.fire_fuel_models_edit.text().strip(),
+                "fuel_moisture_file":   self.fire_fuel_moisture_edit.text().strip(),
+                "fbp_lookup_file":      self.fire_fbp_lookup_edit.text().strip(),
+                "start_dc":             self.fire_start_dc.value(),
+                "start_dmc":            self.fire_start_dmc.value(),
+                "start_ffmc":           self.fire_start_ffmc.value(),
+                "start_hourly_ffmc":    self.fire_start_hourly_ffmc.value(),
+                "ros_lookup_file":      self.fire_ros_lookup_edit.text().strip(),
+                "ign_shapefile":        self.fire_ign_shp_edit.text().strip(),
+                "ign_time":             self.fire_ign_time_spin.value(),
+                "asc_root":             self.asc_root_edit.text().strip(),
+                "toa_file":             self.asc_toa_edit.text().strip(),
+                "ros_file":             self.asc_ros_edit.text().strip(),
+                "sd_file":              self.asc_sd_edit.text().strip(),
+                "fi_file":              self.asc_fi_edit.text().strip(),
+                "wx_file":              self.asc_wx_edit.text().strip(),
             },
             "smoke": {
                 "enabled":           self.smoke_enabled.isChecked(),
                 "module":            self.smoke_module_combo.currentText(),
                 "extinction_file":   self.smoke_extinction_edit.text().strip(),
-                "mixing_height":     (self.smoke_mixing_height_3d
-                                      if self.smoke_module_combo.currentText() == "AdvectDiffuse3D"
-                                      else self.smoke_mixing_height).value(),
-                "particles":         self.smoke_particles_spin.value(),
             },
             "trigger_buffer": {
                 "enabled":           self.trig_enabled.isChecked(),
@@ -742,21 +782,8 @@ class ExportDialog(QDialog):
                 "ros_from_behave":   self.kperil_ros_from_behave.isChecked(),
                 "fuel_moisture":     self.kperil_fuel_moisture_edit.text().strip(),
                 "output_name":       self.kperil_output_name.text().strip(),
-                "trigger_file":      self.trig_buffer_file_edit.text().strip(),
             },
         }
-
-
-def _info_page(text):
-    """Return a plain QWidget containing a single info label."""
-    w = QWidget()
-    vbox = QVBoxLayout(w)
-    vbox.setContentsMargins(4, 4, 4, 4)
-    lbl = QLabel(text)
-    lbl.setStyleSheet("color: #666;")
-    vbox.addWidget(lbl)
-    vbox.addStretch()
-    return w
 
 
 # ---------------------------------------------------------------------------

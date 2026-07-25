@@ -13,7 +13,6 @@ from PyQt5.QtWidgets import (
     QDialogButtonBox, QHeaderView, QSizePolicy, QAbstractItemView,
 )
 from PyQt5.QtCore import Qt
-from qgis.core import QgsFeature
 
 
 class GroupDialog(QDialog):

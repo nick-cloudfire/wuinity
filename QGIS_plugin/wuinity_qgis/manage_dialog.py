@@ -59,7 +59,8 @@ class ManageDialog(QDialog):
         add_btn = QPushButton("Add")
         del_btn = QPushButton("Delete selected")
         sav_btn = QPushButton("Save changes")
-        add_btn.clicked.connect(self._demo_add_row)
+        # Swallow the clicked(bool) arg so it doesn't land in _demo_add_row(name=...).
+        add_btn.clicked.connect(lambda _=False: self._demo_add_row())
         del_btn.clicked.connect(self._demo_delete_row)
         sav_btn.clicked.connect(self._demo_save)
         btns.addWidget(add_btn)
@@ -319,7 +320,7 @@ class _CurveEditorDialog(QDialog):
         row_btns = QHBoxLayout()
         add_row  = QPushButton("Add point")
         del_row  = QPushButton("Remove last")
-        add_row.clicked.connect(self._add_row)
+        add_row.clicked.connect(lambda _=False: self._add_row())
         del_row.clicked.connect(self._remove_last_row)
         row_btns.addWidget(add_row)
         row_btns.addWidget(del_row)

@@ -18,7 +18,7 @@ import xml.etree.ElementTree as ET
 
 from qgis.core import (
     QgsTask, QgsApplication, QgsVectorLayer, QgsFeature,
-    QgsGeometry, QgsPointXY, QgsField, QgsProject,
+    QgsGeometry, QgsPointXY, QgsProject,
     QgsCoordinateReferenceSystem, QgsCoordinateTransform,
     QgsCategorizedSymbolRenderer, QgsRendererCategory,
     QgsLineSymbol, QgsDistanceArea, QgsMessageLog, Qgis,
