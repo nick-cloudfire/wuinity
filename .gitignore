@@ -1,1 +1,27 @@
+# Root-level ignores. Each subproject (WUInity/, PREACT/, QGIS_plugin/) also
+# has its own .gitignore for language/tool-specific artifacts.
+
+# WUInity simulation output
 _output/
+*_output/
+
+# OS cruft
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# Build / solution caches and backups
+*.lscache
+*.slnx.bak
+*.bak
+
+# Python (QGIS plugin dev)
+__pycache__/
+*.pyc
+*.pyo
