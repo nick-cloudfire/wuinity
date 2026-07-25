@@ -6,13 +6,21 @@ namespace PREACT.Utility
     /// <summary>
     /// Namelist groups/keys ELMFIRE's <c>elmfire.data</c> is patched with per realization —
     /// verified against <c>WildfireAV/pipeline/createElmfireInputFiles.py</c> (the real writer
-    /// this pipeline is modeled on) and <c>pipelineConfig.py</c>. Two things that earlier
-    /// (unverified) guesses got wrong, now corrected:
+    /// this pipeline is modeled on), <c>pipelineConfig.py</c>, and ELMFIRE's own
+    /// <c>docs/archive/user_guide/io.rst</c>. Things earlier (unverified) guesses got wrong,
+    /// now corrected:
     ///
-    /// - There is no computational-domain group at all: ELMFIRE reads EPSG/cellsize/xll/yll
-    ///   directly from <c>DEM_FILENAME</c>'s own georeferencing, not from namelist keys.
+    /// - A <c>&amp;COMPUTATIONAL_DOMAIN</c> group (<c>A_SRS</c>/<c>COMPUTATIONAL_DOMAIN_CELLSIZE</c>/
+    ///   <c>_XLLCORNER</c>/<c>_YLLCORNER</c>) does exist and can override the domain explicitly, but
+    ///   WildfireAV's real writer never sets it — ELMFIRE falls back to reading EPSG/cellsize/xll/yll
+    ///   from <c>DEM_FILENAME</c>'s own georeferencing when it's absent, which is what this writer
+    ///   relies on too.
     /// - Ignition is <c>NUM_IGNITIONS</c> + indexed <c>X_IGN(1)</c>/<c>Y_IGN(1)</c>/<c>T_IGN(1)</c>
     ///   in <c>&amp;SIMULATOR</c>, not scalar <c>X_IGNITION</c>/<c>Y_IGNITION</c>.
+    /// - <c>WS_FILENAME</c> is always in **mph**, regardless of height — <c>WS_AT_10M</c> only tells
+    ///   ELMFIRE the raster is 10 m wind instead of the default 20 ft, it does not change the unit.
+    ///   A caller supplying m/s (this pipeline's convention, matching Open-Meteo's `wind_speed_10m`)
+    ///   must convert; see <see cref="ElmfireRealizationWriter.Write"/>.
     ///
     /// Filenames in <c>&amp;INPUTS</c> are stems only (no directory, no extension) — the
     /// directory comes from <c>FUELS_AND_TOPOGRAPHY_DIRECTORY</c>/<c>WEATHER_DIRECTORY</c> and
@@ -52,10 +60,15 @@ namespace PREACT.Utility
         public const string WsAt10m = "WS_AT_10M";
         public const string BarrierFilename = "BARRIER_FILENAME";
 
-        // &OUTPUTS
+        // &OUTPUTS (DUMP_* keys confirmed in ELMFIRE's docs/archive/user_guide/io.rst; WildfireAV's
+        // own validation use case only turns on DUMP_TIME_OF_ARRIVAL, but our k-PERIL/AscImport
+        // pipeline also needs fireline intensity and spread rate)
         public const string OutputsDirectory = "OUTPUTS_DIRECTORY";
         public const string Dtdump = "DTDUMP";
         public const string DumpTimeOfArrival = "DUMP_TIME_OF_ARRIVAL";
+        public const string DumpFlin = "DUMP_FLIN";
+        public const string DumpSpreadRate = "DUMP_SPREAD_RATE";
+        public const string DumpSurfaceFire = "DUMP_SURFACE_FIRE";
         public const string ConvertToGeotiff = "CONVERT_TO_GEOTIFF";
 
         // &TIME_CONTROL
@@ -149,6 +162,9 @@ namespace PREACT.Utility
     /// </summary>
     public static class ElmfireRealizationWriter
     {
+        /// <summary>ELMFIRE's WS_FILENAME is always mph, regardless of WS_AT_10M (io.rst).</summary>
+        private const double MpsToMph = 2.2369362920544;
+
         public static string[] Write(string[] baseTemplateLines, ElmfireRealization r, string rasterOutputDir, int numMeteorologyTimes = 1)
         {
             Directory.CreateDirectory(rasterOutputDir);
@@ -159,7 +175,8 @@ namespace PREACT.Utility
             string m10Stem = $"m10_{r.RunId}";
             string m100Stem = $"m100_{r.RunId}";
 
-            GeoTiffRasterWriter.WriteConstantTimeSeries(r.Grid, (float)r.WindSpeedMps, numMeteorologyTimes, Path.Combine(rasterOutputDir, wsStem + ".tif"));
+            float windSpeedMph = (float)(r.WindSpeedMps * MpsToMph);
+            GeoTiffRasterWriter.WriteConstantTimeSeries(r.Grid, windSpeedMph, numMeteorologyTimes, Path.Combine(rasterOutputDir, wsStem + ".tif"));
             GeoTiffRasterWriter.WriteConstantTimeSeries(r.Grid, (float)r.WindDirDeg, numMeteorologyTimes, Path.Combine(rasterOutputDir, wdStem + ".tif"));
             GeoTiffRasterWriter.WriteConstantTimeSeries(r.Grid, (float)r.M1Percent, numMeteorologyTimes, Path.Combine(rasterOutputDir, m1Stem + ".tif"));
             GeoTiffRasterWriter.WriteConstantTimeSeries(r.Grid, (float)r.M10Percent, numMeteorologyTimes, Path.Combine(rasterOutputDir, m10Stem + ".tif"));
@@ -179,6 +196,8 @@ namespace PREACT.Utility
             k.Set(ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.M100Filename, m100Stem, quoted: true);
             k.Set(ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.LhMoistureContent, D(r.LiveHerbaceousMoisturePercent));
             k.Set(ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.LwMoistureContent, D(r.LiveWoodyMoisturePercent));
+            // our weather (Open-Meteo wind_speed_10m) is measured at 10 m, not ELMFIRE's 20 ft default
+            k.Set(ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.WsAt10m, ".TRUE.");
             if (r.BarrierFilenameStem != null)
             {
                 k.Set(ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.UseBarriers, ".TRUE.");
@@ -189,6 +208,9 @@ namespace PREACT.Utility
             k.Set(ElmfireNamelistKeys.OutputsGroup, ElmfireNamelistKeys.OutputsDirectory, r.OutputsDirectory, quoted: true);
             k.Set(ElmfireNamelistKeys.OutputsGroup, ElmfireNamelistKeys.Dtdump, D(r.DtdumpSeconds));
             k.Set(ElmfireNamelistKeys.OutputsGroup, ElmfireNamelistKeys.DumpTimeOfArrival, ".TRUE.");
+            k.Set(ElmfireNamelistKeys.OutputsGroup, ElmfireNamelistKeys.DumpFlin, ".TRUE.");
+            k.Set(ElmfireNamelistKeys.OutputsGroup, ElmfireNamelistKeys.DumpSpreadRate, ".TRUE.");
+            k.Set(ElmfireNamelistKeys.OutputsGroup, ElmfireNamelistKeys.DumpSurfaceFire, ".TRUE.");
             k.Set(ElmfireNamelistKeys.OutputsGroup, ElmfireNamelistKeys.ConvertToGeotiff, ".TRUE.");
 
             // &TIME_CONTROL

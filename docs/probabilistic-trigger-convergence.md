@@ -205,6 +205,81 @@ GeoTIFF writer itself shares the same GDAL-runtime caveat as
 `RasterHarmonizer` below — compiles, not runtime-tested in this sandbox. The
 runner (invoking the `elmfire` binary itself) is still unimplemented.
 
+### Corrections from ELMFIRE's own docs
+
+`elmfire`, `WildfireAV`, and `Nelson-Dead-Fuel-Moisture` are now real git
+submodules under `WUInity/Assets/ThirdParty/` (the gitlinks existed but
+`.gitmodules` was missing its URLs — fixed). ELMFIRE's own
+`docs/archive/user_guide/io.rst`/`monte_carlo.rst` (this fork, pinned to the
+`ELMFIRE-WUINITY` branch) confirm most of the above and correct two real bugs
+that are now fixed in `ElmfireRealizationWriter`:
+
+- **`WS_FILENAME` is always mph**, regardless of `WS_AT_10M` — that flag only
+  tells ELMFIRE the raster is 10 m wind instead of its 20 ft default, it does
+  not change the unit. The writer was passing `WindSpeedMps` straight through;
+  it now converts to mph before writing the raster. It was also never actually
+  setting `WS_AT_10M = .TRUE.` despite having the key defined — added.
+- **`&OUTPUTS` was missing `DUMP_FLIN`/`DUMP_SPREAD_RATE`/`DUMP_SURFACE_FIRE`**
+  — confirmed real keys (`DUMP_TIME_OF_ARRIVAL` alone, which is all
+  WildfireAV's own validation use case needs, doesn't give k-PERIL the
+  fireline-intensity/spread-rate rasters `AscImportInput` also reads). Added.
+  **Still unconfirmed**: a native "spread direction" output — nothing in the
+  documented `DUMP_*` list corresponds to it, so `AscImportInput`'s spread
+  direction (`SD`) may need to be derived downstream from the time-of-arrival
+  raster's gradient rather than read directly from an ELMFIRE output.
+- **`&COMPUTATIONAL_DOMAIN` does exist** (`A_SRS`/`COMPUTATIONAL_DOMAIN_CELLSIZE`/
+  `_XLLCORNER`/`_YLLCORNER`) as an optional explicit override — the earlier
+  claim that there's "no computational-domain group at all" was too strong.
+  WildfireAV's real writer (and this writer) still don't set it, relying on
+  ELMFIRE's fallback to infer domain/CRS from `DEM_FILENAME`'s own
+  georeferencing when the group is absent, which the docs confirm is
+  supported (`"can be determined internally from the fuels inputs' metadata"`).
+- **Nelson lineage confirmed, not just plausible**: `Nelson-Dead-Fuel-
+  Moisture/DeadFuelMoisture.cs` (`namespace PREACT.Fire`) and this project's
+  own `DeadFuelMoistureCSharp.cs` (`namespace PREACT.Wildfire`) are the same
+  author, same Nelson/Bevins algorithm, near-identical size (2423 vs 2379
+  lines) — the standalone repo is a BSQ/exe-wrapped build of (a lineage of)
+  the same engine already running in-process here.
+
+### A bigger option this surfaced: ELMFIRE's native Monte Carlo mode
+
+ELMFIRE's `&MONTE_CARLO` group (`monte_carlo.rst`) natively supports almost
+exactly what Phases 0/1/3 build externally:
+
+- `RANDOM_IGNITIONS = .TRUE.` + `USE_IGNITION_MASK = .TRUE.` +
+  `IGNITION_MASK_FILENAME` + `RANDOM_IGNITIONS_TYPE = 2` samples ignition
+  points **weighted by a probability raster** — the same thing
+  `IgnitionSampler.TrySampleFromRaster` does in C#.
+- `NUM_METEOROLOGY_TIMES` + `METEOROLOGY_BAND_START`/`_STOP`/
+  `_SKIP_INTERVAL` step through **non-contiguous blocks of a single stacked
+  weather raster**, i.e. exactly "one block per climatology-sampled day",
+  running one realization per block.
+- `NUM_ENSEMBLE_MEMBERS` runs the **entire ensemble in one ELMFIRE
+  invocation**, writing each realization's rasters with a sequential
+  identifier prefix — which is already the exact shape
+  `ProbabilisticTrigger`/`ConvergeTrigger` expect to read from disk.
+- `CALCULATE_BURN_PROBABILITY = .TRUE.` computes a per-cell burn-probability
+  raster across the whole ensemble natively (`burn_probability.tif`) — not a
+  substitute for our trigger-boundary probability (that still needs
+  WUInity's evacuation + k-PERIL per realization, which ELMFIRE can't do),
+  but confirms the same "decile/probability aggregation" idea exists on the
+  fire-only side too.
+
+This is a real alternative to what's built: instead of our own C# code
+spawning N separate ELMFIRE processes (one per realization, each with its own
+patched namelist — the shape `ElmfireRealizationWriter` currently produces),
+ELMFIRE could run the **whole realization ensemble in one process** via
+`NUM_ENSEMBLE_MEMBERS`/`RANDOM_IGNITIONS`/`METEOROLOGY_BAND_*`, and our driver
+would just read the resulting numbered rasters — which
+`ProbabilisticTrigger`/`ConvergeTrigger` already do today, unchanged. This
+wasn't pursued further without checking which approach is wanted: per-
+realization external orchestration (what's built) is simpler to reason about
+and matches the outer "one WUInity+k-PERIL run per realization" loop 1:1, but
+running ELMFIRE as one ensemble could be significantly more efficient
+(one process startup, one set of static inputs loaded once) at the cost of
+building the climatology weather stack and ignition mask ELMFIRE's native
+mode expects instead of the per-realization files this writer produces now.
+
 ## Global automation: data sourcing & preprocessing
 
 The vision is that a case can be built for **any location on Earth** from a
