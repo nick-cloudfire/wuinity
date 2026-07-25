@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using PREACT.Utility;
 
@@ -43,7 +42,7 @@ namespace PREACTcli
             string outputDir = Path.Combine(caseDir, "_output");
             Directory.CreateDirectory(outputDir);
 
-            string preactExe = opts.PreactExe ?? FindPreactExe();
+            string preactExe = opts.PreactExe ?? RealizationRunner.FindPreactExe();
             if (!opts.ResumeOnly && (preactExe == null || !File.Exists(preactExe)))
             {
                 Console.Error.WriteLine("ERROR: could not locate PREACT.exe; pass --preact <path>. (Use --resume-only to aggregate already-computed boundaries without running.)");
@@ -71,57 +70,12 @@ namespace PREACTcli
                 string sd  = Path.Combine(opts.RasterDir, opts.SdPattern.Replace("{i}", idx));
                 string fi  = Path.Combine(opts.RasterDir, opts.FiPattern.Replace("{i}", idx));
 
-                string outputName = "trigger_" + idx + ".asc";
-                string triggerPath = Path.Combine(outputDir, "0_" + outputName);
-
-                bool haveResult = File.Exists(triggerPath);
-
-                if (!haveResult || !opts.Resume)
+                bool ok = RealizationRunner.TryRun(
+                    preactExe, caseDir, baseName, baseLines, idx, toa, ros, sd, fi,
+                    outputDir, opts.Resume, opts.ResumeOnly,
+                    out float[,] boundary, out AscRaster.Header h);
+                if (!ok)
                 {
-                    if (opts.ResumeOnly)
-                    {
-                        if (!haveResult) { Console.WriteLine($"[{idx}] no existing boundary, skipping (resume-only)."); continue; }
-                    }
-                    else
-                    {
-                        if (!File.Exists(toa) || !File.Exists(ros) || !File.Exists(sd))
-                        {
-                            Console.Error.WriteLine($"[{idx}] missing TOA/ROS/SD raster, skipping.");
-                            ++nFailed;
-                            continue;
-                        }
-
-                        string tempWui = Path.Combine(caseDir, "__prob_" + idx + ".wui");
-                        string[] lines = (string[])baseLines.Clone();
-                        lines = SetKeyInSection(lines, "Simulation", "Name", baseName + "_prob_" + idx);
-                        lines = SetKeyInSection(lines, "AscImport", "TimeOfArrivalFile", toa);
-                        lines = SetKeyInSection(lines, "AscImport", "RateOfSpreadFile", ros);
-                        lines = SetKeyInSection(lines, "AscImport", "SpreadDirectionFile", sd);
-                        if (File.Exists(fi)) lines = SetKeyInSection(lines, "AscImport", "FirelineIntensityFile", fi);
-                        lines = SetKeyInSection(lines, "kPERIL", "OutputName", outputName);
-                        File.WriteAllLines(tempWui, lines);
-
-                        Console.WriteLine($"[{idx}] running evacuation + k-PERIL...");
-                        int exit = RunProcess(preactExe, tempWui);
-                        try { File.Delete(tempWui); } catch { }
-
-                        if (exit != 0 || !File.Exists(triggerPath))
-                        {
-                            Console.Error.WriteLine($"[{idx}] run failed or produced no trigger boundary (exit {exit}).");
-                            ++nFailed;
-                            continue;
-                        }
-                    }
-                }
-                else
-                {
-                    Console.WriteLine($"[{idx}] reusing existing boundary.");
-                }
-
-                float[,] boundary = AscRaster.Read(triggerPath, out AscRaster.Header h, out bool ok);
-                if (!ok || boundary == null)
-                {
-                    Console.Error.WriteLine($"[{idx}] could not read boundary raster.");
                     ++nFailed;
                     continue;
                 }
@@ -274,40 +228,6 @@ namespace PREACTcli
                 result.Insert(insertAt, key + "=" + value);
             }
             return result.ToArray();
-        }
-
-        private static int RunProcess(string exe, string wuiPath)
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = exe,
-                UseShellExecute = false,
-                CreateNoWindow = false,
-                WorkingDirectory = Path.GetDirectoryName(Path.GetFullPath(exe)),
-            };
-            psi.ArgumentList.Add(wuiPath);
-
-            using (Process p = Process.Start(psi))
-            {
-                p.WaitForExit();
-                return p.ExitCode;
-            }
-        }
-
-        private static string FindPreactExe()
-        {
-            string cliDir = Path.GetDirectoryName(Path.GetFullPath(Environment.GetCommandLineArgs()[0]));
-            var candidates = new List<string>
-            {
-                Path.Combine(cliDir, "PREACT.exe"),
-                Path.GetFullPath(Path.Combine(cliDir, "..", "..", "..", "..", "PREACTexecute", "bin", "Release", "net8.0", "PREACT.exe")),
-                Path.GetFullPath(Path.Combine(cliDir, "..", "..", "..", "..", "PREACTexecute", "bin", "Debug", "net8.0", "PREACT.exe")),
-            };
-            foreach (string c in candidates)
-            {
-                if (File.Exists(c)) return c;
-            }
-            return null;
         }
 
         public static void PrintUsage()

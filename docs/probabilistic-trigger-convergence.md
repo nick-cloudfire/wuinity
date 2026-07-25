@@ -38,6 +38,17 @@ For each realization until converged:
 - Deliverable: the converged probability raster plus per-decile
   area-versus-run diagnostics (to show the convergence history).
 
+**Implemented** as `PREACTcli converge-trigger` (`PREACT/PREACTcli/ConvergeTrigger.cs`),
+alongside the existing fixed-count `PREACTcli probabilistic-trigger`
+(`ProbabilisticTrigger.cs`); both now share their per-realization run/read step via
+`RealizationRunner.cs`. `converge-trigger` takes `--max` (a cap on how many pre-generated
+realizations may be consumed — it does not run ELMFIRE itself, see the runner contract
+below) instead of a fixed `--count`, plus `--streak`/`--tolerance` (defaulting to 20/2%
+per this section), and writes `trigger_convergence.csv` (one row per realization: the
+per-decile area and its Δ vs. the previous realization, plus the running streak) next to
+the aggregated `trigger_probability.asc`. A decile only starts counting toward the streak
+once its area has an established non-zero baseline, matching the exclusion rule above.
+
 ## Climatology sampling — annual fire-weather maxima
 
 Uses the existing Open-Meteo historical archive client
@@ -197,8 +208,9 @@ produce grid-aligned inputs and invoke the runner.
 | 0 | Ignition sampler (mask → point) | new |
 | 1 | ELMFIRE realization runner + namelist writer | new — port from WildfireAV; user tunes template |
 | 2 | WUInity + k-PERIL per realization | ✅ built |
-| 3 | Convergence controller (decile-area, 20-run/<2% streak) | new |
-| 4 | CLI `converge-trigger` + Unity UI (ignition picker, climatology settings, live convergence view) | new |
+| 3 | Convergence controller (decile-area, 20-run/<2% streak) | ✅ built (`converge-trigger`) |
+| 4 | CLI `converge-trigger` | ✅ built | 
+| 4 | Unity UI (ignition picker, climatology settings, live convergence view) | new — `ProbabilisticTriggerWindow.cs` only wraps the fixed-count `probabilistic-trigger` today |
 
 User-supplied (not auto-sourced): **fuel model + canopy** rasters, and the
 **evacuation scenario** (destinations/exits, groups, demographics, response

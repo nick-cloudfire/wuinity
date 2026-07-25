@@ -20,6 +20,9 @@ namespace PREACTcli
                 case "probabilistic-trigger":
                     Environment.Exit(ProbabilisticTrigger.Run(args[1..]));
                     break;
+                case "converge-trigger":
+                    Environment.Exit(ConvergeTrigger.Run(args[1..]));
+                    break;
                 default:
                     Console.Error.WriteLine($"Unknown command: {args[0]}");
                     PrintUsage();
@@ -33,6 +36,7 @@ namespace PREACTcli
             Console.WriteLine("Usage:");
             Console.WriteLine("  PREACTcli global-gpw-to-pop --gpw <dir> --osm <file> --out <file> [--minhh <n>] [--maxhh <n>]");
             ProbabilisticTrigger.PrintUsage();
+            ConvergeTrigger.PrintUsage();
         }
 
         static void RunGpwToPop(string[] args)
