@@ -179,9 +179,11 @@ replaces that with what the real pipeline does:
   realization Monte Carlo).
 - **`&OUTPUTS`** needs `OUTPUTS_DIRECTORY`, `DTDUMP`, `DUMP_TIME_OF_ARRIVAL =
   .TRUE.`, `CONVERT_TO_GEOTIFF = .TRUE.` — WildfireAV only turns on
-  time-of-arrival dumping; the `vs_`/`spread_dir_`/`flin_` outputs our own
-  runner contract wants are **not** exercised by WildfireAV's validation use
-  case, so their exact `DUMP_*` key names are still unconfirmed.
+  time-of-arrival dumping; the `vs_`/`flin_` outputs our own runner contract
+  also wants aren't exercised by WildfireAV's validation use case, but their
+  `DUMP_*` keys are now confirmed against ELMFIRE's own docs (see "Corrections
+  from ELMFIRE's own docs" below) — `spread_dir_` is the one exception, with
+  no corresponding native output.
 - **`&TIME_CONTROL`**: `SIMULATION_DT`, `TARGET_CFL`, `SIMULATION_TSTOP`,
   `CURRENT_YEAR`, `HOUR_OF_YEAR` (hours since Jan 1 of `CURRENT_YEAR`).
 - **`&MISCELLANEOUS`**: `PATH_TO_GDAL`, `SCRATCH`.
