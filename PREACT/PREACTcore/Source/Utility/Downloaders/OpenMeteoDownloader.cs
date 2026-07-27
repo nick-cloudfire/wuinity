@@ -13,6 +13,14 @@ namespace PREACT.Tools
         static readonly OpenMeteo.HourlyOptionsParameter[] _parameters = { OpenMeteo.HourlyOptionsParameter.temperature_2m, OpenMeteo.HourlyOptionsParameter.relativehumidity_2m, OpenMeteo.HourlyOptionsParameter.precipitation,
             OpenMeteo.HourlyOptionsParameter.windspeed_10m, OpenMeteo.HourlyOptionsParameter.winddirection_10m, OpenMeteo.HourlyOptionsParameter.cloudcover, OpenMeteo.HourlyOptionsParameter.direct_radiation, OpenMeteo.HourlyOptionsParameter.boundary_layer_height};
 
+        /// <summary>How far the ERA5 reanalysis archive trails real time; requests past this return nothing.</summary>
+        private const int ArchiveLagDays = 6;
+
+        private static string Iso(DateTime d)
+        {
+            return d.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+        }
+
         public static async Task Download(Vector2d latLon, DateTime start, DateTime end, string newFilePath)
         {
             Engine.Message(null, Engine.LogType.Log, "Starting attempt to dowload weather data.");
@@ -24,12 +32,16 @@ namespace PREACT.Tools
                 if((end - DateTime.Now).Days < 16)
                 {
                     _client = _forecastClient;
+                    //Was never set, so a forecast request still asked for the whole calendar year
+                    //below - a range the forecast endpoint cannot serve, and the query came back
+                    //empty. This is what made any present or future dated scenario fail.
+                    forecast = true;
                 }
                 else
                 {
                     Engine.Message(null, Engine.LogType.Log, "Open-meteo only provides 16 days of forecasting, unable to download weather for specified dates.");
                     return;
-                }                
+                }
             }
 
             //set options to download
@@ -38,13 +50,37 @@ namespace PREACT.Tools
             //canadian FBP needs all year data for FWI/BUI/FFMC etc
             if(forecast)
             {
-                options.Start_date = new string($"{start.Year}-{start.Month}-{start.Day}");
-                options.End_date = new string($"{end.Year}-{end.Month}-{end.Day}");
+                //Zero-padded ISO: Open-Meteo wants YYYY-MM-DD, and the previous interpolation
+                //produced "2026-7-3" for single-digit months and days.
+                options.Start_date = Iso(start);
+                options.End_date = Iso(end);
             }
             else
             {
-                options.Start_date = new string($"{start.Year}-01-01");
-                options.End_date = new string($"{end.Year}-12-31");
+                //The reanalysis archive trails real time by several days, so asking for the rest
+                //of the current year returns nothing at all rather than the part that does exist.
+                //Clamped to the last day the archive can be expected to hold.
+                DateTime archiveEnd = DateTime.Now.Date.AddDays(-ArchiveLagDays);
+                DateTime requestedEnd = new DateTime(end.Year, 12, 31);
+                if (requestedEnd > archiveEnd) requestedEnd = archiveEnd;
+
+                DateTime requestedStart = new DateTime(start.Year, 1, 1);
+                if (requestedStart > requestedEnd)
+                {
+                    Engine.Message(null, Engine.LogType.SimulationError,
+                        $"The historical archive only reaches {archiveEnd:yyyy-MM-dd}, which is before the requested " +
+                        $"start of {requestedStart:yyyy-MM-dd}. Pick an earlier date for the scenario.");
+                    return;
+                }
+
+                if (requestedEnd < new DateTime(end.Year, 12, 31))
+                {
+                    Engine.Message(null, Engine.LogType.Log,
+                        $"Historical weather is only available to {requestedEnd:yyyy-MM-dd}; requesting up to there.");
+                }
+
+                options.Start_date = Iso(requestedStart);
+                options.End_date = Iso(requestedEnd);
             }
             options.Hourly.Add(_parameters);
 
@@ -96,7 +132,12 @@ namespace PREACT.Tools
             }
             else
             {
-                Engine.Message(null, Engine.LogType.Log, $"{nameof(OpenMeteoDownloader)} failed to download weather data.");
+                //Names the request that came back empty. "Failed to download weather data" alone
+                //gave no way to tell an unreachable service from an out-of-range date range.
+                Engine.Message(null, Engine.LogType.SimulationError,
+                    $"{nameof(OpenMeteoDownloader)} got no data for {options.Start_date} to {options.End_date} at " +
+                    $"{latLon.x:F4},{latLon.y:F4} from the {(forecast ? "forecast" : "historical archive")} endpoint. " +
+                    "Check the scenario dates are within range and that the service is reachable.");
             }
         }
     }

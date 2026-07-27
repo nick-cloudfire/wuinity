@@ -629,11 +629,28 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 Engine.Message(null, Engine.LogType.InputError, $"Parameter {nameof(_input.Simulation.Name)} needs to be properly set.");
                 return;
             }
+            //The module choices were only ever driving which controls were shown; without this the
+            //generated scenario would not actually enable what was ticked.
+            _input.PedestrianModule.Enabled = _wantPedestrian;
+            _input.TrafficModule.Enabled = _wantTraffic;
+            _input.WildfireModule.Enabled = _wantWildfire;
+            _input.SmokeModule.Enabled = _wantSmoke && _wantWildfire;
+
             _isOpen = false;
             _folderSet = false;
-            string filePath = Path.Combine(_input.RootFolder, _input.Simulation.Name, ".wui");
+
+            //Path.Combine treats each argument as a path segment, so this used to build
+            //"<root>\<name>\.wui" - a directory named after the scenario containing a file called
+            //".wui" - rather than "<root>\<name>.wui".
+            string filePath = Path.Combine(_input.RootFolder, _input.Simulation.Name + ".wui");
+
             PREACTInput.SaveToDisk(_input, filePath);
-            PreactGUI.Engine.SetInput(_input, filePath);     
+            PreactGUI.Engine.SetInput(_input, filePath);
+
+            if (File.Exists(filePath))
+            {
+                Engine.Message(null, Engine.LogType.Log, "Scenario written to " + filePath);
+            }
         }
         private static void OpenSetRootFolder()
         {
