@@ -46,10 +46,18 @@ namespace PREACT.Input
 
         public static void SaveToDisk(PREACTInput input, string saveFilePath)
         {
-            //TODO: writing the new .wui format back to disk is not implemented yet.
-            //Until it is, do NOT claim the file was saved — that would mislead callers
-            //into thinking their changes were persisted.
-            Engine.Message(null, Engine.LogType.Warning, " Saving input files is not implemented yet; " + saveFilePath + " was NOT written.");
+            try
+            {
+                string folder = Path.GetDirectoryName(Path.GetFullPath(saveFilePath));
+                if (!string.IsNullOrEmpty(folder)) Directory.CreateDirectory(folder);
+
+                File.WriteAllLines(saveFilePath, PREACTInputWriter.Write(input));
+                Engine.Message(null, Engine.LogType.Log, " Saved input file " + saveFilePath + ".");
+            }
+            catch (System.Exception e)
+            {
+                Engine.Message(null, Engine.LogType.SimulationError, " Could not save " + saveFilePath + ": " + e.Message);
+            }
         }
 
         public static PREACTInput LoadFromDisk(string filePath, out bool success)
