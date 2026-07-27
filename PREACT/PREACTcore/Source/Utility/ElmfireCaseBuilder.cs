@@ -83,6 +83,12 @@ namespace PREACT.Utility
             /// <summary>Optional CSVs (fuel_models.csv, building_fuel_models.csv) copied verbatim.</summary>
             public List<string> CopyFiles = new List<string>();
 
+            /// <summary>A graphical-fire-input file holding masks painted in Unity, and the
+            /// landscape raster they were painted against (which supplies their georeferencing).
+            /// Both are needed, or neither.</summary>
+            public string PaintedMasksPath;
+            public string PaintedMasksGridPath;
+
             /// <summary>Where the case is written. Must be empty or <see cref="Force"/> must be set.</summary>
             public string OutputDirectory;
 
@@ -125,6 +131,13 @@ namespace PREACT.Utility
 
             /// <summary>Anything the builder had to work around, surfaced so it is not silent.</summary>
             public List<string> Fallbacks = new List<string>();
+
+            /// <summary>An explicit ignition point from a painted initial ignition, in grid coordinates.</summary>
+            public bool HasIgnitionPoint;
+            public double IgnitionX, IgnitionY;
+
+            /// <summary>The exported painted WUI area, for k-PERIL's WuiAreaFile; null if none was painted.</summary>
+            public string WuiAreaFile;
 
             /// <summary>What the history-based weather chain actually managed to use, and where it fell back.</summary>
             public WeatherRasterPipeline.Result Weather;
@@ -238,6 +251,11 @@ namespace PREACT.Utility
                     "(surface fire only - no crown fire will be modelled).");
             }
 
+            //---------------------------------------------------------------- 5c. Painted masks
+            //Run before the ignition-mask default below, so a painted ignition area is used rather
+            //than being overwritten by the ignite-anywhere fallback.
+            ApplyPaintedMasks(o, result, inputs, grid, Log);
+
             //---------------------------------------------------------------- 6. Ignition mask
             //Only generated when the user did not supply one: an all-ones mask lets ELMFIRE's
             //RANDOM_IGNITIONS place a fire anywhere in the domain, which is the neutral default.
@@ -335,6 +353,71 @@ namespace PREACT.Utility
         /// inputs and invoke the runner". Per-realization keys (weather stems, SEED, ignition)
         /// are left for <see cref="ElmfireRealizationWriter"/> to patch in.
         /// </summary>
+        /// <summary>
+        /// Brings masks painted in Unity into the case: the random-ignition area becomes
+        /// <c>ignition_mask.tif</c>, the WUI area becomes <c>wui_area.tif</c> (what k-PERIL's
+        /// <c>WuiAreaFile</c> should point at), and a painted initial ignition becomes an explicit
+        /// <c>X_IGN</c>/<c>Y_IGN</c> point in the namelist instead of a random draw.
+        ///
+        /// A painted mask that is entirely empty is treated as "not painted" rather than as "ignite
+        /// nowhere" — an all-false mask is what an untouched painter produces, and honouring it
+        /// literally would give ELMFIRE no valid ignition cell at all.
+        /// </summary>
+        private static void ApplyPaintedMasks(Options o, Result result, string inputs, MasterGrid grid, Action<string> log)
+        {
+            if (string.IsNullOrEmpty(o.PaintedMasksPath)) return;
+
+            if (!File.Exists(o.PaintedMasksPath))
+            {
+                result.Fallbacks.Add("painted masks: file not found, " + o.PaintedMasksPath);
+                log("  painted: file not found, skipping.");
+                return;
+            }
+
+            if (string.IsNullOrEmpty(o.PaintedMasksGridPath) || !File.Exists(o.PaintedMasksGridPath))
+            {
+                result.Fallbacks.Add("painted masks: no landscape raster given for their georeferencing");
+                log("  painted: --painted-grid is required (the landscape raster the painting was done against); skipping.");
+                return;
+            }
+
+            try
+            {
+                PaintedMaskExporter.Masks masks = PaintedMaskExporter.Load(o.PaintedMasksPath);
+                MasterGrid painted = MasterGrid.FromRasterFile(o.PaintedMasksGridPath);
+
+                if (masks.Any(masks.RandomIgnition))
+                {
+                    PaintedMaskExporter.Export(masks.RandomIgnition, masks, painted, grid, Path.Combine(inputs, "ignition_mask.tif"));
+                    if (!result.Written.Contains("ignition_mask")) result.Written.Add("ignition_mask");
+                    log($"  painted: ignition area -> ignition_mask.tif ({masks.Count(masks.RandomIgnition)} painted cells).");
+                }
+
+                if (masks.Any(masks.WuiArea))
+                {
+                    PaintedMaskExporter.Export(masks.WuiArea, masks, painted, grid, Path.Combine(inputs, "wui_area.tif"));
+                    result.Written.Add("wui_area");
+                    result.WuiAreaFile = Path.Combine(inputs, "wui_area.tif");
+                    log($"  painted: WUI area -> wui_area.tif ({masks.Count(masks.WuiArea)} painted cells) - " +
+                        "point the .wui's [kPERIL] WuiAreaFile at it.");
+                }
+
+                if (masks.Any(masks.InitialIgnition) &&
+                    PaintedMaskExporter.TryGetIgnitionPoint(masks.InitialIgnition, masks, painted, grid, out double ix, out double iy))
+                {
+                    result.IgnitionX = ix;
+                    result.IgnitionY = iy;
+                    result.HasIgnitionPoint = true;
+                    log($"  painted: initial ignition -> X_IGN/Y_IGN ({ix:F1}, {iy:F1}), random ignition disabled.");
+                }
+            }
+            catch (Exception e)
+            {
+                result.Fallbacks.Add("painted masks: " + e.Message);
+                log("  painted: could not apply (" + e.Message + ").");
+            }
+        }
+
         /// <summary>
         /// Zeroes the ignition mask wherever the fuel model says nothing can burn, so ELMFIRE's own
         /// <c>RANDOM_IGNITIONS</c> cannot place a fire there.
@@ -511,9 +594,20 @@ namespace PREACT.Utility
             //pipeline's unit of parallelism (the driver re-seeds and reruns per realization).
             l.Add("NUM_ENSEMBLE_MEMBERS           = 1");
             l.Add("EDGEBUFFER                     = 30");
-            l.Add("RANDOM_IGNITIONS               = .TRUE.");
-            l.Add("USE_IGNITION_MASK              = .TRUE.");
-            l.Add("RANDOM_IGNITIONS_TYPE          = 1");
+
+            if (r.HasIgnitionPoint)
+            {
+                //An explicitly painted ignition and a random draw are mutually exclusive: leaving
+                //RANDOM_IGNITIONS on would have ELMFIRE ignore the point it was just given.
+                l.Add("RANDOM_IGNITIONS               = .FALSE.");
+                l.Add("USE_IGNITION_MASK              = .FALSE.");
+            }
+            else
+            {
+                l.Add("RANDOM_IGNITIONS               = .TRUE.");
+                l.Add("USE_IGNITION_MASK              = .TRUE.");
+                l.Add("RANDOM_IGNITIONS_TYPE          = 1");
+            }
             l.Add("");
             l.Add("! Fill in RASTER_TO_PERTURB blocks here to make the ensemble vary in weather /");
             l.Add("! moisture as well as ignition location - see the Mati template for the shape.");
@@ -522,6 +616,13 @@ namespace PREACT.Utility
             l.Add("&SIMULATOR");
             l.Add("MODE           = 1");
             l.Add("CLEAN_SCRATCH  = .TRUE.");
+            if (r.HasIgnitionPoint)
+            {
+                l.Add("NUM_IGNITIONS  = 1");
+                l.Add($"X_IGN(1)       = {C(r.IgnitionX)}");
+                l.Add($"Y_IGN(1)       = {C(r.IgnitionY)}");
+                l.Add("T_IGN(1)       = 0.00");
+            }
             l.Add("/");
             l.Add("");
 

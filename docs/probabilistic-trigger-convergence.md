@@ -542,6 +542,47 @@ which review would have caught:
   were never created and those cells returned -1. The pipeline drives its own
   per-class sticks (it has to, for per-class solar), but the engine is fixed too.
 
+### Painted masks from Unity
+
+Unity's `Painter` (`WUInity/Assets/WUInity/Core/Painter.cs`) already has the brush
+and the three modes that matter — `WUIArea`, `RandomIgnitionArea`,
+`InitialIgnition`. What it paints is **not** just a texture: it is written
+through to `WildfireData`'s `bool[]` arrays and persisted by
+`GraphicalFireInput.SaveGraphicalFireInput`. So the export path needs no Unity
+code at all — paint in the editor, save, then build the case from the CLI:
+
+```
+PREACTcli build-case ... --painted <graphical fire input> --painted-grid <landscape.tif>
+```
+
+| Painted mask | Becomes |
+|--------------|---------|
+| `RandomIgnitionArea` | `ignition_mask.tif` (then intersected with burnable fuel) |
+| `WUIArea` | `wui_area.tif` — point the `.wui`'s `[kPERIL] WuiAreaFile` at it |
+| `InitialIgnition` | explicit `X_IGN(1)`/`Y_IGN(1)`, with `RANDOM_IGNITIONS` turned **off** |
+
+`--painted-grid` is the landscape raster the painting was done against, and it is
+required: the masks live on the **LCP grid**, which is generally not the case's
+master grid (on Mati the LCP is EPSG:32635 at 27 m against a generated case in
+EPSG:32634 at 30 m). Every mask is therefore warped with nearest-neighbour —
+interpolating one would invent fractional cells along every edge. An all-false
+mask is treated as "not painted" rather than "ignite nowhere", since that is what
+an untouched painter produces.
+
+The `bool[]` convention is `x + y * ncols` with **y running north**, confirmed
+against `EvacuationManager.LoadWuiAreaMask` — the code that reads these masks
+back — rather than assumed.
+
+Verified against a synthetic file written in `SaveGraphicalFireInput`'s exact
+layout, which is the check that matters because a row-flip or CRS error would
+still produce a plausible-looking raster. A block painted at LCP cells
+x∈[30,80), y∈[40,90) should land at EPSG:32634 (758711.3, 4212051.6); the export
+put its centroid at (758711.4, 4212050.7) — sub-metre on a 30 m grid, where a row
+flip would have been kilometres out. A 3×3 initial-ignition dab produced an
+`X_IGN`/`Y_IGN` within one cell of its computed position, and ELMFIRE's own
+time-of-arrival output has its earliest arrival one cell from that point, so the
+fire really did start where the brush said.
+
 ### Burnable-only ignition
 
 `build-case` zeroes the ignition mask wherever the fuel model cannot carry fire

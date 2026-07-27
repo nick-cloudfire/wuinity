@@ -65,6 +65,8 @@ namespace PREACTcli
                     case "--m10":       o.Weather.FallbackM10Percent = Dbl(Next(args, ref i)); break;
                     case "--m100":      o.Weather.FallbackM100Percent = Dbl(Next(args, ref i)); break;
                     case "--copy":      o.CopyFiles.Add(Next(args, ref i)); break;
+                    case "--painted":      o.PaintedMasksPath = Next(args, ref i); break;
+                    case "--painted-grid": o.PaintedMasksGridPath = Next(args, ref i); break;
                     case "--force":     o.Force = true; break;
                     default:
                         if (a.StartsWith("--") && Array.IndexOf(UserRasterStems, a.Substring(2)) >= 0)
@@ -129,6 +131,16 @@ namespace PREACTcli
                 {
                     Console.WriteLine($"  defaulted {string.Join(", ", r.Defaulted)} to zero (surface fire only)");
                 }
+                if (r.WuiAreaFile != null)
+                {
+                    Console.WriteLine($"  wui area  {r.WuiAreaFile}");
+                    Console.WriteLine("            set [kPERIL] WuiAreaFile to this path in the .wui");
+                }
+                if (r.HasIgnitionPoint)
+                {
+                    Console.WriteLine($"  ignition  fixed at {r.IgnitionX:F1}, {r.IgnitionY:F1} (random ignition disabled)");
+                }
+                foreach (string f in r.Fallbacks) Console.WriteLine($"  !         {f}");
                 if (!r.Written.Contains("fbfm13"))
                 {
                     Console.WriteLine("  WARNING   no fuel model raster (--fbfm13); ELMFIRE will refuse to start on this case.");
@@ -338,6 +350,10 @@ namespace PREACTcli
             Console.WriteLine("      --gdal <bin>       GDAL bin directory written into the namelist's PATH_TO_GDAL");
             Console.WriteLine("      --tstop <s>        SIMULATION_TSTOP (default 72000)");
             Console.WriteLine("      --copy <file>      copy a loose file (e.g. fuel_models.csv) into inputs/");
+            Console.WriteLine("      --painted <file>   masks painted in Unity (a graphical fire input file):");
+            Console.WriteLine("                         ignition area -> ignition_mask.tif, WUI area -> wui_area.tif,");
+            Console.WriteLine("                         initial ignition -> an explicit X_IGN/Y_IGN");
+            Console.WriteLine("      --painted-grid <t> the landscape raster those masks were painted against");
             Console.WriteLine("      baseline weather (ERA5 climatology -> WindNinja -> Nelson):");
             Console.WriteLine("      --climatology-from/-to <year>  archive range (default 2000 to last complete year)");
             Console.WriteLine("      --weather-date <date>          use this historical day instead of sampling one");
