@@ -362,7 +362,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
             {
                 //No measurable total: a sweeping bar says "working" without inventing a
                 //percentage. Driven by time so it animates regardless of what the step is doing.
-                float sweep = Mathf.PingPong(Time.realtimeSinceStartup * 0.6f, 1f);
+                //Both qualified: PREACT.Math defines its own Mathf, and PREACT.Time is a namespace
+                //that shadows UnityEngine.Time under this file's "using PREACT".
+                float sweep = UnityEngine.Mathf.PingPong(UnityEngine.Time.realtimeSinceStartup * 0.6f, 1f);
                 ImGui.ProgressBar(sweep, new Vector2(-1, 0), "working...");
             }
             else
