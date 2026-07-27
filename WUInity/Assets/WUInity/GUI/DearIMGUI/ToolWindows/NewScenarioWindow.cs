@@ -30,6 +30,15 @@ namespace Assets.WUInity.GUI.DearIMGUI
         private static readonly object _logSync = new object();
         private static readonly System.Collections.Generic.List<string> _pendingLog = new System.Collections.Generic.List<string>();
 
+        //Progress popup. The fraction is negative while a step is running without a measurable
+        //total, which the bar renders as a sweep rather than pretending to a percentage it does
+        //not have.
+        private static bool _progressPopupOpen;
+        private static string _progressTitle = string.Empty;
+        private static volatile float _progressFraction = -1f;
+        private static string _progressDetail = string.Empty;
+        private static readonly System.Collections.Generic.List<string> _progressLog = new System.Collections.Generic.List<string>();
+
         //Files the steps produce, relative to the scenario root so the generated .wui stays portable.
         private static string WorldPopFile => _input.Simulation.Name + "_worldpop.tif";
         private static string OsmFile => _input.Simulation.Name + ".osm.xml";
@@ -78,10 +87,13 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             if(!_folderSet)
             {
-                if (ImGui.Button("Set root folder")) 
+                if (ImGui.Button("Set root folder"))
                 {
-                    OpenSetRootFolder();                    
+                    OpenSetRootFolder();
                 }
+                //Begin must always be matched by End, even on the early-out path. Returning here
+                //without it left ImGui's window stack unbalanced for the rest of the frame.
+                ImGui.End();
                 return;
             }
             ImGui.Text($"{nameof(_input.RootFolder)}: {_input.RootFolder}");
@@ -128,10 +140,10 @@ namespace Assets.WUInity.GUI.DearIMGUI
                     ImGui.InputInt("Max household size", ref _maxHouseholdSize);
 
                     ImGui.BeginDisabled(_stepBusy);
-                    if (ImGui.Button("Step 1: Download WorldPop")) { DownloadWorldPop(); }
-                    if (ImGui.Button("Step 2: Download OSM data")) { DownloadOsm(); }
-                    if (ImGui.Button("Step 3: Build RouterDb")) { BuildRouterDb(); }
-                    if (ImGui.Button("Step 4: Generate population")) { GeneratePopulation(); }
+                    if (StepButton("Step 1: Download WorldPop", WorldPopFile)) { DownloadWorldPop(); }
+                    if (StepButton("Step 2: Download OSM data", OsmFile)) { DownloadOsm(); }
+                    if (StepButton("Step 3: Build RouterDb", RouterDbFile)) { BuildRouterDb(); }
+                    if (StepButton("Step 4: Generate population", PopulationFile)) { GeneratePopulation(); }
                     ImGui.EndDisabled();
                 }
             }
@@ -149,7 +161,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 else
                 {
                     ImGui.BeginDisabled(_stepBusy);
-                    if (ImGui.Button("Step 1: Download OSM data")) { DownloadOsm(); }
+                    if (StepButton("Step 1: Download OSM data", OsmFile)) { DownloadOsm(); }
                     ImGui.EndDisabled();
                     //No SUMO network builder exists on this side yet - the .osm.xml above is the
                     //input to SUMO's own netconvert/osmWebWizard, which has to be run externally.
@@ -189,7 +201,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 else
                 {
                     ImGui.BeginDisabled(_stepBusy);
-                    if (ImGui.Button("Step 1: Download weather file")) { DownloadWeather(); }
+                    if (StepButton("Step 1: Download weather file", WeatherFile)) { DownloadWeather(); }
                     ImGui.EndDisabled();
                 }
             }
@@ -198,6 +210,10 @@ namespace Assets.WUInity.GUI.DearIMGUI
             {
                 ImGui.SeparatorText("Data preparation");
                 ImGui.TextWrapped(_stepStatus);
+                if (!_progressPopupOpen && ImGui.Button("Show progress"))
+                {
+                    _progressPopupOpen = true;
+                }
             }
 
             ImGui.Separator();
@@ -216,6 +232,12 @@ namespace Assets.WUInity.GUI.DearIMGUI
             if (ImGui.Button("Generate scenario")) { GenerateScenario(); }
 
             ImGui.End();
+
+            //Drawn after the main window is closed off, so it is a sibling window rather than
+            //nested inside the creator. It is still tied to the creator's lifetime - Draw returns
+            //early once that closes - which is why a running step keeps the creator open.
+            DrawProgressWindow();
+
             if (!_isOpen)
             {
                 PreactGUI.CloseWindow(Draw);
@@ -260,6 +282,11 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             _stepBusy = true;
             _stepStatus = what + "...";
+            _progressPopupOpen = true;
+            _progressTitle = what;
+            _progressDetail = string.Empty;
+            _progressFraction = -1f;
+            lock (_logSync) { _progressLog.Clear(); }
             LogStep(what + "...");
 
             System.Threading.Tasks.Task.Run(async () =>
@@ -278,16 +305,130 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 finally
                 {
                     _stepBusy = false;
+                    //Completed steps show a full bar rather than freezing wherever they stopped.
+                    _progressFraction = 1f;
                 }
             });
         }
 
-        /// <summary>Queues a message for the console; safe to call from a step's worker thread.</summary>
+        /// <summary>
+        /// A step button with a completion marker. Completion is judged by the output file
+        /// existing rather than by a flag set when the button was pressed, so it stays correct
+        /// across a restart, and after a step is re-run or its file deleted outside the editor.
+        /// </summary>
+        private static bool StepButton(string label, string producedFile)
+        {
+            bool done = !string.IsNullOrEmpty(_input.Simulation.Name) && File.Exists(InRoot(producedFile));
+
+            bool pressed = ImGui.Button(done ? label + " (redo)" : label);
+
+            ImGui.SameLine();
+            if (done)
+            {
+                //ImGui has no tick glyph in the default font, so this uses text that renders in
+                //any font rather than a symbol that might come out as a box.
+                ImGui.TextColored(new Vector4(0.35f, 0.8f, 0.35f, 1f), "[done] " + producedFile);
+            }
+            else
+            {
+                ImGui.TextDisabled("[pending]");
+            }
+
+            return pressed;
+        }
+
+        /// <summary>
+        /// The step progress window: what is running, how far along, and the messages it produced.
+        /// Drawn as its own window rather than a modal so the map and console stay usable while a
+        /// long download runs.
+        /// </summary>
+        private static void DrawProgressWindow()
+        {
+            if (!_progressPopupOpen)
+            {
+                return;
+            }
+
+            ImGui.Begin("Scenario data preparation", ref _progressPopupOpen, ImGuiWindowFlags.NoCollapse);
+
+            ImGui.TextWrapped(_progressTitle);
+
+            float fraction = _progressFraction;
+            if (fraction >= 0f)
+            {
+                ImGui.ProgressBar(fraction, new Vector2(-1, 0), $"{fraction * 100f:F0} %");
+            }
+            else if (_stepBusy)
+            {
+                //No measurable total: a sweeping bar says "working" without inventing a
+                //percentage. Driven by time so it animates regardless of what the step is doing.
+                float sweep = Mathf.PingPong(Time.realtimeSinceStartup * 0.6f, 1f);
+                ImGui.ProgressBar(sweep, new Vector2(-1, 0), "working...");
+            }
+            else
+            {
+                ImGui.ProgressBar(1f, new Vector2(-1, 0), "idle");
+            }
+
+            if (!string.IsNullOrEmpty(_progressDetail))
+            {
+                ImGui.TextWrapped(_progressDetail);
+            }
+
+            ImGui.Separator();
+
+            ImGui.BeginChild("step_log", new Vector2(0, 160), (ImGuiChildFlags)1, ImGuiWindowFlags.HorizontalScrollbar);
+            lock (_logSync)
+            {
+                for (int i = 0; i < _progressLog.Count; ++i)
+                {
+                    ImGui.TextUnformatted(_progressLog[i]);
+                }
+            }
+            if (_stepBusy)
+            {
+                ImGui.SetScrollHereY(1.0f);
+            }
+            ImGui.EndChild();
+
+            ImGui.BeginDisabled(_stepBusy);
+            if (ImGui.Button("Close"))
+            {
+                _progressPopupOpen = false;
+            }
+            ImGui.EndDisabled();
+
+            ImGui.End();
+        }
+
+        /// <summary>Queues a message for the console and the progress window; safe to call from a
+        /// step's worker thread.</summary>
         private static void LogStep(string message)
         {
             lock (_logSync)
             {
                 _pendingLog.Add(message);
+                _progressLog.Add(message);
+                //bounded so a chatty step cannot grow this without limit
+                if (_progressLog.Count > 200) _progressLog.RemoveAt(0);
+            }
+        }
+
+        /// <summary>
+        /// Reports download progress from a worker thread. Only the numbers are stored; they are
+        /// formatted while drawing, so this stays cheap enough to call per buffer.
+        /// </summary>
+        private static void ReportBytes(long received, long total)
+        {
+            if (total > 0)
+            {
+                _progressFraction = (float)received / total;
+                _progressDetail = $"{received / (1024.0 * 1024.0):F1} of {total / (1024.0 * 1024.0):F1} MB";
+            }
+            else
+            {
+                _progressFraction = -1f;
+                _progressDetail = $"{received / (1024.0 * 1024.0):F1} MB received";
             }
         }
 
@@ -346,7 +487,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 await PREACT.Tools.WorldPopDownloader.DownloadRegionUTM(
                     _input.Simulation.StartDateTime.Year,
                     _input.Simulation.LowerLeftLatLon, UpperRightLatLon(),
-                    _input.RootFolder, Path.GetFileNameWithoutExtension(WorldPopFile));
+                    _input.RootFolder, Path.GetFileNameWithoutExtension(WorldPopFile),
+                    ReportBytes);
             });
         }
 

@@ -68,7 +68,13 @@ namespace PREACT.Tools
             return region.ThreeLetterISORegionName;
         }
 
-        public static async Task<string> DownloadRegionUTM(int year, Vector2d lowerLeftLatLon, Vector2d upperRightLatLon, string outputFolder, string clippedFileName)
+        /// <summary>
+        /// <paramref name="onProgress"/> receives (bytesReceived, totalBytes) while the country
+        /// raster downloads, with totalBytes -1 when the server does not declare a length. It is
+        /// optional so existing callers are unaffected; the country file runs to hundreds of
+        /// megabytes, which is far too long to leave a caller with nothing to show.
+        /// </summary>
+        public static async Task<string> DownloadRegionUTM(int year, Vector2d lowerLeftLatLon, Vector2d upperRightLatLon, string outputFolder, string clippedFileName, Action<long, long> onProgress = null)
         {
             if(clippedFileName == null)
             {
@@ -159,12 +165,27 @@ namespace PREACT.Tools
             if (!File.Exists(countryFilePath))
             {
                 Engine.Message(null, Engine.LogType.Log, $"No local cache was found, downloading WorldPop for {iso3} and will the proceed to clip to AIO and warp to UTM zone.");
-                //Download the GeoTIFF
-                using (var stream = await _http.GetStreamAsync(selected.files[0]))
+                //Download the GeoTIFF, reporting progress as it goes. Read with
+                //ResponseHeadersRead so the length is known before the body arrives, and copied a
+                //buffer at a time rather than with CopyToAsync, which would give no visibility
+                //into a download this large.
+                using (var response = await _http.GetAsync(selected.files[0], HttpCompletionOption.ResponseHeadersRead))
                 {
+                    response.EnsureSuccessStatusCode();
+                    long total = response.Content.Headers.ContentLength ?? -1L;
+
+                    using (var stream = await response.Content.ReadAsStreamAsync())
                     using (var file = File.Create(countryFilePath))
                     {
-                        await stream.CopyToAsync(file);
+                        var buffer = new byte[81920];
+                        long received = 0;
+                        int read;
+                        while ((read = await stream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                        {
+                            await file.WriteAsync(buffer, 0, read);
+                            received += read;
+                            onProgress?.Invoke(received, total);
+                        }
                     }
                 }
             }
