@@ -110,10 +110,43 @@ namespace PREACT.Tools
                 }
             }
 
+            //Nearest available year rather than a hard failure. The requested year is normally the
+            //simulation's, which for a present-day or forecast scenario is routinely outside
+            //WorldPop's published range - it is a historical product and does not extend to the
+            //current year. Refusing outright made the population step unusable for any such
+            //scenario, when a neighbouring year's population is a perfectly reasonable input and
+            //is what a user would have picked by hand anyway.
+            if (selected == null)
+            {
+                int bestDistance = int.MaxValue;
+                for (int i = 0; i < datasets.data.Count; i++)
+                {
+                    var d = datasets.data[i];
+                    if (d.data_file == null) continue;
+                    if (!int.TryParse(d.popyear, out int candidateYear)) continue;
+
+                    int distance = System.Math.Abs(candidateYear - year);
+                    //ties go to the later year: newer population data is the better estimate
+                    if (distance < bestDistance || (distance == bestDistance && selected != null &&
+                        int.TryParse(selected.popyear, out int chosen) && candidateYear > chosen))
+                    {
+                        bestDistance = distance;
+                        selected = d;
+                    }
+                }
+
+                if (selected != null)
+                {
+                    Engine.Message(null, Engine.LogType.Warning,
+                        $"WorldPop has no {iso3} data for {year}; using {selected.popyear} instead " +
+                        $"(the closest available). Selected data Id: {selected.id}, {selected.desc}.");
+                }
+            }
+
             //could not find anything
             if (selected == null)
             {
-                throw new Exception("No dataset found for " + iso3 + " in " + year + ".");
+                throw new Exception("No dataset found for " + iso3 + " in " + year + ", and no other year is available either.");
             }
             if (selected.data_file == null)
             {
