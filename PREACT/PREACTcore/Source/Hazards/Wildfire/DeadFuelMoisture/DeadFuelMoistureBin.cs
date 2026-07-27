@@ -16,7 +16,9 @@ namespace PREACT.Wildfire
             _include1000hour = include1000hour;
             _oneHour = DeadFuelMoisture.createDeadFuelMoisture1("OneHour");        
             _tenHour = DeadFuelMoisture.createDeadFuelMoisture10("TenHour");
-            _hundredHour = DeadFuelMoisture.createDeadFuelMoisture10("HundredHour");
+            //was createDeadFuelMoisture10, which built a second 10-hour stick under a 100-hour
+            //name - the two always returned identical moisture as a result.
+            _hundredHour = DeadFuelMoisture.createDeadFuelMoisture100("HundredHour");
             if(_include1000hour)
             {
                 _thousandHour = DeadFuelMoisture.createDeadFuelMoisture1000("ThousandHour");

@@ -15,9 +15,12 @@ namespace PREACT.Wildfire
             int xDim = elevation.GetLength(0);
             int yDim = elevation.GetLength(1);
 
+            //x was previously bounded by yDim, so on any non-square raster the bins for the
+            //columns past yDim were never created and GetDeadFuelMoisture returned -1 for every
+            //cell whose terrain class only occurs there.
             for (int y = 0; y < yDim; ++y)
             {
-                for (int x = 0; x < yDim; ++x)
+                for (int x = 0; x < xDim; ++x)
                 {
                     uint hash = GetBinHash(elevation[x, y], slope[x, y], aspect[x, y], canopyCover[x, y]); //, 400, 45, 15, 20
                     if (!_deadFuelMoistureBins.ContainsKey(hash))

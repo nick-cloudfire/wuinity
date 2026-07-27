@@ -11,9 +11,15 @@ namespace PREACT.Utility
     public static class SlopeAspect
     {
         /// <summary>
-        /// Computes slope (degrees from horizontal) and aspect (degrees clockwise from... see
-        /// note) for every cell of an elevation raster, using the standard 3x3 Horn's-method
-        /// kernel. Edge cells clamp to the nearest valid row/column instead of wrapping.
+        /// Computes slope (degrees from horizontal) and aspect for every cell of an elevation
+        /// raster, using the standard 3x3 Horn's-method kernel. Edge cells clamp to the nearest
+        /// valid row/column instead of wrapping.
+        ///
+        /// The input is indexed <c>[x, y]</c> with <b>x running east and y running north</b>
+        /// (the lower-left-origin convention <see cref="AscRaster.ReadGeoTiff"/> produces).
+        /// Aspect is returned the way LANDFIRE and ELMFIRE both define it: the compass bearing
+        /// of the <b>downslope</b> direction, degrees clockwise from north, in [0, 360). Flat
+        /// cells return 0.
         /// </summary>
         public static void Compute(float[,] elevation, double cellSize, out float[,] slopeDegrees, out float[,] aspectDegrees)
         {
@@ -45,19 +51,25 @@ namespace PREACT.Utility
                     float z8 = Sample(x + 1, y);
                     float z9 = Sample(x + 1, y + 1);
 
-                    double dzdx = ((z3 + 2.0 * z6 + z9) - (z1 + 2.0 * z4 + z7)) / (8.0 * cellSize);
-                    double dzdy = ((z7 + 2.0 * z8 + z9) - (z1 + 2.0 * z2 + z3)) / (8.0 * cellSize);
+                    //the y-varying kernel gives the northward gradient, the x-varying one the
+                    //eastward gradient - naming them after the axis they actually differentiate
+                    //along, because getting these two the wrong way round mirrors the aspect.
+                    double dzdNorth = ((z3 + 2.0 * z6 + z9) - (z1 + 2.0 * z4 + z7)) / (8.0 * cellSize);
+                    double dzdEast = ((z7 + 2.0 * z8 + z9) - (z1 + 2.0 * z2 + z3)) / (8.0 * cellSize);
 
-                    double gradient = System.Math.Sqrt(dzdx * dzdx + dzdy * dzdy);
+                    double gradient = System.Math.Sqrt(dzdEast * dzdEast + dzdNorth * dzdNorth);
                     slopeDegrees[x, y] = (float)(System.Math.Atan(gradient) * radToDeg);
 
-                    if (System.Math.Abs(dzdx) < 1e-6 && System.Math.Abs(dzdy) < 1e-6)
+                    if (System.Math.Abs(dzdEast) < 1e-6 && System.Math.Abs(dzdNorth) < 1e-6)
                     {
                         aspectDegrees[x, y] = 0f; //flat terrain
                         continue;
                     }
 
-                    double aspectRadians = System.Math.Atan2(dzdy, -dzdx);
+                    //compass bearing of the downslope vector (-dzdEast, -dzdNorth): Atan2 takes
+                    //(east, north) in that order because bearings are measured clockwise from
+                    //north, the mirror image of the usual counter-clockwise-from-east angle.
+                    double aspectRadians = System.Math.Atan2(-dzdEast, -dzdNorth);
                     if (aspectRadians < 0) aspectRadians += 2 * System.Math.PI;
                     aspectDegrees[x, y] = (float)(aspectRadians * radToDeg);
                 }
