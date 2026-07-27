@@ -202,11 +202,62 @@ namespace PREACT
                 }                
             }
 
+            //Shared cache, checked before falling back to the network. The name above is derived
+            //from Simulation.Name, which the probabilistic-trigger driver overrides per
+            //realization - so that file never exists on a fresh run and every realization of a
+            //campaign downloads its own copy of the same year of weather. A 990-realization
+            //campaign meant 990 identical Open-Meteo requests, which is what draws rate limiting.
+            if (!haveCorrectWeather)
+            {
+                string sharedPath = SharedWeatherCachePath();
+                if (File.Exists(sharedPath))
+                {
+                    WeatherStream wD = WeatherStream.LoadFromFile(sharedPath, out success);
+                    if (success && DateTime.Compare(timeManager.StartDateTime, wD.FirstEntry) >= 0
+                                && DateTime.Compare(timeManager.EndDateTime, wD.LastEntry) <= 0)
+                    {
+                        Engine.Message(_simulation, Engine.LogType.Log, $"Using shared weather cache {Path.GetFileName(sharedPath)}.");
+                        haveCorrectWeather = true;
+                        _weatherData = wD;
+                    }
+                }
+            }
+
             if (!haveCorrectWeather)
             {
                 Engine.Message(_simulation, Engine.LogType.Log, $"Weather data file was either not found or did not contain needed time range, downloading weather.");
-                DownloadWeather();
-            }                             
+
+                //A download failure used to take the whole process down with it, losing that
+                //realization's already-completed fire simulation and leaving nothing in the log to
+                //say why. Failing the simulation cleanly is recoverable; aborting is not.
+                try
+                {
+                    DownloadWeather();
+                }
+                catch (Exception e)
+                {
+                    Engine.Message(_simulation, Engine.LogType.SimulationError,
+                        $"Weather download failed: {e.Message}");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Where a downloaded year of weather is cached for reuse. Keyed on the location and year
+        /// range it actually covers rather than on the simulation name, so every realization of a
+        /// campaign - each of which runs under its own generated name - shares one file instead of
+        /// fetching its own identical copy.
+        /// </summary>
+        private string SharedWeatherCachePath()
+        {
+            double lat = _simulation.Spatial.SimulationCenterLatLon.x;
+            double lon = _simulation.Spatial.SimulationCenterLatLon.y;
+            string name = string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "weather_{0:F4}_{1:F4}_{2}_{3}.csv",
+                lat, lon, _simulation.Time.StartDateTime.Year, _simulation.Time.EndDateTime.Year)
+                .Replace('-', 'm'); //keep negative lat/lon out of the filename as a leading dash
+
+            return Path.Combine(_simulation.Input.RootFolder, name);
         }
 
         //TODO: remove
@@ -228,8 +279,13 @@ namespace PREACT
             {
                 _weatherReferenceElevation = weatherStream.Elevation;
 
-                string filePath = Path.Combine(_simulation.Input.RootFolder, $"{_simulation.Input.Simulation.Name}_weather.csv");
-                using (StreamWriter file = new StreamWriter(filePath))
+                //Written to a private temporary file and then moved into place, because several
+                //realizations may reach this at once: a reader must never see a half-written cache,
+                //and a download that dies midway must not leave a truncated one behind. The move is
+                //within the same directory, so it is atomic enough for that.
+                string filePath = SharedWeatherCachePath();
+                string tempPath = filePath + "." + System.Diagnostics.Process.GetCurrentProcess().Id + ".tmp";
+                using (StreamWriter file = new StreamWriter(tempPath))
                 {
                     file.WriteLine($"Latitide,{weatherStream.Latitude}");
                     file.WriteLine($"Longitude,{weatherStream.Longitude}");
@@ -272,12 +328,40 @@ namespace PREACT
                         }
                     }
                 }
+
+                PublishWeatherCache(tempPath, filePath);
             }
             else
             {
                 Engine.Message(_simulation, Engine.LogType.SimulationError, "Could not download weather and no weather file has been supplied.");
             }
-        }           
+        }
+
+        /// <summary>
+        /// Moves a freshly-written cache into place. A concurrent realization may have finished
+        /// the same download first; that is a benign race - the two files hold the same weather -
+        /// so losing it just means discarding this copy rather than failing the run.
+        /// </summary>
+        private void PublishWeatherCache(string tempPath, string filePath)
+        {
+            try
+            {
+                if (File.Exists(filePath))
+                {
+                    File.Delete(tempPath);
+                    return;
+                }
+
+                File.Move(tempPath, filePath);
+            }
+            catch (Exception e)
+            {
+                //The weather itself is already in memory, so this only costs the next realization
+                //a re-download - not worth failing over.
+                Engine.Message(_simulation, Engine.LogType.Log, $"Could not publish the weather cache: {e.Message}");
+                try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
+            }
+        }
 
         public float GetTemperature()
         {

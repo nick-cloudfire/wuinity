@@ -525,10 +525,11 @@ which review would have caught:
   takes the hour as `HHMM` — internally it computes `hour / 100` in integer
   arithmetic — so an hour-of-day argument collapses to midnight and it returns 0
   for every cell. It also wants elevation in feet. With both fixed, a south slope
-  gets 904 W/m² at noon against a north slope's 543. (Note the pre-existing
-  `CellDeadFuelMoisture` passes an hour-of-day here too, and additionally
-  hard-codes `Hour = 0`, so it is presumably getting zero radiation as well —
-  not touched here, but it looks like the same bug.)
+  gets 904 W/m² at noon against a north slope's 543. `SimpleRadiation` now
+  documents both units on the parameters themselves, since nothing in the
+  signature hints at either. (`CellDeadFuelMoisture` calls it the same wrong way,
+  but its entire class body is inside a `/* */` block — it is dead code with no
+  callers, so there is nothing live to fix there.)
 - **Sampling one hour made the result hostage to drizzle.** ERA5 reported 0.3 mm
   at 13:00 on the drawn day — an area-average over ~9 km, not necessarily rain on
   the fuel — and Nelson correctly soaked the 1-hour stick from 3.7 % to 60 %. The
@@ -564,6 +565,38 @@ As a second line of defence `ElmfireRunner` parses ELMFIRE's own `Fire area:`
 line and **fails** a realization that burned nothing, rather than passing it on.
 An unparsed log is deliberately not treated as empty — absence of the line is not
 evidence of a zero-area fire.
+
+### The evacuation half's own weather download
+
+Separate from the ELMFIRE weather chain above, `WeatherManager` fetches a year of
+hourly weather for the *evacuation* simulation. It used to cache that against
+`{Simulation.Name}_weather.csv` — and the driver overrides `Simulation.Name` per
+realization, so that file never existed on a fresh run and **every realization
+downloaded its own identical copy**. A 990-realization campaign made 990
+identical Open-Meteo requests and left 990 × 1.4 MB of duplicate CSV in the case
+folder. One of them (realization 0093) died mid-download and took the whole
+process with it, discarding that realization's already-completed ELMFIRE run.
+
+Three changes:
+
+- The cache is now keyed on **location and year range** rather than the
+  simulation name, so all realizations of a campaign share one file.
+- It is written to a per-process temp file and moved into place, so a concurrent
+  realization never reads a half-written cache and a died-midway download leaves
+  nothing behind. Losing the move race to another realization is benign — the two
+  files hold the same weather — so the loser just discards its copy.
+- A download failure is caught and fails that realization cleanly instead of
+  aborting the process.
+
+Verified with 4 concurrent realizations from a cold cache: 4/4 successful, one
+weather file on disk, no leftover temp files. Note what the logs show — the two
+realizations that started before any cache existed both downloaded, and one of
+them lost the move race and discarded its copy; the two that started later read
+the shared file. So this bounds concurrent downloads by **`--parallel`, not by
+campaign length**: 4 instead of 990, rather than 1. Closing that last gap would
+need a cross-process lock or a serial pre-warm like the one `converge-trigger`
+already does for the ELMFIRE-side ERA5 archive, and at 4 requests per campaign
+it is no longer the thing that breaks long runs.
 
 ### Per-realization weather
 
