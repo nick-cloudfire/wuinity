@@ -39,7 +39,11 @@ namespace PREACT.Utility
                 }
                 if (inGroup)
                 {
-                    string noSpace = trimmed.Replace(" ", "");
+                    // All whitespace, not just spaces: real templates align their '=' with tabs
+                    // (ELMFIRE's own examples do), and matching only on spaces silently misses
+                    // those keys, appending a duplicate to the group instead of replacing the
+                    // existing line.
+                    string noSpace = StripWhitespace(trimmed);
                     if (noSpace.StartsWith(key + "=", StringComparison.OrdinalIgnoreCase))
                     {
                         result[i] = newLine;
@@ -67,6 +71,16 @@ namespace PREACT.Utility
                 result.Insert(groupEnd, newLine);
             }
             return result.ToArray();
+        }
+
+        private static string StripWhitespace(string s)
+        {
+            var sb = new System.Text.StringBuilder(s.Length);
+            foreach (char c in s)
+            {
+                if (!char.IsWhiteSpace(c)) sb.Append(c);
+            }
+            return sb.ToString();
         }
     }
 }

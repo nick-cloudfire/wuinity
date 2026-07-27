@@ -41,9 +41,9 @@ For each realization until converged:
 **Implemented** as `PREACTcli converge-trigger` (`PREACT/PREACTcli/ConvergeTrigger.cs`),
 alongside the existing fixed-count `PREACTcli probabilistic-trigger`
 (`ProbabilisticTrigger.cs`); both now share their per-realization run/read step via
-`RealizationRunner.cs`. `converge-trigger` takes `--max` (a cap on how many pre-generated
-realizations may be consumed — it does not run ELMFIRE itself, see the runner contract
-below) instead of a fixed `--count`, plus `--streak`/`--tolerance` (defaulting to 20/2%
+`RealizationRunner.cs`. `converge-trigger` takes `--max` (a cap on how many realizations
+may be consumed, whether read from `--dir` or generated via `--elmfire`; see Realization
+generation) instead of a fixed `--count`, plus `--streak`/`--tolerance` (defaulting to 20/2%
 per this section), and writes `trigger_convergence.csv` (one row per realization: the
 per-decile area and its Δ vs. the previous realization, plus the running streak) next to
 the aggregated `trigger_probability.asc`. A decile only starts counting toward the streak
@@ -432,6 +432,123 @@ Porting WildfireAV's per-case steps:
 The **user will fine-tune the ELMFIRE input template**; this pipeline only has to
 produce grid-aligned inputs and invoke the runner.
 
+## Realization generation
+
+`converge-trigger` gets each realization's fire rasters one of two ways. By default it reads a
+pre-generated set from `--dir` using indexed filename patterns. With `--elmfire <exe>
+--elmfire-template <elmfire.data> --elmfire-inputs <folder>` it generates them on demand instead,
+so the ensemble no longer has to exist up front.
+
+The ensemble comes from **ELMFIRE's own Monte Carlo machinery**, not from a second sampler on the
+C# side: the template keeps whatever `RANDOM_IGNITIONS` / `USE_IGNITION_MASK` /
+`RASTER_TO_PERTURB` configuration it was written with, and only `SEED` changes per realization
+(`NUM_ENSEMBLE_MEMBERS` is pinned to 1, since the unit of parallelism here is the realization).
+This is how the reference Mati ensemble was produced, it keeps the fire physics in one place, and
+it means a hand-tuned template behaves identically under the driver. Verified: two realizations
+from one template produce genuinely different fires (max time-of-arrival 3596 s vs 3249 s).
+
+Two things make concurrent realizations safe, both load-bearing:
+
+- **Private scratch and outputs per realization, shared read-only inputs.** ELMFIRE converts every
+  input GeoTIFF to an intermediate ENVI `.bsq`/`.hdr` before reading it, writing those next to the
+  input *only when `SCRATCH` is unset*; with `SCRATCH` set they go there instead. Output names are
+  not unique either — every realization dumps `time_of_arrival_0000001_*.tif` — so a shared outputs
+  directory would have realizations overwriting each other.
+- **A pinned GDAL/PROJ environment for the child process.** ELMFIRE calls `gdalsrsinfo` to learn
+  the DEM's EPSG and writes its GeoTIFFs with `-a_srs` from the result. A conflicting PROJ data
+  directory earlier on `PATH` — **SUMO ships one**, and SUMO is on `PATH` on any machine set up for
+  WUInity's traffic half — makes that lookup fail, ELMFIRE falls back to `A_SRS=UNKNOWN`, every
+  `gdal_translate` fails, and the run **still exits 0** having deleted its own `.bil` intermediates:
+  a silent, total loss of the realization. `ElmfireRunner` therefore puts the GDAL bin directory
+  first on the child's `PATH` and points `PROJ_DATA`/`PROJ_LIB` at its sibling `share\proj`.
+
+Not yet wired: per-realization weather from the climatology/WindNinja/Nelson chain. Until those
+land, weather variation is whatever the template's own `RASTER_TO_PERTURB` block specifies.
+
+### Output and logs
+
+The console carries only the driver's own lines — `PROGRESS n/N`, the per-realization streak, and
+the final summary. Both child processes are redirected to files, because at `--parallel` width
+their combined per-timestep output is unreadable and buries the driver's own messages:
+
+| Path | Contents |
+|------|----------|
+| `_output/trigger_probability.asc` | the aggregated per-cell probability raster |
+| `_output/trigger_convergence.csv` | one row per realization: per-decile areas, Δ vs. previous, running streak |
+| `_output/0_trigger_<idx>.asc` | each realization's k-PERIL boundary |
+| `_output/logs/realization_<idx>.log` | that realization's full PREACT/SUMO/k-PERIL output |
+| `_elmfire/<idx>/outputs/*.tif` | that realization's fire rasters (TOA, vs, spread_dir, flin) |
+| `_elmfire/<idx>/elmfire.log` | that realization's ELMFIRE output |
+
+When a realization fails the driver prints the log path plus a short tail, so a redirected run
+still says why it broke without needing the file opened. `--resume` reads `_elmfire/` and the
+existing boundaries to skip completed work, so that directory is worth keeping between runs;
+`_output/logs/` is never read back and can be deleted freely.
+
+## Running the pipeline
+
+### Build
+
+```
+dotnet build PREACT/PREACTcli/PREACTcli.csproj -c Release
+dotnet build PREACT/PREACTexecute/PREACTexecute.csproj -c Release
+WUInity\Assets\ThirdParty\elmfire\build\windows\make_windows.bat
+```
+
+The ELMFIRE build needs an ordinary `cmd` (it sources oneAPI's `setvars.bat` itself) plus the
+Intel Fortran compiler, Intel MPI, and the MSVC toolset — `ifx` compiles the Fortran but links
+against the Microsoft C runtime, so "Desktop development with C++" must be installed or the build
+fails at link time with cryptic `lld-link` errors. It produces `build\windows\bin\elmfire.exe` and
+stages `impi.dll` beside it, which is what lets the binary run outside an oneAPI shell — including
+when spawned by this driver, which inherits WUInity's environment rather than a oneAPI one. Only
+`elmfire` is built; upstream's `elmfire_post` is skipped as unused here.
+
+### Runtime prerequisites
+
+- **GDAL command-line tools.** ELMFIRE shells out to `gdalinfo`, `gdalsrsinfo` and
+  `gdal_translate`; a QGIS or OSGeo4W install provides them. WUInity's own
+  `Runtimes/Native/GDAL` does *not* — those are the C# binding's DLLs, with no executables.
+- **SUMO**, for the evacuation half, as for any WUInity run.
+
+### Invocation
+
+```
+PREACTcli.exe converge-trigger ^
+  --wui <case>\<name>.wui ^
+  --max 200 --parallel 8 --pad 4 --resume ^
+  --elmfire <...>\build\windows\bin\elmfire.exe ^
+  --elmfire-template <case>\ELMFIRE\<name>.data ^
+  --elmfire-inputs <case>\ELMFIRE\inputs ^
+  --gdal "C:\Program Files\QGIS 3.44.2\bin"
+```
+
+Drop the four `--elmfire*`/`--gdal` flags and pass `--dir` instead to consume a pre-generated
+ensemble the original way.
+
+**`--gdal` is effectively mandatory when generating realizations.** Without it ELMFIRE inherits
+the ambient `PATH`, and on any machine set up for WUInity that includes SUMO — whose bundled
+`proj.db` shadows GDAL's, breaking the EPSG lookup. ELMFIRE then falls back to `A_SRS=UNKNOWN`,
+every `gdal_translate` fails, and **the run still exits 0** having deleted its own intermediates.
+The failure is silent and total, so treat the flag as required rather than optional.
+
+Other flags worth knowing: `--max` is a ceiling, not a target — the run stops early when the
+convergence criterion is met. `--resume` reuses both existing ELMFIRE outputs and existing
+boundaries, making an interrupted campaign continuable. `--parallel` is one ELMFIRE *and* one
+SUMO process per slot, and SUMO dominates the wall clock.
+
+### Unity constraints
+
+Both `elmfire` and `Nelson-Dead-Fuel-Moisture` are submodules under `Assets/`, and Unity tries to
+import everything it finds there — compiling .NET-only sources with its own older C#, loading
+managed DLLs as game assemblies, and importing Fortran `.obj`/`.mod` files as FBX models and
+AudioClips. Two mitigations are in place: `make_windows.bat` sets the Windows hidden attribute on
+its `bin\`/`obj\` output every build (Unity skips hidden paths), and
+`Assets/WUInity/Compatibility/IsExternalInit.cs` polyfills the marker type that C# 9 `init`
+accessors need but netstandard2.1 lacks. The hidden attribute is not stored in git, so a fresh
+clone needs it re-applied to Nelson's `bin\`/`obj\`. The durable fix is moving these submodules
+out of `Assets/` — nothing in this pipeline requires them there, since the runner takes
+`--elmfire <path>`.
+
 ## Components / phases
 
 | Phase | Component | Status |
@@ -440,10 +557,10 @@ produce grid-aligned inputs and invoke the runner.
 | 0 | Raster harmonization (auto-UTM warp/clip/resample to master grid) | ✅ built, ⚠️ warp untested at runtime (`MasterGrid`, `RasterHarmonizer`, `UtmUtility` — see Master-grid principle) |
 | 0 | Climatology sampler (ERA5, 20-day conditioning, annual FWI-max distribution) | ✅ built (annual-maxima half; conditioning window still TBD — see `ClimatologySampler`) |
 | 0 | Nelson wrapper for dead moisture (weather → m1/m10/m100) | new — call the existing in-process engine directly (WildfireAV's exe/BSQ plumbing doesn't apply, see ELMFIRE runner contract) |
-| 0 | ECMWF fuel-dataset reader for live moisture (NetCDF, by-date LFMC) | new — dataset stored in repo |
+| 0 | Fuel-dataset reader for live moisture (by-date LFMC) | new — dataset is in `WUInity/Assets/ThirdParty/LFMC/` as ~250 monthly GeoTIFFs (`LFMC_MAP_<year>_<month>.tif`), **not** NetCDF as earlier planned (confirmed by the user). So this is a by-date file lookup plus a `RasterHarmonizer` call onto the master grid — no NetCDF dependency needed |
 | 0 | WindNinja step (terrain wind → ws/wd on master grid) | new (port from WildfireAV; confirmed invoked via `conda run -n <env> WindNinja_cli <config>`) |
 | 0 | Ignition sampler (mask → point) | ✅ built (`IgnitionSampler`: uniform mask + weighted-raster sampling); valid-fuel snapping not yet ported |
-| 1 | ELMFIRE realization runner + namelist writer | 🟡 namelist writer built with keys verified against the real WildfireAV template *and* ELMFIRE's own docs; runner (invoking `elmfire`) still new — see ELMFIRE runner contract |
+| 1 | ELMFIRE realization runner + namelist writer | ✅ built (`ElmfireRunner`, wired into `converge-trigger --elmfire`): per realization the template is re-seeded and `elmfire` runs in its own directory. Ensemble variation comes from ELMFIRE's own Monte Carlo (`SEED` + the template's `RANDOM_IGNITIONS`/`RASTER_TO_PERTURB`), not a second sampler on the C# side — see Realization generation |
 | 2 | WUInity + k-PERIL per realization | ✅ built |
 | 3 | Convergence controller (decile-area, 20-run/<2% streak) | ✅ built (`converge-trigger`), now runs realizations `--parallel`-wide as concurrent OS processes (see Convergence criterion) |
 | 4 | CLI `converge-trigger` | ✅ built | 

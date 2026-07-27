@@ -88,6 +88,11 @@ namespace PREACT.Utility
 
         // &MONTE_CARLO
         public const string NumMeteorologyTimes = "NUM_METEOROLOGY_TIMES";
+        /// <summary>Seeds ELMFIRE's own Monte Carlo draws — random ignition placement and the
+        /// RASTER_TO_PERTURB weather/moisture perturbations. Varying it per realization is what
+        /// makes an ensemble out of a single template.</summary>
+        public const string Seed = "SEED";
+        public const string NumEnsembleMembers = "NUM_ENSEMBLE_MEMBERS";
 
         // &MISCELLANEOUS
         public const string PathToGdal = "PATH_TO_GDAL";

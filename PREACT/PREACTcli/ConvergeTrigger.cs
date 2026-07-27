@@ -15,8 +15,13 @@ namespace PREACTcli
     /// probability raster. Instead of a fixed count it stops once the probability raster's
     /// decile-area footprint has stabilized: for a streak of consecutive realizations, every
     /// decile's area changed by less than a tolerance from the previous realization. --max bounds
-    /// how many pre-generated realizations may be consumed (this driver does not run ELMFIRE
-    /// itself; realizations must already exist on disk).
+    /// how many realizations may be consumed.
+    ///
+    /// The fire rasters behind each realization come from one of two sources. By default they are
+    /// read from a pre-generated set on disk (--dir with indexed filename patterns). With
+    /// --elmfire they are generated on demand instead: per realization the template namelist is
+    /// re-seeded and ELMFIRE is run in its own directory, so the ensemble no longer has to exist
+    /// up front (see <see cref="TryGenerateRasters"/>).
     ///
     /// Up to <c>--parallel</c> realizations run concurrently, each as its own PREACT.exe OS
     /// process. This is deliberate, not incidental: WUInity's evacuation step runs on SUMO via
@@ -38,9 +43,15 @@ namespace PREACTcli
         {
             var opts = ParseArgs(args);
 
-            if (opts.BaseWui == null || opts.RasterDir == null || opts.MaxRealizations <= 0)
+            if (opts.BaseWui == null || opts.MaxRealizations <= 0)
             {
-                Console.Error.WriteLine("ERROR: --wui, --dir and --max are required.");
+                Console.Error.WriteLine("ERROR: --wui and --max are required.");
+                PrintUsage();
+                return 1;
+            }
+            if (!opts.GenerateRealizations && opts.RasterDir == null)
+            {
+                Console.Error.WriteLine("ERROR: --dir is required unless generating realizations with --elmfire.");
                 PrintUsage();
                 return 1;
             }
@@ -49,10 +60,33 @@ namespace PREACTcli
                 Console.Error.WriteLine("ERROR: base .wui not found: " + opts.BaseWui);
                 return 1;
             }
-            if (!Directory.Exists(opts.RasterDir))
+            if (opts.RasterDir != null && !Directory.Exists(opts.RasterDir))
             {
                 Console.Error.WriteLine("ERROR: raster folder not found: " + opts.RasterDir);
                 return 1;
+            }
+            if (opts.GenerateRealizations && !opts.ResumeOnly)
+            {
+                if (opts.ElmfireExe == null || !File.Exists(opts.ElmfireExe))
+                {
+                    Console.Error.WriteLine("ERROR: --elmfire must point at the elmfire executable.");
+                    return 1;
+                }
+                if (opts.ElmfireTemplate == null || !File.Exists(opts.ElmfireTemplate))
+                {
+                    Console.Error.WriteLine("ERROR: --elmfire-template must point at a base elmfire.data namelist.");
+                    return 1;
+                }
+                if (opts.ElmfireInputs == null || !Directory.Exists(opts.ElmfireInputs))
+                {
+                    Console.Error.WriteLine("ERROR: --elmfire-inputs must point at the shared fuels/topography/weather raster folder.");
+                    return 1;
+                }
+                // ELMFIRE resolves these against each realization's own run directory, so a
+                // relative path would silently point somewhere else per realization.
+                opts.ElmfireInputs = Path.GetFullPath(opts.ElmfireInputs).TrimEnd(Path.DirectorySeparatorChar);
+                opts.ElmfireExe = Path.GetFullPath(opts.ElmfireExe);
+                opts.ElmfireTemplate = Path.GetFullPath(opts.ElmfireTemplate);
             }
             if (opts.Streak <= 0 || opts.Tolerance <= 0)
             {
@@ -92,14 +126,85 @@ namespace PREACTcli
             public AscRaster.Header Header;
         }
 
+        /// <summary>
+        /// Produces realization <paramref name="index"/>'s fire rasters by running ELMFIRE, rather
+        /// than reading a pre-generated set from --dir.
+        ///
+        /// The ensemble comes from ELMFIRE's own Monte Carlo machinery, not from a second sampler
+        /// on this side: the template keeps whatever RANDOM_IGNITIONS / USE_IGNITION_MASK /
+        /// RASTER_TO_PERTURB configuration it was written with, and only SEED changes per
+        /// realization. That is how the reference Mati ensemble was generated, it keeps the
+        /// physics in one place, and it means a template tuned by hand behaves identically here.
+        /// NUM_ENSEMBLE_MEMBERS is pinned to 1 because this driver's unit of parallelism is the
+        /// realization — one ELMFIRE process per member, each with its own scratch and outputs.
+        /// </summary>
+        private static bool TryGenerateRasters(Options opts, string caseDir, string idx, int index,
+            out string toa, out string ros, out string sd, out string fi)
+        {
+            toa = ros = sd = fi = null;
+
+            string runDir = Path.Combine(caseDir, "_elmfire", idx);
+            Directory.CreateDirectory(runDir);
+
+            string[] lines = File.ReadAllLines(opts.ElmfireTemplate);
+            lines = ElmfireNamelist.SetKeyInGroup(lines, ElmfireNamelistKeys.MonteCarloGroup,
+                        ElmfireNamelistKeys.Seed, unchecked(opts.Seed + index).ToString(CultureInfo.InvariantCulture));
+            lines = ElmfireNamelist.SetKeyInGroup(lines, ElmfireNamelistKeys.MonteCarloGroup,
+                        ElmfireNamelistKeys.NumEnsembleMembers, "1");
+
+            // Inputs stay shared and read-only; outputs and scratch are per realization. ELMFIRE
+            // appends the path separator to these itself, so they are passed without one.
+            lines = ElmfireNamelist.SetKeyInGroup(lines, ElmfireNamelistKeys.InputsGroup,
+                        ElmfireNamelistKeys.FuelsAndTopographyDirectory, opts.ElmfireInputs, quoted: true);
+            lines = ElmfireNamelist.SetKeyInGroup(lines, ElmfireNamelistKeys.InputsGroup,
+                        ElmfireNamelistKeys.WeatherDirectory, opts.ElmfireInputs, quoted: true);
+            lines = ElmfireNamelist.SetKeyInGroup(lines, ElmfireNamelistKeys.OutputsGroup,
+                        ElmfireNamelistKeys.OutputsDirectory, "./outputs", quoted: true);
+            lines = ElmfireNamelist.SetKeyInGroup(lines, ElmfireNamelistKeys.MiscellaneousGroup,
+                        ElmfireNamelistKeys.Scratch, "./scratch", quoted: true);
+
+            if (opts.PathToGdal != null)
+            {
+                lines = ElmfireNamelist.SetKeyInGroup(lines, ElmfireNamelistKeys.MiscellaneousGroup,
+                            ElmfireNamelistKeys.PathToGdal, opts.PathToGdal, quoted: true);
+            }
+            if (opts.TstopSeconds > 0)
+            {
+                lines = ElmfireNamelist.SetKeyInGroup(lines, ElmfireNamelistKeys.TimeControlGroup,
+                            ElmfireNamelistKeys.SimulationTstop, opts.TstopSeconds.ToString(CultureInfo.InvariantCulture));
+            }
+
+            var r = ElmfireRunner.Run(opts.ElmfireExe, runDir, idx, lines, opts.Resume, Console.Out, opts.PathToGdal);
+            if (!r.Ok)
+            {
+                Console.Error.WriteLine($"[{idx}] ELMFIRE failed: {r.Message}");
+                return false;
+            }
+
+            toa = r.Toa; ros = r.Ros; sd = r.Sd; fi = r.Fi ?? "";
+            return true;
+        }
+
         private static RealizationOutcome RunRealization(string preactExe, string caseDir, string baseName, string[] baseLines,
             int index, Options opts, string outputDir)
         {
             string idx = index.ToString().PadLeft(opts.Pad, '0');
-            string toa = Path.Combine(opts.RasterDir, opts.ToaPattern.Replace("{i}", idx));
-            string ros = Path.Combine(opts.RasterDir, opts.RosPattern.Replace("{i}", idx));
-            string sd  = Path.Combine(opts.RasterDir, opts.SdPattern.Replace("{i}", idx));
-            string fi  = Path.Combine(opts.RasterDir, opts.FiPattern.Replace("{i}", idx));
+            string toa, ros, sd, fi;
+
+            if (opts.GenerateRealizations && !opts.ResumeOnly)
+            {
+                if (!TryGenerateRasters(opts, caseDir, idx, index, out toa, out ros, out sd, out fi))
+                {
+                    return new RealizationOutcome { Ok = false, Idx = idx };
+                }
+            }
+            else
+            {
+                toa = Path.Combine(opts.RasterDir, opts.ToaPattern.Replace("{i}", idx));
+                ros = Path.Combine(opts.RasterDir, opts.RosPattern.Replace("{i}", idx));
+                sd  = Path.Combine(opts.RasterDir, opts.SdPattern.Replace("{i}", idx));
+                fi  = Path.Combine(opts.RasterDir, opts.FiPattern.Replace("{i}", idx));
+            }
 
             bool ok = RealizationRunner.TryRun(
                 preactExe, caseDir, baseName, baseLines, idx, toa, ros, sd, fi,
@@ -298,6 +403,18 @@ namespace PREACTcli
             public bool Resume;
             public bool ResumeOnly;
             public int Parallelism = Environment.ProcessorCount;
+
+            // ---- generate-realizations mode -----------------------------------------------
+            // With --elmfire set, each realization's fire rasters are produced on demand instead
+            // of being read from --dir: sample an ignition, patch the template, run ELMFIRE.
+            public string ElmfireExe;
+            public string ElmfireTemplate;
+            public string ElmfireInputs;
+            public string PathToGdal;
+            public double TstopSeconds;
+            public int Seed = 12345;
+
+            public bool GenerateRealizations => ElmfireExe != null || ElmfireTemplate != null;
         }
 
         private static Options ParseArgs(string[] args)
@@ -324,6 +441,12 @@ namespace PREACTcli
                     case "--parallel":    int.TryParse(Next(args, ref i), out o.Parallelism); break;
                     case "--resume":      o.Resume = true; break;
                     case "--resume-only": o.Resume = true; o.ResumeOnly = true; break;
+                    case "--elmfire":          o.ElmfireExe = Next(args, ref i); break;
+                    case "--elmfire-template": o.ElmfireTemplate = Next(args, ref i); break;
+                    case "--elmfire-inputs":   o.ElmfireInputs = Next(args, ref i); break;
+                    case "--gdal":             o.PathToGdal = Next(args, ref i); break;
+                    case "--tstop":            double.TryParse(Next(args, ref i), NumberStyles.Any, CultureInfo.InvariantCulture, out o.TstopSeconds); break;
+                    case "--seed":             int.TryParse(Next(args, ref i), out o.Seed); break;
                 }
             }
             return o;
@@ -337,6 +460,10 @@ namespace PREACTcli
         public static void PrintUsage()
         {
             Console.WriteLine("  PREACTcli converge-trigger --wui <base.wui> --dir <rasterFolder> --max <N>");
+            Console.WriteLine("    or, generating realizations instead of reading them from --dir:");
+            Console.WriteLine("  PREACTcli converge-trigger --wui <base.wui> --max <N> \\");
+            Console.WriteLine("      --elmfire <elmfire.exe> --elmfire-template <elmfire.data> --elmfire-inputs <inputsFolder>");
+            Console.WriteLine("      [--tstop <seconds>] [--seed <n=12345>] [--gdal <gdalBinFolder>]");
             Console.WriteLine("      [--start <n=1>] [--pad <width=4>]");
             Console.WriteLine("      [--toa TOA_{i}.tif] [--ros ROS_{i}.tif] [--sd SD_{i}.tif] [--fi FI_{i}.tif]");
             Console.WriteLine("      [--preact <PREACT.exe>] [--out <probability.asc>] [--diagnostics <convergence.csv>]");

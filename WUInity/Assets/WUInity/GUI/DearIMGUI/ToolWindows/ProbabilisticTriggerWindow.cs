@@ -143,7 +143,11 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             // Log
             ImGui.SeparatorText("Log");
-            ImGui.BeginChild("prob_log", new Vector2(0, 220), true, ImGuiWindowFlags.HorizontalScrollbar);
+            // Third argument is ImGuiChildFlags, not the bool 'border' of older bindings. The
+            // member for a bordered child was renamed across ImGui.NET versions (Border -> Borders),
+            // so the value is written numerically: it is 1 in both, and this file has to compile
+            // against whatever version the uimgui package pins.
+            ImGui.BeginChild("prob_log", new Vector2(0, 220), (ImGuiChildFlags)1, ImGuiWindowFlags.HorizontalScrollbar);
             lock (_sync)
             {
                 // show the tail to keep the widget light on very long runs

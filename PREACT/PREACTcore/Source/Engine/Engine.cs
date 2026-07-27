@@ -159,7 +159,13 @@ namespace PREACT
             }
         }
 
-        public async void RunSimulations(EngineTask engineTask, int startIndexOffset = 0)
+        // Returns a Task rather than being 'async void' so callers can actually wait for the run
+        // and observe its exceptions. As async void it was fire-and-forget: PREACT.exe could only
+        // poll a flag set by the SimulationsFinished callback, and any failure in here surfaced
+        // nowhere, leaving the process spinning forever on a run that had already finished or
+        // already died. Callers that genuinely want fire-and-forget (the Unity manager) can still
+        // call it without awaiting.
+        public async Task RunSimulations(EngineTask engineTask, int startIndexOffset = 0)
         {
             if(_input == null)
             {

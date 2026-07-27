@@ -9,6 +9,11 @@
     <Platforms>AnyCPU</Platforms>
     <RootNamespace>PREACT</RootNamespace>
     <AssemblyName>PREACT</AssemblyName>
+    <!-- Matches PREACTcli. Without it PREACT.exe refuses to start on a machine that has a newer
+         .NET than 8 installed but not 8 itself, which is what the probabilistic-trigger drivers
+         hit: they spawn PREACT.exe per realization, so the whole pipeline fails at the evacuation
+         step while the CLI that launched it runs fine. -->
+    <RollForward>LatestMajor</RollForward>
   </PropertyGroup>
 
   <ItemGroup>

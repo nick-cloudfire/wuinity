@@ -59,12 +59,14 @@ namespace PREACTcli
                     File.WriteAllLines(tempWui, lines);
 
                     Console.WriteLine($"[{idx}] running evacuation + k-PERIL...");
-                    int exit = RunProcess(preactExe, tempWui);
+                    string logPath = Path.Combine(outputDir, "logs", "realization_" + idx + ".log");
+                    int exit = RunProcess(preactExe, tempWui, logPath);
                     try { File.Delete(tempWui); } catch { }
 
                     if (exit != 0 || !File.Exists(triggerPath))
                     {
-                        Console.Error.WriteLine($"[{idx}] run failed or produced no trigger boundary (exit {exit}).");
+                        Console.Error.WriteLine($"[{idx}] run failed or produced no trigger boundary (exit {exit}). See {logPath}");
+                        Console.Error.WriteLine($"    {LogTail(logPath)}");
                         return false;
                     }
                 }
@@ -83,21 +85,73 @@ namespace PREACTcli
             return true;
         }
 
-        public static int RunProcess(string exe, string wuiPath)
+        /// <summary>
+        /// Runs PREACT.exe for one realization. When <paramref name="logPath"/> is given both of
+        /// its streams go to that file instead of the console.
+        ///
+        /// PREACT logs every simulation step, so at --parallel width the inherited console output
+        /// is both unreadable (several realizations interleaving line by line) and useless (the
+        /// driver's own PROGRESS/error lines get buried). Per-realization files keep the full
+        /// detail for diagnosis while leaving the console to the driver. On failure the caller
+        /// prints a tail of the file, so a broken run still says why without being tailed by hand.
+        /// </summary>
+        public static int RunProcess(string exe, string wuiPath, string logPath = null)
         {
             var psi = new ProcessStartInfo
             {
                 FileName = exe,
                 UseShellExecute = false,
-                CreateNoWindow = false,
+                CreateNoWindow = true,
                 WorkingDirectory = Path.GetDirectoryName(Path.GetFullPath(exe)),
+                RedirectStandardOutput = logPath != null,
+                RedirectStandardError = logPath != null,
             };
             psi.ArgumentList.Add(wuiPath);
 
-            using (Process p = Process.Start(psi))
+            if (logPath == null)
             {
+                using (Process p = Process.Start(psi))
+                {
+                    p.WaitForExit();
+                    return p.ExitCode;
+                }
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(logPath)));
+            using (var log = new StreamWriter(logPath, append: false))
+            using (var p = new Process { StartInfo = psi })
+            {
+                //synchronised because stdout and stderr arrive on separate threads
+                object sync = new object();
+                void Write(string line)
+                {
+                    if (line == null) return;
+                    lock (sync) log.WriteLine(line);
+                }
+
+                p.OutputDataReceived += (_, e) => Write(e.Data);
+                p.ErrorDataReceived += (_, e) => Write(e.Data);
+
+                p.Start();
+                p.BeginOutputReadLine();
+                p.BeginErrorReadLine();
                 p.WaitForExit();
                 return p.ExitCode;
+            }
+        }
+
+        /// <summary>Last <paramref name="lines"/> lines of a log, for failure messages.</summary>
+        public static string LogTail(string logPath, int lines = 5)
+        {
+            try
+            {
+                string[] all = File.ReadAllLines(logPath);
+                int from = Math.Max(0, all.Length - lines);
+                return string.Join(System.Environment.NewLine + "    ", all[from..]);
+            }
+            catch
+            {
+                return "(no log available)";
             }
         }
 

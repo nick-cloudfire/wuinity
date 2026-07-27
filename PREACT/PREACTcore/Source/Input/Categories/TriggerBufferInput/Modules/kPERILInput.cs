@@ -67,24 +67,34 @@ namespace PREACT.Input
             }
 
 
+            //critical only when the rate of spread is computed with Behave. When ROS is supplied
+            //externally (CalculateROSFromBehave=false, which is how the ELMFIRE-driven
+            //probabilistic trigger pipeline runs) the moisture raster is never read, so a missing
+            //entry must not fail the load. The guard below always said as much, but the
+            //missing-key branch set success=false unconditionally and the next critical check
+            //returned on it, so an irrelevant key still aborted the whole .wui.
             nameOfInput = nameof(InitialFuelMoistureFile);
             if (inputToParse.TryGetValue(nameOfInput, out userInput))
             {
                 newInput.InitialFuelMoistureFile = userInput;
-                PREACTInput.CheckIfFileExist(nameOfInput, userInput, rootFolder, out success);
+                PREACTInput.CheckIfFileExist(nameOfInput, userInput, rootFolder, out bool moistureFileExists);
+                if (!moistureFileExists && newInput.CalculateROSFromBehave)
+                {
+                    success = false;
+                    return newInput;
+                }
             }
-            else
+            else if (newInput.CalculateROSFromBehave)
             {
                 success = false;
                 PREACTInput.InputNotFoundMessage(nameOfInput, true);
-            }
-            //critical
-            if(!success && newInput.CalculateROSFromBehave)
-            {
                 return newInput;
             }
 
-            //critical
+            //critical. Returns directly rather than falling through to a shared "if (!success)"
+            //check: success is still false at this point in every path (it is only set true at the
+            //end), because the checks above signal failure by returning, not by leaving the flag
+            //set. Testing the flag here would reject a perfectly valid input.
             nameOfInput = nameof(OutputName);
             if (inputToParse.TryGetValue(nameOfInput, out userInput))
             {
@@ -94,9 +104,6 @@ namespace PREACT.Input
             {
                 success = false;
                 PREACTInput.InputNotFoundMessage(nameOfInput);
-            }
-            if (!success)
-            {
                 return newInput;
             }
 

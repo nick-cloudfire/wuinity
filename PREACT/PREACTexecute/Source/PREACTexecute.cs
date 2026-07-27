@@ -24,7 +24,7 @@ namespace PREACT
             _isDone = true;
         }
 
-        public void Execute(string[] args)
+        public async Task Execute(string[] args)
         {
             if (args.Length == 0)
             {
@@ -73,7 +73,10 @@ namespace PREACT
                 if(engineTask != null)
                 {
                     _isDone = false;
-                    _engine.RunSimulations(engineTask);
+                    await _engine.RunSimulations(engineTask);
+                    //belt and braces: SimulationsFinished() normally sets this, but it only fires
+                    //when an external manager is registered, and the process must exit regardless.
+                    _isDone = true;
                 }                               
             }
             else
