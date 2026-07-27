@@ -13,4 +13,21 @@
     <ProjectReference Include="..\PREACTcore\PREACTcore.csproj" />
   </ItemGroup>
 
+  <!-- The GDAL C# bindings P/Invoke into gdal_wrap.dll by bare name, so it has to sit next to the
+       executable (or on PATH). PREACTcore's own copy rules preserve the Runtimes\Native\GDAL\x64
+       subpath, which .NET's native resolver does not search - build-case's warp/derive steps then
+       fail unless the machine happens to have that folder on PATH. Flatten them into the output
+       root so the CLI resolves GDAL by itself.
+       Note this only supplies the P/Invoke shims; the GDAL core itself (gdal.dll and its PROJ
+       data) still comes from a system install - see docs/probabilistic-trigger-convergence.md. -->
+  <!-- NFDRS4core.dll is the same story: the Nelson dead-fuel-moisture engine P/Invokes it by bare
+       name, so build-case's moisture stage dies with a NFDRS4corePINVOKE type-initializer error
+       unless it sits beside the executable. -->
+  <ItemGroup>
+    <None Include="..\PREACTcore\Runtimes\Native\GDAL\x64\*.dll;..\PREACTcore\Runtimes\Native\NFDRS4\x64\*.dll">
+      <Link>%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>
