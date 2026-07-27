@@ -384,11 +384,30 @@ via `OpenTopographyAccess.ApiKey`
 copy and fill in. `WUInity/.gitignore` gained the matching
 `[Oo]pen[Tt]opography[Cc]onfiguration.txt` rule.
 
-Not yet built: the orchestration step that actually calls
-`OpenTopographyDownloader.Download` with a domain's lat/lon and
-`OpenTopographyAccess.ApiKey`, then feeds the result through `SlopeAspect` and
-`RasterHarmonizer` to produce the case's `dem`/`slp`/`asp` inputs — the pieces
-exist, wiring them into one "build this case's topography" call doesn't yet.
+**Now built**: that orchestration step is `ElmfireCaseBuilder`
+(`PREACT/PREACTcore/Source/Utility/ElmfireCaseBuilder.cs`), driven by
+`PREACTcli build-case` — see "Building a case from scratch" below.
+
+Two things had to be fixed on the way, both found by actually running the code
+rather than by review:
+
+- **`SlopeAspect` returned a mirrored aspect.** Its `dzdx`/`dzdy` locals were
+  named after the wrong axes — the "`dzdx`" kernel differentiates along y and
+  vice versa — so `Atan2(dzdy, -dzdx)` produced a bearing reflected about the
+  north–south axis. North and south slopes came out right, which is why the
+  original synthetic-ramp check passed; east and west were swapped, and a
+  north-east-facing slope read 315° instead of 45°. Now computed as the compass
+  bearing of the downslope vector, `Atan2(-dzdEast, -dzdNorth)`, and verified
+  against all four cardinal ramps plus a diagonal. Slope magnitude was never
+  affected. This mattered: aspect drives ELMFIRE's slope-weighted spread, so
+  every generated case would have burned the wrong way across east–west terrain.
+- **`BuildUtmMasterGrid` did not clip to the requested domain.** It warped the
+  whole source raster, which is harmless for a DEM downloaded to the domain's
+  bounding box but silently wrong for a local or cached DEM covering a wider
+  area — the master grid, and therefore ELMFIRE's whole computational domain,
+  would inherit the source's extent instead of the domain asked for. There is
+  now an overload taking the lat/lon corners, which reprojects all four (a
+  lat/lon box is not a rectangle in UTM) and warps with `-te`.
 
 ### 2. Reprojection / harmonization step
 
@@ -431,6 +450,173 @@ Porting WildfireAV's per-case steps:
 
 The **user will fine-tune the ELMFIRE input template**; this pipeline only has to
 produce grid-aligned inputs and invoke the runner.
+
+## Building a case from scratch
+
+`PREACTcli build-case` turns a `.wui`'s `[Simulation]` domain (lower-left lat/lon
++ domain size in metres) into a complete, runnable ELMFIRE case, so a campaign no
+longer needs a hand-prepared `ELMFIRE/inputs` tree to exist first:
+
+```
+PREACTcli build-case --wui <case>\<name>.wui --out <case>\ELMFIRE ^
+  --cellsize 30 --padding 2000 ^
+  --fbfm13 <fuel.tif> --cc <cc.tif> --ch <ch.tif> --cbh <cbh.tif> --cbd <cbd.tif> ^
+  --wind 11.8 --wind-dir 225 --m1 11.1 --m10 15.8 --m100 17.9 ^
+  --gdal "C:\Program Files\QGIS 3.44.2\bin"
+```
+
+| Produced | How |
+|----------|-----|
+| `dem` | OpenTopography (COP30 by default), or `--dem <file>` for a local DEM |
+| `slp`, `asp` | derived from the warped DEM (Horn's method, `SlopeAspect`) |
+| `adj`, `phi` | constant 1.0 rasters, per WildfireAV's `makePhiAndAdjFiles.py` |
+| `ws`, `wd`, `m1`, `m10`, `m100` | constant-value baseline weather (see below) |
+| `ignition_mask` | all-ones (ignite anywhere) unless one is supplied |
+| `elmfire.data` | namelist referencing exactly the layers that were produced |
+
+Everything is snapped to the **master grid** established by the DEM: the local
+UTM zone from the domain centre, clipped to the domain, at `--cellsize`. Any
+user-supplied raster (`--fbfm13`, `--cc`, `--bldg_*`, …) is warped onto that same
+grid — nearest-neighbour for categorical layers (fuel codes, ignition mask),
+bilinear for continuous ones.
+
+The domain is **padded** (`--padding`, default 2 km) on every side. A fire is
+free to burn past the evacuation domain's edge, and clipping it there would
+truncate the very spread the trigger boundary measures.
+
+What it deliberately does **not** source, per "User-supplied (not auto-sourced)"
+below: fuel model and canopy. Pass them in and they are reprojected; leave them
+out and the namelist simply omits those keys. Same for the ELMFIRE-WUINITY fork's
+building layers — the `&WUI` urban-spread group is only emitted when all five
+`bldg_*` rasters are present, since a partial set makes ELMFIRE read a raster
+nobody wrote.
+
+### History-based weather (climatology → WindNinja → Nelson)
+
+`WeatherRasterPipeline` builds the five weather rasters from the historical
+record rather than from constants:
+
+1. **Climatology** — hourly ERA5 for the domain centre via `OpenMeteoDownloader`,
+   cached once per case (`<case>/climatology/<name>_era5_hourly.csv`) and reused,
+   since it is identical for every realization. `ClimatologySampler` reduces it to
+   one peak-FWI day per year and draws one, keeping that day's wind/temperature/
+   RH/precipitation physically consistent with each other.
+2. **WindNinja** — `WindNinja_cli` (auto-detected under `C:\WindNinja`) turns the
+   drawn day's single domain-average wind into a terrain-resolved field.
+3. **Nelson** — the in-process dead-fuel-moisture engine is marched hourly over
+   the 20-day conditioning window ending on the drawn day, one stick per distinct
+   terrain class, each with its own solar forcing.
+
+Each stage degrades independently to a uniform fallback and *says so* in the
+output, so a silently-placeholder case is impossible to mistake for a real one.
+
+Verified on Mati (2015–2020 archive, seed 1): drew 2016-06-19, FWI 49.6, 39.6 °C,
+RH 17%; WindNinja spread a 1.9 m/s domain wind into 0.3–8.2 mph across the
+terrain; Nelson returned 3.7/5.6/8.6 % mean dead moisture varying per cell
+(m100 8.2–10.7 %, damper on shaded slopes). ELMFIRE ran on the result to
+3094 acres. Whole build takes ~8 s once the archive is cached.
+
+Four bugs had to be fixed to get physically correct numbers out of it, none of
+which review would have caught:
+
+- **The 100-hour stick was a 10-hour stick.** `DeadFuelMoistureBin` built it with
+  `createDeadFuelMoisture10`, so m10 and m100 were identical by construction.
+- **Terrain had no effect on solar radiation.** `SunRadiation.SimpleRadiation`
+  takes the hour as `HHMM` — internally it computes `hour / 100` in integer
+  arithmetic — so an hour-of-day argument collapses to midnight and it returns 0
+  for every cell. It also wants elevation in feet. With both fixed, a south slope
+  gets 904 W/m² at noon against a north slope's 543. (Note the pre-existing
+  `CellDeadFuelMoisture` passes an hour-of-day here too, and additionally
+  hard-codes `Hour = 0`, so it is presumably getting zero radiation as well —
+  not touched here, but it looks like the same bug.)
+- **Sampling one hour made the result hostage to drizzle.** ERA5 reported 0.3 mm
+  at 13:00 on the drawn day — an area-average over ~9 km, not necessarily rain on
+  the fuel — and Nelson correctly soaked the 1-hour stick from 3.7 % to 60 %. The
+  driest day of the record came out sodden. The pipeline now takes the **minimum
+  over the burning period** (10:00–18:00 by default), which is what this document
+  specified all along ("captures the diurnal minimum … during the peak burning
+  period") and is inherently robust to a single trace-rain hour.
+- **`DeadFuelMoistureEngine`'s bin constructor bounded `x` by `yDim`**, so on any
+  non-square raster the terrain classes occurring only in the columns past `yDim`
+  were never created and those cells returned -1. The pipeline drives its own
+  per-class sticks (it has to, for per-class solar), but the engine is fixed too.
+
+### Burnable-only ignition
+
+`build-case` zeroes the ignition mask wherever the fuel model cannot carry fire
+(codes 0, 14 and the 91–99 block — non-burnable in both Anderson FBFM13 and
+Scott & Burgan FBFM40 — plus NoData, which is what a clipped domain is padded
+with). Disable with `RestrictIgnitionToBurnableFuel = false`.
+
+This is the cheap half of WildfireAV's `_snap_to_valid_fuel`, and restricting the
+*mask* is preferable to snapping the point afterwards because it leaves ignition
+placement with ELMFIRE's own `RANDOM_IGNITIONS` rather than taking it over in C#.
+
+It is not a tidiness measure. **64 % of the padded Mati domain is non-burnable**
+(sea and urban), so an all-ones mask ignited open water most of the time: ELMFIRE
+ran to completion, exited 0, wrote all four output rasters, and reported
+`Fire area: 0.0 acres`. Nothing downstream noticed — k-PERIL produced an empty
+boundary and the driver aggregated it as a successful realization, biasing every
+decile toward zero. With the mask restricted to the 36 % that can burn, three
+seeds on the previously-empty case gave 3990, 6099 and 4460 acres.
+
+As a second line of defence `ElmfireRunner` parses ELMFIRE's own `Fire area:`
+line and **fails** a realization that burned nothing, rather than passing it on.
+An unparsed log is deliberately not treated as empty — absence of the line is not
+evidence of a zero-area fire.
+
+### Per-realization weather
+
+`converge-trigger --realization-weather` runs the same chain **per realization**,
+so the ensemble varies in weather and not only in ignition location. Each
+realization draws its own historical day (seeded `--seed` + realization index, so
+the campaign stays reproducible) and writes its own `ws`/`wd`/`m1`/`m10`/`m100`
+into `_elmfire/<idx>/weather`, which the namelist's `WEATHER_DIRECTORY` points at
+while `FUELS_AND_TOPOGRAPHY_DIRECTORY` still points at the one shared, read-only
+terrain copy.
+
+The ERA5 archive is fetched **once, serially, at startup** rather than by
+whichever realizations happen to begin first — several concurrent processes
+downloading and writing the same cache file is precisely the race that made the
+existing per-realization `WeatherManager` download fail one run in ~95. A
+realization whose weather chain throws falls back to the shared case-level
+rasters rather than failing outright.
+
+Verified on Mati (3 realizations, 2015–2020 archive): drew 2018-06-14
+(10.9 mph, 6.4/10.3/14.0 %) and 2015-07-21 (17.4 mph, 4.1/5.6/8.9 %), 3/3
+successful. Note two of the three drew the same day — with only 6 annual maxima
+on record, repeat draws are expected from empirical resampling, and the fix is a
+longer archive (the default 2000–last-complete-year gives ~25) rather than a
+change to the sampler.
+
+Variation on top of the drawn day still comes from the template's
+`RASTER_TO_PERTURB` blocks, which `build-case` leaves as a commented placeholder.
+
+**Verified end-to-end** on the Mati domain, built into a clean folder from
+nothing but `mati.wui` + the user fuel/canopy/building layers: 21 layers on one
+423×317 @ 30 m EPSG:32634 grid, ELMFIRE ran to `End of simulation reached
+successfully` (1496 acres, all four output rasters, correctly georeferenced —
+no `A_SRS=UNKNOWN`), and a 3-realization `converge-trigger` campaign against the
+generated case produced three genuinely distinct fires and a probability raster
+holding exactly `{0, ⅓, ⅔, 1}`.
+
+### In-process GDAL
+
+`MasterGrid`/`RasterHarmonizer`/`GeoTiffRasterWriter` are **now runtime-verified**
+(the earlier "⚠️ warp untested" caveat is resolved) — EPSG lookup, warp, and
+GeoTIFF creation all work from the CLI. Two things make that work, and both are
+worth knowing before this runs on another machine:
+
+- The GDAL C# bindings P/Invoke `gdal_wrap.dll` **by bare name**, so it must sit
+  next to the executable or on `PATH`. PREACTcore's copy rules preserve a
+  `Runtimes\Native\GDAL\x64` subpath that .NET's native resolver does not search,
+  so `PREACTcli.csproj` now flattens those shims into its own output directory.
+- The GDAL **core** (`gdal.dll` + PROJ data) still comes from a system install.
+  On the development machine that resolves to **SUMO's** GDAL 3.9.3, which is
+  self-consistent with its own `proj.db` and works. Note the vendored shims are
+  built against the 3.9 ABI, so QGIS 3.44's `gdal311.dll` is *not* a drop-in
+  substitute for the in-process path — which is separate from, and can differ
+  from, the `--gdal` directory ELMFIRE shells out to.
 
 ## Realization generation
 
@@ -553,12 +739,15 @@ out of `Assets/` — nothing in this pipeline requires them there, since the run
 
 | Phase | Component | Status |
 |-------|-----------|--------|
-| 0 | Global DEM downloader (Copernicus GLO-30 / SRTM) + slope/aspect | ✅ built (`OpenTopographyDownloader`, `SlopeAspect`); API key wired via the Mapbox-token pattern; not yet wired into a "build case topography" orchestration step |
-| 0 | Raster harmonization (auto-UTM warp/clip/resample to master grid) | ✅ built, ⚠️ warp untested at runtime (`MasterGrid`, `RasterHarmonizer`, `UtmUtility` — see Master-grid principle) |
+| 0 | Global DEM downloader (Copernicus GLO-30 / SRTM) + slope/aspect | ✅ built and wired (`OpenTopographyDownloader`, `SlopeAspect`, orchestrated by `ElmfireCaseBuilder` / `PREACTcli build-case`); API key via the Mapbox-token pattern, `$OPENTOPOGRAPHY_API_KEY`, or `--api-key`; `--dem <file>` skips the download entirely. **The download path itself is still unrun** — no key was configured on the development machine, so end-to-end verification used `--dem` |
+| 0 | Raster harmonization (auto-UTM warp/clip/resample to master grid) | ✅ built and **runtime-verified** (`MasterGrid`, `RasterHarmonizer`, `UtmUtility`) — warp, EPSG lookup and GeoTIFF writing all exercised by `build-case`; gained a domain-clipping overload (see In-process GDAL) |
+| 0 | Case builder (domain → complete ELMFIRE input set + namelist) | ✅ built (`ElmfireCaseBuilder`, `PREACTcli build-case`) — see Building a case from scratch |
 | 0 | Climatology sampler (ERA5, 20-day conditioning, annual FWI-max distribution) | ✅ built (annual-maxima half; conditioning window still TBD — see `ClimatologySampler`) |
-| 0 | Nelson wrapper for dead moisture (weather → m1/m10/m100) | new — call the existing in-process engine directly (WildfireAV's exe/BSQ plumbing doesn't apply, see ELMFIRE runner contract) |
+| 0 | Nelson wrapper for dead moisture (weather → m1/m10/m100) | ✅ built (`WeatherRasterPipeline`) — in-process engine, one stick per terrain class with per-class solar, minimum over the burning period; four correctness bugs fixed on the way (see History-based weather) |
 | 0 | Fuel-dataset reader for live moisture (by-date LFMC) | new — dataset is in `WUInity/Assets/ThirdParty/LFMC/` as ~250 monthly GeoTIFFs (`LFMC_MAP_<year>_<month>.tif`), **not** NetCDF as earlier planned (confirmed by the user). So this is a by-date file lookup plus a `RasterHarmonizer` call onto the master grid — no NetCDF dependency needed |
-| 0 | WindNinja step (terrain wind → ws/wd on master grid) | new (port from WildfireAV; confirmed invoked via `conda run -n <env> WindNinja_cli <config>`) |
+| 0 | WindNinja step (terrain wind → ws/wd on master grid) | ✅ built (`WindNinjaRunner`) — the Windows installer's `WindNinja_cli.exe` is self-contained, so no `conda run` wrapper is needed; speed/direction are warped as vector components rather than as a bearing, and the NoData fringe outside WindNinja's mesh is filled with the domain average |
+| 0 | Climatology → WindNinja → Nelson, wired per realization | new — `build-case` draws one historical day for the whole case; `converge-trigger` does not yet draw a fresh day per realization |
+| 0 | Ignition valid-fuel snapping | ✅ built — `build-case` zeroes the ignition mask wherever the fuel model cannot burn, and `ElmfireRunner` now fails any realization that burns 0 acres instead of silently aggregating it (see Burnable-only ignition) |
 | 0 | Ignition sampler (mask → point) | ✅ built (`IgnitionSampler`: uniform mask + weighted-raster sampling); valid-fuel snapping not yet ported |
 | 1 | ELMFIRE realization runner + namelist writer | ✅ built (`ElmfireRunner`, wired into `converge-trigger --elmfire`): per realization the template is re-seeded and `elmfire` runs in its own directory. Ensemble variation comes from ELMFIRE's own Monte Carlo (`SEED` + the template's `RANDOM_IGNITIONS`/`RASTER_TO_PERTURB`), not a second sampler on the C# side — see Realization generation |
 | 2 | WUInity + k-PERIL per realization | ✅ built |
