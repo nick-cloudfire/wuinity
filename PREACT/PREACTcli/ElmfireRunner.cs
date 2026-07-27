@@ -91,6 +91,17 @@ namespace PREACTcli
                 return result;
             }
 
+            // A fire that never spread is not a realization, it is a wasted draw — and left
+            // unchecked it is invisible: ELMFIRE exits 0, writes all four rasters, and only the
+            // "Fire area: 0.0 acres" line in its log says anything is wrong. Downstream, k-PERIL
+            // produces an empty trigger boundary and the driver folds it into the probability
+            // raster as though it were a real outcome, biasing every decile toward zero.
+            if (TryReadFireArea(runDir, out double acres) && acres <= 0.0)
+            {
+                result.Message = "elmfire burned 0 acres (the ignition most likely landed on non-burnable fuel)";
+                return result;
+            }
+
             result.Ok = true;
             return result;
         }
@@ -117,6 +128,40 @@ namespace PREACTcli
 
             // FI is optional downstream (AscImport only requires TOA/ROS/SD), the rest are not.
             return result.Ros != null && result.Sd != null;
+        }
+
+        /// <summary>
+        /// Reads the burned area back out of ELMFIRE's own log line, e.g.
+        /// <c>[1] Meteorology band 1: Case # 1 complete.  Fire area:   3094.0 acres.</c>
+        /// Returns false when no such line is present, in which case the caller must not treat the
+        /// run as empty — an unparsed log is not evidence of a zero-area fire.
+        /// </summary>
+        private static bool TryReadFireArea(string runDir, out double acres)
+        {
+            acres = 0;
+            string logPath = Path.Combine(runDir, "elmfire.log");
+            if (!File.Exists(logPath)) return false;
+
+            bool found = false;
+            foreach (string line in File.ReadLines(logPath))
+            {
+                int at = line.IndexOf("Fire area:", StringComparison.OrdinalIgnoreCase);
+                if (at < 0) continue;
+
+                string rest = line.Substring(at + "Fire area:".Length).TrimStart();
+                int end = 0;
+                while (end < rest.Length && (char.IsDigit(rest[end]) || rest[end] == '.' || rest[end] == '-')) ++end;
+
+                if (end > 0 && double.TryParse(rest.Substring(0, end),
+                        System.Globalization.NumberStyles.Any,
+                        System.Globalization.CultureInfo.InvariantCulture, out double v))
+                {
+                    //take the last reported area: one line per ensemble member/dump
+                    acres = v;
+                    found = true;
+                }
+            }
+            return found;
         }
 
         private static string LatestDump(string outputsDir, string stem)

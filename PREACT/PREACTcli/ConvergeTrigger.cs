@@ -87,6 +87,8 @@ namespace PREACTcli
                 opts.ElmfireInputs = Path.GetFullPath(opts.ElmfireInputs).TrimEnd(Path.DirectorySeparatorChar);
                 opts.ElmfireExe = Path.GetFullPath(opts.ElmfireExe);
                 opts.ElmfireTemplate = Path.GetFullPath(opts.ElmfireTemplate);
+
+                if (opts.RealizationWeather && !SetUpRealizationWeather(opts)) return 1;
             }
             if (opts.Streak <= 0 || opts.Tolerance <= 0)
             {
@@ -114,8 +116,9 @@ namespace PREACTcli
             string[] baseLines = File.ReadAllLines(opts.BaseWui);
 
             string diagnosticsPath = opts.DiagnosticsPath ?? Path.Combine(outputDir, "trigger_convergence.csv");
+            string livePath = Path.Combine(outputDir, "trigger_probability_live.asc");
 
-            return RunAsync(opts, caseDir, outputDir, preactExe, baseName, baseLines, diagnosticsPath).GetAwaiter().GetResult();
+            return RunAsync(opts, caseDir, outputDir, preactExe, baseName, baseLines, diagnosticsPath, livePath).GetAwaiter().GetResult();
         }
 
         private class RealizationOutcome
@@ -138,6 +141,148 @@ namespace PREACTcli
         /// NUM_ENSEMBLE_MEMBERS is pinned to 1 because this driver's unit of parallelism is the
         /// realization — one ELMFIRE process per member, each with its own scratch and outputs.
         /// </summary>
+        /// <summary>
+        /// Resolves everything the per-realization weather chain needs once, at startup, rather
+        /// than rediscovering it inside every realization: the master grid (read off the shared
+        /// DEM), the domain centre the archive is queried at, and where the cached archive lives.
+        /// Failing here is fatal — the alternative is a campaign that silently runs every
+        /// realization on identical weather, which looks exactly like a working one.
+        /// </summary>
+        private static bool SetUpRealizationWeather(Options opts)
+        {
+            string dem = Path.Combine(opts.ElmfireInputs, "dem.tif");
+            if (!File.Exists(dem))
+            {
+                Console.Error.WriteLine("ERROR: --realization-weather needs dem.tif in --elmfire-inputs (build the case with build-case).");
+                return false;
+            }
+
+            try
+            {
+                opts.WeatherGrid = MasterGrid.FromRasterFile(dem);
+            }
+            catch (Exception e)
+            {
+                Console.Error.WriteLine("ERROR: could not read the master grid from " + dem + ": " + e.Message);
+                return false;
+            }
+
+            if (!BuildCase.TryReadCentreLatLon(opts.BaseWui, 0.0, out PREACT.Math.Vector2d centre))
+            {
+                Console.Error.WriteLine("ERROR: could not read the domain from " + opts.BaseWui + " for the weather query.");
+                return false;
+            }
+            opts.Weather.LatLon = centre;
+
+            if (string.IsNullOrEmpty(opts.Weather.ArchiveCsvPath))
+            {
+                //Defaults to the archive build-case already cached beside the namelist, so a
+                //campaign against a built case reuses it instead of re-downloading decades of data.
+                string caseRoot = Path.GetDirectoryName(opts.ElmfireTemplate);
+                opts.Weather.ArchiveCsvPath = Path.Combine(caseRoot, "climatology",
+                    Path.GetFileNameWithoutExtension(opts.BaseWui) + "_era5_hourly.csv");
+            }
+            opts.Weather.ArchiveCsvPath = Path.GetFullPath(opts.Weather.ArchiveCsvPath);
+            opts.Weather.WindNinjaExe ??= BuildCase.FindWindNinja();
+            opts.Weather.Seed = opts.Seed;
+
+            //Fetched once here, serially, rather than by whichever realizations happen to start
+            //first: several concurrent processes downloading and writing the same cache file is
+            //the race that makes long campaigns fail.
+            if (!File.Exists(opts.Weather.ArchiveCsvPath))
+            {
+                Console.WriteLine("Fetching the ERA5 climatology archive once for the whole campaign...");
+            }
+
+            try
+            {
+                var warm = new WeatherRasterPipeline.Options
+                {
+                    Grid = opts.WeatherGrid,
+                    InputsDirectory = Path.Combine(Path.GetDirectoryName(opts.Weather.ArchiveCsvPath), "_warmup"),
+                    TerrainDirectory = opts.ElmfireInputs,
+                    LatLon = opts.Weather.LatLon,
+                    ArchiveCsvPath = opts.Weather.ArchiveCsvPath,
+                    ArchiveStartYear = opts.Weather.ArchiveStartYear,
+                    ArchiveEndYear = opts.Weather.ArchiveEndYear,
+                    //only the archive matters here; skip the expensive stages
+                    WindNinjaExe = null,
+                    ConditioningDays = 1,
+                    Log = Console.WriteLine,
+                };
+                Directory.CreateDirectory(warm.InputsDirectory);
+                WeatherRasterPipeline.Run(warm).GetAwaiter().GetResult();
+                try { Directory.Delete(warm.InputsDirectory, recursive: true); } catch { }
+            }
+            catch (Exception e)
+            {
+                Console.Error.WriteLine("ERROR: could not prepare the climatology archive: " + e.Message);
+                return false;
+            }
+
+            Console.WriteLine($"Per-realization weather enabled: archive {opts.Weather.ArchiveCsvPath}, " +
+                              (opts.Weather.WindNinjaExe != null ? "WindNinja " + Path.GetFileName(opts.Weather.WindNinjaExe) : "no WindNinja (uniform wind)"));
+            return true;
+        }
+
+        /// <summary>
+        /// Runs the climatology → WindNinja → Nelson chain for one realization, into its own
+        /// private weather directory. Returns that directory, or null when per-realization weather
+        /// is not enabled (in which case the realization uses whatever weather rasters the shared
+        /// inputs folder already holds, as built by <c>build-case</c>).
+        ///
+        /// The seed is offset by the realization index so each draws a different historical day
+        /// while the campaign as a whole stays reproducible from <c>--seed</c>. The ERA5 archive is
+        /// downloaded once and cached, so this costs no extra network traffic per realization.
+        /// </summary>
+        private static string TryGenerateWeather(Options opts, string runDir, string idx, int index)
+        {
+            if (!opts.RealizationWeather) return null;
+
+            string weatherDir = Path.Combine(runDir, "weather");
+            Directory.CreateDirectory(weatherDir);
+
+            try
+            {
+                WeatherRasterPipeline.Options w = opts.Weather;
+                var per = new WeatherRasterPipeline.Options
+                {
+                    Grid = opts.WeatherGrid,
+                    InputsDirectory = weatherDir,
+                    TerrainDirectory = opts.ElmfireInputs,
+                    LatLon = w.LatLon,
+                    ArchiveCsvPath = w.ArchiveCsvPath,
+                    ArchiveStartYear = w.ArchiveStartYear,
+                    ArchiveEndYear = w.ArchiveEndYear,
+                    ConditioningDays = w.ConditioningDays,
+                    BurningPeriodStartHour = w.BurningPeriodStartHour,
+                    BurningPeriodEndHour = w.BurningPeriodEndHour,
+                    WindNinjaExe = w.WindNinjaExe,
+                    WindNinjaVegetation = w.WindNinjaVegetation,
+                    WindNinjaMesh = w.WindNinjaMesh,
+                    Seed = unchecked(w.Seed + index),
+                    //quiet: at --parallel width the per-stage chatter from several realizations
+                    //interleaves into noise. The drawn day is reported on one line below instead.
+                    Log = null,
+                };
+
+                WeatherRasterPipeline.Result r = WeatherRasterPipeline.Run(per).GetAwaiter().GetResult();
+
+                string day = r.Day.HasValue ? r.Day.Value.Date.ToString("yyyy-MM-dd") : "uniform";
+                Console.WriteLine($"[{idx}] weather {day}: wind {r.MeanWindSpeedMph:F1} mph, " +
+                                  $"dead moisture {r.MeanM1Percent:F1}/{r.MeanM10Percent:F1}/{r.MeanM100Percent:F1} %" +
+                                  (r.Fallbacks.Count > 0 ? $" ({string.Join("; ", r.Fallbacks)})" : ""));
+                return weatherDir;
+            }
+            catch (Exception e)
+            {
+                //A weather failure falls back to the shared rasters rather than failing the
+                //realization: the case-level set is a valid, if less varied, input.
+                Console.Error.WriteLine($"[{idx}] per-realization weather failed ({e.Message}); using the shared rasters.");
+                return null;
+            }
+        }
+
         private static bool TryGenerateRasters(Options opts, string caseDir, string idx, int index,
             out string toa, out string ros, out string sd, out string fi)
         {
@@ -156,8 +301,14 @@ namespace PREACTcli
             // appends the path separator to these itself, so they are passed without one.
             lines = ElmfireNamelist.SetKeyInGroup(lines, ElmfireNamelistKeys.InputsGroup,
                         ElmfireNamelistKeys.FuelsAndTopographyDirectory, opts.ElmfireInputs, quoted: true);
+
+            // Weather is per realization when the climatology chain is driving it: each draws its
+            // own historical peak fire-weather day, which is what makes the ensemble vary in
+            // weather rather than only in ignition location. Terrain still comes from the one
+            // shared copy - only the five weather stems are private.
+            string weatherDir = TryGenerateWeather(opts, runDir, idx, index);
             lines = ElmfireNamelist.SetKeyInGroup(lines, ElmfireNamelistKeys.InputsGroup,
-                        ElmfireNamelistKeys.WeatherDirectory, opts.ElmfireInputs, quoted: true);
+                        ElmfireNamelistKeys.WeatherDirectory, weatherDir ?? opts.ElmfireInputs, quoted: true);
             lines = ElmfireNamelist.SetKeyInGroup(lines, ElmfireNamelistKeys.OutputsGroup,
                         ElmfireNamelistKeys.OutputsDirectory, "./outputs", quoted: true);
             lines = ElmfireNamelist.SetKeyInGroup(lines, ElmfireNamelistKeys.MiscellaneousGroup,
@@ -215,7 +366,7 @@ namespace PREACTcli
         }
 
         private static async Task<int> RunAsync(Options opts, string caseDir, string outputDir, string preactExe,
-            string baseName, string[] baseLines, string diagnosticsPath)
+            string baseName, string[] baseLines, string diagnosticsPath, string livePath)
         {
             using var diag = new StreamWriter(diagnosticsPath);
             WriteDiagnosticsHeader(diag);
@@ -324,6 +475,35 @@ namespace PREACTcli
 
                 Console.WriteLine($"[{result.Idx}] streak {streak}/{opts.Streak} (nSuccess={nSuccess}).");
 
+                //Live state for the Unity window, which reads this stream rather than
+                //re-implementing the convergence loop. Emitted here because everything the UI
+                //needs is already assembled at this point. One self-delimiting line per
+                //realization, so a partially-flushed write can never be half-parsed, and plain
+                //stdout so it costs nothing when nobody is listening.
+                if (opts.EmitProgressJson)
+                {
+                    EmitProgressJson(result.Idx, nSuccess, nFailed, streak, opts.Streak, converged, area, delta);
+                }
+
+                //Snapshot the running raster so the UI can show the probability field building up
+                //rather than only its final state. Cheap next to a realization (one SUMO run), and
+                //it doubles as a crash-safety net for long campaigns.
+                if (opts.EmitProgressJson && insideCount != null)
+                {
+                    try
+                    {
+                        var snapHeader = header;
+                        snapHeader.NoDataValue = -9999.0;
+                        AscRaster.Write(BuildProbability(insideCount, header, nSuccess), snapHeader, livePath);
+                        Console.WriteLine("PROGRESS_RASTER " + livePath);
+                    }
+                    catch (Exception e)
+                    {
+                        //a failed snapshot must never abort the campaign
+                        Console.Error.WriteLine("WARNING: could not write live raster snapshot: " + e.Message);
+                    }
+                }
+
                 if (streak >= opts.Streak)
                 {
                     converged = true;
@@ -342,14 +522,7 @@ namespace PREACTcli
                 Console.Error.WriteLine($"WARNING: reached --max {opts.MaxRealizations} realizations ({nSuccess} successful) without converging; probability raster is not yet stable.");
             }
 
-            float[,] probability = new float[header.Ncols, header.Nrows];
-            for (int x = 0; x < header.Ncols; ++x)
-            {
-                for (int y = 0; y < header.Nrows; ++y)
-                {
-                    probability[x, y] = (float)insideCount[x, y] / nSuccess;
-                }
-            }
+            float[,] probability = BuildProbability(insideCount, header, nSuccess);
 
             string outPath = opts.OutPath ?? Path.Combine(outputDir, "trigger_probability.asc");
             AscRaster.Header outHeader = header;
@@ -371,6 +544,62 @@ namespace PREACTcli
             foreach (double tau in Deciles) cols.Add("area_p" + (int)Math.Round(tau * 100));
             foreach (double tau in Deciles) cols.Add("delta_p" + (int)Math.Round(tau * 100));
             w.WriteLine(string.Join(",", cols));
+        }
+
+        /// <summary>Per-cell probability = fraction of successful realizations enclosing the cell.</summary>
+        private static float[,] BuildProbability(int[,] insideCount, AscRaster.Header header, int nSuccess)
+        {
+            float[,] probability = new float[header.Ncols, header.Nrows];
+            for (int x = 0; x < header.Ncols; ++x)
+            {
+                for (int y = 0; y < header.Nrows; ++y)
+                {
+                    probability[x, y] = (float)insideCount[x, y] / nSuccess;
+                }
+            }
+            return probability;
+        }
+
+        /// <summary>
+        /// One JSON object per line on stdout, tagged so a reader can pick it out of the ordinary
+        /// log stream. Hand-built rather than serialized to keep PREACTcli free of a JSON
+        /// dependency for a single fixed-shape record; every value is written with
+        /// InvariantCulture so a comma-decimal locale cannot produce malformed JSON.
+        /// </summary>
+        private static void EmitProgressJson(string idx, int nSuccess, int nFailed, int streak, int streakTarget,
+                                             bool converged, double[] area, double?[] delta)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.Append("PROGRESS_JSON {");
+            sb.Append("\"realization\":\"").Append(idx).Append("\",");
+            sb.Append("\"nSuccess\":").Append(nSuccess).Append(',');
+            sb.Append("\"nFailed\":").Append(nFailed).Append(',');
+            sb.Append("\"streak\":").Append(streak).Append(',');
+            sb.Append("\"streakTarget\":").Append(streakTarget).Append(',');
+            sb.Append("\"converged\":").Append(converged ? "true" : "false").Append(',');
+
+            sb.Append("\"deciles\":[");
+            for (int i = 0; i < Deciles.Length; ++i)
+            {
+                if (i > 0) sb.Append(',');
+                sb.Append(Deciles[i].ToString("0.0#", CultureInfo.InvariantCulture));
+            }
+            sb.Append("],\"area\":[");
+            for (int i = 0; i < area.Length; ++i)
+            {
+                if (i > 0) sb.Append(',');
+                sb.Append(area[i].ToString("R", CultureInfo.InvariantCulture));
+            }
+            //null where a decile has no baseline yet; JSON null keeps that distinct from 0
+            sb.Append("],\"delta\":[");
+            for (int i = 0; i < delta.Length; ++i)
+            {
+                if (i > 0) sb.Append(',');
+                sb.Append(delta[i].HasValue ? delta[i].Value.ToString("R", CultureInfo.InvariantCulture) : "null");
+            }
+            sb.Append("]}");
+
+            Console.WriteLine(sb.ToString());
         }
 
         private static void WriteDiagnosticsRow(StreamWriter w, int run, string realizationId, int nSuccess, double[] area, double?[] delta, int streak)
@@ -413,6 +642,22 @@ namespace PREACTcli
             public string PathToGdal;
             public double TstopSeconds;
             public int Seed = 12345;
+            /// <summary>Emit machine-readable per-realization progress (PROGRESS_JSON lines plus a
+            /// PROGRESS_RASTER snapshot) for the Unity window, which drives its live view from this
+            /// stream instead of re-implementing the convergence loop.</summary>
+            public bool EmitProgressJson;
+
+            /// <summary>Draw a fresh historical peak fire-weather day per realization, rather than
+            /// reusing the one set of weather rasters the case was built with.</summary>
+            public bool RealizationWeather;
+
+            /// <summary>Settings for that chain; <c>Seed</c> here is offset by the realization index.</summary>
+            public WeatherRasterPipeline.Options Weather = new WeatherRasterPipeline.Options();
+
+            /// <summary>The case's master grid, read from the shared inputs' dem.tif once at startup
+            /// rather than per realization.</summary>
+            public MasterGrid WeatherGrid;
+
 
             public bool GenerateRealizations => ElmfireExe != null || ElmfireTemplate != null;
         }
@@ -447,6 +692,14 @@ namespace PREACTcli
                     case "--gdal":             o.PathToGdal = Next(args, ref i); break;
                     case "--tstop":            double.TryParse(Next(args, ref i), NumberStyles.Any, CultureInfo.InvariantCulture, out o.TstopSeconds); break;
                     case "--seed":             int.TryParse(Next(args, ref i), out o.Seed); break;
+                    case "--progress-json":    o.EmitProgressJson = true; break;
+                    case "--realization-weather": o.RealizationWeather = true; break;
+                    case "--weather-archive":     o.Weather.ArchiveCsvPath = Next(args, ref i); break;
+                    case "--climatology-from":    o.Weather.ArchiveStartYear = int.Parse(Next(args, ref i)); break;
+                    case "--climatology-to":      o.Weather.ArchiveEndYear = int.Parse(Next(args, ref i)); break;
+                    case "--conditioning-days":   o.Weather.ConditioningDays = int.Parse(Next(args, ref i)); break;
+                    case "--windninja":           o.Weather.WindNinjaExe = Next(args, ref i); break;
+                    case "--wn-mesh":             o.Weather.WindNinjaMesh = Next(args, ref i); break;
                 }
             }
             return o;
