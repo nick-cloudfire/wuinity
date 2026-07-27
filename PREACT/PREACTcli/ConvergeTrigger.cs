@@ -349,12 +349,22 @@ namespace PREACTcli
                     return new RealizationOutcome { Ok = false, Idx = idx };
                 }
             }
-            else
+            else if (opts.RasterDir != null)
             {
                 toa = Path.Combine(opts.RasterDir, opts.ToaPattern.Replace("{i}", idx));
                 ros = Path.Combine(opts.RasterDir, opts.RosPattern.Replace("{i}", idx));
                 sd  = Path.Combine(opts.RasterDir, opts.SdPattern.Replace("{i}", idx));
                 fi  = Path.Combine(opts.RasterDir, opts.FiPattern.Replace("{i}", idx));
+            }
+            else
+            {
+                //--resume-only against a generated ensemble. There is no --dir in that
+                //configuration (it is not required when --elmfire generates the rasters), and
+                //resume-only reads each boundary straight out of the output folder without ever
+                //touching the source rasters - so the paths are simply unused here. Building them
+                //from a null RasterDir threw instead, which made resume-only unusable in exactly
+                //the case it is most wanted: re-aggregating an interrupted generating campaign.
+                toa = ros = sd = fi = string.Empty;
             }
 
             bool ok = RealizationRunner.TryRun(
