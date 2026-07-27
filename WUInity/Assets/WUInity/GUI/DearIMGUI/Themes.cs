@@ -9,6 +9,17 @@ namespace Assets.WUInity.GUI.DearIMGUI
     {       
         public static void ApplyAdobeSpectrum(bool darkTheme)
         {
+            //Styling needs a live ImGui context, and there is no guaranteed order between this
+            //component's OnEnable and the one where UImGui creates that context. Reached too
+            //early, ImGui.GetStyle() hands back a pointer to nothing and the first field write
+            //throws a NullReferenceException - which then cascades, because the GUI never
+            //finishes enabling. Returning quietly is correct here: the caller re-applies the
+            //theme from UImGuiUtility.OnInitialize once the context exists.
+            if (ImGui.GetCurrentContext() == System.IntPtr.Zero)
+            {
+                return;
+            }
+
             var style = ImGui.GetStyle();
             var colors = style.Colors;
 

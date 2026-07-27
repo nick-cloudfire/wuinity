@@ -24,6 +24,12 @@ namespace Assets.WUInity.GUI.DearIMGUI
         private static string _stepStatus = string.Empty;
         private static volatile bool _stepBusy;
 
+        //Steps run on a background thread, but the console is a LinkedList the GUI thread walks
+        //while drawing - appending to it from another thread risks corrupting that walk. Messages
+        //are therefore queued here and flushed into the engine log from Draw, on the GUI thread.
+        private static readonly object _logSync = new object();
+        private static readonly System.Collections.Generic.List<string> _pendingLog = new System.Collections.Generic.List<string>();
+
         //Files the steps produce, relative to the scenario root so the generated .wui stays portable.
         private static string WorldPopFile => _input.Simulation.Name + "_worldpop.tif";
         private static string OsmFile => _input.Simulation.Name + ".osm.xml";
@@ -66,6 +72,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 return;
             }
 
+            FlushStepLog();
+
             ImGui.Begin("New scenario creator", ref _isOpen, PreactGUI.NoDockingNoCollapse);
 
             if(!_folderSet)
@@ -89,6 +97,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 Close();
                 PreactGUI.WUInity.PickBoundingBoxOnMap(SetAIO);
             }
+            //There is no separate confirm step - the second click commits the box and reopens this
+            //window with the fields filled in. Saying so avoids hunting for a save button.
+            ImGui.TextWrapped("Click two opposite corners on the map. The second click applies the box and fills in the fields below; there is nothing further to confirm.");
             if(CustomTypes.InputDouble2(nameof(simIn.LowerLeftLatLon), ref _latLon))
             {
                 simIn.LowerLeftLatLon = _latLon;
@@ -243,11 +254,13 @@ namespace Assets.WUInity.GUI.DearIMGUI
             if (!ValidateAio(out string problem))
             {
                 _stepStatus = problem;
+                LogStep(problem);
                 return;
             }
 
             _stepBusy = true;
             _stepStatus = what + "...";
+            LogStep(what + "...");
 
             System.Threading.Tasks.Task.Run(async () =>
             {
@@ -255,16 +268,44 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 {
                     await work();
                     _stepStatus = what + ": done.";
+                    LogStep(what + ": done.");
                 }
                 catch (System.Exception e)
                 {
                     _stepStatus = what + " FAILED: " + e.Message;
+                    LogStep(what + " FAILED: " + e.Message);
                 }
                 finally
                 {
                     _stepBusy = false;
                 }
             });
+        }
+
+        /// <summary>Queues a message for the console; safe to call from a step's worker thread.</summary>
+        private static void LogStep(string message)
+        {
+            lock (_logSync)
+            {
+                _pendingLog.Add(message);
+            }
+        }
+
+        /// <summary>
+        /// Moves queued step messages into the engine log, from the GUI thread. Engine.Message
+        /// ultimately appends to the console's LinkedList and calls Debug.Log, neither of which is
+        /// safe to touch from the worker threads the steps run on.
+        /// </summary>
+        private static void FlushStepLog()
+        {
+            lock (_logSync)
+            {
+                for (int i = 0; i < _pendingLog.Count; ++i)
+                {
+                    Engine.Message(null, Engine.LogType.Log, _pendingLog[i]);
+                }
+                _pendingLog.Clear();
+            }
         }
 
         /// <summary>Checked up front because every step depends on it, and an unset area of
@@ -275,7 +316,12 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             if (_input.Simulation.DomainSize.x <= 0.0 || _input.Simulation.DomainSize.y <= 0.0)
             {
-                problem = "Set the area of interest first (its domain size is zero).";
+                //Reports what was actually read rather than just asserting the area is unset - the
+                //values are what distinguish "never picked" from "picked but not stored".
+                problem = "Set the area of interest first. Currently lower-left " +
+                          $"{_input.Simulation.LowerLeftLatLon.x:F5}, {_input.Simulation.LowerLeftLatLon.y:F5} " +
+                          $"with domain {_input.Simulation.DomainSize.x:F0} x {_input.Simulation.DomainSize.y:F0} m " +
+                          "(click two opposite corners on the map, or type the values in directly).";
                 return false;
             }
 
@@ -380,14 +426,55 @@ namespace Assets.WUInity.GUI.DearIMGUI
             });
         }
 
+        /// <summary>
+        /// Domain size in metres between two already-sorted corners.
+        ///
+        /// UTM is used when both corners fall in the same zone, because it is the more accurate
+        /// measure and matches how the rest of the pipeline treats the domain. It cannot be used
+        /// across a zone boundary: <c>convertLatLngToUtm</c> picks the zone per point, so eastings
+        /// either side of a boundary are measured from different origins and subtracting them is
+        /// meaningless - it can even come out negative for a perfectly valid box. Mati sits right
+        /// on the 24 deg E zone 34/35 boundary, so this is a real case rather than a hypothetical.
+        ///
+        /// Straddling boxes therefore fall back to the flat-earth conversion the population tools
+        /// already use to interpret DomainSize, which has no concept of zones. Both paths return
+        /// magnitudes, so the result is positive whichever corners were clicked first.
+        /// </summary>
+        private static Vector2d MeasureDomain(Vector2d lowerLeft, Vector2d upperRight)
+        {
+            var lower = PREACT.Utility.LatLngUTMConverter.WGS84.convertLatLngToUtm(lowerLeft.x, lowerLeft.y);
+            var upper = PREACT.Utility.LatLngUTMConverter.WGS84.convertLatLngToUtm(upperRight.x, upperRight.y);
+
+            if (lower.ZoneNumber == upper.ZoneNumber)
+            {
+                return new Vector2d(
+                    Mathd.Abs(upper.Easting - lower.Easting),
+                    Mathd.Abs(upper.Northing - lower.Northing));
+            }
+
+            Vector2d degrees = new Vector2d(
+                Mathd.Abs(upperRight.y - lowerLeft.y),   //longitude span
+                Mathd.Abs(upperRight.x - lowerLeft.x));  //latitude span
+
+            Vector2d size = PREACT.Population.LocalGPWData.DegreesToSize(lowerLeft, degrees);
+            Engine.Message(null, Engine.LogType.Log,
+                $"Area of interest crosses UTM zones {lower.ZoneNumber} and {upper.ZoneNumber}; " +
+                "measuring the domain geographically instead.");
+            return size;
+        }
+
         private static void SetAIO(Vector2d[] latLons)
         {
+            //Corner order is whatever the user clicked, so the box is normalised here - clicking
+            //top-right then bottom-left is just as natural as the other way round.
             _latLon = new Vector2d(Mathd.Min(latLons[0].x, latLons[1].x), Mathd.Min(latLons[0].y, latLons[1].y));
             _input.Simulation.LowerLeftLatLon = _latLon;
             Vector2d _upperRightLatLon = new Vector2d(Mathd.Max(latLons[0].x, latLons[1].x), Mathd.Max(latLons[0].y, latLons[1].y));
-            var lower = PREACT.Utility.LatLngUTMConverter.WGS84.convertLatLngToUtm(_latLon.x, _latLon.y);
-            var upper = PREACT.Utility.LatLngUTMConverter.WGS84.convertLatLngToUtm(_upperRightLatLon.x, _upperRightLatLon.y);
-            _input.Simulation.DomainSize = new Vector2d(upper.Easting - lower.Easting, upper.Northing - lower.Northing); 
+
+            _input.Simulation.DomainSize = MeasureDomain(_latLon, _upperRightLatLon);
+            Engine.Message(null, Engine.LogType.Log,
+                $"Area of interest set: lower-left {_latLon.x:F5}, {_latLon.y:F5}, domain " +
+                $"{_input.Simulation.DomainSize.x:F0} x {_input.Simulation.DomainSize.y:F0} m.");
             Open(false);
         }
 

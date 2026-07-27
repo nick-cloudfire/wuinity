@@ -25,12 +25,25 @@ namespace Assets.WUInity.GUI.DearIMGUI
         private void OnEnable()
         {
             UImGuiUtility.Layout += OnLayout;
+
+            //The theme can only be applied once UImGui has created the ImGui context, and the
+            //order in which the two components are enabled is not guaranteed. Applying it here
+            //alone therefore works or throws depending on that order. Subscribing to
+            //OnInitialize covers the case where UImGui comes second; the direct call covers the
+            //case where it has already initialised (the event would then never fire again).
+            UImGuiUtility.OnInitialize += OnImGuiInitialized;
             ApplyTheme();
         }
 
         private void OnDisable()
         {
             UImGuiUtility.Layout -= OnLayout;
+            UImGuiUtility.OnInitialize -= OnImGuiInitialized;
+        }
+
+        private void OnImGuiInitialized(UImGui.UImGui obj)
+        {
+            ApplyTheme();
         }
 
         private static event Action Windows;

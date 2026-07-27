@@ -119,11 +119,29 @@ namespace WUInity
                 DeveloperMode = false;
             }            
 
+            //Checked before anything is dereferenced. A missing reference here used to throw a bare
+            //NullReferenceException part-way through Awake, which left _engine unassigned and made
+            //Update() throw on every frame from then on - so the visible error was dozens of lines
+            //away from the cause, repeated forever, and it silently disabled everything Update
+            //drives, including picking the area of interest on the map.
+            if (!ValidateSceneReferences())
+            {
+                return;
+            }
+
             _simBorder.gameObject.SetActive(false);
             _boundingBoxRenderer.gameObject.SetActive(false);
 
             //gui            
             _wuiGUI = FindAnyObjectByType<PreactGUI>();
+            if (_wuiGUI == null)
+            {
+                //Found rather than assigned, so it goes missing if the GUI object is absent or
+                //disabled. Reported here for the same reason as the references above: otherwise it
+                //surfaces as an unexplained NullReferenceException several lines later.
+                Debug.LogError($"{nameof(WUInityManager)} cannot start: no active {nameof(PreactGUI)} was found in the scene.", this);
+                return;
+            }
 
             //map
             _utmMap.gameObject.SetActive(false);
@@ -156,6 +174,44 @@ namespace WUInity
 
             _simulationDomainVisualizer = new SimulationDomainVisualizerUnity(transform);
             _fireDomainVisualizer = new FireDomainVisualizerUnity(transform);            
+        }
+
+        /// <summary>
+        /// Verifies the scene references Awake depends on, naming any that are unassigned rather
+        /// than failing with a NullReferenceException that points at whichever line happened to
+        /// touch one first. Unity drops these silently when a component is reserialized, so this
+        /// is a realistic failure rather than a theoretical one.
+        /// </summary>
+        private bool ValidateSceneReferences()
+        {
+            string missing = null;
+
+            void Require(object reference, string name)
+            {
+                if (reference == null || reference.Equals(null))
+                {
+                    missing = missing == null ? name : missing + ", " + name;
+                }
+            }
+
+            Require(_simBorder, nameof(_simBorder));
+            Require(_boundingBoxRenderer, nameof(_boundingBoxRenderer));
+            Require(_utmMap, nameof(_utmMap));
+            Require(_webMercatorMap, nameof(_webMercatorMap));
+            Require(_webMercatorCameraMovement, nameof(_webMercatorCameraMovement));
+            //_wuiGUI is deliberately not checked here: it is found at runtime further down in
+            //Awake, so it is legitimately null at this point.
+
+            if (missing == null)
+            {
+                return true;
+            }
+
+            Debug.LogError(
+                $"{nameof(WUInityManager)} cannot start: the following are not assigned in the scene: {missing}. " +
+                "Select the object holding this component and set them in the Inspector. " +
+                "Nothing else in this component will run until they are.", this);
+            return false;
         }
 
         private void Start()
@@ -242,6 +298,13 @@ namespace WUInity
                 }                
             }
 
+            //Awake bailed out (it logs why), so there is nothing to drive. Returning keeps the
+            //console readable instead of repeating the same NullReferenceException every frame.
+            if (_engine == null)
+            {
+                return;
+            }
+
             //always update visuals, even when paused
             if (_engine.Simulation != null)
             {
@@ -283,6 +346,10 @@ namespace WUInity
                         var clickLatLon = _webMercatorMap.WorldToGeoPosition(pos);
                         _clickLatLons[_clicks] = new PREACT.Math.Vector2d(clickLatLon.x, clickLatLon.y);
                         ++_clicks;
+                        //Reported because a bounding box that never completes is otherwise silent:
+                        //nothing distinguishes "the click was not registered" from "the second
+                        //corner was never placed".
+                        NewLogMessage($"Area of interest corner {_clicks} of 2: {clickLatLon.x:F5}, {clickLatLon.y:F5}");
                         if (_clicks > 1)
                         {
                             FinishPickBoundingBoxOnMap();
@@ -791,6 +858,7 @@ namespace WUInity
             _clicks = 0;
             SetWebMercatorMapInteraction(true);
             _pickingBoundingBox = true;
+            NewLogMessage("Pick the area of interest: click two opposite corners on the map.");
             _boundingBoxRenderer.gameObject.SetActive(true);
             _boundingBoxRenderer.startWidth = 0.5f;
             _boundingBoxRenderer.endWidth = 0.5f;
