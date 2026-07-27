@@ -3,6 +3,7 @@ using UnityEngine;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 
 namespace Assets.WUInity.GUI.DearIMGUI
@@ -29,6 +30,33 @@ namespace Assets.WUInity.GUI.DearIMGUI
         private static string _sd  = "spread_dir_{i}_0072000.tif";
         private static string _fi  = "flin_{i}_0072000.tif";
         private static bool _resume = true;
+
+        // Convergence-driven mode (converge-trigger). The fixed-count mode below stays available
+        // because it is still the right tool when the ensemble already exists and the question is
+        // "aggregate exactly these N", rather than "run until the boundary stops moving".
+        private static bool _convergeMode = true;
+        private static int _max = 200;
+        private static int _parallel = 0;               // 0 = let the CLI pick (CPU count)
+        private static int _streakTarget = 20;
+        private static float _tolerancePercent = 2.0f;  // shown as %, sent as a fraction
+
+        // ELMFIRE realization generation. Without these converge-trigger reads a pre-generated
+        // ensemble from the realization folder instead of producing one.
+        private static bool _generateWithElmfire;
+        private static string _elmfireExe = string.Empty;
+        private static string _elmfireTemplate = string.Empty;
+        private static string _elmfireInputs = string.Empty;
+        private static string _gdalBin = string.Empty;
+        private static bool _realizationWeather;
+
+        // Live convergence state, parsed from the CLI's PROGRESS_JSON lines. Guarded by _sync
+        // because it is written on the process's output thread and read while drawing.
+        private static int _nSuccess, _nFailed, _streak;
+        private static bool _converged;
+        private static double[] _deciles;
+        private static double[] _area;
+        private static double?[] _delta;
+        private static string _liveRasterPath;
 
         // ---- live run state (written from the process reader thread, read on the UI thread) ----
         private static readonly object _sync = new object();
@@ -101,9 +129,41 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             FileRow("PREACTcli.exe", ref _cliExe, false, "Executable (*.exe)");
             FileRow("Base .wui", ref _baseWui, false, "WUInity input (*.wui)");
-            FileRow("Realization folder", ref _rasterDir, true, null);
 
-            ImGui.InputInt("Count", ref _count);
+            ImGui.Checkbox("Run until converged (instead of a fixed count)", ref _convergeMode);
+
+            if (_convergeMode)
+            {
+                ImGui.TextWrapped("Stops once every decile of the probability raster changes by less than the tolerance for the required number of consecutive realizations. The maximum is a ceiling, not a target.");
+                ImGui.InputInt("Maximum realizations", ref _max);
+                ImGui.InputInt("Parallel realizations (0 = CPU count)", ref _parallel);
+                ImGui.InputInt("Consecutive stable realizations", ref _streakTarget);
+                ImGui.InputFloat("Per-decile tolerance (%)", ref _tolerancePercent);
+
+                ImGui.Checkbox("Generate realizations with ELMFIRE", ref _generateWithElmfire);
+                if (_generateWithElmfire)
+                {
+                    FileRow("elmfire.exe", ref _elmfireExe, false, "Executable (*.exe)");
+                    FileRow("ELMFIRE namelist", ref _elmfireTemplate, false, "ELMFIRE data (*.data)");
+                    FileRow("ELMFIRE inputs folder", ref _elmfireInputs, true, null);
+                    // Effectively mandatory, not optional: without it ELMFIRE inherits the ambient
+                    // PATH, and on any machine set up for WUInity that includes SUMO, whose bundled
+                    // proj.db shadows GDAL's. The EPSG lookup then fails, every gdal_translate
+                    // fails, and the run still exits 0 having deleted its own intermediates.
+                    FileRow("GDAL bin folder (required)", ref _gdalBin, true, null);
+                    ImGui.Checkbox("Draw a historical weather day per realization", ref _realizationWeather);
+                }
+                else
+                {
+                    FileRow("Realization folder", ref _rasterDir, true, null);
+                }
+            }
+            else
+            {
+                FileRow("Realization folder", ref _rasterDir, true, null);
+                ImGui.InputInt("Count", ref _count);
+            }
+
             ImGui.InputInt("Start index", ref _start);
             ImGui.InputInt("Index zero-padding", ref _pad);
 
@@ -140,6 +200,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
             string overlay = _totalCount > 0 ? $"{_doneCount} / {_totalCount}" : (_running ? "starting..." : "");
             ImGui.ProgressBar(p, new Vector2(-1, 0), overlay);
             ImGui.Text(_status);
+
+            DrawConvergence();
 
             // Log
             ImGui.SeparatorText("Log");
@@ -206,6 +268,59 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
         private static void OnBrowseCancel() { }
 
+        /// <summary>
+        /// Shows the convergence state the CLI reports, so the run can be judged while it is still
+        /// going rather than only from the CSV afterwards. Deliberately plain text rather than an
+        /// ImGui table: the table API has moved between ImGui.NET versions and this file has to
+        /// compile against whatever the uimgui package pins.
+        /// </summary>
+        private static void DrawConvergence()
+        {
+            double[] deciles, area;
+            double?[] delta;
+            int nSuccess, nFailed, streak;
+            bool converged;
+            string live;
+
+            lock (_sync)
+            {
+                deciles = _deciles;
+                area = _area;
+                delta = _delta;
+                nSuccess = _nSuccess;
+                nFailed = _nFailed;
+                streak = _streak;
+                converged = _converged;
+                live = _liveRasterPath;
+            }
+
+            if (deciles == null || area == null)
+            {
+                return;
+            }
+
+            ImGui.SeparatorText("Convergence");
+            ImGui.Text($"{nSuccess} succeeded, {nFailed} failed    streak {streak} / {_streakTarget}" +
+                       (converged ? "    CONVERGED" : string.Empty));
+
+            ImGui.Text("  decile        area (m2)      change");
+            for (int i = 0; i < deciles.Length && i < area.Length; ++i)
+            {
+                //a decile with no baseline yet is shown as "-" rather than 0%, because "has not
+                //moved" and "has nothing to move from" mean very different things for the streak
+                string change = (delta != null && i < delta.Length && delta[i].HasValue)
+                    ? (delta[i].Value * 100.0).ToString("F2") + " %"
+                    : "-";
+
+                ImGui.Text($"  P >= {deciles[i]:F1}   {area[i],14:N0}   {change,10}");
+            }
+
+            if (!string.IsNullOrEmpty(live))
+            {
+                ImGui.TextWrapped("Live raster: " + live);
+            }
+        }
+
         private static void AppendLog(string line)
         {
             if (line == null) return;
@@ -218,6 +333,11 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
         private static void ParseProgress(string line)
         {
+            if (ParseProgressJson(line) || ParseProgressRaster(line))
+            {
+                return;
+            }
+
             // "PROGRESS <done>/<total> ..."
             const string tag = "PROGRESS ";
             int idx = line.IndexOf(tag, StringComparison.Ordinal);
@@ -230,8 +350,119 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 _doneCount = done;
                 _totalCount = total;
                 _progress = Mathf.Clamp01((float)done / total);
-                _status = $"Processing realization {done + 1} of {total}...";
+                _status = _convergeMode
+                    ? $"{done} of at most {total} realizations..."
+                    : $"Processing realization {done + 1} of {total}...";
             }
+        }
+
+        private static bool ParseProgressRaster(string line)
+        {
+            const string tag = "PROGRESS_RASTER ";
+            int idx = line.IndexOf(tag, StringComparison.Ordinal);
+            if (idx < 0) return false;
+
+            lock (_sync)
+            {
+                _liveRasterPath = line.Substring(idx + tag.Length).Trim();
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Reads one PROGRESS_JSON line from converge-trigger.
+        ///
+        /// Hand-parsed rather than run through a JSON library: the shape is fixed and emitted by
+        /// code in this same repository, and this runs on the child process's output thread where
+        /// an exception would be swallowed and simply stop the display updating. Anything
+        /// unrecognised is ignored rather than throwing.
+        /// </summary>
+        private static bool ParseProgressJson(string line)
+        {
+            const string tag = "PROGRESS_JSON ";
+            int idx = line.IndexOf(tag, StringComparison.Ordinal);
+            if (idx < 0) return false;
+
+            string json = line.Substring(idx + tag.Length);
+
+            try
+            {
+                lock (_sync)
+                {
+                    if (TryGetInt(json, "nSuccess", out int ok)) _nSuccess = ok;
+                    if (TryGetInt(json, "nFailed", out int failed)) _nFailed = failed;
+                    if (TryGetInt(json, "streak", out int streak)) _streak = streak;
+                    if (TryGetInt(json, "streakTarget", out int target) && target > 0) _streakTarget = target;
+                    _converged = json.Contains("\"converged\":true");
+
+                    double[] deciles = GetArray(json, "deciles");
+                    double[] area = GetArray(json, "area");
+                    if (deciles != null) _deciles = deciles;
+                    if (area != null) _area = area;
+                    _delta = GetNullableArray(json, "delta");
+                }
+            }
+            catch
+            {
+                //a malformed progress line must never take down the reader thread
+            }
+            return true;
+        }
+
+        private static bool TryGetInt(string json, string key, out int value)
+        {
+            value = 0;
+            string token = "\"" + key + "\":";
+            int at = json.IndexOf(token, StringComparison.Ordinal);
+            if (at < 0) return false;
+
+            at += token.Length;
+            int end = at;
+            while (end < json.Length && (char.IsDigit(json[end]) || json[end] == '-')) ++end;
+            return end > at && int.TryParse(json.Substring(at, end - at), NumberStyles.Any, CultureInfo.InvariantCulture, out value);
+        }
+
+        private static string GetArrayBody(string json, string key)
+        {
+            string token = "\"" + key + "\":[";
+            int at = json.IndexOf(token, StringComparison.Ordinal);
+            if (at < 0) return null;
+
+            at += token.Length;
+            int end = json.IndexOf(']', at);
+            return end < 0 ? null : json.Substring(at, end - at);
+        }
+
+        private static double[] GetArray(string json, string key)
+        {
+            string body = GetArrayBody(json, key);
+            if (body == null) return null;
+
+            string[] parts = body.Split(',');
+            var result = new double[parts.Length];
+            for (int i = 0; i < parts.Length; ++i)
+            {
+                double.TryParse(parts[i].Trim(), NumberStyles.Any, CultureInfo.InvariantCulture, out result[i]);
+            }
+            return result;
+        }
+
+        /// <summary>As <see cref="GetArray"/>, but keeps JSON null distinct from 0 — the CLI uses
+        /// null for a decile that has no baseline to compare against yet.</summary>
+        private static double?[] GetNullableArray(string json, string key)
+        {
+            string body = GetArrayBody(json, key);
+            if (body == null) return null;
+
+            string[] parts = body.Split(',');
+            var result = new double?[parts.Length];
+            for (int i = 0; i < parts.Length; ++i)
+            {
+                string p = parts[i].Trim();
+                if (p == "null") { result[i] = null; continue; }
+                result[i] = double.TryParse(p, NumberStyles.Any, CultureInfo.InvariantCulture, out double v) ? (double?)v : null;
+            }
+            return result;
         }
 
         private static void StartRun()
@@ -246,16 +477,55 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 _status = "Base .wui not found — set its path.";
                 return;
             }
-            if (string.IsNullOrEmpty(_rasterDir) || !Directory.Exists(_rasterDir))
+            bool needRasterDir = !_convergeMode || !_generateWithElmfire;
+            if (needRasterDir && (string.IsNullOrEmpty(_rasterDir) || !Directory.Exists(_rasterDir)))
             {
                 _status = "Realization folder not found — set its path.";
                 return;
             }
 
-            lock (_sync) { _log.Clear(); }
+            if (_convergeMode && _generateWithElmfire)
+            {
+                if (string.IsNullOrEmpty(_elmfireExe) || !File.Exists(_elmfireExe))
+                {
+                    _status = "elmfire.exe not found — set its path.";
+                    return;
+                }
+                if (string.IsNullOrEmpty(_elmfireTemplate) || !File.Exists(_elmfireTemplate))
+                {
+                    _status = "ELMFIRE namelist not found — set its path.";
+                    return;
+                }
+                if (string.IsNullOrEmpty(_elmfireInputs) || !Directory.Exists(_elmfireInputs))
+                {
+                    _status = "ELMFIRE inputs folder not found — set its path.";
+                    return;
+                }
+                if (string.IsNullOrEmpty(_gdalBin) || !Directory.Exists(_gdalBin))
+                {
+                    //Refused rather than warned about: without it the run does not fail, it
+                    //silently produces nothing while still exiting 0.
+                    _status = "GDAL bin folder is required when generating realizations — set its path.";
+                    return;
+                }
+            }
+
+            lock (_sync)
+            {
+                _log.Clear();
+                _deciles = null;
+                _area = null;
+                _delta = null;
+                _liveRasterPath = null;
+                _nSuccess = 0;
+                _nFailed = 0;
+                _streak = 0;
+                _converged = false;
+            }
+
             _progress = 0f;
             _doneCount = 0;
-            _totalCount = _count;
+            _totalCount = _convergeMode ? _max : _count;
             _status = "Starting...";
 
             var psi = new ProcessStartInfo
@@ -267,10 +537,42 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 RedirectStandardError = true,
                 WorkingDirectory = Path.GetDirectoryName(_cliExe),
             };
-            psi.ArgumentList.Add("probabilistic-trigger");
+            psi.ArgumentList.Add(_convergeMode ? "converge-trigger" : "probabilistic-trigger");
             psi.ArgumentList.Add("--wui");   psi.ArgumentList.Add(_baseWui);
-            psi.ArgumentList.Add("--dir");   psi.ArgumentList.Add(_rasterDir);
-            psi.ArgumentList.Add("--count"); psi.ArgumentList.Add(_count.ToString());
+
+            if (_convergeMode)
+            {
+                psi.ArgumentList.Add("--max"); psi.ArgumentList.Add(_max.ToString(CultureInfo.InvariantCulture));
+                psi.ArgumentList.Add("--streak"); psi.ArgumentList.Add(_streakTarget.ToString(CultureInfo.InvariantCulture));
+                //shown as a percentage, sent as the fraction the CLI expects
+                psi.ArgumentList.Add("--tolerance");
+                psi.ArgumentList.Add((_tolerancePercent / 100f).ToString("R", CultureInfo.InvariantCulture));
+                if (_parallel > 0)
+                {
+                    psi.ArgumentList.Add("--parallel"); psi.ArgumentList.Add(_parallel.ToString(CultureInfo.InvariantCulture));
+                }
+                //this is what drives the convergence display above
+                psi.ArgumentList.Add("--progress-json");
+
+                if (_generateWithElmfire)
+                {
+                    psi.ArgumentList.Add("--elmfire");          psi.ArgumentList.Add(_elmfireExe);
+                    psi.ArgumentList.Add("--elmfire-template"); psi.ArgumentList.Add(_elmfireTemplate);
+                    psi.ArgumentList.Add("--elmfire-inputs");   psi.ArgumentList.Add(_elmfireInputs);
+                    psi.ArgumentList.Add("--gdal");             psi.ArgumentList.Add(_gdalBin);
+                    if (_realizationWeather) { psi.ArgumentList.Add("--realization-weather"); }
+                }
+                else
+                {
+                    psi.ArgumentList.Add("--dir"); psi.ArgumentList.Add(_rasterDir);
+                }
+            }
+            else
+            {
+                psi.ArgumentList.Add("--dir");   psi.ArgumentList.Add(_rasterDir);
+                psi.ArgumentList.Add("--count"); psi.ArgumentList.Add(_count.ToString());
+            }
+
             psi.ArgumentList.Add("--start"); psi.ArgumentList.Add(_start.ToString());
             psi.ArgumentList.Add("--pad");   psi.ArgumentList.Add(_pad.ToString());
             psi.ArgumentList.Add("--toa");   psi.ArgumentList.Add(_toa);
@@ -291,7 +593,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 _process.Start();
                 _process.BeginOutputReadLine();
                 _process.BeginErrorReadLine();
-                AppendLog("Launched: " + _cliExe + " probabilistic-trigger ...");
+                AppendLog("Launched: " + _cliExe + (_convergeMode ? " converge-trigger ..." : " probabilistic-trigger ..."));
             }
             catch (Exception ex)
             {
@@ -309,7 +611,16 @@ namespace Assets.WUInity.GUI.DearIMGUI
             if (code == 0)
             {
                 _progress = 1f;
-                _status = "Finished. Probability raster written to the case _output folder.";
+                bool converged;
+                lock (_sync) { converged = _converged; }
+
+                //A converge run that hits --max without converging still exits 0, so the exit code
+                //alone would report an unconverged result as a clean success.
+                _status = !_convergeMode
+                    ? "Finished. Probability raster written to the case _output folder."
+                    : converged
+                        ? "Converged. Probability raster written to the case _output folder."
+                        : "Reached the maximum without converging — the probability raster is not yet stable.";
             }
             else
             {
