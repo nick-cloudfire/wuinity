@@ -15,15 +15,21 @@ namespace PREACT.Weather
         /// <summary>
         /// Adapted from Farsite FMC-FE2.cpp, returns W/m2. Added latitude and longitide as that was not included (lat got it through reference, long was set to 0 for some reason, equator?)
         /// </summary>
-        /// <param name="latitude"></param>
-        /// <param name="dayOfYear"></param>
-        /// <param name="hour"></param>
-        /// <param name="cloud"></param>
-        /// <param name="elev"></param>
-        /// <param name="slope"></param>
-        /// <param name="aspect"></param>
-        /// <param name="cover"></param>
-        /// <returns></returns>
+        /// <param name="latitude">Degrees north.</param>
+        /// <param name="longitude">Degrees east.</param>
+        /// <param name="dayOfYear">1-366.</param>
+        /// <param name="hour">
+        /// Time of day as <b>HHMM</b>, not hours 0-23 — 2 pm is 1400. The implementation below
+        /// takes <c>(int)hour / 100</c> in integer arithmetic, so an hour-of-day argument silently
+        /// collapses to midnight and the function returns 0 for every terrain, at every time of
+        /// year. Nothing in the signature hints at this, so it is spelled out here.
+        /// </param>
+        /// <param name="cloud">Cloud cover, percent.</param>
+        /// <param name="elev">Elevation in <b>feet</b> (converted to metres internally).</param>
+        /// <param name="slope">Degrees from horizontal.</param>
+        /// <param name="aspect">Downslope bearing, degrees clockwise from north.</param>
+        /// <param name="cover">Canopy cover, percent.</param>
+        /// <returns>Incident solar radiation, W/m2.</returns>
         public static double SimpleRadiation(double latitude, double longitude, long dayOfYear, double hour, long cloud, long elev, long slope, long aspect, long cover)
         {
 
