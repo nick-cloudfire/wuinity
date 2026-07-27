@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using OSGeo.GDAL;
+using OSGeo.OSR;
 
 namespace PREACT.Utility
 {
@@ -25,6 +26,73 @@ namespace PREACT.Utility
             string epsg = UtmUtility.GetUtmEpsg(centerLatitude, centerLongitude);
 
             var args = new List<string> { "-t_srs", epsg, "-r", "bilinear", "-overwrite" };
+            if (cellSize.HasValue)
+            {
+                string cs = cellSize.Value.ToString(CultureInfo.InvariantCulture);
+                args.Add("-tr");
+                args.Add(cs);
+                args.Add(cs);
+            }
+
+            Warp(sourcePath, destPath, args.ToArray());
+            return MasterGrid.FromRasterFile(destPath);
+        }
+
+        /// <summary>
+        /// Warps a DEM into the local UTM zone <b>and clips it to a lat/lon bounding box</b>,
+        /// establishing a master grid whose extent is the domain that was asked for rather than
+        /// whatever the source DEM happened to cover. Necessary whenever the DEM is not a
+        /// download cut to the domain — a local or cached DEM is usually much larger, and without
+        /// the clip every downstream raster (and ELMFIRE's whole computational domain, which it
+        /// infers from the DEM) would silently inherit the wrong extent.
+        ///
+        /// The corners are reprojected rather than assumed: a lat/lon box is not a rectangle in
+        /// UTM, so all four are transformed and the bounding box of the result is used.
+        /// </summary>
+        public static MasterGrid BuildUtmMasterGrid(
+            string sourcePath, string destPath,
+            double southLatitude, double westLongitude, double northLatitude, double eastLongitude,
+            double? cellSize = null)
+        {
+            double centreLat = 0.5 * (southLatitude + northLatitude);
+            double centreLon = 0.5 * (westLongitude + eastLongitude);
+            string epsg = UtmUtility.GetUtmEpsg(centreLat, centreLon);
+
+            var wgs84 = new SpatialReference("");
+            wgs84.ImportFromEPSG(4326);
+            //lat/lon in that order, matching how the corners are passed in below, instead of
+            //EPSG:4326's official axis order.
+            wgs84.SetAxisMappingStrategy(AxisMappingStrategy.OAMS_TRADITIONAL_GIS_ORDER);
+
+            var utm = new SpatialReference("");
+            utm.ImportFromEPSG(int.Parse(epsg.Replace("EPSG:", "")));
+            utm.SetAxisMappingStrategy(AxisMappingStrategy.OAMS_TRADITIONAL_GIS_ORDER);
+
+            var transform = new CoordinateTransformation(wgs84, utm);
+
+            double xMin = double.MaxValue, yMin = double.MaxValue;
+            double xMax = double.MinValue, yMax = double.MinValue;
+            foreach ((double lon, double lat) in new[]
+                     { (westLongitude, southLatitude), (eastLongitude, southLatitude),
+                       (westLongitude, northLatitude), (eastLongitude, northLatitude) })
+            {
+                double[] p = { lon, lat, 0 };
+                transform.TransformPoint(p);
+                xMin = System.Math.Min(xMin, p[0]); xMax = System.Math.Max(xMax, p[0]);
+                yMin = System.Math.Min(yMin, p[1]); yMax = System.Math.Max(yMax, p[1]);
+            }
+
+            transform.Dispose();
+            wgs84.Dispose();
+            utm.Dispose();
+
+            var args = new List<string>
+            {
+                "-t_srs", epsg,
+                "-te", D(xMin), D(yMin), D(xMax), D(yMax),
+                "-r", "bilinear", "-overwrite"
+            };
+
             if (cellSize.HasValue)
             {
                 string cs = cellSize.Value.ToString(CultureInfo.InvariantCulture);

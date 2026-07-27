@@ -20,6 +20,41 @@ namespace PREACT.Utility
         }
 
         /// <summary>
+        /// Writes a single-band GeoTIFF from a <c>[ncols, nrows]</c> array with a <b>lower-left
+        /// origin</b> — the convention <see cref="AscRaster.ReadGeoTiff"/> reads into and
+        /// <see cref="SlopeAspect"/> works in. Rows are flipped back on the way out, since a
+        /// north-up GeoTIFF stores its northernmost row first.
+        /// </summary>
+        public static void WriteBand(MasterGrid grid, float[,] data, string outputPath)
+        {
+            int ncols = data.GetLength(0);
+            int nrows = data.GetLength(1);
+
+            if (ncols != grid.Header.Ncols || nrows != grid.Header.Nrows)
+            {
+                throw new System.ArgumentException(
+                    $"Raster is {ncols}x{nrows} but the master grid is {grid.Header.Ncols}x{grid.Header.Nrows}.", nameof(data));
+            }
+
+            float[] buffer = new float[ncols * nrows];
+            for (int row = 0; row < nrows; ++row)
+            {
+                int yIndex = nrows - 1 - row; //flip: GDAL row 0 is north, y index 0 is south
+                for (int x = 0; x < ncols; ++x)
+                {
+                    buffer[row * ncols + x] = data[x, yIndex];
+                }
+            }
+
+            Dataset ds = CreateOnGrid(grid, ncols, nrows, 1, outputPath);
+            Band band = ds.GetRasterBand(1);
+            band.SetNoDataValue(grid.Header.NoDataValue);
+            band.WriteRaster(0, 0, ncols, nrows, buffer, ncols, nrows, 0, 0);
+            ds.FlushCache();
+            ds.Dispose();
+        }
+
+        /// <summary>
         /// Writes a multi-band GeoTIFF with every band set to the same constant value — the
         /// "constant transient rasters" fallback docs/probabilistic-trigger-convergence.md
         /// allows for per-realization wind/moisture until a real time-varying series (WindNinja
@@ -28,25 +63,10 @@ namespace PREACT.Utility
         /// </summary>
         public static void WriteConstantTimeSeries(MasterGrid grid, float value, int bandCount, string outputPath)
         {
-            Gdal.AllRegister();
-
             int ncols = grid.Header.Ncols;
             int nrows = grid.Header.Nrows;
 
-            Driver drv = Gdal.GetDriverByName("GTiff");
-            Dataset ds = drv.Create(outputPath, ncols, nrows, bandCount, DataType.GDT_Float32, null);
-
-            double[] gt = { grid.XMin, grid.Header.CellSize, 0, grid.YMax, 0, -grid.Header.CellSize };
-            ds.SetGeoTransform(gt);
-
-            if (!string.IsNullOrEmpty(grid.Epsg))
-            {
-                SpatialReference srs = new SpatialReference("");
-                srs.ImportFromEPSG(int.Parse(grid.Epsg.Replace("EPSG:", "")));
-                srs.ExportToWkt(out string wkt, null);
-                ds.SetProjection(wkt);
-                srs.Dispose();
-            }
+            Dataset ds = CreateOnGrid(grid, ncols, nrows, bandCount, outputPath);
 
             float[] buffer = new float[ncols * nrows];
             for (int i = 0; i < buffer.Length; ++i) buffer[i] = value;
@@ -60,6 +80,33 @@ namespace PREACT.Utility
 
             ds.FlushCache();
             ds.Dispose();
+        }
+
+        /// <summary>Creates a Float32 GeoTIFF carrying the master grid's geotransform and CRS.</summary>
+        private static Dataset CreateOnGrid(MasterGrid grid, int ncols, int nrows, int bandCount, string outputPath)
+        {
+            Gdal.AllRegister();
+
+            Driver drv = Gdal.GetDriverByName("GTiff");
+            Dataset ds = drv.Create(outputPath, ncols, nrows, bandCount, DataType.GDT_Float32, null);
+            if (ds == null)
+            {
+                throw new System.Exception("Could not create GeoTIFF: " + outputPath);
+            }
+
+            double[] gt = { grid.XMin, grid.Header.CellSize, 0, grid.YMax, 0, -grid.Header.CellSize };
+            ds.SetGeoTransform(gt);
+
+            if (!string.IsNullOrEmpty(grid.Epsg))
+            {
+                SpatialReference srs = new SpatialReference("");
+                srs.ImportFromEPSG(int.Parse(grid.Epsg.Replace("EPSG:", "")));
+                srs.ExportToWkt(out string wkt, null);
+                ds.SetProjection(wkt);
+                srs.Dispose();
+            }
+
+            return ds;
         }
     }
 }
