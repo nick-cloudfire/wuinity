@@ -23,7 +23,11 @@ namespace Assets.WUInity.GUI.DearIMGUI
         {
             ImGui.Begin(nameof(GlobalSmokeInput), ref _isOpen, PreactGUI.NoDockingNoCollapse);
                         
-            if (ImGui.Button("Create global smoke file")) { }
+            //There is no writer for the extinction ramp on this side, so this states that rather
+            //than presenting a button with an empty body.
+            ImGui.BeginDisabled();
+            ImGui.Button("Create global smoke file");
+            ImGui.EndDisabled();
             ImGui.SameLine();
             if (ImGui.Button("Set global smoke file")) { FileBrowser.OpenSetFilePath(path => _input.ExtinctionFile = path, "Select global smoke file", true); }
             ImGui.InputText(nameof(_input.ExtinctionFile), ref _input.ExtinctionFile, 256);

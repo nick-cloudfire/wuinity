@@ -50,13 +50,18 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             ImGui.Begin("Demographics editor", ref _isOpen, PreactGUI.NoDockingNoCollapse);
 
+            //Only clears the others when this one is being turned ON. It used to force Default back
+            //to true on every toggle, so the box could never be unticked.
             if(ImGui.Checkbox(nameof(_input.Default), ref _input.Default))
             {
-                foreach(KeyValuePair<string, DemographicsInput> kV in _inputs)
+                if (_input.Default)
                 {
-                    kV.Value.Default = false;
+                    foreach(KeyValuePair<string, DemographicsInput> kV in _inputs)
+                    {
+                        kV.Value.Default = false;
+                    }
+                    _input.Default = true;
                 }
-                _input.Default = true;
             }
 
             ImGui.InputText(nameof(_input.Name), ref _input.Name, 64);
@@ -67,14 +72,28 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 ImGui.InputFloat(nameof(_input.MaxCarsProbability), ref _input.MaxCarsProbability);
             }
 
+            //Same guard as the destination editor: the name is the key, so it has to be present and
+            //free. Renaming onto an existing entry previously threw an unhandled ArgumentException,
+            //and a brand new entry was never added at all when its name happened to be unchanged
+            //from the empty default.
+            bool nameIsFree = !string.IsNullOrWhiteSpace(_input.Name)
+                              && (_input.Name == _oldKey || !_inputs.ContainsKey(_input.Name));
+
+            ImGui.BeginDisabled(!nameIsFree);
             if (ImGui.Button("OK"))
             {
                 if (_input.Name != _oldKey)
                 {
                     _inputs.Remove(_oldKey);
-                    _inputs.Add(_input.Name, _input);
                 }
+                _inputs[_input.Name] = _input;
                 _isOpen = false;
+            }
+            ImGui.EndDisabled();
+            if (!nameIsFree)
+            {
+                ImGui.SameLine();
+                ImGui.TextDisabled(string.IsNullOrWhiteSpace(_input.Name) ? "Needs a name." : "That name is already used.");
             }
 
             ImGui.End();

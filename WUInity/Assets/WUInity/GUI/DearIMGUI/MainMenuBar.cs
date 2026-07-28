@@ -49,7 +49,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 if (ImGui.BeginMenu("Console"))
                 {
                     if (ImGui.MenuItem("Open")) { ConsoleWindow.Open(); }
-                    if (ImGui.MenuItem("Clear")) { }
+                    if (ImGui.MenuItem("Clear")) { PreactGUI.ClearMessages(); }
 
                     ImGui.EndMenu();
                 }
@@ -61,13 +61,15 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
                     ImGui.SeparatorText("Edit");
                     if (ImGui.MenuItem("Population editor")) { PopulationEditWindow.Open(); }
-                    if (ImGui.MenuItem("Landscape editor")) { }
+                    //Disabled rather than dead: no landscape editor exists. Passing false greys the
+                    //item out, which is how the other conditional items here signal unavailability.
+                    ImGui.MenuItem("Landscape editor", false);
 
                     ImGui.SeparatorText("Trigger boundaries");
                     if (ImGui.MenuItem("Probabilistic trigger boundary")) { ProbabilisticTriggerWindow.Open(); }
 
                     ImGui.SeparatorText("Viewing");
-                    if (ImGui.MenuItem("Visualize population")) { }
+                    ImGui.MenuItem("Visualize population", false);
 
                     ImGui.EndMenu();
                 }

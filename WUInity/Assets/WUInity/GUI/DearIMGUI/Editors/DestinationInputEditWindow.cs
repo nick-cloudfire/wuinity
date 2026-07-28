@@ -92,11 +92,25 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             _input.Color.g = color.y;
             _input.Color.b = color.z;
 
-            if (ImGui.Button("OK")) 
-            {                
+            //A name is the dictionary key, so an empty or already-taken one cannot be committed.
+            //This used to Remove the old key then Add unconditionally, which threw an unhandled
+            //ArgumentException whenever a new destination reused an existing name, and silently
+            //filed a nameless one under the empty string.
+            bool nameIsFree = !string.IsNullOrWhiteSpace(_input.Name)
+                              && (_input.Name == _oldKey || !_inputs.ContainsKey(_input.Name));
+
+            ImGui.BeginDisabled(!nameIsFree);
+            if (ImGui.Button("OK"))
+            {
                 _inputs.Remove(_oldKey);
-                _inputs.Add(_input.Name, _input);
+                _inputs[_input.Name] = _input;
                 _isOpen = false;
+            }
+            ImGui.EndDisabled();
+            if (!nameIsFree)
+            {
+                ImGui.SameLine();
+                ImGui.TextDisabled(string.IsNullOrWhiteSpace(_input.Name) ? "Needs a name." : "That name is already used.");
             }
 
             ImGui.End();

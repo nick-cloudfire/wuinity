@@ -24,15 +24,20 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
         {
             ImGui.SeparatorText("Wildfire spread");
 
+            //No settings window exists for either wildfire module, so this says so instead of
+            //offering a button with an empty body - which is what was here, and was
+            //indistinguishable from the button being broken.
             if (input.WildfireModule.Module != WildfireModuleInput.WildfireModules.None)
             {
-                if (ImGui.Button("Module settings###1"))
-                {
-                    // per-module settings window not implemented yet
-                }
+                ImGui.BeginDisabled();
+                ImGui.Button("Module settings###1");
+                ImGui.EndDisabled();
+                ImGui.SameLine();
+                ImGui.TextDisabled("(edit in the .wui file)");
                 ImGui.SameLine();
             }
-            
+
+
             wildfireModuleIndex = (int)input.WildfireModule.Module;
             ImGui.Combo(nameof(input.WildfireModule), ref wildfireModuleIndex, WildfireModulesStrings, WildfireModulesStrings.Length);
             input.WildfireModule.Module = (WildfireModuleInput.WildfireModules)wildfireModuleIndex;

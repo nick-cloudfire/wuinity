@@ -137,7 +137,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
             ScenarioEditorWindow.SetInput(input);
         }
 
-        LinkedList<string> _messages = new LinkedList<string>();
+        //Static like _engine and _wuinityManager above, so the menu bar - which is static - can
+        //clear it. Without this the Console/Clear item had nothing to act on and did nothing.
+        static LinkedList<string> _messages = new LinkedList<string>();
         public void NewMessage(string message)
         {
             _messages.AddFirst(message);
@@ -145,6 +147,11 @@ namespace Assets.WUInity.GUI.DearIMGUI
             {
                 _messages.RemoveLast();
             }
+        }
+
+        public static void ClearMessages()
+        {
+            _messages.Clear();
         }
 
         bool _simulationRunning = false;
