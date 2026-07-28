@@ -657,76 +657,47 @@ namespace PREACT.Wildfire
 			slope = new short[w * h];
 			aspect = new short[w * h];
 
-			//Cell size in metres, per axis. The rows run north-down, so a positive dz/dy points south.
-			double cellX = RasterCellResolutionX > 0.0 ? RasterCellResolutionX : 1.0;
-			double cellY = RasterCellResolutionY > 0.0 ? RasterCellResolutionY : 1.0;
+			if (System.Math.Abs(RasterCellResolutionX - RasterCellResolutionY) > 0.01 * RasterCellResolutionX)
+			{
+				//Horn's method as shared here takes one cell size. Non-square cells are rare enough in a
+				//projected DEM to be worth reporting rather than silently averaging over.
+				Engine.Message(null, Engine.LogType.Warning,
+					$"The elevation raster's cells are {RasterCellResolutionX:F2} by {RasterCellResolutionY:F2} m, "
+					+ "not square; the derived slope uses the east-west size for both.");
+			}
+			double cellSize = RasterCellResolutionX > 0.0 ? RasterCellResolutionX : 1.0;
+
+			//Into [x, y] with y running north, which is what SlopeAspect works in, and back out again.
+			//The shared implementation is used rather than another copy of Horn's method: there were two,
+			//and only one of them handled nodata, so slope came out differently depending on which path a
+			//scenario happened to take.
+			float[,] elevationNorthUp = new float[w, h];
+			for (int y = 0; y < h; ++y)
+			{
+				int row = h - 1 - y; //file rows run north-down
+				for (int x = 0; x < w; ++x)
+				{
+					elevationNorthUp[x, y] = elevation[x + row * w];
+				}
+			}
+
+			Utility.SlopeAspect.Compute(elevationNorthUp, cellSize, out float[,] slopeDegrees, out float[,] aspectDegrees);
 
 			for (int y = 0; y < h; ++y)
 			{
+				int row = h - 1 - y;
 				for (int x = 0; x < w; ++x)
 				{
-					double centre = elevation[x + y * w];
-
-					//A cell with no elevation has no slope or aspect either. Marked as nodata rather than
-					//computed as flat, so a consumer can tell "no data here" from "level ground here".
-					if (IsNoElevation(centre))
-					{
-						slope[x + y * w] = -9999;
-						aspect[x + y * w] = -9999;
-						continue;
-					}
-
-					//Edges clamp to themselves, which flattens the outermost ring rather than inventing
-					//ground beyond the raster.
-					int xm = System.Math.Max(x - 1, 0), xp = System.Math.Min(x + 1, w - 1);
-					int ym = System.Math.Max(y - 1, 0), yp = System.Math.Min(y + 1, h - 1);
-
-					//A nodata neighbour stands in as the centre's own height, which is the same treatment
-					//the raster edge gets and reads as "no change in that direction". Using -9999 as if it
-					//were a height puts a 10 km cliff beside every gap: Mati's DEM has no data over the
-					//sea, and taking those values literally produced 90 degree slopes all along the coast
-					//and a mean slope three and a half degrees too steep across the whole raster.
-					double a = Neighbour(elevation, xm, ym, w, centre), b = Neighbour(elevation, x, ym, w, centre), c = Neighbour(elevation, xp, ym, w, centre);
-					double d = Neighbour(elevation, xm, y, w, centre), f = Neighbour(elevation, xp, y, w, centre);
-					double g = Neighbour(elevation, xm, yp, w, centre), hh = Neighbour(elevation, x, yp, w, centre), i = Neighbour(elevation, xp, yp, w, centre);
-
-					double dzdx = ((c + 2.0 * f + i) - (a + 2.0 * d + g)) / (8.0 * cellX);
-					double dzdy = ((g + 2.0 * hh + i) - (a + 2.0 * b + c)) / (8.0 * cellY);
-
-					double riseRun = System.Math.Sqrt(dzdx * dzdx + dzdy * dzdy);
-					slope[x + y * w] = (short)System.Math.Round(System.Math.Atan(riseRun) * 180.0 / System.Math.PI);
-
-					if (riseRun < 1e-9)
-					{
-						aspect[x + y * w] = -1; //flat
-						continue;
-					}
-
-					//dzdy is measured down the array, which is southward, so it already points the way a
-					//north-down raster does. Downslope is the direction the ground falls towards.
-					double degrees = System.Math.Atan2(dzdy, -dzdx) * 180.0 / System.Math.PI;
-					degrees = 90.0 - degrees;
-					if (degrees < 0.0) degrees += 360.0;
-					if (degrees >= 360.0) degrees -= 360.0;
-					aspect[x + y * w] = (short)System.Math.Round(degrees);
+					slope[x + row * w] = (short)System.Math.Round(slopeDegrees[x, y]);
+					aspect[x + row * w] = (short)System.Math.Round(aspectDegrees[x, y]);
 				}
 			}
 		}
 
-		/// <summary>
-		/// Whether an elevation value is a height or a hole. -9999 is the convention the rest of the
-		/// landscape uses; the wider test catches the other sentinels DEMs are published with, all of
-		/// which are far outside the range of real ground.
-		/// </summary>
+		/// <summary>Shared with the slope derivation, so both agree on what counts as a height.</summary>
 		private static bool IsNoElevation(double value)
 		{
-			return value <= -1000.0 || value >= 30000.0;
-		}
-
-		private static double Neighbour(float[] elevation, int x, int y, int width, double fallback)
-		{
-			double value = elevation[x + y * width];
-			return IsNoElevation(value) ? fallback : value;
+			return Utility.SlopeAspect.IsNoElevation(value);
 		}
 
 		/// <summary>

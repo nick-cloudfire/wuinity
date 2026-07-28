@@ -121,6 +121,11 @@ namespace Assets.WUInity.GUI.DearIMGUI
         //Files the steps produce, relative to the scenario root.
         public static string WorldPopFile => Input.Simulation.Name + "_worldpop.tif";
         public static string DemFile => Input.Simulation.Name + "_dem.tif";
+        //Written out rather than only computed in memory. ELMFIRE takes all three as separate GeoTIFF
+        //inputs, and a derived raster that exists only inside a load cannot be handed to anything else,
+        //inspected in QGIS, or compared against what a previous run used.
+        public static string SlopeFile => Input.Simulation.Name + "_slope.tif";
+        public static string AspectFile => Input.Simulation.Name + "_aspect.tif";
         //The download as it arrives, in degrees, before it is warped into the simulation's zone. Kept
         //rather than deleted: it is the slow part to obtain, and a failed warp can be retried from it.
         public static string DemDownloadFile => Input.Simulation.Name + "_dem_wgs84.tif";
@@ -606,11 +611,59 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 LogStep($"DEM on the simulation's grid: {grid.Header.Ncols} x {grid.Header.Nrows} cells of "
                     + $"{grid.Header.CellSize:F1} m, in {grid.Epsg}.");
 
+                WriteSlopeAndAspect(grid);
+
                 //Set on the scenario, which is the point of the step: this is what makes terrain, slope
                 //and aspect available to everything that wants them.
                 Input.Landscape.ElevationFile = DemFile;
-                LogStep("Scenario now points at " + DemFile + " for elevation. Slope and aspect are computed from it.");
+                LogStep("Scenario now points at " + DemFile + ", " + SlopeFile + " and " + AspectFile + ".");
             });
+        }
+
+        /// <summary>
+        /// Derives slope and aspect from the DEM and writes both as GeoTIFFs on its grid.
+        ///
+        /// On disk rather than only in memory, because they are inputs in their own right: ELMFIRE takes
+        /// elevation, slope and aspect as three separate GeoTIFFs, and a raster that exists only inside a
+        /// scenario load cannot be handed to it, opened in QGIS, or compared against what an earlier run
+        /// used. The scenario still recomputes them if the files are absent, so nothing depends on this
+        /// having been run - it makes them available, it does not make them required.
+        /// </summary>
+        private static void WriteSlopeAndAspect(PREACT.Utility.MasterGrid grid)
+        {
+            float[,] elevation = PREACT.Utility.AscRaster.ReadGeoTiff(InRoot(DemFile),
+                out PREACT.Utility.AscRaster.Header header, out bool ok);
+            if (!ok || elevation == null)
+            {
+                LogStep("Could not read the DEM back, so no slope or aspect was written.");
+                return;
+            }
+
+            PREACT.Utility.SlopeAspect.Compute(elevation, header.CellSize,
+                out float[,] slope, out float[,] aspect);
+
+            PREACT.Utility.GeoTiffRasterWriter.WriteBand(grid, slope, InRoot(SlopeFile));
+            PREACT.Utility.GeoTiffRasterWriter.WriteBand(grid, aspect, InRoot(AspectFile));
+
+            Input.Landscape.SlopeFile = SlopeFile;
+            Input.Landscape.AspectFile = AspectFile;
+
+            //Reported with their ranges, because a slope raster is the one of the three whose plausibility
+            //can be judged at a glance: tens of degrees is terrain, ninety is a nodata edge.
+            float slopeMax = 0f, slopeMean = 0f;
+            int cells = 0;
+            for (int y = 0; y < header.Nrows; ++y)
+            {
+                for (int x = 0; x < header.Ncols; ++x)
+                {
+                    slopeMax = System.Math.Max(slopeMax, slope[x, y]);
+                    slopeMean += slope[x, y];
+                    ++cells;
+                }
+            }
+            if (cells > 0) slopeMean /= cells;
+
+            LogStep($"Wrote {SlopeFile} and {AspectFile} (slope mean {slopeMean:F1} deg, max {slopeMax:F0} deg).");
         }
 
         public static void DownloadLandfire()

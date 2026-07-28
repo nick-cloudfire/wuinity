@@ -21,6 +21,16 @@ namespace PREACT.Utility
         /// of the <b>downslope</b> direction, degrees clockwise from north, in [0, 360). Flat
         /// cells return 0.
         /// </summary>
+        /// <summary>
+        /// Whether an elevation value is a height or a hole. -9999 is the convention used throughout;
+        /// the wider test catches the other sentinels DEMs are published with (-32768 and friends), all
+        /// far outside the range of real ground.
+        /// </summary>
+        public static bool IsNoElevation(double value)
+        {
+            return value <= -1000.0 || value >= 30000.0;
+        }
+
         public static void Compute(float[,] elevation, double cellSize, out float[,] slopeDegrees, out float[,] aspectDegrees)
         {
             int ncols = elevation.GetLength(0);
@@ -31,17 +41,35 @@ namespace PREACT.Utility
 
             const double radToDeg = 180.0 / System.Math.PI;
 
-            float Sample(int x, int y)
-            {
-                x = System.Math.Clamp(x, 0, ncols - 1);
-                y = System.Math.Clamp(y, 0, nrows - 1);
-                return elevation[x, y];
-            }
-
             for (int x = 0; x < ncols; ++x)
             {
                 for (int y = 0; y < nrows; ++y)
                 {
+                    double centre = elevation[x, y];
+
+                    //A cell with no height has no slope or aspect. Flat, rather than a sentinel carried
+                    //through: consumers multiply the slope by something (k-PERIL by 0.06, into a wind) and
+                    //not all of them check for nodata first.
+                    if (IsNoElevation(centre))
+                    {
+                        slopeDegrees[x, y] = 0f;
+                        aspectDegrees[x, y] = 0f;
+                        continue;
+                    }
+
+                    //A neighbour with no height stands in as the centre's own, which is the same treatment
+                    //the raster edge gets and reads as "no change in that direction". Taking -9999 as a
+                    //height instead puts a 10 km cliff beside every gap: on Mati's DEM, which has no data
+                    //over the sea, that produced 90 degree slopes along the whole coast and a mean slope
+                    //three and a half degrees too steep across the raster.
+                    float Sample(int sx, int sy)
+                    {
+                        sx = System.Math.Clamp(sx, 0, ncols - 1);
+                        sy = System.Math.Clamp(sy, 0, nrows - 1);
+                        float value = elevation[sx, sy];
+                        return IsNoElevation(value) ? (float)centre : value;
+                    }
+
                     float z1 = Sample(x - 1, y - 1);
                     float z2 = Sample(x - 1, y);
                     float z3 = Sample(x - 1, y + 1);

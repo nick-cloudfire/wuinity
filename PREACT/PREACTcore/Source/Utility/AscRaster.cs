@@ -148,6 +148,7 @@ namespace PREACT.Utility
             double.TryParse(SplitLine(lines[3])[1], NumberStyles.Any, CultureInfo.InvariantCulture, out header.YllCorner);
             double.TryParse(SplitLine(lines[4])[1], NumberStyles.Any, CultureInfo.InvariantCulture, out header.CellSize);
             double.TryParse(SplitLine(lines[5])[1], NumberStyles.Any, CultureInfo.InvariantCulture, out header.NoDataValue);
+            header.EpsgCode = EpsgFromCompanionPrj(filePath);
 
             float[,] data = new float[header.Ncols, header.Nrows];
             for (int y = 0; y < header.Nrows; y++)
@@ -212,6 +213,10 @@ namespace PREACT.Utility
                 header.XllCorner = originX;
                 header.YllCorner = originY + gt[5] * nrows; //gt[5] negative -> bottom edge
                 header.NoDataValue = hasNodata != 0 ? nodata : -9999.0;
+                //Populated here as well as in ReadHeader. Leaving it out meant a raster read for its data
+                //reported no CRS while the same file read for its header reported one, so whether a raster
+                //appeared georeferenced depended on which function had been called.
+                header.EpsgCode = GetEpsgCode(ds);
 
                 float[] buffer = new float[ncols * nrows];
                 band.ReadRaster(0, 0, ncols, nrows, buffer, ncols, nrows, 0, 0);
