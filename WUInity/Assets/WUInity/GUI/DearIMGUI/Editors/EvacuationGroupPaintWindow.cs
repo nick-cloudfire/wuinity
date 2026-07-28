@@ -21,6 +21,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
         private static readonly List<EvacuationGroupInput> _ordered = new List<EvacuationGroupInput>();
         private static int _selected;
         private static bool _painting;
+        private static bool _startFailed;
 
         public static void Open(Dictionary<string, EvacuationGroupInput> inputs)
         {
@@ -125,7 +126,13 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                 {
                     StartPainting();
                 }
-                ImGui.TextDisabled("Needs the landscape loaded, since groups are painted on the fire grid.");
+                ImGui.TextDisabled("Groups are painted on the fire grid: the landscape's, or the imported "
+                    + "time of arrival raster's when the fire comes from one.");
+                if (_startFailed)
+                {
+                    ImGui.TextColored(new Vector4(0.9f, 0.7f, 0.2f, 1f),
+                        "The fire grid could not be established - see the console for what is missing.");
+                }
             }
             else
             {
@@ -158,13 +165,25 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
         private static void StartPainting()
         {
             PushGroupsToPainter();
-            _painting = true;
             PreactGUI.WUInity.ShowUTMMap();
             //Through the manager, so the painter object is actually switched on and the sample mode
             //says painting is happening. Setting the mode on the painter alone left it inert whenever
             //another painter had been stopped earlier, and left the map draggable out from under the
             //brush, since a left-drag pans unless something claims the button.
             PreactGUI.WUInity.StartPainter(global::WUInity.Painter.PaintMode.EvacGroup);
+
+            //Setting a mode can fail for want of a fire grid, and it says so in the log rather than
+            //throwing - so without this the window would claim to be painting while the brush did
+            //nothing at all.
+            if (!PreactGUI.WUInity.Painter.CanPaint)
+            {
+                _startFailed = true;
+                PreactGUI.WUInity.StopPainter();
+                return;
+            }
+
+            _startFailed = false;
+            _painting = true;
             PreactGUI.WUInity.Painter.SetEvacGroupColor(_selected);
             PreactGUI.WUInity.DisplayEvacGroupMap();
         }

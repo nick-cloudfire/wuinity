@@ -160,6 +160,78 @@ namespace PREACT.Utility
         }
 
         /// <summary>
+        /// Reads only the georeferencing of a raster - extent, cell size, cell count - without its
+        /// data. For the cases that need to know what grid a file is on rather than what is in it:
+        /// reading a whole arrival time raster to learn its dimensions costs a large allocation for
+        /// six numbers.
+        /// </summary>
+        public static Header ReadHeader(string filePath, out bool success)
+        {
+            var header = new Header();
+            success = false;
+
+            if (!File.Exists(filePath))
+            {
+                Engine.Message(null, Engine.LogType.SimulationError, "Raster not found: " + filePath);
+                return header;
+            }
+
+            string ext = Path.GetExtension(filePath).ToLowerInvariant();
+            if (ext == ".tif" || ext == ".tiff")
+            {
+                OSGeo.GDAL.Gdal.AllRegister();
+                using (OSGeo.GDAL.Dataset ds = OSGeo.GDAL.Gdal.Open(filePath, OSGeo.GDAL.Access.GA_ReadOnly))
+                {
+                    if (ds == null)
+                    {
+                        Engine.Message(null, Engine.LogType.SimulationError, "GDAL could not open: " + filePath);
+                        return header;
+                    }
+
+                    double[] gt = new double[6];
+                    ds.GetGeoTransform(gt); //[originX, pxW, 0, originY, 0, pxH(neg)]
+
+                    header.Ncols = ds.RasterXSize;
+                    header.Nrows = ds.RasterYSize;
+                    header.CellSize = gt[1];
+                    header.XllCorner = gt[0];
+                    header.YllCorner = gt[3] + gt[5] * header.Nrows; //gt[5] negative -> bottom edge
+
+                    ds.GetRasterBand(1).GetNoDataValue(out double nodata, out int hasNodata);
+                    header.NoDataValue = hasNodata != 0 ? nodata : -9999.0;
+
+                    success = true;
+                    return header;
+                }
+            }
+
+            //An .asc grid keeps all six in its first six lines, so the data never has to be touched.
+            using (StreamReader reader = new StreamReader(filePath))
+            {
+                string[] lines = new string[6];
+                for (int i = 0; i < 6; ++i)
+                {
+                    lines[i] = reader.ReadLine();
+                    if (lines[i] == null)
+                    {
+                        Engine.Message(null, Engine.LogType.SimulationError, "ASC file has no header: " + filePath);
+                        return header;
+                    }
+                }
+
+                int.TryParse(SplitLine(lines[0])[1], out header.Ncols);
+                int.TryParse(SplitLine(lines[1])[1], out header.Nrows);
+                double.TryParse(SplitLine(lines[2])[1], NumberStyles.Any, CultureInfo.InvariantCulture, out header.XllCorner);
+                double.TryParse(SplitLine(lines[3])[1], NumberStyles.Any, CultureInfo.InvariantCulture, out header.YllCorner);
+                double.TryParse(SplitLine(lines[4])[1], NumberStyles.Any, CultureInfo.InvariantCulture, out header.CellSize);
+                double.TryParse(SplitLine(lines[5])[1], NumberStyles.Any, CultureInfo.InvariantCulture, out header.NoDataValue);
+            }
+
+            success = header.Ncols > 0 && header.Nrows > 0 && header.CellSize > 0.0;
+            return header;
+        }
+
+        /// <summary>
         /// Write a [ncols, nrows] lower-left-origin array to an .asc grid (flipping back
         /// so the north row is written first).
         /// </summary>

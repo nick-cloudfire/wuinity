@@ -48,6 +48,14 @@ namespace WUInity
         PREACT.Wildfire.LandscapeData _lcpData;
         bool addingArea;
 
+        //The fire grid's lower-left corner in simulation coordinates, and its cell size. Held here
+        //rather than read from the LCP at each use, because an AscImport scenario has no LCP at all -
+        //WildfireData skips loading one for it by design - and the grid then comes from the imported
+        //arrival time raster instead.
+        Vector2d _fireGridOrigin;
+        double _fireGridCellSize;
+        bool _haveFireGrid;
+
         //wui area stuff
         Texture2D wuiAreaTex;
         Color[] wuiAreaColorArray;   
@@ -81,6 +89,14 @@ namespace WUInity
         {
             return paintMode;
         }
+
+        /// <summary>
+        /// Whether the painter actually has a grid and a texture to work on. Callers that offer a
+        /// "start painting" control need this: setting a mode can fail - no scenario, no fire grid -
+        /// and the failure is a logged warning, not an exception, so it is otherwise invisible and the
+        /// brush simply does nothing.
+        /// </summary>
+        public bool CanPaint { get => activeTexture != null && activeColorArray != null && activeCellCount.x > 0; }
 
         public Texture2D GetEvacGroupTexture()
         {
@@ -192,6 +208,93 @@ namespace WUInity
             }
         }
 
+        /// <summary>
+        /// Establishes the grid every paint mode works on: cell count, extent, the lower-left corner in
+        /// simulation coordinates and the cell size.
+        ///
+        /// The landscape is used when there is one. When there is not, the imported arrival time raster
+        /// is - and that is not a fallback but the normal case for the module the trigger pipeline uses:
+        /// WildfireData deliberately skips loading an LCP for AscImport, so every paint mode used to
+        /// refuse outright with "LCP data is not loaded" for exactly the scenarios that need a WUI area
+        /// and evacuation groups painted. That raster is also the grid k-PERIL computes on, so a mask
+        /// painted against it lines up with the boundary cell for cell, which is what matters.
+        /// </summary>
+        private bool ResolveFireGrid()
+        {
+            if (_manager == null || _manager.PREACTInput == null)
+            {
+                Engine.Message(null, Engine.LogType.Warning, "The painter has no scenario to paint on; load one first.");
+                return false;
+            }
+
+            PREACT.Input.PREACTInput input = _manager.PREACTInput;
+
+            if (_lcpData != null)
+            {
+                fireDataCellCount = _lcpData.GetCellCount();
+                fireDataRealSize = _lcpData.GetSize();
+                _fireGridOrigin = _lcpData.OriginOffset;
+                _fireGridCellSize = fireDataCellCount.x > 0 ? fireDataRealSize.x / fireDataCellCount.x : 0.0;
+                _haveFireGrid = _fireGridCellSize > 0.0;
+                return _haveFireGrid;
+            }
+
+            if (input.WildfireModule.Module != PREACT.Input.WildfireModuleInput.WildfireModules.AscImport)
+            {
+                Engine.Message(null, Engine.LogType.Warning,
+                    "Painting needs the fire grid, which comes from the landscape file for this wildfire module. Load the landscape first.");
+                return false;
+            }
+
+            string arrivalFile = input.WildfireModule.AscImportInput.TimeOfArrivalFile;
+            if (string.IsNullOrEmpty(arrivalFile))
+            {
+                Engine.Message(null, Engine.LogType.Warning,
+                    "Painting needs the fire grid, which for an imported fire comes from the time of arrival raster. None is set on this scenario.");
+                return false;
+            }
+
+            string path = System.IO.Path.Combine(input.RootFolder, arrivalFile);
+            PREACT.Utility.AscRaster.Header header = PREACT.Utility.AscRaster.ReadHeader(path, out bool ok);
+            if (!ok)
+            {
+                Engine.Message(null, Engine.LogType.Warning, "Could not read the fire grid from " + path + ".");
+                return false;
+            }
+
+            fireDataCellCount = new Vector2int(header.Ncols, header.Nrows);
+            fireDataRealSize = new Vector2d(header.Ncols * header.CellSize, header.Nrows * header.CellSize);
+            //Simulation coordinates, as OriginOffset is: the raster's corner measured from the
+            //simulation's own UTM origin. Mixing the two frames puts everything painted somewhere else.
+            _fireGridOrigin = new Vector2d(header.XllCorner, header.YllCorner) - input.Simulation.Data.UTMOrigin;
+            _fireGridCellSize = header.CellSize;
+            _haveFireGrid = true;
+
+            Engine.Message(null, Engine.LogType.Log,
+                $"Painting on the imported fire grid: {header.Ncols} x {header.Nrows} cells of {header.CellSize:F1} m.");
+
+            //A fire grid that does not reach the domain at all cannot be painted on usefully - the
+            //brush would be somewhere off-screen - and the cause is always the same: the raster and the
+            //simulation origin are in different UTM zones, so subtracting their eastings is meaningless.
+            //Said here because the offset is otherwise invisible, and the same subtraction is what
+            //AscFireImport places the fire itself with, so the fire is displaced by just as much.
+            Vector2d domain = input.Simulation.DomainSize;
+            bool overlaps = _fireGridOrigin.x < domain.x && _fireGridOrigin.y < domain.y
+                            && _fireGridOrigin.x + fireDataRealSize.x > 0.0
+                            && _fireGridOrigin.y + fireDataRealSize.y > 0.0;
+            if (!overlaps)
+            {
+                Engine.Message(null, Engine.LogType.Warning,
+                    $"The fire grid does not overlap the simulation domain: its corner is {_fireGridOrigin.x:F0}, {_fireGridOrigin.y:F0} m "
+                    + $"from the origin, for a domain of {domain.x:F0} x {domain.y:F0} m. The raster's easting "
+                    + $"({header.XllCorner:F0}) and the simulation's UTM origin ({input.Simulation.Data.UTMOrigin.x:F0}) "
+                    + "are almost certainly in different UTM zones, which makes the difference between them meaningless. "
+                    + "The fire itself is placed the same way, so it is displaced by the same amount.");
+            }
+
+            return true;
+        }
+
         public void SetPainterMode(PaintMode mode)
         {
             if (mode == PaintMode.WUIArea)
@@ -253,7 +356,7 @@ namespace WUInity
         /// </summary>
         public string[] ExportEvacGroupMasks(string folder)
         {
-            if (_evacGroupCells == null || _lcpData == null)
+            if (_evacGroupCells == null || !_haveFireGrid)
             {
                 Engine.Message(null, Engine.LogType.Warning, "No painted evacuation groups to export.");
                 return null;
@@ -266,9 +369,9 @@ namespace WUInity
             {
                 Ncols = xCount,
                 Nrows = yCount,
-                XllCorner = _lcpData.OriginOffset.x,
-                YllCorner = _lcpData.OriginOffset.y,
-                CellSize = fireDataRealSize.x / xCount,
+                XllCorner = _fireGridOrigin.x,
+                YllCorner = _fireGridOrigin.y,
+                CellSize = _fireGridCellSize,
                 NoDataValue = -9999.0
             };
 
@@ -310,9 +413,8 @@ namespace WUInity
 
         void SetPainterEvacGroup(int groupIndex)
         {
-            if (_lcpData == null)
+            if (!ResolveFireGrid())
             {
-                Engine.Message(null, Engine.LogType.Warning, "Painting an evacuation group needs the landscape loaded, since groups are painted on the fire grid.");
                 return;
             }
 
@@ -321,12 +423,12 @@ namespace WUInity
             CheckDataResources(evacGroupTex, evacGroupColorArray);
             SetColor(groupIndex);
             _brushSize = 5;
-            _offset = new Vector3((float)_lcpData.OriginOffset.x, 0f, (float)_lcpData.OriginOffset.y);
+            _offset = FireGridOffset();
         }
 
         void SetPainterWUIArea()
         {
-            if(_lcpData == null)
+            if (!ResolveFireGrid())
             {
                 return;
             }
@@ -335,12 +437,12 @@ namespace WUInity
             CheckDataResources(wuiAreaTex, wuiAreaColorArray);
             SetWUIAreaColor(true);
             _brushSize = 5;
-            _offset = new Vector3((float)_lcpData.OriginOffset.x, 0f, (float)_lcpData.OriginOffset.y);
+            _offset = FireGridOffset();
         }
 
         void SetPainterRandomIgnition()
         {
-            if (_lcpData == null)
+            if (!ResolveFireGrid())
             {
                 return;
             }
@@ -349,11 +451,11 @@ namespace WUInity
             CheckDataResources(randomIgnitionTex, randomIgnitionColorArray);
             SetRandomIgnitionAreaColor(true);
             _brushSize = 5;
-            _offset = new Vector3((float)_lcpData.OriginOffset.x, 0f, (float)_lcpData.OriginOffset.y);
+            _offset = FireGridOffset();
         }
         void SetPainterInitialIgnition()
         {
-            if (_lcpData == null)
+            if (!ResolveFireGrid())
             {
                 return;
             }
@@ -362,7 +464,13 @@ namespace WUInity
             CheckDataResources(initialIgnitionTex, initialIgnitionColorArray);
             SetInitialIgnitionAreaColor(true);
             _brushSize = 3;
-            _offset = new Vector3((float)_lcpData.OriginOffset.x, 0f, (float)_lcpData.OriginOffset.y);
+            _offset = FireGridOffset();
+        }
+
+        /// <summary>Where the fire grid sits in the scene, which is its simulation-space corner.</summary>
+        private Vector3 FireGridOffset()
+        {
+            return new Vector3((float)_fireGridOrigin.x, 0f, (float)_fireGridOrigin.y);
         }
 
         void CheckDataResources(Texture2D requestedTexture, Color[] requestedColorArray)
@@ -378,19 +486,31 @@ namespace WUInity
 
             if (requestedTexture == null)
             {
-                Vector2int cellCount;
-                //get correct size, fire mesh or evac mesh
-                if(_manager.PREACTInput.WildfireModule.Data.LandscapeData != null)
+                //The grid comes from the landscape when there is one and from the imported arrival time
+                //raster when there is not, which is the case for the module the trigger pipeline uses.
+                if (!_haveFireGrid && !ResolveFireGrid())
                 {
-                    fireDataCellCount = _manager.PREACTInput.WildfireModule.Data.LandscapeData.GetCellCount();
-                    cellCount = fireDataCellCount;
-                    fireDataRealSize = _manager.PREACTInput.WildfireModule.Data.LandscapeData.GetSize();
-                }
-                else
-                {
-                    Engine.Message(null, Engine.LogType.Warning, "Painter is trying to access LCP data but it is not loaded.");
                     return;
                 }
+                Vector2int cellCount = fireDataCellCount;
+
+                //Allocated here when absent rather than assumed: these hold what has been painted and
+                //are only filled in by a graphical fire input file, which most scenarios do not have.
+                PREACT.Input.WildfireData fireData = _manager.PREACTInput.WildfireModule.Data;
+                int cells = cellCount.x * cellCount.y;
+                if (fireData.WuiArea == null || fireData.WuiArea.Length != cells)
+                {
+                    fireData.UpdateWUIArea(null, cellCount.x, cellCount.y);
+                }
+                if (fireData.RandomIgnition == null || fireData.RandomIgnition.Length != cells)
+                {
+                    fireData.UpdateRandomIgnitionIndices(null, cellCount.x, cellCount.y);
+                }
+                if (fireData.InitialIgnition == null || fireData.InitialIgnition.Length != cells)
+                {
+                    fireData.UpdateInitialIgnitionIndices(null, cellCount.x, cellCount.y);
+                }
+
                 //painter
                 requestedColorArray = new Color[cellCount.x * cellCount.y];
                 requestedTexture = new Texture2D(cellCount.x, cellCount.y);
@@ -494,6 +614,14 @@ namespace WUInity
             //The brush follows the pointer wherever it is, so without this it paints through the
             //windows on top of the map - including through the button that ends the painting.
             if (ImGui.GetIO().WantCaptureMouse)
+            {
+                return;
+            }
+
+            //Nothing to paint on. CheckDataResources leaves these null whenever it could not work out
+            //the grid, and this ran anyway on the next click - a NullReferenceException per frame the
+            //button was held, with the actual reason logged once, far above, and easily missed.
+            if (activeTexture == null || activeColorArray == null || activeCellCount.x <= 0)
             {
                 return;
             }

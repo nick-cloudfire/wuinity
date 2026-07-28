@@ -193,9 +193,30 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                 ImGui.Text($"{nameof(_input.ShapeFile)}: {_input.ShapeFile}");
             }
 
-            if (ImGui.Button("Paint group areas on the map"))
+            //A group that is not in the dictionary yet cannot be painted: the paint window works from
+            //the dictionary, since every group is painted against the others. Rather than a button that
+            //silently leaves the new group out, this commits it first - which is what pressing OK would
+            //have done anyway, and the editor stays open on it.
+            bool isNew = _inputs != null && !_inputs.ContainsKey(_input.Name);
+            bool canCommit = !string.IsNullOrWhiteSpace(_input.Name);
+
+            ImGui.BeginDisabled(isNew && !canCommit);
+            if (ImGui.Button(isNew ? "Add this group and paint the areas" : "Paint group areas on the map"))
             {
+                if (isNew)
+                {
+                    _inputs.Remove(_oldKey);
+                    _inputs[_input.Name] = _input;
+                    _oldKey = _input.Name;
+                    Engine.Message(null, Engine.LogType.Log, "Evacuation group " + _input.Name + " added, so its area can be painted.");
+                }
                 EvacuationGroupPaintWindow.Open(_inputs);
+            }
+            ImGui.EndDisabled();
+
+            if (isNew && !canCommit)
+            {
+                ImGui.TextDisabled("Name the group first: painting works on all the groups at once, and they are identified by name.");
             }
             ImGui.TextWrapped("Painting covers every group at once, since a cell belongs to only one group.");
         }
