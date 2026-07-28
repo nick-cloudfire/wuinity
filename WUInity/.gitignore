@@ -77,3 +77,9 @@ crashlytics-build.properties
 /[Aa]ssets/[Pp]REACT/[Dd]ebug.meta
 /[Aa]ssets/[Pp]REACT/[Rr]elease.meta
 [Ii]mgui.ini
+
+# Live fuel moisture rasters: a downloaded monthly data set, some gigabytes of GeoTIFF, which
+# does not belong in the history. The folder's own .meta goes with it, so nobody who lacks the
+# data ends up with a meta file describing a directory they do not have.
+/[Aa]ssets/[Tt]hird[Pp]arty/LFMC/*
+/[Aa]ssets/[Tt]hird[Pp]arty/LFMC.meta
