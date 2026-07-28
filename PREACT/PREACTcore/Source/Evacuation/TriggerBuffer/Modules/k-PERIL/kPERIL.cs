@@ -31,13 +31,20 @@ namespace PREACT
         private const BehaveUnits.SpeedUnits.SpeedUnitsEnum windSpeedUnits = BehaveUnits.SpeedUnits.SpeedUnitsEnum.MetersPerSecond;
         private const WindAndSpreadOrientationMode windAndSpreadOrientationMode = WindAndSpreadOrientationMode.RelativeToNorth;
 
+        /// <summary>
+        /// Mid-flame wind arrives in mi/h, which is what k-PERIL's Anderson (1983) length-to-breadth
+        /// correlation is defined for. Behave is driven in m/s here (see windSpeedUnits), so the
+        /// same field cannot be handed to both without converting - which is what this is for.
+        /// </summary>
+        private const float MilesPerHourToMetersPerSecond = 0.44704f;
+
         private int _xDim, _yDim;
         private bool _calculateROS;
         private LandscapeData? _lcpData;
         private float _RSET; //minutes
         private bool[] _wuiArea;
-        private float _midflameWindspeed;
-        private float _windDirection;
+        private float[,] _windSpeedMph;
+        private float[,] _windDirectionDegrees;
         private float _cellSize;
 
         private float[,]? _maxROS;
@@ -54,7 +61,7 @@ namespace PREACT
         /// provides slp/asp rasters); otherwise they are derived from elevation, or assumed
         /// flat if neither is available.
         /// </summary>
-        public kPERIL(float rsetMinutes, bool[] wuiArea, float midflameWindspeed, float windDirection, float[,] maxROS, float[,] rosAzimuth, float cellSize, float[,]? elevation = null, float[,]? slope = null, float[,]? aspect = null)
+        public kPERIL(float rsetMinutes, bool[] wuiArea, float[,] windSpeedMph, float[,] windDirectionDegrees, float[,] maxROS, float[,] rosAzimuth, float cellSize, float[,]? elevation = null, float[,]? slope = null, float[,]? aspect = null)
         {
             _calculateROS = false;
             _xDim = maxROS.GetLength(0);
@@ -62,8 +69,8 @@ namespace PREACT
 
             _RSET = rsetMinutes;
             _wuiArea = wuiArea;
-            _midflameWindspeed = midflameWindspeed;
-            _windDirection = windDirection;
+            _windSpeedMph = windSpeedMph;
+            _windDirectionDegrees = windDirectionDegrees;
             _cellSize = cellSize;
 
             _maxROS = maxROS;
@@ -74,7 +81,7 @@ namespace PREACT
         }
 
         /// <summary>Compute the rate-of-spread field internally from the landscape using Behave.</summary>
-        public kPERIL(LandscapeData lcpData, float rsetMinutes, bool[] wuiArea, float midflameWindspeed, float windDirection, InitialFuelMoistureLibrary fuelMoisture, FuelModelInput fuelModel)
+        public kPERIL(LandscapeData lcpData, float rsetMinutes, bool[] wuiArea, float[,] windSpeedMph, float[,] windDirectionDegrees, InitialFuelMoistureLibrary fuelMoisture, FuelModelInput fuelModel)
         {
             _calculateROS = true;
             _xDim = lcpData.GetCellCountX();
@@ -83,8 +90,8 @@ namespace PREACT
             _lcpData = lcpData;
             _RSET = rsetMinutes;
             _wuiArea = wuiArea;
-            _midflameWindspeed = midflameWindspeed;
-            _windDirection = windDirection;
+            _windSpeedMph = windSpeedMph;
+            _windDirectionDegrees = windDirectionDegrees;
             _cellSize = (float)lcpData.RasterCellResolutionX;
 
             _fuelMoisture = fuelMoisture;
@@ -109,7 +116,7 @@ namespace PREACT
             {
                 Engine.Message(null, Engine.LogType.Log, "k-PERIL is calculating ROS using Behave.");
                 bool[,] wuiArea2D = GetWUIArea2D(_wuiArea, _xDim, _yDim);
-                CalculateAllRateOfSpreadsAndDirections(_lcpData, out maxROS, out rosAzimuth, out slope, out aspect, _midflameWindspeed, _windDirection, _fuelMoisture, wuiArea2D, _fuelModel);
+                CalculateAllRateOfSpreadsAndDirections(_lcpData, out maxROS, out rosAzimuth, out slope, out aspect, _windSpeedMph, _windDirectionDegrees, _fuelMoisture, wuiArea2D, _fuelModel);
             }
             else
             {
@@ -136,9 +143,12 @@ namespace PREACT
                 peril.perilData.importTopographyRastersByVariable(_elevation ?? new float[_xDim, _yDim]);
             }
 
-            //wind must come after topography (it combines with slope). k-PERIL takes a single
-            //representative mid-flame wind as it does not model changing weather.
-            peril.perilData.rasteriseWindFromScalars(_midflameWindspeed, _windDirection);
+            //Wind must come after topography, because k-PERIL combines the two into an effective
+            //wind before using it. The field goes in as a raster: k-PERIL does not model weather
+            //changing over TIME, but it handles wind varying over SPACE perfectly well, and the
+            //weather pipeline runs WindNinja precisely to resolve that variation over terrain.
+            //Speeds are in mi/h, the unit Anderson's length-to-breadth correlation expects.
+            peril.perilData.importWeatherRastersByVariable(_windSpeedMph, _windDirectionDegrees);
 
             peril.perilData.importWuiRastersByVariable(BuildWuiRaster(_wuiArea, _xDim, _yDim));
 
@@ -187,7 +197,7 @@ namespace PREACT
             }
         }
 
-        private static void CalculateAllRateOfSpreadsAndDirections(LandscapeData lcpData, out float[,] rateOfSpreads, out float[,] spreadDirections, out float[,] slope, out float[,] aspect, float midFlameWindspeed, float windDirection, InitialFuelMoistureLibrary initialFuelMoistureLibrary, bool[,]? wuiArea = null, FuelModelInput? fuelModelInputs = null)
+        private static void CalculateAllRateOfSpreadsAndDirections(LandscapeData lcpData, out float[,] rateOfSpreads, out float[,] spreadDirections, out float[,] slope, out float[,] aspect, float[,] windSpeedMph, float[,] windDirectionDegrees, InitialFuelMoistureLibrary initialFuelMoistureLibrary, bool[,]? wuiArea = null, FuelModelInput? fuelModelInputs = null)
         {
             int xDim = lcpData.GetCellCountX();
             int yDim = lcpData.GetCellCountY();
@@ -229,8 +239,14 @@ namespace PREACT
                     InitialFuelMoisture moisture = initialFuelMoistureLibrary.GetInitialFuelMoisture(cellData.fuel_model);
                     double crownRatio = 1.5; //TODO: how to get this data? LCP does not seem to carry it
 
+                    //Per-cell wind, converted because windSpeedUnits declares m/s to Behave while
+                    //the raster is in mi/h for k-PERIL's ellipse. Handing the mi/h figure straight
+                    //to Behave would overstate the wind by a factor of about 2.2.
+                    double cellWindSpeed = windSpeedMph[x, y] * MilesPerHourToMetersPerSecond;
+                    double cellWindDirection = windDirectionDegrees[x, y];
+
                     surfaceFire.updateSurfaceInputs(cellData.fuel_model, moisture.OneHour, moisture.TenHour, moisture.HundredHour, moisture.LiveHerbaceous, moisture.LiveWoody, moistureUnits,
-                        midFlameWindspeed, windSpeedUnits, windHeightInputMode, windDirection, windAndSpreadOrientationMode, cellData.slope, slopeUnits, cellData.aspect, cellData.canopy_cover, coverUnits, cellData.crown_canopy_height, lengthUnits, crownRatio);
+                        cellWindSpeed, windSpeedUnits, windHeightInputMode, cellWindDirection, windAndSpreadOrientationMode, cellData.slope, slopeUnits, cellData.aspect, cellData.canopy_cover, coverUnits, cellData.crown_canopy_height, lengthUnits, crownRatio);
 
                     surfaceFire.doSurfaceRunInDirectionOfMaxSpread();
                     rateOfSpreads[x, y] = (float)surfaceFire.getSpreadRate(BehaveUnits.SpeedUnits.SpeedUnitsEnum.MetersPerMinute);

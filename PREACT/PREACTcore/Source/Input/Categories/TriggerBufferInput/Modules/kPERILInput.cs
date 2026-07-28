@@ -12,11 +12,32 @@ namespace PREACT.Input
     [System.Serializable]
     public class kPERILInput
     {
-        public float MidflameWindspeed = 0f;
         public bool CalculateROSFromBehave = true;
         public string InitialFuelMoistureFile = string.Empty;
         public string OutputName = string.Empty;
         public string WuiAreaFile = string.Empty; //.asc mask, 1 = protected WUI cell
+
+        /// <summary>
+        /// Mid-flame wind speed raster, in MILES PER HOUR.
+        ///
+        /// The unit is not a free choice. k-PERIL spends this value in one place - the Anderson
+        /// (1983) length-to-breadth ratio of the Huygens ellipse - and that correlation is defined
+        /// for mid-flame wind in mi/h. It is also what WindNinjaRunner already writes to ws.tif, so
+        /// the pipeline output drops straight in. Feeding m/s instead silently produces
+        /// grossly over-elongated spread ellipses: 5 mi/h gives L/B of about 3.2, while the same
+        /// figure read as m/s (11.2 mi/h) gives about 16.
+        /// </summary>
+        public string WindSpeedFile = string.Empty;
+
+        /// <summary>
+        /// Wind direction raster, in DEGREES. As written by WindNinjaRunner to wd.tif.
+        ///
+        /// k-PERIL only ever uses this to take the angle between the wind and the upslope
+        /// direction, and it applies the same trigonometric convention to both, so the resulting
+        /// effective wind magnitude is the same whether these are compass bearings or mathematical
+        /// angles. The convention therefore does not need pinning down; the unit does.
+        /// </summary>
+        public string WindDirectionFile = string.Empty;
 
         public kPERILInput()
         {
@@ -30,24 +51,45 @@ namespace PREACT.Input
             Dictionary<string, string> inputToParse = PREACTInput.GetHeaderInput(inputLines, startIndex);
             string nameOfInput, userInput;
 
-            //critical
-            nameOfInput = nameof(MidflameWindspeed);
+            //critical, both of them. These replace the single MidflameWindspeed scalar this section
+            //used to carry: k-PERIL accepts a full wind field and the weather pipeline already
+            //produces one with WindNinja, so representing the whole domain by one number threw away
+            //exactly the terrain-driven variation WindNinja exists to resolve.
+            nameOfInput = nameof(WindSpeedFile);
             if (inputToParse.TryGetValue(nameOfInput, out userInput))
             {
-                issues += float.TryParse(userInput, out newInput.MidflameWindspeed) ? 0 : 1;
-                if(issues > 0)
+                newInput.WindSpeedFile = userInput;
+                PREACTInput.CheckIfFileExist(nameOfInput, userInput, rootFolder, out bool windSpeedExists);
+                if (!windSpeedExists)
                 {
-                    PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
+                    success = false;
+                    PREACTInput.InputNotFoundMessage(nameOfInput, true);
+                    return newInput;
                 }
             }
             else
             {
-                ++issues;
-                PREACTInput.InputNotFoundMessage(nameOfInput);
+                success = false;
+                PREACTInput.InputNotFoundMessage(nameOfInput, true);
+                return newInput;
             }
-            if(issues > 0)
+
+            nameOfInput = nameof(WindDirectionFile);
+            if (inputToParse.TryGetValue(nameOfInput, out userInput))
+            {
+                newInput.WindDirectionFile = userInput;
+                PREACTInput.CheckIfFileExist(nameOfInput, userInput, rootFolder, out bool windDirectionExists);
+                if (!windDirectionExists)
+                {
+                    success = false;
+                    PREACTInput.InputNotFoundMessage(nameOfInput, true);
+                    return newInput;
+                }
+            }
+            else
             {
                 success = false;
+                PREACTInput.InputNotFoundMessage(nameOfInput, true);
                 return newInput;
             }
 

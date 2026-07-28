@@ -63,8 +63,13 @@ namespace Assets.WUInity.GUI.DearIMGUI
         //and because computing it with Behave makes an initial fuel moisture file mandatory - the
         //field default of true would otherwise produce a scenario that cannot be loaded back.
         private static bool _wantTriggerBuffer;
-        private static float _midflameWindspeed = 5.0f;
         private static bool _calculateRosFromBehave;
+
+        //Wind fields for k-PERIL, as written by the weather pipeline's WindNinja step. Both are
+        //required, and both come from the same place, so one button sets the pair from a folder
+        //rather than making the user find two files with fixed names.
+        private const string WindSpeedRaster = "ws.tif";
+        private const string WindDirectionRaster = "wd.tif";
 
         //Amber, for inputs that are required but not yet given. Matches how StepButton colours its
         //own marker rather than introducing a theme dependency.
@@ -261,7 +266,26 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 //and the section is written out once Module is set to kPERIL in GenerateScenario.
                 kPERILInput peril = _input.TriggerBufferModule.kPERILInput;
 
-                ImGui.InputFloat("Midflame windspeed", ref _midflameWindspeed);
+                //Picked individually rather than derived from one folder: a case can easily hold
+                //several candidates for each (a raw WindNinja output and a warped copy beside it),
+                //so guessing by filename picks the wrong one silently.
+                if (ImGui.Button($"Select wind speed raster ({WindSpeedRaster})"))
+                {
+                    FileBrowser.OpenSetFilePath(path => peril.WindSpeedFile = path, "Select wind speed raster", true, FileBrowser.geoTiffFilter);
+                }
+                ImGui.Text($"{nameof(peril.WindSpeedFile)}: {peril.WindSpeedFile}");
+
+                if (ImGui.Button($"Select wind direction raster ({WindDirectionRaster})"))
+                {
+                    FileBrowser.OpenSetFilePath(path => peril.WindDirectionFile = path, "Select wind direction raster", true, FileBrowser.geoTiffFilter);
+                }
+                ImGui.Text($"{nameof(peril.WindDirectionFile)}: {peril.WindDirectionFile}");
+
+                ImGui.TextWrapped($"Wind speed in MILES PER HOUR and direction in degrees, on the fire grid - what the weather pipeline's WindNinja step writes as {WindSpeedRaster} / {WindDirectionRaster}. The unit matters: k-PERIL reads the speed into Anderson's length-to-breadth correlation, which is defined for mi/h.");
+                if (string.IsNullOrEmpty(peril.WindSpeedFile) || string.IsNullOrEmpty(peril.WindDirectionFile))
+                {
+                    ImGui.TextColored(WarningColor, "Required: k-PERIL needs a wind field to derive how elongated fire spread is.");
+                }
 
                 ImGui.Checkbox("Compute rate of spread with Behave", ref _calculateRosFromBehave);
                 if (_calculateRosFromBehave)
@@ -730,7 +754,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
             if (_wantTriggerBuffer)
             {
                 kPERILInput peril = _input.TriggerBufferModule.kPERILInput;
-                peril.MidflameWindspeed = _midflameWindspeed;
                 peril.CalculateROSFromBehave = _calculateRosFromBehave;
 
                 //A required key, and an empty value is omitted rather than written, so the scenario

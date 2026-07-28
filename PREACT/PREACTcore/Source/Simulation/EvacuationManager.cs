@@ -241,6 +241,79 @@ namespace PREACT.Evacuation
             return wuiArea;
         }
 
+        /// <summary>
+        /// Reads a wind raster onto the fire grid, returning null if it is missing, unreadable or
+        /// the wrong size. AscRaster handles both .asc and .tif and returns [x, y] with a lower-left
+        /// origin, which is the same convention GetMaxROS() uses - k-PERIL takes totalX/totalY from
+        /// the ROS raster and throws on a size mismatch, so a transposed grid would be caught, but
+        /// only on a non-square domain. Checking here means a square domain cannot slip through
+        /// silently transposed.
+        /// </summary>
+        private float[,] LoadWindRaster(string windFile, string rootFolder, int xCount, int yCount, string what, bool isDirection)
+        {
+            if (string.IsNullOrEmpty(windFile))
+            {
+                Engine.Message(null, Engine.LogType.InputError, what + " was not specified; k-PERIL needs a wind field.");
+                return null;
+            }
+
+            string path = System.IO.Path.Combine(rootFolder, windFile);
+            float[,] raster = Utility.AscRaster.Read(path, out Utility.AscRaster.Header header, out bool ok);
+            if (!ok || raster == null)
+            {
+                Engine.Message(null, Engine.LogType.InputError, what + " could not be read: " + path);
+                return null;
+            }
+
+            if (header.Ncols != xCount || header.Nrows != yCount)
+            {
+                Engine.Message(null, Engine.LogType.InputError, $"{what} dimensions ({header.Ncols}x{header.Nrows}) do not match the fire grid ({xCount}x{yCount}).");
+                return null;
+            }
+
+            float min = float.MaxValue;
+            float max = float.MinValue;
+            for (int x = 0; x < xCount; ++x)
+            {
+                for (int y = 0; y < yCount; ++y)
+                {
+                    float v = raster[x, y];
+                    if (v <= -9000f || float.IsNaN(v))
+                    {
+                        continue;
+                    }
+                    if (v < min) min = v;
+                    if (v > max) max = v;
+                }
+            }
+
+            if (min > max)
+            {
+                Engine.Message(null, Engine.LogType.InputError, what + " contains no valid data: " + path);
+                return null;
+            }
+
+            //An all-zero or otherwise flat wind field is almost always the wrong file rather than a
+            //real calm. It is worth saying so, because it fails silently: zero wind gives a
+            //length-to-breadth ratio of 1, so the spread template turns into a circle and the
+            //trigger boundary comes out isotropic instead of wind-driven.
+            if (min == max)
+            {
+                Engine.Message(null, Engine.LogType.Warning, $"{what} is constant at {min}; the spread ellipse will be circular. Check that the weather pipeline actually produced this raster.");
+            }
+
+            //Directions outside [0, 360] mean the field was resampled in angle space, which
+            //interpolates across the 0/360 wrap: averaging 350 and 10 yields 180, the opposite
+            //direction. Overshoot past the ends is the visible symptom of it. Wind rasters have to
+            //be warped as u/v components, which is what WindNinjaRunner does.
+            if (isDirection && (min < -0.001f || max > 360.001f))
+            {
+                Engine.Message(null, Engine.LogType.Warning, $"{what} spans {min} to {max} degrees, outside 0-360. It was most likely resampled as angles rather than as u/v components, so directions near the 0/360 wrap are wrong.");
+            }
+
+            return raster;
+        }
+
         public void CreateAndRunTriggerBufferModule(Simulation simulation, PREACTInput input, WeatherManager weather, TimeManager time)
         {
             if (_input.TriggerBufferModule.Enabled)
@@ -259,9 +332,23 @@ namespace PREACT.Evacuation
                         float wrsetMinutes = CalculateWRSETMinutes(simulation);
                         Engine.Message(simulation, Engine.LogType.Log, "WRSET (last-arrival evacuation time) = " + wrsetMinutes + " minutes.");
 
-                        float midflameWindspeed = _input.TriggerBufferModule.kPERILInput.MidflameWindspeed;
                         int xCount = simulation.Hazards.Wildfire.GetCellCountX();
                         int yCount = simulation.Hazards.Wildfire.GetCellCountY();
+
+                        //k-PERIL takes a wind field, not a representative number. Both rasters are
+                        //required: without them there is nothing to derive the spread ellipse's
+                        //elongation from, and silently standing in a constant would discard the
+                        //terrain-driven variation the WindNinja step exists to produce.
+                        float[,] windSpeedMph = LoadWindRaster(_input.TriggerBufferModule.kPERILInput.WindSpeedFile,
+                            _input.RootFolder, xCount, yCount, nameof(kPERILInput.WindSpeedFile), false);
+                        float[,] windDirectionDegrees = LoadWindRaster(_input.TriggerBufferModule.kPERILInput.WindDirectionFile,
+                            _input.RootFolder, xCount, yCount, nameof(kPERILInput.WindDirectionFile), true);
+
+                        if (windSpeedMph == null || windDirectionDegrees == null)
+                        {
+                            Engine.Message(simulation, Engine.LogType.SimulationError, "Can't run kPERIL without wind speed and direction rasters matching the fire grid.");
+                            return;
+                        }
 
                         //Prefer an explicit WUI-area mask (.asc/.tif) when supplied; otherwise
                         //fall back to whatever WuiArea the wildfire data carried.
@@ -270,11 +357,11 @@ namespace PREACT.Evacuation
 
                         if (_input.TriggerBufferModule.kPERILInput.CalculateROSFromBehave)
                         {
-                            _triggerBufferModule = new kPERIL(_input.WildfireModule.Data.LandscapeData, wrsetMinutes, wuiArea, midflameWindspeed, 0f, _input.WildfireModule.Data.InitialFuelMoistureData, _input.WildfireModule.Data.FuelModelsData);
+                            _triggerBufferModule = new kPERIL(_input.WildfireModule.Data.LandscapeData, wrsetMinutes, wuiArea, windSpeedMph, windDirectionDegrees, _input.WildfireModule.Data.InitialFuelMoistureData, _input.WildfireModule.Data.FuelModelsData);
                         }
                         else
                         {
-                            _triggerBufferModule = new kPERIL(wrsetMinutes, wuiArea, midflameWindspeed, 0f, simulation.Hazards.Wildfire.GetMaxROS(), simulation.Hazards.Wildfire.GetMaxROSAzimuth(), simulation.Hazards.Wildfire.GetCellSizeX());
+                            _triggerBufferModule = new kPERIL(wrsetMinutes, wuiArea, windSpeedMph, windDirectionDegrees, simulation.Hazards.Wildfire.GetMaxROS(), simulation.Hazards.Wildfire.GetMaxROSAzimuth(), simulation.Hazards.Wildfire.GetCellSizeX());
                         }
                         _triggerBufferModule.Run();
                         string outputFilePath = Path.Combine(simulation.Engine.OutputFolder, simulation.SimulationIndex + "_" + _input.TriggerBufferModule.kPERILInput.OutputName);
