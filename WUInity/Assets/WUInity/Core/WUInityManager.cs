@@ -162,6 +162,10 @@ namespace WUInity
                 _painter = g.AddComponent<Painter>();
                 g.SetActive(false);
             }
+            //Never called before, so the painter's _manager stayed null and every path through
+            //CheckDataResources threw a NullReferenceException on the first thing it reads from it -
+            //which is what happened as soon as a paint mode needed a texture built.
+            _painter.SetManager(this);
 
             _godCamera = FindFirstObjectByType<OverviewCamera>();
             if (_godCamera == null)
@@ -668,7 +672,17 @@ namespace WUInity
 
         public void DisplayEvacGroupMap()
         {
-            _simulationDomainVisualizer.SetSimulationPlaneTexture(Painter.GetEvacGroupTexture());
+            //The painter builds the texture on the fire grid, so it hands back nothing when no
+            //landscape is loaded. Said plainly here rather than handing a null texture on: the plane
+            //would go blank with no indication of why.
+            Texture2D texture = Painter.GetEvacGroupTexture();
+            if (texture == null)
+            {
+                Engine.Message(null, Engine.LogType.Warning,
+                    "Cannot show the evacuation group areas: they are painted on the fire grid, and no landscape is loaded.");
+                return;
+            }
+            _simulationDomainVisualizer.SetSimulationPlaneTexture(texture);
         }
 
         public void DisplayPopulationMask()
@@ -999,7 +1013,10 @@ namespace WUInity
                 return;
             }
 
-            bool guiOwnsInput = ImGui.GetIO().WantCaptureMouse || ImGui.GetIO().WantCaptureKeyboard;
+            //WantTextInput, not WantCaptureKeyboard: the latter is true whenever any window has focus,
+            //which is most of the time, and Mapbox's camera pans on the keyboard axes. Only an active
+            //text field should stop it.
+            bool guiOwnsInput = ImGui.GetIO().WantCaptureMouse || ImGui.GetIO().WantTextInput;
             _webMercatorCameraMovement.enabled = !guiOwnsInput;
         }
 

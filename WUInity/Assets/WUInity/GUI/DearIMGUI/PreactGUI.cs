@@ -114,7 +114,13 @@ namespace Assets.WUInity.GUI.DearIMGUI
             ImGui.Begin("MainDockspaceHost", mainDockspace);
 
             uint dockspaceId = ImGui.GetID("MainDockspace");
-            ImGui.DockSpace(dockspaceId, Vector2.zero);
+            //PassthruCentralNode is what makes the map usable. This host window covers the whole
+            //viewport, and without the flag the dockspace's empty central node is a solid, hoverable
+            //node across all of it - so ImGui reported WantCaptureMouse everywhere, at all times, and
+            //everything that defers to the GUI for the mouse (panning, zooming, picking a position,
+            //the brush) was permanently switched off. NoBackground on the host, already set above, is
+            //the other half of the pair this flag expects.
+            ImGui.DockSpace(dockspaceId, Vector2.zero, ImGuiDockNodeFlags.PassthruCentralNode);
 
             ImGui.End();
 

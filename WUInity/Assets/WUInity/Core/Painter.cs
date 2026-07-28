@@ -367,6 +367,15 @@ namespace WUInity
 
         void CheckDataResources(Texture2D requestedTexture, Color[] requestedColorArray)
         {
+            //Reported rather than dereferenced blindly: this used to throw a NullReferenceException
+            //from the line below whenever it ran before a scenario was loaded, which says nothing
+            //about what is actually missing.
+            if (_manager == null || _manager.PREACTInput == null)
+            {
+                Engine.Message(null, Engine.LogType.Warning, "Painter has no scenario to paint on; load one first.");
+                return;
+            }
+
             if (requestedTexture == null)
             {
                 Vector2int cellCount;

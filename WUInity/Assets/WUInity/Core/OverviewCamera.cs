@@ -149,8 +149,10 @@ namespace WUInity
             }
 
             //Keyboard panning is skipped while a text field has focus, or naming a destination
-            //"Kalamos" would send the map off to the north-east as it was typed.
-            if (ImGui.GetIO().WantCaptureKeyboard || ImGui.GetIO().WantTextInput)
+            //"Kalamos" would send the map off to the north-east as it was typed. WantTextInput alone:
+            //WantCaptureKeyboard is true whenever any window has focus, which would leave the keys
+            //dead for as long as a window is open.
+            if (ImGui.GetIO().WantTextInput)
             {
                 return;
             }
