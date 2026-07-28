@@ -193,6 +193,11 @@ namespace PREACT.Input
                 SectionIncomplete(nameOfInput);
             }
 
+            //Done here, immediately after the simulation section and before any section that reads the
+            //origin, because pinning changes what every simulation coordinate means. Doing it later
+            //would leave whatever had already been converted measured in the old zone.
+            PinSimulationZoneToFireData(newInput, inputLines, headerLineIndices, rootFolder);
+
             //map
             success = true; //each section is judged on its own
             nameOfInput = nameof(Map);
@@ -386,6 +391,71 @@ namespace PREACT.Input
             //on a scenario with holes in it.
             success = RequirementsMet;
             return newInput;
+        }
+
+        /// <summary>
+        /// Measures the simulation in the UTM zone the fire data is in, rather than the one the
+        /// domain's own south-west corner falls in.
+        ///
+        /// A raster is placed in the scene by subtracting the simulation's origin from the raster's
+        /// corner, which only means anything if both are measured in the same zone. Nothing checked
+        /// that, and a domain near a zone boundary can easily disagree with its own data: Mati's corner
+        /// is at 23.93 E with the boundary at 24 E, its ELMFIRE output is in zone 35 while the corner is
+        /// in zone 34, and the fire was consequently placed 526 km west of the town.
+        ///
+        /// Only the imported arrival time raster is consulted. A FARSITE landscape carries no CRS in
+        /// its header at all - the file format has no field for one - so for the modules that use an LCP
+        /// there is nothing to read, and the zone stays the domain's own as before. That is also the
+        /// case where it matters least: an LCP comes from LANDFIRE, which is US-only, and the whole
+        /// point of AscImport is running somewhere LANDFIRE does not cover.
+        /// </summary>
+        private static void PinSimulationZoneToFireData(PREACTInput input, string[] inputLines,
+            Dictionary<string, int> headerLineIndices, string rootFolder)
+        {
+            if (!headerLineIndices.TryGetValue("AscImport", out int lineIndex))
+            {
+                return;
+            }
+
+            Dictionary<string, string> ascInput = GetHeaderInput(inputLines, lineIndex);
+            if (!ascInput.TryGetValue("TimeOfArrivalFile", out string arrivalFile) || string.IsNullOrEmpty(arrivalFile))
+            {
+                return;
+            }
+
+            string path = System.IO.Path.Combine(rootFolder, arrivalFile);
+            if (!System.IO.File.Exists(path))
+            {
+                //Reported by the wildfire section's own parser as a missing required file; nothing to
+                //add here beyond not pinning.
+                return;
+            }
+
+            Utility.AscRaster.Header header = Utility.AscRaster.ReadHeader(path, out bool ok);
+            if (!ok)
+            {
+                return;
+            }
+
+            if (header.EpsgCode == 0)
+            {
+                //Worth saying, because the consequence is silent: the raster's easting is then used as
+                //if it were in the simulation's zone, and if it is not, everything from that raster
+                //lands somewhere else.
+                Engine.Message(null, Engine.LogType.Warning,
+                    System.IO.Path.GetFileName(path) + " does not say which coordinate system it is in, so it is "
+                    + "assumed to be in the simulation's own UTM zone. Give it a .prj, or use a GeoTIFF, if it is not.");
+                return;
+            }
+
+            input.Simulation.Data.PinToUtmEpsg(header.EpsgCode, out bool pinned);
+            if (!pinned)
+            {
+                //_currentSection is still Simulation here, which is where this belongs on the checklist.
+                AddRequirement("UTM zone",
+                    $"The fire data is in EPSG:{header.EpsgCode}, which the simulation cannot measure in. "
+                    + "Everything read from that raster will be misplaced.", true);
+            }
         }
 
         /// <summary>

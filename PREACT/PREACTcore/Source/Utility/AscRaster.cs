@@ -26,6 +26,70 @@ namespace PREACT.Utility
             public double YllCorner;
             public double CellSize;
             public double NoDataValue;
+
+            /// <summary>
+            /// The raster's coordinate reference system as an EPSG code, or 0 when it does not say.
+            ///
+            /// This is what makes the corner above interpretable. An easting is meaningless without
+            /// knowing which UTM zone measured it: at the boundary between two zones the same ground
+            /// has eastings half a million metres apart, so treating an unknown-CRS easting as if it
+            /// were in the simulation's own zone is how fire data ends up hundreds of kilometres from
+            /// the domain. A GeoTIFF carries this; a bare .asc does not, unless a .prj sits beside it.
+            /// </summary>
+            public int EpsgCode;
+        }
+
+        /// <summary>
+        /// The EPSG code of a GDAL dataset's projection, or 0 if it has none or cannot be identified.
+        /// </summary>
+        private static int GetEpsgCode(OSGeo.GDAL.Dataset dataset)
+        {
+            string wkt = dataset.GetProjectionRef();
+            if (string.IsNullOrEmpty(wkt))
+            {
+                return 0;
+            }
+
+            return EpsgFromWkt(wkt);
+        }
+
+        private static int EpsgFromWkt(string wkt)
+        {
+            try
+            {
+                var srs = new OSGeo.OSR.SpatialReference(wkt);
+
+                //Well-known CRSs usually name their authority; those that do not can often still be
+                //recognised from their parameters, which is what AutoIdentifyEPSG is for.
+                string code = srs.GetAuthorityCode("PROJCS");
+                if (string.IsNullOrEmpty(code))
+                {
+                    srs.AutoIdentifyEPSG();
+                    code = srs.GetAuthorityCode("PROJCS");
+                }
+
+                return int.TryParse(code, out int epsg) ? epsg : 0;
+            }
+            catch
+            {
+                //An unreadable projection is the same as an absent one for every caller here.
+                return 0;
+            }
+        }
+
+        /// <summary>
+        /// The CRS of a companion .prj file, or 0 when there is none. An ESRI ASCII grid keeps no
+        /// projection of its own, so this is the only place one can come from.
+        /// </summary>
+        private static int EpsgFromCompanionPrj(string rasterFilePath)
+        {
+            string prj = Path.ChangeExtension(rasterFilePath, ".prj");
+            if (!File.Exists(prj))
+            {
+                return 0;
+            }
+
+            return EpsgFromWkt(File.ReadAllText(prj));
         }
 
         private static string[] SplitLine(string line)
@@ -199,6 +263,7 @@ namespace PREACT.Utility
 
                     ds.GetRasterBand(1).GetNoDataValue(out double nodata, out int hasNodata);
                     header.NoDataValue = hasNodata != 0 ? nodata : -9999.0;
+                    header.EpsgCode = GetEpsgCode(ds);
 
                     success = true;
                     return header;
@@ -226,6 +291,8 @@ namespace PREACT.Utility
                 double.TryParse(SplitLine(lines[4])[1], NumberStyles.Any, CultureInfo.InvariantCulture, out header.CellSize);
                 double.TryParse(SplitLine(lines[5])[1], NumberStyles.Any, CultureInfo.InvariantCulture, out header.NoDataValue);
             }
+
+            header.EpsgCode = EpsgFromCompanionPrj(filePath);
 
             success = header.Ncols > 0 && header.Nrows > 0 && header.CellSize > 0.0;
             return header;
