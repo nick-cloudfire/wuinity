@@ -194,8 +194,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             ImGui.SameLine();
             ImGui.Text($"{nameof(_input.Landscape.ElevationFile)}: {_input.Landscape.ElevationFile}");
 
-            ImGui.SetNextItemWidth(240);
-            ImGui.InputText("OpenTopography API key", ref ScenarioDataSteps.OpenTopographyApiKey, 128, ImGuiInputTextFlags.Password);
+            ScenarioDataWindow.DrawOpenTopographyKey();
             ImGui.BeginDisabled(ScenarioDataSteps.Busy);
             if (ScenarioDataSteps.StepButton("Or download a DEM", ScenarioDataSteps.DemFile)) { ScenarioDataSteps.DownloadDem(); }
             ImGui.EndDisabled();

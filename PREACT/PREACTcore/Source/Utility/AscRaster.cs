@@ -59,13 +59,21 @@ namespace PREACT.Utility
             {
                 var srs = new OSGeo.OSR.SpatialReference(wkt);
 
-                //Well-known CRSs usually name their authority; those that do not can often still be
-                //recognised from their parameters, which is what AutoIdentifyEPSG is for.
+                //PROJCS names a projected CRS and GEOGCS a geographic one, and only one of the two is
+                //present. Asking for PROJCS alone reported "no CRS" for every lat/lon raster - including
+                //the DEMs OpenTopography serves, which are EPSG:4326 - so a raster in degrees came out
+                //indistinguishable from one that says nothing at all. The difference matters: the first
+                //needs reprojecting and can say so, the second can only be guessed at.
                 string code = srs.GetAuthorityCode("PROJCS");
                 if (string.IsNullOrEmpty(code))
                 {
+                    code = srs.GetAuthorityCode("GEOGCS");
+                }
+                if (string.IsNullOrEmpty(code))
+                {
+                    //Some CRSs name no authority but are still recognisable from their parameters.
                     srs.AutoIdentifyEPSG();
-                    code = srs.GetAuthorityCode("PROJCS");
+                    code = srs.GetAuthorityCode("PROJCS") ?? srs.GetAuthorityCode("GEOGCS");
                 }
 
                 return int.TryParse(code, out int epsg) ? epsg : 0;

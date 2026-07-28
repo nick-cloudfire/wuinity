@@ -54,11 +54,58 @@ namespace Assets.WUInity.GUI.DearIMGUI
         private static readonly System.Collections.Generic.List<string> _progressLog = new System.Collections.Generic.List<string>();
         public static bool ProgressWindowOpen { get => _progressWindowOpen; set => _progressWindowOpen = value; }
 
-        //OpenTopography requires a key per request. Taken from the environment when there is one, so it
-        //does not have to be pasted in every session; it is not written into the scenario, which would put
-        //a personal credential into a file meant to be shared.
-        public static string OpenTopographyApiKey =
-            System.Environment.GetEnvironmentVariable("OPENTOPOGRAPHY_API_KEY") ?? string.Empty;
+        //OpenTopography requires a key per request, and it comes from the same place the Mapbox token
+        //does: a gitignored JSON file under Resources, read by OpenTopographyAccess. That is the answer
+        //for a key that should outlive the session and never reach the scenario file, which is meant to
+        //be shared.
+        //
+        //The two fallbacks below are for the case where that file has not been made yet, so the step is
+        //not simply unusable until someone finds the template.
+        public static string OpenTopographyApiKeyOverride = string.Empty;
+
+        /// <summary>
+        /// The key that will actually be used, and where it came from. The configuration file wins, so a
+        /// key typed here once cannot quietly shadow the one the file supplies from then on.
+        /// </summary>
+        public static string EffectiveOpenTopographyApiKey
+        {
+            get
+            {
+                string fromFile = global::WUInity.OpenTopographyAccess.ApiKey;
+                if (!string.IsNullOrWhiteSpace(fromFile))
+                {
+                    return fromFile.Trim();
+                }
+
+                string fromEnvironment = System.Environment.GetEnvironmentVariable("OPENTOPOGRAPHY_API_KEY");
+                if (!string.IsNullOrWhiteSpace(fromEnvironment))
+                {
+                    return fromEnvironment.Trim();
+                }
+
+                return OpenTopographyApiKeyOverride.Trim();
+            }
+        }
+
+        public static string OpenTopographyApiKeySource
+        {
+            get
+            {
+                if (!string.IsNullOrWhiteSpace(global::WUInity.OpenTopographyAccess.ApiKey))
+                {
+                    return "Resources/OpenTopography/OpenTopographyConfiguration.txt";
+                }
+                if (!string.IsNullOrWhiteSpace(System.Environment.GetEnvironmentVariable("OPENTOPOGRAPHY_API_KEY")))
+                {
+                    return "the OPENTOPOGRAPHY_API_KEY environment variable";
+                }
+                if (!string.IsNullOrWhiteSpace(OpenTopographyApiKeyOverride))
+                {
+                    return "typed in for this session only";
+                }
+                return string.Empty;
+            }
+        }
 
         //Copernicus GLO-30 by default: free, global, and 30 m, which is finer than the cell size any of
         //these scenarios run at.
@@ -508,25 +555,46 @@ namespace Assets.WUInity.GUI.DearIMGUI
         {
             RunStep("Downloading DEM", async () =>
             {
-                if (string.IsNullOrWhiteSpace(OpenTopographyApiKey))
+                string apiKey = EffectiveOpenTopographyApiKey;
+                if (string.IsNullOrWhiteSpace(apiKey))
                 {
-                    throw new System.Exception("OpenTopography needs an API key. One is free from "
-                        + "portal.opentopography.org; paste it above, or set OPENTOPOGRAPHY_API_KEY.");
+                    throw new System.Exception("OpenTopography needs an API key, set the same way as the Mapbox "
+                        + "token: copy Assets/Resources/OpenTopography/OpenTopographyConfigurationTemplate.txt to "
+                        + "OpenTopographyConfiguration.txt beside it and paste a key into it. One is free from "
+                        + "portal.opentopography.org.");
                 }
+                LogStep("Using the OpenTopography key from " + OpenTopographyApiKeySource + ".");
+
+                Vector2d requestLowerLeft = Input.Simulation.LowerLeftLatLon;
+                Vector2d requestUpperRight = UpperRightLatLon();
+
+                //Asked for with a margin. A latitude/longitude box is not a rectangle in UTM, so the
+                //bounding box the warp clips to reaches beyond the corners of what was downloaded - and
+                //GDAL fills what the source does not cover, with zero when the source declares no nodata,
+                //which Copernicus does not. Beside 400 m of hillside that fill reads as a cliff: measured
+                //without the margin, Mati's downloaded DEM came out with slopes up to 86 degrees against
+                //47 for the same ground from a DEM that covers it properly.
+                //
+                //Half a kilometre in degrees, which is a few cells at any DEM resolution offered here.
+                const double marginDegrees = 0.005;
+                Vector2d paddedLowerLeft = new Vector2d(requestLowerLeft.x - marginDegrees, requestLowerLeft.y - marginDegrees);
+                Vector2d paddedUpperRight = new Vector2d(requestUpperRight.x + marginDegrees, requestUpperRight.y + marginDegrees);
 
                 string downloaded = InRoot(DemDownloadFile);
                 await PREACT.Tools.OpenTopographyDownloader.Download(
-                    Input.Simulation.LowerLeftLatLon, UpperRightLatLon(),
-                    OpenTopographyApiKey.Trim(), downloaded, DemType);
+                    paddedLowerLeft, paddedUpperRight, apiKey, downloaded, DemType);
 
                 LogStep("Warping the DEM into the simulation's UTM zone...");
 
-                Vector2d ll = Input.Simulation.LowerLeftLatLon;
-                Vector2d ur = UpperRightLatLon();
+                //Clipped to the area of interest that was asked for, not to the padded box that was
+                //downloaded: the margin exists to give the warp data to work with at the corners, not to
+                //enlarge the scenario's domain.
+                Vector2d ll = requestLowerLeft;
+                Vector2d ur = requestUpperRight;
 
-                //Clipped to the area of interest as well as reprojected: the download is cut to a lat/lon
-                //box, which is not a rectangle in UTM, so the warped extent is the bounding box of the
-                //four transformed corners rather than the box that was asked for.
+                //Clipped as well as reprojected: the download is cut to a lat/lon box, which is not a
+                //rectangle in UTM, so the warped extent is the bounding box of the four transformed
+                //corners rather than the box that was asked for.
                 //
                 //Into the zone the simulation measures in, named explicitly rather than recomputed from
                 //the domain's centre. For a domain on a zone boundary the two differ, and a DEM in one

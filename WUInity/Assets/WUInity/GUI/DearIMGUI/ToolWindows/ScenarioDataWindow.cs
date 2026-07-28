@@ -38,6 +38,36 @@ namespace Assets.WUInity.GUI.DearIMGUI
             _isOpen = false;
         }
 
+        /// <summary>
+        /// Shows where the OpenTopography key is coming from, and offers somewhere to put one only when
+        /// nothing supplies it.
+        ///
+        /// The configuration file is the way this is meant to be set - it is the same mechanism as the
+        /// Mapbox token, it survives restarts, and it is gitignored - so when it is doing its job there is
+        /// nothing to ask for and no field is drawn. A box that is always there invites pasting a
+        /// credential into somewhere it will be lost.
+        /// </summary>
+        public static void DrawOpenTopographyKey()
+        {
+            string source = ScenarioDataSteps.OpenTopographyApiKeySource;
+
+            if (!string.IsNullOrEmpty(source))
+            {
+                ImGui.TextDisabled("OpenTopography key: from " + source);
+                return;
+            }
+
+            ImGui.TextColored(new Vector4(0.9f, 0.7f, 0.2f, 1f), "No OpenTopography API key.");
+            ImGui.TextWrapped("Set it the way the Mapbox token is set: copy "
+                + "Assets/Resources/OpenTopography/OpenTopographyConfigurationTemplate.txt to "
+                + "OpenTopographyConfiguration.txt beside it and paste a key in. That file is gitignored and "
+                + "outlives the session. A key is free from portal.opentopography.org.");
+
+            ImGui.SetNextItemWidth(260);
+            ImGui.InputText("Key for this session only", ref ScenarioDataSteps.OpenTopographyApiKeyOverride, 128,
+                ImGuiInputTextFlags.Password);
+        }
+
         public static void Draw()
         {
             if (!_isOpen)
@@ -99,13 +129,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             ImGui.SeparatorText("Terrain");
             //Before LANDFIRE, because it is the one that works anywhere, and because slope and aspect are
             //computed from it - so a DEM alone is enough to have terrain, and to give k-PERIL a slope.
-            ImGui.SetNextItemWidth(260);
-            ImGui.InputText("OpenTopography API key", ref ScenarioDataSteps.OpenTopographyApiKey, 128,
-                ImGuiInputTextFlags.Password);
-            ImGui.SameLine();
-            ImGui.TextDisabled(string.IsNullOrWhiteSpace(ScenarioDataSteps.OpenTopographyApiKey) ? "(needed)" : "(set)");
-            ImGui.TextDisabled("Free from portal.opentopography.org. Read from OPENTOPOGRAPHY_API_KEY if set. "
-                + "Not saved into the scenario.");
+            DrawOpenTopographyKey();
 
             int demTypeIndex = System.Array.IndexOf(ScenarioDataSteps.DemTypes, ScenarioDataSteps.DemType);
             if (demTypeIndex < 0) { demTypeIndex = 0; }
