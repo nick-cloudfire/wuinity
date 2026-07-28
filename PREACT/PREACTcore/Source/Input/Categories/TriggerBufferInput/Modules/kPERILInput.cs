@@ -5,6 +5,7 @@
 //MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
 //You should have received a copy of the GNU General Public License along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+using System;
 using System.Collections.Generic;
 
 namespace PREACT.Input
@@ -12,10 +13,25 @@ namespace PREACT.Input
     [System.Serializable]
     public class kPERILInput
     {
+        /// <summary>
+        /// Where the area k-PERIL protects comes from.
+        ///
+        /// Raster reads <see cref="WuiAreaFile"/>. The two group options rasterise the evacuation
+        /// groups' own polygons onto the fire grid instead, which keeps the area being protected and
+        /// the area being evacuated as one definition rather than two that can drift apart.
+        ///
+        /// Combined unions every group into a single boundary: one answer for the whole community.
+        /// Separate computes a boundary per group, which is what you want when the groups evacuate
+        /// on different orders or to different destinations, because each then has its own required
+        /// egress time and so its own trigger.
+        /// </summary>
+        public enum WuiAreaSources { Raster, EvacuationGroupsCombined, EvacuationGroupsSeparate }
+
         public bool CalculateROSFromBehave = true;
         public string InitialFuelMoistureFile = string.Empty;
         public string OutputName = string.Empty;
         public string WuiAreaFile = string.Empty; //.asc mask, 1 = protected WUI cell
+        public WuiAreaSources WuiAreaSource = WuiAreaSources.Raster;
 
         /// <summary>
         /// Mid-flame wind speed raster, in MILES PER HOUR.
@@ -146,6 +162,28 @@ namespace PREACT.Input
             {
                 success = false;
                 PREACTInput.InputNotFoundMessage(nameOfInput);
+                return newInput;
+            }
+
+            //optional: defaults to reading the raster below, which is how existing scenarios behave.
+            nameOfInput = nameof(WuiAreaSource);
+            if (inputToParse.TryGetValue(nameOfInput, out userInput))
+            {
+                if (Enum.TryParse(userInput, true, out WuiAreaSources parsedSource))
+                {
+                    newInput.WuiAreaSource = parsedSource;
+                }
+                else
+                {
+                    PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
+                }
+            }
+
+            //Only needed when the area comes from a raster; the group options derive it instead, so
+            //demanding a file there would reject a perfectly good scenario.
+            if (newInput.WuiAreaSource != WuiAreaSources.Raster)
+            {
+                success = true;
                 return newInput;
             }
 

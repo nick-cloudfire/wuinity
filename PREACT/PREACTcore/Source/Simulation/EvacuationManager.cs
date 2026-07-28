@@ -314,6 +314,114 @@ namespace PREACT.Evacuation
             return raster;
         }
 
+        /// <summary>One WUI area to protect, and a label used to name its output.</summary>
+        private struct WuiAreaRun
+        {
+            public bool[] WuiArea;
+            public string Label;
+        }
+
+        /// <summary>
+        /// Works out which areas k-PERIL should protect, one entry per boundary to compute.
+        /// </summary>
+        private List<WuiAreaRun> BuildWuiAreaRuns(Simulation simulation, int xCount, int yCount)
+        {
+            var runs = new List<WuiAreaRun>();
+            kPERILInput peril = _input.TriggerBufferModule.kPERILInput;
+
+            if (peril.WuiAreaSource == kPERILInput.WuiAreaSources.Raster)
+            {
+                //As before: an explicit mask when given, otherwise whatever the wildfire data carried.
+                bool[] wuiArea = LoadWuiAreaMask(peril.WuiAreaFile, _input.RootFolder, xCount, yCount)
+                                 ?? _input.WildfireModule.Data.WuiArea;
+                if (wuiArea != null)
+                {
+                    runs.Add(new WuiAreaRun { WuiArea = wuiArea, Label = "wui" });
+                }
+                return runs;
+            }
+
+            if (_evacuationGroups == null || _evacuationGroups.Length == 0)
+            {
+                Engine.Message(simulation, Engine.LogType.SimulationError, "WuiAreaSource is set to evacuation groups, but the scenario has none.");
+                return runs;
+            }
+
+            bool separate = peril.WuiAreaSource == kPERILInput.WuiAreaSources.EvacuationGroupsSeparate;
+            bool[] combined = separate ? null : new bool[xCount * yCount];
+            int combinedCells = 0;
+
+            for (int i = 0; i < _evacuationGroups.Length; ++i)
+            {
+                bool[] mask = RasterizeEvacuationGroup(simulation, _evacuationGroups[i], xCount, yCount, out int cellCount);
+
+                if (cellCount == 0)
+                {
+                    //Silence here would produce an empty boundary with no indication why.
+                    Engine.Message(simulation, Engine.LogType.Warning, $"Evacuation group {_evacuationGroups[i].Name} covers no cell of the fire grid; it contributes no WUI area.");
+                    continue;
+                }
+
+                if (separate)
+                {
+                    runs.Add(new WuiAreaRun { WuiArea = mask, Label = _evacuationGroups[i].Name });
+                }
+                else
+                {
+                    for (int c = 0; c < combined.Length; ++c)
+                    {
+                        if (mask[c] && !combined[c])
+                        {
+                            combined[c] = true;
+                            ++combinedCells;
+                        }
+                    }
+                }
+            }
+
+            if (!separate && combinedCells > 0)
+            {
+                Engine.Message(simulation, Engine.LogType.Log, $"WUI area combined from {_evacuationGroups.Length} evacuation groups: {combinedCells} cells.");
+                runs.Add(new WuiAreaRun { WuiArea = combined, Label = "groups" });
+            }
+
+            return runs;
+        }
+
+        /// <summary>
+        /// Marks every fire-grid cell whose centre falls inside the group's polygon.
+        ///
+        /// Cell centres are built in simulation coordinates, which is what the group's polygon is
+        /// already stored in, and the fire grid's own offset is applied so the two line up even when
+        /// the fire domain does not start at the simulation origin. The resulting index order,
+        /// x + y*xCount with y running north, is the order k-PERIL and the WUI mask reader use.
+        /// </summary>
+        private bool[] RasterizeEvacuationGroup(Simulation simulation, EvacuationGroup group, int xCount, int yCount, out int cellCount)
+        {
+            bool[] mask = new bool[xCount * yCount];
+            cellCount = 0;
+
+            simulation.Hazards.Wildfire.GetOffsetAndSize(out Vector2d offset, out Vector2d size);
+            double cellSizeX = size.x / xCount;
+            double cellSizeY = size.y / yCount;
+
+            for (int y = 0; y < yCount; ++y)
+            {
+                double posY = offset.y + (y + 0.5) * cellSizeY;
+                for (int x = 0; x < xCount; ++x)
+                {
+                    double posX = offset.x + (x + 0.5) * cellSizeX;
+                    if (group.SimulationPositionBelongsToGroup(new Vector2d(posX, posY)))
+                    {
+                        mask[x + y * xCount] = true;
+                        ++cellCount;
+                    }
+                }
+            }
+
+            return mask;
+        }
+
         public void CreateAndRunTriggerBufferModule(Simulation simulation, PREACTInput input, WeatherManager weather, TimeManager time)
         {
             if (_input.TriggerBufferModule.Enabled)
@@ -350,32 +458,50 @@ namespace PREACT.Evacuation
                             return;
                         }
 
-                        //Prefer an explicit WUI-area mask (.asc/.tif) when supplied; otherwise
-                        //fall back to whatever WuiArea the wildfire data carried.
-                        bool[] wuiArea = LoadWuiAreaMask(_input.TriggerBufferModule.kPERILInput.WuiAreaFile, _input.RootFolder, xCount, yCount)
-                                         ?? _input.WildfireModule.Data.WuiArea;
+                        //One run per WUI area. A raster or combined groups give a single area and so
+                        //a single boundary; per-group gives one each, which is the point of the
+                        //option - groups evacuating on different orders have different egress times
+                        //and therefore different triggers, and unioning them would hide that.
+                        List<WuiAreaRun> runs = BuildWuiAreaRuns(simulation, xCount, yCount);
+                        if (runs.Count == 0)
+                        {
+                            Engine.Message(simulation, Engine.LogType.SimulationError, "Can't run kPERIL without a WUI area to protect.");
+                            return;
+                        }
 
-                        if (_input.TriggerBufferModule.kPERILInput.CalculateROSFromBehave)
+                        for (int i = 0; i < runs.Count; ++i)
                         {
-                            _triggerBufferModule = new kPERIL(_input.WildfireModule.Data.LandscapeData, wrsetMinutes, wuiArea, windSpeedMph, windDirectionDegrees, _input.WildfireModule.Data.InitialFuelMoistureData, _input.WildfireModule.Data.FuelModelsData);
+                            if (_input.TriggerBufferModule.kPERILInput.CalculateROSFromBehave)
+                            {
+                                _triggerBufferModule = new kPERIL(_input.WildfireModule.Data.LandscapeData, wrsetMinutes, runs[i].WuiArea, windSpeedMph, windDirectionDegrees, _input.WildfireModule.Data.InitialFuelMoistureData, _input.WildfireModule.Data.FuelModelsData);
+                            }
+                            else
+                            {
+                                _triggerBufferModule = new kPERIL(wrsetMinutes, runs[i].WuiArea, windSpeedMph, windDirectionDegrees, simulation.Hazards.Wildfire.GetMaxROS(), simulation.Hazards.Wildfire.GetMaxROSAzimuth(), simulation.Hazards.Wildfire.GetCellSizeX());
+                            }
+
+                            if (runs.Count > 1)
+                            {
+                                Engine.Message(simulation, Engine.LogType.Log, $"k-PERIL run {i + 1} of {runs.Count}: {runs[i].Label}.");
+                            }
+
+                            _triggerBufferModule.Run();
+
+                            //Per-group outputs are named after the group, so several boundaries from
+                            //one simulation do not overwrite each other.
+                            string outputName = _input.TriggerBufferModule.kPERILInput.OutputName;
+                            if (runs.Count > 1)
+                            {
+                                outputName = Path.GetFileNameWithoutExtension(outputName) + "_" + runs[i].Label + Path.GetExtension(outputName);
+                            }
+                            string outputFilePath = Path.Combine(simulation.Engine.OutputFolder, simulation.SimulationIndex + "_" + outputName);
+                            kPERIL.SaveToFile(_triggerBufferModule.TriggerBufferOutput, simulation.Hazards.Wildfire.GetCellSizeX(), outputFilePath);
+
+                            //Registered here, once per run, rather than once after the loop - which
+                            //would have recorded only the last group's boundary.
+                            simulation.Output.AddTriggerBufferOutput(_triggerBufferModule.TriggerBufferOutput, simulation.SimulationIndex);
                         }
-                        else
-                        {
-                            _triggerBufferModule = new kPERIL(wrsetMinutes, wuiArea, windSpeedMph, windDirectionDegrees, simulation.Hazards.Wildfire.GetMaxROS(), simulation.Hazards.Wildfire.GetMaxROSAzimuth(), simulation.Hazards.Wildfire.GetCellSizeX());
-                        }
-                        _triggerBufferModule.Run();
-                        string outputFilePath = Path.Combine(simulation.Engine.OutputFolder, simulation.SimulationIndex + "_" + _input.TriggerBufferModule.kPERILInput.OutputName);
-                        kPERIL.SaveToFile(_triggerBufferModule.TriggerBufferOutput, simulation.Hazards.Wildfire.GetCellSizeX(), outputFilePath);
                     }
-                }
-                else
-                {
-
-                }
-
-                if (_triggerBufferModule != null)
-                {
-                    simulation.Output.AddTriggerBufferOutput(_triggerBufferModule.TriggerBufferOutput, simulation.SimulationIndex);
                 }
             }
             else

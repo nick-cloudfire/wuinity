@@ -69,7 +69,11 @@ namespace Assets.WUInity.GUI.DearIMGUI
                     if (ImGui.MenuItem("Probabilistic trigger boundary")) { ProbabilisticTriggerWindow.Open(); }
 
                     ImGui.SeparatorText("Viewing");
-                    ImGui.MenuItem("Visualize population", false);
+                    //Needs a loaded scenario, since the population file it reads is named by one.
+                    if (ImGui.MenuItem("Visualize population", ScenarioEditorWindow.HasInput))
+                    {
+                        PreactGUI.WUInity.DisplayPopulationDensityMap();
+                    }
 
                     ImGui.EndMenu();
                 }

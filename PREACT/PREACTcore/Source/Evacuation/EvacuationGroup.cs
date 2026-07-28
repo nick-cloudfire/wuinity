@@ -187,9 +187,25 @@ namespace PREACT.Evacuation
         //https://en.wikipedia.org/wiki/Point_in_polygon
         //https://stackoverflow.com/questions/4243042/c-sharp-point-in-polygon
         public bool LatLonBelongsToGroup(Vector2d latLon, Simulation simulation)
-        {            
+        {
+            return SimulationPositionBelongsToGroup(simulation.Input.Simulation.Data.GetSimulationPosition(latLon));
+        }
+
+        /// <summary>
+        /// The same test against a point already in simulation coordinates, which is what the
+        /// polygon is stored in. Rasterising a group onto the fire grid works in these coordinates
+        /// throughout, so going out to lat/lon and straight back for every cell would only add
+        /// conversion error and cost.
+        /// </summary>
+        public bool SimulationPositionBelongsToGroup(Vector2d testedPoint)
+        {
             bool result = false;
-            Vector2d testedPoint = simulation.Input.Simulation.Data.GetSimulationPosition(latLon);
+
+            //a group whose shapefile failed to load has no polygon to test against
+            if (_shapePolygonLocal == null || _shapePolygonLocal.Count == 0)
+            {
+                return false;
+            }
 
             //first check bounding box for potential early exit
             if(testedPoint.x < _boundingBoxMin.x || testedPoint.x > _boundingBoxMax.x || testedPoint.y < _boundingBoxMin.y || testedPoint.y > _boundingBoxMax.y)

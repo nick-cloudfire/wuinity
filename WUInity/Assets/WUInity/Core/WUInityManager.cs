@@ -633,6 +633,45 @@ namespace WUInity
             _simulationDomainVisualizer.SetSimulationPlaneTexture(Painter.GetPopulationMaskTexture());
         }
 
+        /// <summary>
+        /// Shows population density over the domain. The renderer for this already existed, complete
+        /// with its density colour ramp; nothing ever called it, because WorkingData.PopulationMap is
+        /// not assigned anywhere - so the map is loaded here from the scenario's population file on
+        /// first use, and cached on WorkingData by the renderer itself.
+        /// </summary>
+        public bool DisplayPopulationDensityMap()
+        {
+            PREACT.Population.PopulationMap map = _engine.WorkingData.PopulationMap;
+
+            if (map == null || !map.HaveData)
+            {
+                if (PREACTInput == null || string.IsNullOrEmpty(PREACTInput.Population.PopulationFile))
+                {
+                    PREACT.Engine.Message(null, PREACT.Engine.LogType.Warning, "No population file is set for this scenario, so there is no population to show.");
+                    return false;
+                }
+
+                string path = System.IO.Path.Combine(PREACTInput.RootFolder, PREACTInput.Population.PopulationFile);
+                if (!System.IO.File.Exists(path))
+                {
+                    PREACT.Engine.Message(null, PREACT.Engine.LogType.Warning, "Population file not found: " + path);
+                    return false;
+                }
+
+                map = new PREACT.Population.PopulationMap();
+                map.LoadFromFile(path, out bool loaded);
+                if (!loaded)
+                {
+                    PREACT.Engine.Message(null, PREACT.Engine.LogType.Warning, "Could not read the population file: " + path);
+                    return false;
+                }
+            }
+
+            _simulationDomainVisualizer.SetAndDisplayPopulationMapTexture(map, _engine.WorkingData);
+            ShowWebMercatorMap();
+            return true;
+        }
+
         public void DisplayTrafficUsageMap()
         {
             if(_trafficUsageMap == null)

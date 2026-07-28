@@ -132,10 +132,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             if (ImGui.BeginTabItem("Response curves"))
             {
-                //No editor for these yet, so the list is read-only apart from removal rather than
-                //offering buttons that do nothing. A curve is a set of time/probability points and
-                //needs a plot to edit sensibly.
-                ImGui.TextDisabled("Response curves are read-only here; edit them in the .wui file.");
+                if (ImGui.Button("New response curve")) { ResponseCurveEditWindow.Open(eInput.ResponseCurves, null); }
 
                 string removeCurve = null;
                 foreach (KeyValuePair<string, ResponseCurve> kV in eInput.ResponseCurves)
@@ -143,17 +140,14 @@ namespace Assets.WUInity.GUI.DearIMGUI
                     ResponseCurve rC = kV.Value;
                     if (ImGui.TreeNode(rC.Name))
                     {
-                        ImGui.Text($"{nameof(rC.TimeInput)}: {rC.TimeInput}");
-                        ImGui.Text($"{(rC.DataPoints == null ? 0 : rC.DataPoints.Length)} data points");
-                        if (rC.DataPoints != null)
-                        {
-                            for (int i = 0; i < rC.DataPoints.Length; ++i)
-                            {
-                                ImGui.Text($"    {rC.DataPoints[i].Time}, {rC.DataPoints[i].Probability}");
-                            }
-                        }
-
+                        //Passed by value, which is what the editor wants: ResponseCurve is a struct,
+                        //so it commits a whole new value back into the dictionary rather than
+                        //mutating this copy.
+                        if (ImGui.Button("Edit")) { ResponseCurveEditWindow.Open(eInput.ResponseCurves, rC); }
+                        ImGui.SameLine();
                         if (ImGui.Button("Remove")) { removeCurve = kV.Key; }
+
+                        ImGui.Text($"{nameof(rC.TimeInput)}: {rC.TimeInput}, {(rC.DataPoints == null ? 0 : rC.DataPoints.Length)} points");
 
                         ImGui.TreePop();
                     }
