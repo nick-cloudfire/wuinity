@@ -40,14 +40,24 @@ namespace PREACT.Spatial
                 east.ToString("R", CultureInfo.InvariantCulture),
             });
 
-            // Build Overpass query
+            //Roads only, plus the nodes that give them geometry.
+            //
+            //This used to ask for every node, way and relation in the box and then recurse both down
+            //and up ("(._;>;>>;)"), so it downloaded buildings, land use, coastlines and every POI as
+            //well - none of which anything here reads. Both consumers want the road network and
+            //nothing else: netconvert builds the SUMO network from it, and Itinero builds the RouterDb.
+            //On a 16 x 16 km domain the difference was 115 MB against a few MB, which then became a
+            //103 MB SUMO network with 143,000 edges.
+            //
+            //Every value of "highway" is kept rather than just the driveable ones, because pedestrian
+            //evacuation routes over footways too, and netconvert discards what cars cannot use by
+            //itself. The recursion is now down only: ">" collects the nodes the ways reference, which
+            //is what they need to have geometry at all. ">>" walked back up to every relation
+            //containing them, which is how single ways dragged in whole administrative boundaries.
             string query =
-                "[out:xml][timeout:180];(" +
-                "node(" + bbox + ");" +
-                "way(" + bbox + ");" +
-                "relation(" + bbox + ");" +
-                ");" +
-                "(._;>;>>;);" +
+                "[out:xml][timeout:180];" +
+                "way[\"highway\"](" + bbox + ");" +
+                "(._;>;);" +
                 "out body;";
 
             //Sent as a proper form field. The query used to be posted as the raw body while

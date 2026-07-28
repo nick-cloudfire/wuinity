@@ -46,6 +46,11 @@ namespace Assets.WUInity.GUI.DearIMGUI
         private static string PopulationFile => _input.Simulation.Name + "_population.csv";
         private static string WeatherFile => _input.Simulation.Name + "_weather.csv";
 
+        //The SUMO network and configuration live in their own folder, since netconvert writes several
+        //files beside the one named here.
+        private const string SumoFolder = "sumo";
+        private static string SumoConfigFile => Path.Combine(SumoFolder, PREACT.Utility.SumoNetworkBuilder.ConfigurationFileName);
+
         private static int _minHouseholdSize = 1;
         private static int _maxHouseholdSize = 5;
         private static bool _useAnderson13 = true;
@@ -187,11 +192,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 {
                     ImGui.BeginDisabled(_stepBusy);
                     if (StepButton("Step 1: Download OSM data", OsmFile)) { DownloadOsm(); }
+                    if (StepButton("Step 2: Build SUMO network", SumoConfigFile)) { BuildSumoNetwork(); }
                     ImGui.EndDisabled();
-                    //No SUMO network builder exists on this side yet - the .osm.xml above is the
-                    //input to SUMO's own netconvert/osmWebWizard, which has to be run externally.
-                    //Saying so beats a button that silently does nothing.
-                    ImGui.TextWrapped("Step 2: build the SUMO network from the downloaded .osm.xml with SUMO's own netconvert / osmWebWizard, then tick \"Have SUMO input?\" and select the .sumocfg.");
+                    ImGui.TextWrapped("Step 2 runs SUMO's own netconvert on the downloaded OSM and writes the configuration, which is then set on the scenario. It needs SUMO installed.");
                 }
             }
 
@@ -596,6 +599,37 @@ namespace Assets.WUInity.GUI.DearIMGUI
             {
                 await PREACT.Tools.OSMDownloader.Download(
                     _input.Simulation.LowerLeftLatLon, UpperRightLatLon(), InRoot(OsmFile));
+            });
+        }
+
+        private static void BuildSumoNetwork()
+        {
+            RunStep("Building SUMO network", () =>
+            {
+                string osmPath = InRoot(OsmFile);
+                if (!File.Exists(osmPath))
+                {
+                    throw new System.IO.FileNotFoundException("Download the OSM data first (step 1).", osmPath);
+                }
+
+                //The engine already locates SUMO's bin folder from the machine PATH, so the builder is
+                //given that before it starts looking for netconvert itself.
+                string configurationPath = PREACT.Utility.SumoNetworkBuilder.Build(
+                    osmPath, InRoot(SumoFolder), PreactGUI.Engine.SumoPath, LogStep);
+
+                if (configurationPath == null)
+                {
+                    throw new System.Exception("netconvert did not produce a network; see the messages above.");
+                }
+
+                //Stored relative to the scenario root, like every other generated path, so the
+                //scenario stays portable. Setting it here is the point of automating the step: the
+                //configuration is the thing the scenario actually refers to.
+                _input.TrafficModule.SumoInput.ConfigurationFile = SumoConfigFile;
+                _haveSumo = true;
+                LogStep("Scenario now points at " + SumoConfigFile + ".");
+
+                return System.Threading.Tasks.Task.CompletedTask;
             });
         }
 
