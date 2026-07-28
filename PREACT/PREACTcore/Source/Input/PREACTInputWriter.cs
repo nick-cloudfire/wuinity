@@ -262,17 +262,21 @@ namespace PREACT.Input
                 case Vector2d v: return F(v.x) + "," + F(v.y);
                 //System.Numerics.Vector2, used for pairs such as WalkingSpeedMinMax
                 case System.Numerics.Vector2 v2: return F(v2.X) + "," + F(v2.Y);
+                //Vector2int needs stating explicitly even though it is IFormattable, because its
+                //own ToString yields "(1, 2)" - parentheses and a space - which none of the
+                //parsers read. Without this case it reached the IFormattable fallback below and
+                //quietly wrote a value that could not be loaded back.
+                case Vector2int vi: return vi.x.ToString(CultureInfo.InvariantCulture) + "," + vi.y.ToString(CultureInfo.InvariantCulture);
+                //Three components, which is exactly what the parsers split on; alpha is not part
+                //of the format. Kept ahead of the IFormattable fallback so this stays correct if
+                //PREACTColor ever gains a ToString of its own.
+                case PREACTColor colour: return F(colour.r) + "," + F(colour.g) + "," + F(colour.b);
             }
 
             if (value is Enum) return value.ToString();
             if (value is IFormattable formattable && !(value is IEnumerable))
             {
                 return formattable.ToString(null, CultureInfo.InvariantCulture);
-            }
-
-            if (value is PREACTColor colour)
-            {
-                return F(colour.r) + "," + F(colour.g) + "," + F(colour.b);
             }
 
             //Arrays and lists share the comma-separated form. Handled after the scalar cases so a

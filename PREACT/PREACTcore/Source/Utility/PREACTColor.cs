@@ -15,10 +15,15 @@ namespace PREACT
 
         public PREACTColor(float r, float g, float b)
         {
-            this.r = r; 
-            this.g = g; 
+            this.r = r;
+            this.g = g;
             this.b = b;
-            this.a = 0f;
+            //Opaque, matching every named colour below and the convention everywhere else that a
+            //colour given without an alpha is a visible one. This used to be 0f, which made every
+            //colour built from three components fully transparent - Random(), so every evacuation
+            //group without an explicit Color= key, the fuel model error colour, the Canadian FBP
+            //fuel colours and the domain visualizer's ramp. "clear" already exists for alpha 0.
+            this.a = 1f;
         }
 
         public PREACTColor(float r, float g, float b, float a)
