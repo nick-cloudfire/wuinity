@@ -96,11 +96,35 @@ namespace Assets.WUInity.GUI.DearIMGUI
             if (ScenarioDataSteps.StepButton("Generate population", ScenarioDataSteps.PopulationFile)) { ScenarioDataSteps.GeneratePopulation(); }
             ImGui.TextDisabled("Needs WorldPop and the RouterDb. Sets PopulationFile on the scenario.");
 
-            ImGui.SeparatorText("Weather and landscape");
+            ImGui.SeparatorText("Terrain");
+            //Before LANDFIRE, because it is the one that works anywhere, and because slope and aspect are
+            //computed from it - so a DEM alone is enough to have terrain, and to give k-PERIL a slope.
+            ImGui.SetNextItemWidth(260);
+            ImGui.InputText("OpenTopography API key", ref ScenarioDataSteps.OpenTopographyApiKey, 128,
+                ImGuiInputTextFlags.Password);
+            ImGui.SameLine();
+            ImGui.TextDisabled(string.IsNullOrWhiteSpace(ScenarioDataSteps.OpenTopographyApiKey) ? "(needed)" : "(set)");
+            ImGui.TextDisabled("Free from portal.opentopography.org. Read from OPENTOPOGRAPHY_API_KEY if set. "
+                + "Not saved into the scenario.");
+
+            int demTypeIndex = System.Array.IndexOf(ScenarioDataSteps.DemTypes, ScenarioDataSteps.DemType);
+            if (demTypeIndex < 0) { demTypeIndex = 0; }
+            ImGui.SetNextItemWidth(160);
+            if (ImGui.Combo("DEM", ref demTypeIndex, ScenarioDataSteps.DemTypes, ScenarioDataSteps.DemTypes.Length))
+            {
+                ScenarioDataSteps.DemType = ScenarioDataSteps.DemTypes[demTypeIndex];
+            }
+
+            if (ScenarioDataSteps.StepButton("Download DEM", ScenarioDataSteps.DemFile)) { ScenarioDataSteps.DownloadDem(); }
+            ImGui.TextDisabled("Reprojected into the simulation's UTM zone and set as the scenario's elevation. "
+                + "Slope and aspect are computed from it, and k-PERIL uses the slope.");
+
+            ImGui.SeparatorText("Weather and fuels");
             if (ScenarioDataSteps.StepButton("Download weather", ScenarioDataSteps.WeatherFile)) { ScenarioDataSteps.DownloadWeather(); }
             ImGui.Checkbox("Anderson 13 fuel models (otherwise Scott & Burgan 40)", ref ScenarioDataSteps.UseAnderson13);
             if (ImGui.Button("Download LANDFIRE landscape")) { ScenarioDataSteps.DownloadLandfire(); }
-            ImGui.TextDisabled("LANDFIRE covers the United States only. Elsewhere, supply the landscape file yourself.");
+            ImGui.TextDisabled("LANDFIRE covers the United States only, and carries fuels as well as terrain. "
+                + "Elsewhere, the DEM above plus a fuel model raster of your own.");
 
             ImGui.EndDisabled();
 

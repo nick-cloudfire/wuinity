@@ -136,11 +136,25 @@ namespace PREACT
             //derive them from a (flat) elevation grid.
             if (slope != null && aspect != null)
             {
-                peril.perilData.importTopographyRastersByFileName(new float[_xDim, _yDim], slope, aspect);
+                //The real elevation when there is one, rather than a grid of zeros. k-PERIL works from the
+                //slope and aspect given here, so the elevation is not what drives the result, but handing
+                //it a flat surface alongside a slope field is a contradiction worth not writing down.
+                peril.perilData.importTopographyRastersByFileName(_elevation ?? new float[_xDim, _yDim], slope, aspect);
+                Engine.Message(null, Engine.LogType.Log, "k-PERIL is using the supplied slope and aspect.");
+            }
+            else if (_elevation != null)
+            {
+                //k-PERIL derives the slope and aspect itself from the elevation.
+                peril.perilData.importTopographyRastersByVariable(_elevation);
+                Engine.Message(null, Engine.LogType.Log, "k-PERIL is deriving slope and aspect from the supplied elevation.");
             }
             else
             {
-                peril.perilData.importTopographyRastersByVariable(_elevation ?? new float[_xDim, _yDim]);
+                //Flat ground. Said plainly, because the slope term then contributes nothing to the
+                //effective wind and the boundary comes out the same as it would on a plain.
+                peril.perilData.importTopographyRastersByVariable(new float[_xDim, _yDim]);
+                Engine.Message(null, Engine.LogType.Warning,
+                    "k-PERIL has no topography, so the boundary is computed as if the ground were flat.");
             }
 
             //Wind must come after topography, because k-PERIL combines the two into an effective

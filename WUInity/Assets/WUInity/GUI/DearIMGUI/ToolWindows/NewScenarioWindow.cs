@@ -182,6 +182,27 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 }
             }
 
+            //Terrain, on its own and before the hazards, because it is not a hazard: the elevation gives
+            //the scenario a cell grid to paint on, a slope for k-PERIL to correct spread by, and the UTM
+            //zone to measure in - none of which need a fire.
+            ImGui.SeparatorText("Terrain");
+            if (ImGui.Button("Select elevation raster"))
+            {
+                FileBrowser.OpenSetFilePath(path => _input.Landscape.ElevationFile = path,
+                    "Select elevation raster (DEM)", true, FileBrowser.geoTiffFilter);
+            }
+            ImGui.SameLine();
+            ImGui.Text($"{nameof(_input.Landscape.ElevationFile)}: {_input.Landscape.ElevationFile}");
+
+            ImGui.SetNextItemWidth(240);
+            ImGui.InputText("OpenTopography API key", ref ScenarioDataSteps.OpenTopographyApiKey, 128, ImGuiInputTextFlags.Password);
+            ImGui.BeginDisabled(ScenarioDataSteps.Busy);
+            if (ScenarioDataSteps.StepButton("Or download a DEM", ScenarioDataSteps.DemFile)) { ScenarioDataSteps.DownloadDem(); }
+            ImGui.EndDisabled();
+            ImGui.TextWrapped("A DEM can be had for anywhere on Earth, and slope and aspect are computed from it, "
+                + "so this alone is enough terrain to paint on and to give k-PERIL a slope. The download is "
+                + "reprojected into the simulation's UTM zone.");
+
             ImGui.SeparatorText("Hazards");
             ImGui.Checkbox("Wildfire spread?", ref _wantWildfire);
             if (_wantWildfire)

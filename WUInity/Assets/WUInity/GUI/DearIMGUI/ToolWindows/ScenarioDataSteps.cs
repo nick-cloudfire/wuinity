@@ -54,8 +54,29 @@ namespace Assets.WUInity.GUI.DearIMGUI
         private static readonly System.Collections.Generic.List<string> _progressLog = new System.Collections.Generic.List<string>();
         public static bool ProgressWindowOpen { get => _progressWindowOpen; set => _progressWindowOpen = value; }
 
+        //OpenTopography requires a key per request. Taken from the environment when there is one, so it
+        //does not have to be pasted in every session; it is not written into the scenario, which would put
+        //a personal credential into a file meant to be shared.
+        public static string OpenTopographyApiKey =
+            System.Environment.GetEnvironmentVariable("OPENTOPOGRAPHY_API_KEY") ?? string.Empty;
+
+        //Copernicus GLO-30 by default: free, global, and 30 m, which is finer than the cell size any of
+        //these scenarios run at.
+        public static string DemType = PREACT.Tools.OpenTopographyDownloader.DemTypeCopernicus30;
+        public static readonly string[] DemTypes =
+        {
+            PREACT.Tools.OpenTopographyDownloader.DemTypeCopernicus30,
+            PREACT.Tools.OpenTopographyDownloader.DemTypeCopernicus90,
+            PREACT.Tools.OpenTopographyDownloader.DemTypeSrtm30,
+            PREACT.Tools.OpenTopographyDownloader.DemTypeSrtm90
+        };
+
         //Files the steps produce, relative to the scenario root.
         public static string WorldPopFile => Input.Simulation.Name + "_worldpop.tif";
+        public static string DemFile => Input.Simulation.Name + "_dem.tif";
+        //The download as it arrives, in degrees, before it is warped into the simulation's zone. Kept
+        //rather than deleted: it is the slow part to obtain, and a failed warp can be retried from it.
+        public static string DemDownloadFile => Input.Simulation.Name + "_dem_wgs84.tif";
         public static string OsmFile => Input.Simulation.Name + ".osm.xml";
         public static string RouterDbFile => Input.Simulation.Name + ".routerdb";
         public static string PopulationFile => Input.Simulation.Name + "_population.csv";
@@ -472,6 +493,56 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 }
             }
             return rows;
+        }
+
+        /// <summary>
+        /// Downloads a DEM for the area of interest and warps it into the zone the simulation measures in.
+        ///
+        /// The warp is the part that matters. OpenTopography serves geographic coordinates - degrees, with
+        /// a cell size of about 0.00028 - and everything here works in UTM metres: the landscape reader
+        /// takes the cell size as metres, the painter places cells by it, k-PERIL measures distances with
+        /// it. Handing a scenario a raster in degrees would put its cells 0.0003 m apart and its corner at
+        /// an easting of 23.
+        /// </summary>
+        public static void DownloadDem()
+        {
+            RunStep("Downloading DEM", async () =>
+            {
+                if (string.IsNullOrWhiteSpace(OpenTopographyApiKey))
+                {
+                    throw new System.Exception("OpenTopography needs an API key. One is free from "
+                        + "portal.opentopography.org; paste it above, or set OPENTOPOGRAPHY_API_KEY.");
+                }
+
+                string downloaded = InRoot(DemDownloadFile);
+                await PREACT.Tools.OpenTopographyDownloader.Download(
+                    Input.Simulation.LowerLeftLatLon, UpperRightLatLon(),
+                    OpenTopographyApiKey.Trim(), downloaded, DemType);
+
+                LogStep("Warping the DEM into the simulation's UTM zone...");
+
+                Vector2d ll = Input.Simulation.LowerLeftLatLon;
+                Vector2d ur = UpperRightLatLon();
+
+                //Clipped to the area of interest as well as reprojected: the download is cut to a lat/lon
+                //box, which is not a rectangle in UTM, so the warped extent is the bounding box of the
+                //four transformed corners rather than the box that was asked for.
+                //
+                //Into the zone the simulation measures in, named explicitly rather than recomputed from
+                //the domain's centre. For a domain on a zone boundary the two differ, and a DEM in one
+                //zone beside a fire in the next is half a million metres of disagreement.
+                PREACT.Utility.MasterGrid grid = PREACT.Utility.RasterHarmonizer.BuildUtmMasterGrid(
+                    downloaded, InRoot(DemFile), ll.x, ll.y, ur.x, ur.y,
+                    null, Input.Simulation.Data.UtmEpsgCode);
+
+                LogStep($"DEM on the simulation's grid: {grid.Header.Ncols} x {grid.Header.Nrows} cells of "
+                    + $"{grid.Header.CellSize:F1} m, in {grid.Epsg}.");
+
+                //Set on the scenario, which is the point of the step: this is what makes terrain, slope
+                //and aspect available to everything that wants them.
+                Input.Landscape.ElevationFile = DemFile;
+                LogStep("Scenario now points at " + DemFile + " for elevation. Slope and aspect are computed from it.");
+            });
         }
 
         public static void DownloadLandfire()

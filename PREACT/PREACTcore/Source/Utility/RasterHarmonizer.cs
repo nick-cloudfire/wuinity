@@ -52,11 +52,19 @@ namespace PREACT.Utility
         public static MasterGrid BuildUtmMasterGrid(
             string sourcePath, string destPath,
             double southLatitude, double westLongitude, double northLatitude, double eastLongitude,
-            double? cellSize = null)
+            double? cellSize = null, int targetEpsgCode = 0)
         {
             double centreLat = 0.5 * (southLatitude + northLatitude);
             double centreLon = 0.5 * (westLongitude + eastLongitude);
-            string epsg = UtmUtility.GetUtmEpsg(centreLat, centreLon);
+
+            //The zone is named by the caller when it has one to name, and only otherwise derived from the
+            //box. It has to be: a simulation whose domain straddles a zone boundary measures in the zone
+            //its other data is in, and warping a DEM into the zone recomputed from the centre would put
+            //the DEM in one zone and the fire in the next - the half-a-million-metre disagreement this
+            //whole path exists to avoid.
+            string epsg = targetEpsgCode != 0
+                ? "EPSG:" + targetEpsgCode
+                : UtmUtility.GetUtmEpsg(centreLat, centreLon);
 
             var wgs84 = new SpatialReference("");
             wgs84.ImportFromEPSG(4326);

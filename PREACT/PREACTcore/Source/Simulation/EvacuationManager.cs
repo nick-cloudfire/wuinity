@@ -422,6 +422,136 @@ namespace PREACT.Evacuation
             return mask;
         }
 
+        /// <summary>
+        /// Samples the landscape's elevation, slope and aspect onto the fire grid, for k-PERIL.
+        ///
+        /// k-PERIL adds 0.06 times the slope to the wind, as a vector, before working out how elongated
+        /// spread is - so on a flat grid that term contributes nothing and a trigger boundary comes out
+        /// the same on a hillside as on level ground. Nothing was passed before, so that is what happened:
+        /// the raster path defaulted its optional topography arguments to null and k-PERIL stood in a grid
+        /// of zeros. On Mati's terrain, which rises 770 m out of the sea, the difference is not small.
+        ///
+        /// The two grids are not assumed to be the same. Each fire cell's centre is taken in simulation
+        /// coordinates and looked up in the landscape by its own origin and cell size, so a landscape of a
+        /// different resolution or extent still lands in the right place. Cells outside the landscape keep
+        /// nodata rather than the nearest edge value, so a landscape that does not cover the fire grid is
+        /// visible as a gap instead of a smear.
+        /// </summary>
+        private bool TrySampleTopographyOntoFireGrid(Simulation simulation, int xCount, int yCount,
+            out float[,] elevation, out float[,] slope, out float[,] aspect)
+        {
+            simulation.Hazards.Wildfire.GetOffsetAndSize(out Vector2d fireOffset, out Vector2d fireSize);
+            return TrySampleTopographyOntoGrid(_input.WildfireModule.Data.LandscapeData,
+                fireOffset, fireSize, xCount, yCount, out elevation, out slope, out aspect);
+        }
+
+        /// <summary>
+        /// The geometry of the above, taking the target grid as numbers rather than reading it off a
+        /// running simulation - so it can be checked against real data without one.
+        /// </summary>
+        public static bool TrySampleTopographyOntoGrid(Wildfire.LandscapeData landscape,
+            Vector2d fireOffset, Vector2d fireSize, int xCount, int yCount,
+            out float[,] elevation, out float[,] slope, out float[,] aspect)
+        {
+            elevation = null;
+            slope = null;
+            aspect = null;
+
+            if (landscape == null)
+            {
+                return false;
+            }
+
+            double fireCellX = fireSize.x / xCount;
+            double fireCellY = fireSize.y / yCount;
+
+            Vector2d landscapeOffset = landscape.OriginOffset;
+            double landscapeCellX = landscape.RasterCellResolutionX;
+            double landscapeCellY = landscape.RasterCellResolutionY;
+            int landscapeCountX = landscape.GetCellCountX();
+            int landscapeCountY = landscape.GetCellCountY();
+
+            if (landscapeCellX <= 0.0 || landscapeCellY <= 0.0)
+            {
+                Engine.Message(null, Engine.LogType.Warning,
+                    "The landscape has no cell size, so no topography can be sampled for k-PERIL.");
+                return false;
+            }
+
+            elevation = new float[xCount, yCount];
+            slope = new float[xCount, yCount];
+            aspect = new float[xCount, yCount];
+
+            int covered = 0;
+            for (int y = 0; y < yCount; ++y)
+            {
+                double posY = fireOffset.y + (y + 0.5) * fireCellY;
+                int landscapeY = (int)System.Math.Floor((posY - landscapeOffset.y) / landscapeCellY);
+
+                for (int x = 0; x < xCount; ++x)
+                {
+                    double posX = fireOffset.x + (x + 0.5) * fireCellX;
+                    int landscapeX = (int)System.Math.Floor((posX - landscapeOffset.x) / landscapeCellX);
+
+                    if (landscapeX < 0 || landscapeX >= landscapeCountX || landscapeY < 0 || landscapeY >= landscapeCountY)
+                    {
+                        //Flat, not nodata. k-PERIL multiplies the slope by 0.06 and vector-adds it to the
+                        //wind with no check for a nodata value, so a -9999 here becomes a 600 mi/h wind in
+                        //that cell rather than a gap - and Mati's grid has 8,619 cells of sea in it. Zero
+                        //contributes nothing, which is the honest answer for ground that is not described.
+                        elevation[x, y] = 0f;
+                        slope[x, y] = 0f;
+                        aspect[x, y] = 0f;
+                        continue;
+                    }
+
+                    //GetCellData indexes the landscape directly, with y running north, which is the same
+                    //direction the fire grid and every raster here run.
+                    Wildfire.LandscapeCellData cell = landscape.GetCellData(landscapeX, landscapeY);
+
+                    //Same reasoning as above for cells the landscape covers but has no height for.
+                    bool haveCell = cell.elevation > -9999 && cell.slope > -9999;
+                    elevation[x, y] = haveCell ? cell.elevation : 0f;
+                    slope[x, y] = haveCell ? cell.slope : 0f;
+                    //A flat cell has no aspect; the landscape marks that -1 and k-PERIL's own convention
+                    //is 0. Translated rather than passed through, so the two agree - it makes no difference
+                    //to the result, since the slope it multiplies is zero either way, but a value k-PERIL
+                    //does not use the same way is not worth handing it.
+                    aspect[x, y] = haveCell && cell.aspect >= 0 ? cell.aspect : 0f;
+
+                    if (haveCell)
+                    {
+                        ++covered;
+                    }
+                }
+            }
+
+            if (covered == 0)
+            {
+                Engine.Message(null, Engine.LogType.Warning,
+                    "The landscape does not overlap the fire grid at all, so k-PERIL will run on flat ground.");
+                elevation = null;
+                slope = null;
+                aspect = null;
+                return false;
+            }
+
+            double coveredFraction = (double)covered / (xCount * yCount);
+            if (coveredFraction < 0.999)
+            {
+                //Not necessarily a problem: Mati's DEM has no height over the sea, which is a tenth of the
+                //grid and is genuinely flat. Reported so that a landscape that really is too small to cover
+                //the domain is distinguishable from one that simply has water in it.
+                Engine.Message(null, Engine.LogType.Log,
+                    $"The landscape gives a height for {coveredFraction * 100.0:F1}% of the fire grid; the rest is "
+                    + "treated as flat.");
+            }
+
+            Engine.Message(null, Engine.LogType.Log,
+                $"k-PERIL topography sampled from the landscape onto the fire grid ({coveredFraction * 100.0:F1}% covered).");
+            return true;
+        }
+
         public void CreateAndRunTriggerBufferModule(Simulation simulation, PREACTInput input, WeatherManager weather, TimeManager time)
         {
             if (_input.TriggerBufferModule.Enabled)
@@ -469,6 +599,19 @@ namespace PREACT.Evacuation
                             return;
                         }
 
+                        //Sampled once for every run: the terrain does not change between WUI areas.
+                        //Absence is not fatal - a boundary on flat ground is still a boundary - but it is
+                        //said out loud, because the difference on real terrain is not small and a silent
+                        //flat grid is indistinguishable from genuinely level ground.
+                        if (!TrySampleTopographyOntoFireGrid(simulation, xCount, yCount,
+                            out float[,] elevation, out float[,] slope, out float[,] aspect))
+                        {
+                            Engine.Message(simulation, Engine.LogType.Warning,
+                                "k-PERIL has no terrain to work with, so it will treat the ground as flat and the "
+                                + "slope will not affect the boundary. Add an ElevationFile to the Landscape section; "
+                                + "slope and aspect are computed from it.");
+                        }
+
                         for (int i = 0; i < runs.Count; ++i)
                         {
                             if (_input.TriggerBufferModule.kPERILInput.CalculateROSFromBehave)
@@ -477,7 +620,14 @@ namespace PREACT.Evacuation
                             }
                             else
                             {
-                                _triggerBufferModule = new kPERIL(wrsetMinutes, runs[i].WuiArea, windSpeedMph, windDirectionDegrees, simulation.Hazards.Wildfire.GetMaxROS(), simulation.Hazards.Wildfire.GetMaxROSAzimuth(), simulation.Hazards.Wildfire.GetCellSizeX());
+                                //Topography goes in with the rate of spread. k-PERIL vector-adds 0.06 of
+                                //the slope to the wind before deriving how elongated spread is, so
+                                //leaving these out - which is what happened, the optional arguments
+                                //defaulting to null and k-PERIL standing in zeros - meant every boundary
+                                //was computed as if the ground were level.
+                                _triggerBufferModule = new kPERIL(wrsetMinutes, runs[i].WuiArea, windSpeedMph, windDirectionDegrees,
+                                    simulation.Hazards.Wildfire.GetMaxROS(), simulation.Hazards.Wildfire.GetMaxROSAzimuth(),
+                                    simulation.Hazards.Wildfire.GetCellSizeX(), elevation, slope, aspect);
                             }
 
                             if (runs.Count > 1)
