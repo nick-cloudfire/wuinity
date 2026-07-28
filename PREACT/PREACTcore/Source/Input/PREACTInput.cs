@@ -79,7 +79,14 @@ namespace PREACT.Input
                 }
                 else
                 {
-                    Engine.Message(null, Engine.LogType.Log, " Input file " + filePath + " could not be loaded, see log.");
+                    //Loaded, just not finished. Saying "could not be loaded" was misleading once the
+                    //parse started returning what it managed to read.
+                    int outstanding = 0;
+                    for (int i = 0; i < _requirements.Count; ++i)
+                    {
+                        if (_requirements[i].Critical) ++outstanding;
+                    }
+                    Engine.Message(null, Engine.LogType.Log, $" Input file {filePath} loaded with {outstanding} item(s) still required; see the scenario checklist.");
                 }
             }
 
@@ -109,6 +116,10 @@ namespace PREACT.Input
             success = false;
             PREACTInput newInput = new PREACTInput(rootFolder);
             Dictionary<string, int> headerLineIndices = new Dictionary<string, int>();
+
+            //The checklist describes the file being read now, not whatever was read before it.
+            _requirements.Clear();
+            _currentSection = string.Empty;
 
             List<int> destinationLineIndices = new List<int>();            
             List<int> responseLineIndices = new List<int>();
@@ -154,9 +165,17 @@ namespace PREACT.Input
 
             //now see if we have what we need
             int lineindex;
-            string nameOfInput;
+            string nameOfInput = string.Empty;
+
+            //Reading on past a gap means a later parser can meet state an earlier one would have
+            //stopped before producing. That is worth catching rather than risking: a throw here used
+            //to be impossible because parsing gave up first, and losing the whole scenario to one
+            //would be a poor trade for being able to edit it.
+            try
+            {
 
             //simulation
+            success = true; //each section is judged on its own
             nameOfInput = nameof(Simulation);
             if (headerLineIndices.TryGetValue(nameOfInput, out lineindex))
             {
@@ -167,14 +186,15 @@ namespace PREACT.Input
             {
                 //critical
                 Engine.Message(null, Engine.LogType.InputError, nameOfInput + " header not found." + pleaseCheckInput);
-                return null;
+                SectionIncomplete(nameOfInput);
             }
             if(!success)
             {
-                return null;
+                SectionIncomplete(nameOfInput);
             }
 
             //map
+            success = true; //each section is judged on its own
             nameOfInput = nameof(Map);
             if (headerLineIndices.TryGetValue(nameOfInput, out lineindex))
             {
@@ -188,10 +208,11 @@ namespace PREACT.Input
             }
             if (!success)
             {
-                return null;
+                SectionIncomplete(nameOfInput);
             }
 
             //weather
+            success = true; //each section is judged on its own
             nameOfInput = nameof(Weather);
             if (headerLineIndices.TryGetValue(nameOfInput, out lineindex))
             {
@@ -205,10 +226,11 @@ namespace PREACT.Input
             }
             if (!success)
             {
-                return null;
+                SectionIncomplete(nameOfInput);
             }
 
             //pedestrian module
+            success = true; //each section is judged on its own
             nameOfInput = nameof(PedestrianModule);
             if (headerLineIndices.TryGetValue(nameOfInput, out lineindex))
             {
@@ -221,10 +243,11 @@ namespace PREACT.Input
             }
             if (!success)
             {
-                return null;
+                SectionIncomplete(nameOfInput);
             }
 
             //traffic module
+            success = true; //each section is judged on its own
             nameOfInput = nameof(TrafficModule);
             if (headerLineIndices.TryGetValue(nameOfInput, out lineindex))
             {
@@ -237,10 +260,11 @@ namespace PREACT.Input
             }
             if (!success)
             {
-                return null;
+                SectionIncomplete(nameOfInput);
             }
 
             //wildfire module
+            success = true; //each section is judged on its own
             nameOfInput = nameof(WildfireModule);
             if (headerLineIndices.TryGetValue(nameOfInput, out lineindex))
             {
@@ -253,10 +277,11 @@ namespace PREACT.Input
             }
             if (!success)
             {
-                return null;
+                SectionIncomplete(nameOfInput);
             }
 
             //smoke module
+            success = true; //each section is judged on its own
             nameOfInput = nameof(SmokeModule);
             if (headerLineIndices.TryGetValue(nameOfInput, out lineindex))
             {
@@ -269,10 +294,11 @@ namespace PREACT.Input
             }
             if (!success)
             {
-                return null;
+                SectionIncomplete(nameOfInput);
             }
 
             //trigger buffer
+            success = true; //each section is judged on its own
             nameOfInput = nameof(TriggerBufferModule);
             if (headerLineIndices.TryGetValue(nameOfInput, out lineindex))
             {
@@ -287,10 +313,11 @@ namespace PREACT.Input
             }
             if (!success)
             {
-                return null;
+                SectionIncomplete(nameOfInput);
             }
 
             //population, must be before evacuation due to dependence on demographics      
+            success = true; //each section is judged on its own
             nameOfInput = nameof(Population);
             if (headerLineIndices.TryGetValue(nameOfInput, out lineindex))
             {
@@ -301,14 +328,15 @@ namespace PREACT.Input
             {
                 //critical
                 Engine.Message(null, Engine.LogType.InputError, nameOfInput + " header not found but user has requested pedestrian module." + pleaseCheckInput);
-                return null;
+                SectionIncomplete(nameOfInput);
             }
             if (!success)
             {
-                return null;
+                SectionIncomplete(nameOfInput);
             }
 
             //events
+            success = true; //each section is judged on its own
             nameOfInput = nameof(Events);
             if (headerLineIndices.TryGetValue(nameOfInput, out lineindex))
             {
@@ -321,10 +349,11 @@ namespace PREACT.Input
             }
             if (!success)
             {
-                return null;
+                SectionIncomplete(nameOfInput);
             }
 
             //evacuation            
+            success = true; //each section is judged on its own
             nameOfInput = nameof(Evacuation);
             if (headerLineIndices.TryGetValue(nameOfInput, out lineindex))
             {                    
@@ -339,10 +368,23 @@ namespace PREACT.Input
             }
             if (!success)
             {
-                return null;
+                SectionIncomplete(nameOfInput);
             }            
 
-            success = true;
+            }
+            catch (System.Exception e)
+            {
+                Engine.Message(null, Engine.LogType.Exception, $"Reading section {nameOfInput} threw: {e.Message}. The rest of the scenario was still loaded.");
+                AddRequirement(string.IsNullOrEmpty(nameOfInput) ? "Scenario" : nameOfInput, "Could not be read: " + e.Message, true);
+            }
+
+            //Every section is now read whatever the ones before it did, and what is missing is
+            //reported as a checklist instead of stopping the load. A scenario is built up over
+            //several sittings, so half-finished is its normal state - abandoning the parse at the
+            //first gap threw away everything already parsed and left nothing to carry on editing.
+            //success still means "complete enough to run", so nothing downstream starts a simulation
+            //on a scenario with holes in it.
+            success = RequirementsMet;
             return newInput;
         }
 
@@ -400,8 +442,74 @@ namespace PREACT.Input
             return inputToParse;
         }
 
+        /// <summary>
+        /// One thing a scenario still needs before it can run.
+        ///
+        /// These are gathered while reading so an incomplete scenario can be presented as a checklist
+        /// rather than as a wall of log lines. A scenario under construction is the normal case, not
+        /// an error: it is built up over several sittings, and the parts arrive in whatever order
+        /// they are produced.
+        /// </summary>
+        public class InputRequirement
+        {
+            public string Section = string.Empty;
+            public string Key = string.Empty;
+            public string Message = string.Empty;
+            public bool Critical;
+
+            public override string ToString()
+            {
+                return string.IsNullOrEmpty(Section) ? Key : Section + " / " + Key;
+            }
+        }
+
+        private static readonly List<InputRequirement> _requirements = new List<InputRequirement>();
+        private static string _currentSection = string.Empty;
+
+        /// <summary>What the last read scenario still needs. Rebuilt by every load.</summary>
+        public static List<InputRequirement> Requirements { get => _requirements; }
+
+        /// <summary>True when nothing critical is outstanding, so the scenario can actually be run.</summary>
+        public static bool RequirementsMet
+        {
+            get
+            {
+                for (int i = 0; i < _requirements.Count; ++i)
+                {
+                    if (_requirements[i].Critical) return false;
+                }
+                return true;
+            }
+        }
+
+        private static void AddRequirement(string key, string message, bool critical)
+        {
+            //Deduplicated: several parsers report the same missing key by way of both their own check
+            //and CheckIfFileExist, and a checklist that lists an item twice reads as two problems.
+            for (int i = 0; i < _requirements.Count; ++i)
+            {
+                if (_requirements[i].Section == _currentSection && _requirements[i].Key == key)
+                {
+                    //Critical wins, so a hard requirement is never masked by a softer duplicate.
+                    _requirements[i].Critical |= critical;
+                    return;
+                }
+            }
+
+            _requirements.Add(new InputRequirement
+            {
+                Section = _currentSection,
+                Key = key,
+                Message = message,
+                Critical = critical
+            });
+        }
+
         public static void ReadingInputMessage(string nameOfInput)
         {
+            //Doubles as the section marker for anything reported while this section is being read,
+            //so requirements can name where they came from without every parser passing it along.
+            _currentSection = nameOfInput;
             Engine.Message(null, Engine.LogType.Log, nameOfInput + " input is being read...");
         }
 
@@ -410,31 +518,58 @@ namespace PREACT.Input
             if(critical)
             {
                 Engine.Message(null, Engine.LogType.InputError, nameOfInput + " was not found, this value is critical for the simulation to function based on the given input parameters." + pleaseCheckInput);
+                AddRequirement(nameOfInput, "Required, and not set.", true);
             }
             else
             {
                 Engine.Message(null, Engine.LogType.Warning, $"{nameOfInput} was not found, default value {defaultValue} has been used.");
-            }                
+                AddRequirement(nameOfInput, $"Not set; defaulted to {defaultValue}.", false);
+            }
         }
 
         public static void CriticalDependency(string missingDependency)
         {
             Engine.Message(null, Engine.LogType.InputError, $"Current module requires {missingDependency} to be set." + pleaseCheckInput);
+            AddRequirement(missingDependency, "Required by this module.", true);
         }
 
         public static void MissingReferenceToOtherInput(string nameOfInput, string missingReference)
         {
             Engine.Message(null, Engine.LogType.InputError, nameOfInput + " reference another input (" + missingReference + ") that could not be found." + pleaseCheckInput);
+            AddRequirement(nameOfInput, $"Refers to \"{missingReference}\", which does not exist.", true);
         }
 
         public static void IncorrectInputCount(string nameOfInput)
         {
             Engine.Message(null, Engine.LogType.InputError, nameOfInput + " does not contain the expected number of inputs." + pleaseCheckInput);
+            AddRequirement(nameOfInput, "Does not have the expected number of values.", true);
         }
 
         public static void CouldNotInterpretInputMessage(string nameOfInput, string userInput)
         {
             Engine.Message(null, Engine.LogType.InputError, "Could not interpret user input " + userInput + " for " + nameOfInput + ".");
+            AddRequirement(nameOfInput, $"Value \"{userInput}\" could not be interpreted.", true);
+        }
+
+        /// <summary>
+        /// Records that a section could not be read through to the end, so the checklist says which
+        /// part of the file is incomplete even when the parser stopped before naming a specific key.
+        /// </summary>
+        private static void SectionIncomplete(string nameOfInput)
+        {
+            //Only worth saying when nothing more specific was already reported. A section that failed
+            //because one named key is missing does not also need "this section is incomplete" beside
+            //it - that reads as two problems where there is one.
+            for (int i = 0; i < _requirements.Count; ++i)
+            {
+                if (_requirements[i].Critical && _requirements[i].Section == nameOfInput)
+                {
+                    return;
+                }
+            }
+
+            _currentSection = nameOfInput;
+            AddRequirement(nameOfInput, "This section could not be read completely.", true);
         }
 
         public static void CheckIfFileExist(string nameOfInput, string inputData, string rootFolder, out bool success, bool critical = true)

@@ -508,14 +508,31 @@ namespace PREACT
 
         public void LoadInputFromFile(string filePath, out bool success)
         {
+            LoadInputFromFile(filePath, out success, true);
+        }
+
+        /// <summary>
+        /// Loads a scenario. With <paramref name="acceptIncomplete"/> the input is taken on even when
+        /// items are still outstanding, so a half-built scenario can be opened, worked on and saved -
+        /// which is the normal way one gets built. HaveInput still tracks completeness, so nothing
+        /// starts a simulation on a scenario with holes in it.
+        /// </summary>
+        public void LoadInputFromFile(string filePath, out bool success, bool acceptIncomplete)
+        {
             _dataStatus.HaveInput = false;
             PREACTInput input = PREACTInput.LoadFromDisk(filePath, out success);
-            if(success)
+
+            if (input == null)
+            {
+                return;
+            }
+
+            if (success || acceptIncomplete)
             {
                 _input = input;
                 _workingFile = filePath;
                 _dataStatus.Reset();
-                _dataStatus.HaveInput = true;   
+                _dataStatus.HaveInput = success;
                 UpdateExternalManager(_input);
             }
         }

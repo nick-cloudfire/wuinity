@@ -33,6 +33,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
                         canEdit = true;
                     }
                     if (ImGui.MenuItem("Run/edit", canEdit)) { ScenarioEditorWindow.Open(); }
+                    //Reopenable, since it is dismissed as soon as it has been read but the items stay
+                    //outstanding until they are dealt with.
+                    if (ImGui.MenuItem("Checklist", ScenarioChecklistWindow.HasItems)) { ScenarioChecklistWindow.Open(); }
 
                     bool haveOutput = false;
                     if(PreactGUI.Engine.Simulation != null && (PreactGUI.Engine.Simulation.State == PREACT.Simulation.SimulationState.Running || PreactGUI.Engine.Simulation.State == PREACT.Simulation.SimulationState.Completed))

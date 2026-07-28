@@ -27,6 +27,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
         {
             bool success;
             PreactGUI.Engine.LoadInputFromFile(paths[0], out success);
+            //Shown whether or not the load was complete: an incomplete scenario is now opened rather
+            //than refused, and the checklist is how that gets said.
+            ScenarioChecklistWindow.ShowFor(Path.GetFileName(paths[0]));
         }
 
         public static void OpenSaveInput()
