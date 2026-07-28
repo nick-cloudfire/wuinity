@@ -224,7 +224,10 @@ namespace PREACT.Tools
                     OsmStreamSource filtered = source.FilterBox(left, top, right, bottom, true);
                     //create a new filtered file
                     string path = Path.Combine(Path.GetDirectoryName(osmFile), "filtered_" + Path.GetFileName(osmFile));
-                    using (FileStream targetStream = File.OpenWrite(path))
+                    //Create, not OpenWrite: OpenWrite does not truncate, so re-filtering onto a larger
+                    //previous result left its tail behind and produced a file that is valid up to a
+                    //point and then garbage.
+                    using (FileStream targetStream = new FileStream(path, FileMode.Create))
                     {
                         PBFOsmStreamTarget target = new PBFOsmStreamTarget(targetStream, compress: false);
                         target.RegisterSource(filtered);

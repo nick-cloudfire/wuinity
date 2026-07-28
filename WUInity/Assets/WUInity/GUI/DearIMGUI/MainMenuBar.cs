@@ -33,6 +33,11 @@ namespace Assets.WUInity.GUI.DearIMGUI
                         canEdit = true;
                     }
                     if (ImGui.MenuItem("Run/edit", canEdit)) { ScenarioEditorWindow.Open(); }
+                    //The same data-preparation steps the creator offers, run against the loaded
+                    //scenario. Needed as its own entry because opening the creator clears the loaded
+                    //scenario, so there was no way to build a missing RouterDb, population or SUMO
+                    //network for one without discarding it.
+                    if (ImGui.MenuItem("Prepare data", canEdit)) { ScenarioDataWindow.Open(); }
                     //Reopenable, since it is dismissed as soon as it has been read but the items stay
                     //outstanding until they are dealt with.
                     if (ImGui.MenuItem("Checklist", ScenarioChecklistWindow.HasItems)) { ScenarioChecklistWindow.Open(); }

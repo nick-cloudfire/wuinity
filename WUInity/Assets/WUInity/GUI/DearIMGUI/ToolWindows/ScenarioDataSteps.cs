@@ -1,0 +1,502 @@
+using ImGuiNET;
+using PREACT;
+using PREACT.Input;
+using PREACT.Math;
+using System.IO;
+using UnityEngine;
+
+namespace Assets.WUInity.GUI.DearIMGUI
+{
+    /// <summary>
+    /// The data-preparation steps a scenario needs: WorldPop, OSM, the RouterDb, the population CSV,
+    /// the SUMO network, LANDFIRE and weather.
+    ///
+    /// These used to live inside the new-scenario creator and were reachable only from it, which meant
+    /// there was no way to build a missing RouterDb - or any other of these - for a scenario loaded
+    /// from disk: opening the creator calls ScenarioEditorWindow.ClearInput and starts a fresh input,
+    /// so the loaded scenario was discarded to get at the buttons. They are therefore separated from
+    /// the creator's own state here and act on whichever input is assigned to <see cref="Input"/>.
+    ///
+    /// Every step names its output after the scenario, relative to the scenario root, so a folder
+    /// prepared for a scenario stays portable and a step can tell whether it has already run.
+    /// </summary>
+    public static class ScenarioDataSteps
+    {
+        /// <summary>The scenario the steps read their area of interest from and write their paths into.</summary>
+        public static PREACTInput Input;
+
+        //Household sizes for the population step, and which fuel model set LANDFIRE is asked for.
+        //Shared rather than duplicated per window so the value shown is the value used.
+        public static int MinHouseholdSize = 1;
+        public static int MaxHouseholdSize = 5;
+        public static bool UseAnderson13 = true;
+
+        //Feedback. Without it even a working download looks like a dead button: these steps take tens
+        //of seconds to minutes and would otherwise sit silent throughout, which is indistinguishable
+        //from nothing having happened.
+        private static string _status = string.Empty;
+        private static volatile bool _busy;
+        public static string Status { get => _status; }
+        public static bool Busy { get => _busy; }
+
+        //Steps run on a background thread, but the console is a LinkedList the GUI thread walks while
+        //drawing - appending to it from another thread risks corrupting that walk. Messages are
+        //queued here and flushed into the engine log from the GUI thread instead.
+        private static readonly object _logSync = new object();
+        private static readonly System.Collections.Generic.List<string> _pendingLog = new System.Collections.Generic.List<string>();
+
+        //Progress window. The fraction is negative while a step runs without a measurable total,
+        //which the bar renders as a sweep rather than pretending to a percentage it does not have.
+        private static bool _progressWindowOpen;
+        private static string _progressTitle = string.Empty;
+        private static volatile float _progressFraction = -1f;
+        private static string _progressDetail = string.Empty;
+        private static readonly System.Collections.Generic.List<string> _progressLog = new System.Collections.Generic.List<string>();
+        public static bool ProgressWindowOpen { get => _progressWindowOpen; set => _progressWindowOpen = value; }
+
+        //Files the steps produce, relative to the scenario root.
+        public static string WorldPopFile => Input.Simulation.Name + "_worldpop.tif";
+        public static string OsmFile => Input.Simulation.Name + ".osm.xml";
+        public static string RouterDbFile => Input.Simulation.Name + ".routerdb";
+        public static string PopulationFile => Input.Simulation.Name + "_population.csv";
+        public static string WeatherFile => Input.Simulation.Name + "_weather.csv";
+
+        //The SUMO network and configuration live in their own folder, since netconvert writes several
+        //files beside the one named here.
+        public const string SumoFolder = "sumo";
+        public static string SumoConfigFile => Path.Combine(SumoFolder, PREACT.Utility.SumoNetworkBuilder.ConfigurationFileName);
+
+        /// <summary>
+        /// Set when the SUMO step succeeds, so a caller showing a "have SUMO input?" choice can follow
+        /// what the step did rather than contradicting it.
+        /// </summary>
+        public static volatile bool SumoNetworkBuilt;
+
+        /// <summary>
+        /// A step button with a completion marker. Completion is judged by the output file existing
+        /// rather than by a flag set when the button was pressed, so it stays correct across a restart,
+        /// and after a step is re-run or its file deleted outside the editor.
+        ///
+        /// An existing file is not a reason to refuse: the button says "(redo)" and re-running
+        /// overwrites, which is what a changed area of interest or a truncated download needs.
+        /// </summary>
+        public static bool StepButton(string label, string producedFile)
+        {
+            bool done = Input != null
+                        && !string.IsNullOrEmpty(Input.Simulation.Name)
+                        && File.Exists(InRoot(producedFile));
+
+            bool pressed = ImGui.Button(done ? label + " (redo)" : label);
+
+            ImGui.SameLine();
+            if (done)
+            {
+                //ImGui has no tick glyph in the default font, so this uses text that renders in any
+                //font rather than a symbol that might come out as a box.
+                ImGui.TextColored(new Vector4(0.35f, 0.8f, 0.35f, 1f), "[done] " + producedFile);
+                if (ImGui.IsItemHovered())
+                {
+                    FileInfo info = new FileInfo(InRoot(producedFile));
+                    ImGui.SetTooltip($"{info.Length / (1024.0 * 1024.0):F2} MB, written {info.LastWriteTime:yyyy-MM-dd HH:mm}."
+                        + "\nRunning the step again overwrites it.");
+                }
+            }
+            else
+            {
+                ImGui.TextDisabled("[pending]");
+            }
+
+            return pressed;
+        }
+
+        /// <summary>
+        /// Runs one step off the UI thread, reporting start, success and failure.
+        ///
+        /// Exceptions are caught and shown rather than left to vanish into a faulted Task, which is
+        /// what happens by default with the fire-and-forget Task.Run used elsewhere in the GUI.
+        /// </summary>
+        public static void RunStep(string what, System.Func<System.Threading.Tasks.Task> work)
+        {
+            if (_busy)
+            {
+                return;
+            }
+
+            if (!ValidateAio(out string problem))
+            {
+                _status = problem;
+                LogStep(problem);
+                return;
+            }
+
+            _busy = true;
+            _status = what + "...";
+            _progressWindowOpen = true;
+            _progressTitle = what;
+            _progressDetail = string.Empty;
+            _progressFraction = -1f;
+            lock (_logSync) { _progressLog.Clear(); }
+            LogStep(what + "...");
+
+            System.Threading.Tasks.Task.Run(async () =>
+            {
+                try
+                {
+                    await work();
+                    _status = what + ": done.";
+                    LogStep(what + ": done.");
+                }
+                catch (System.Exception e)
+                {
+                    _status = what + " FAILED: " + e.Message;
+                    LogStep(what + " FAILED: " + e.Message);
+                }
+                finally
+                {
+                    _busy = false;
+                    //Completed steps show a full bar rather than freezing wherever they stopped.
+                    _progressFraction = 1f;
+                }
+            });
+        }
+
+        /// <summary>
+        /// The step progress window: what is running, how far along, and the messages it produced.
+        /// Its own window rather than a modal, so the map and console stay usable during a long
+        /// download. Call it from a window's Draw, after that window's End.
+        /// </summary>
+        private static int _progressDrawnOnFrame = -1;
+        public static void DrawProgressWindow()
+        {
+            if (!_progressWindowOpen)
+            {
+                return;
+            }
+
+            //Once per frame, however many windows call it: both the creator and the loaded-scenario
+            //window draw it, and with both open the same window would otherwise have its contents
+            //appended twice.
+            int frame = ImGui.GetFrameCount();
+            if (_progressDrawnOnFrame == frame)
+            {
+                return;
+            }
+            _progressDrawnOnFrame = frame;
+
+            ImGui.Begin("Scenario data preparation", ref _progressWindowOpen, ImGuiWindowFlags.NoCollapse);
+
+            ImGui.TextWrapped(_progressTitle);
+
+            float fraction = _progressFraction;
+            if (fraction >= 0f)
+            {
+                ImGui.ProgressBar(fraction, new Vector2(-1, 0), $"{fraction * 100f:F0} %");
+            }
+            else if (_busy)
+            {
+                //No measurable total: a sweeping bar says "working" without inventing a percentage.
+                //Driven by time so it animates regardless of what the step is doing. Both qualified:
+                //PREACT.Math defines its own Mathf, and PREACT.Time is a namespace that shadows
+                //UnityEngine.Time under this file's "using PREACT".
+                float sweep = UnityEngine.Mathf.PingPong(UnityEngine.Time.realtimeSinceStartup * 0.6f, 1f);
+                ImGui.ProgressBar(sweep, new Vector2(-1, 0), "working...");
+            }
+            else
+            {
+                ImGui.ProgressBar(1f, new Vector2(-1, 0), "idle");
+            }
+
+            if (!string.IsNullOrEmpty(_progressDetail))
+            {
+                ImGui.TextWrapped(_progressDetail);
+            }
+
+            ImGui.Separator();
+
+            ImGui.BeginChild("step_log", new Vector2(0, 160), (ImGuiChildFlags)1, ImGuiWindowFlags.HorizontalScrollbar);
+            lock (_logSync)
+            {
+                for (int i = 0; i < _progressLog.Count; ++i)
+                {
+                    ImGui.TextUnformatted(_progressLog[i]);
+                }
+            }
+            if (_busy)
+            {
+                ImGui.SetScrollHereY(1.0f);
+            }
+            ImGui.EndChild();
+
+            ImGui.BeginDisabled(_busy);
+            if (ImGui.Button("Close"))
+            {
+                _progressWindowOpen = false;
+            }
+            ImGui.EndDisabled();
+
+            ImGui.End();
+        }
+
+        /// <summary>
+        /// Draws the status line and a way back to the progress window once it has been closed.
+        /// </summary>
+        public static void DrawStatus()
+        {
+            if (string.IsNullOrEmpty(_status))
+            {
+                return;
+            }
+
+            ImGui.TextWrapped(_status);
+            if (!_progressWindowOpen && ImGui.Button("Show progress"))
+            {
+                _progressWindowOpen = true;
+            }
+        }
+
+        /// <summary>Queues a message for the console and the progress window; safe to call from a
+        /// step's worker thread.</summary>
+        public static void LogStep(string message)
+        {
+            lock (_logSync)
+            {
+                _pendingLog.Add(message);
+                _progressLog.Add(message);
+                //bounded so a chatty step cannot grow this without limit
+                if (_progressLog.Count > 200) _progressLog.RemoveAt(0);
+            }
+        }
+
+        /// <summary>
+        /// Moves queued step messages into the engine log, from the GUI thread. Engine.Message
+        /// ultimately appends to the console's LinkedList and calls Debug.Log, neither of which is
+        /// safe to touch from the worker threads the steps run on. Call it from a window's Draw.
+        /// </summary>
+        public static void FlushStepLog()
+        {
+            lock (_logSync)
+            {
+                for (int i = 0; i < _pendingLog.Count; ++i)
+                {
+                    Engine.Message(null, Engine.LogType.Log, _pendingLog[i]);
+                }
+                _pendingLog.Clear();
+            }
+        }
+
+        /// <summary>
+        /// Reports download progress from a worker thread. Only the numbers are stored; they are
+        /// formatted while drawing, so this stays cheap enough to call per buffer.
+        /// </summary>
+        private static void ReportBytes(long received, long total)
+        {
+            if (total > 0)
+            {
+                _progressFraction = (float)received / total;
+                _progressDetail = $"{received / (1024.0 * 1024.0):F1} of {total / (1024.0 * 1024.0):F1} MB";
+            }
+            else
+            {
+                _progressFraction = -1f;
+                _progressDetail = $"{received / (1024.0 * 1024.0):F1} MB received";
+            }
+        }
+
+        /// <summary>Checked up front because every step depends on it, and an unset area of interest
+        /// otherwise produces a confusing failure from deep inside a downloader.</summary>
+        public static bool ValidateAio(out string problem)
+        {
+            problem = null;
+
+            if (Input == null)
+            {
+                problem = "No scenario is loaded, so there is nothing to prepare data for.";
+                return false;
+            }
+
+            if (Input.Simulation.DomainSize.x <= 0.0 || Input.Simulation.DomainSize.y <= 0.0)
+            {
+                //Reports what was actually read rather than just asserting the area is unset - the
+                //values are what distinguish "never picked" from "picked but not stored".
+                problem = "Set the area of interest first. Currently lower-left " +
+                          $"{Input.Simulation.LowerLeftLatLon.x:F5}, {Input.Simulation.LowerLeftLatLon.y:F5} " +
+                          $"with domain {Input.Simulation.DomainSize.x:F0} x {Input.Simulation.DomainSize.y:F0} m " +
+                          "(click two opposite corners on the map, or type the values in directly).";
+                return false;
+            }
+
+            if (string.IsNullOrEmpty(Input.Simulation.Name))
+            {
+                problem = "Give the scenario a name first - it is used for the downloaded file names.";
+                return false;
+            }
+
+            return true;
+        }
+
+        public static string InRoot(string fileName)
+        {
+            return Path.Combine(Input.RootFolder, fileName);
+        }
+
+        /// <summary>
+        /// The area of interest's north-east corner. A scenario stores the domain as a south-west
+        /// corner plus a size in metres, while every downloader wants a lat/lon bounding box, so the
+        /// size is converted with the same flat-earth approximation the population tools already use
+        /// to interpret DomainSize.
+        /// </summary>
+        public static Vector2d UpperRightLatLon()
+        {
+            Vector2d ll = Input.Simulation.LowerLeftLatLon;
+            //SizeToDegrees returns (lonDegrees, latDegrees) for a size given as (east, north)
+            Vector2d deg = PREACT.Population.LocalGPWData.SizeToDegrees(ll, Input.Simulation.DomainSize);
+            return new Vector2d(ll.x + deg.y, ll.y + deg.x);
+        }
+
+        public static void DownloadWorldPop()
+        {
+            RunStep("Downloading WorldPop", async () =>
+            {
+                await PREACT.Tools.WorldPopDownloader.DownloadRegionUTM(
+                    Input.Simulation.StartDateTime.Year,
+                    Input.Simulation.LowerLeftLatLon, UpperRightLatLon(),
+                    Input.RootFolder, Path.GetFileNameWithoutExtension(WorldPopFile),
+                    ReportBytes);
+            });
+        }
+
+        public static void DownloadOsm()
+        {
+            RunStep("Downloading OSM data", async () =>
+            {
+                await PREACT.Tools.OSMDownloader.Download(
+                    Input.Simulation.LowerLeftLatLon, UpperRightLatLon(), InRoot(OsmFile));
+            });
+        }
+
+        public static void BuildSumoNetwork()
+        {
+            RunStep("Building SUMO network", () =>
+            {
+                string osmPath = InRoot(OsmFile);
+                if (!File.Exists(osmPath))
+                {
+                    throw new FileNotFoundException("Download the OSM data first.", osmPath);
+                }
+
+                //The engine already locates SUMO's bin folder from the machine PATH, so the builder is
+                //given that before it starts looking for netconvert itself.
+                string configurationPath = PREACT.Utility.SumoNetworkBuilder.Build(
+                    osmPath, InRoot(SumoFolder), PreactGUI.Engine.SumoPath, LogStep);
+
+                if (configurationPath == null)
+                {
+                    throw new System.Exception("netconvert did not produce a network; see the messages above.");
+                }
+
+                //Stored relative to the scenario root, like every other generated path, so the
+                //scenario stays portable. Setting it here is the point of automating the step: the
+                //configuration is the thing the scenario actually refers to.
+                Input.TrafficModule.SumoInput.ConfigurationFile = SumoConfigFile;
+                SumoNetworkBuilt = true;
+                LogStep("Scenario now points at " + SumoConfigFile + ".");
+
+                return System.Threading.Tasks.Task.CompletedTask;
+            });
+        }
+
+        public static void BuildRouterDb()
+        {
+            RunStep("Building RouterDb", () =>
+            {
+                string osm = InRoot(OsmFile);
+                if (!File.Exists(osm))
+                {
+                    throw new FileNotFoundException("Download the OSM data first.", osm);
+                }
+
+                PREACT.Tools.PopulationTools.CreateAndSaveRouterDb(osm, InRoot(RouterDbFile), out bool ok);
+                if (!ok)
+                {
+                    throw new System.Exception("RouterDb creation failed - see the log.");
+                }
+                return System.Threading.Tasks.Task.CompletedTask;
+            });
+        }
+
+        public static void GeneratePopulation()
+        {
+            RunStep("Generating population", () =>
+            {
+                string worldPop = InRoot(WorldPopFile);
+                string routerDb = InRoot(RouterDbFile);
+
+                if (!File.Exists(worldPop)) throw new FileNotFoundException("Download WorldPop first.", worldPop);
+                if (!File.Exists(routerDb)) throw new FileNotFoundException("Build the RouterDb first.", routerDb);
+
+                PREACT.Tools.PopulationTools.CreatePopulationFromWorldPop(
+                    MinHouseholdSize, MaxHouseholdSize, worldPop, routerDb, InRoot(PopulationFile), out bool ok);
+                if (!ok)
+                {
+                    throw new System.Exception("Population generation failed - see the log.");
+                }
+
+                //Reported because an empty result is otherwise indistinguishable from a full one: the
+                //file is written either way, so the [done] marker appears for a CSV holding nothing but
+                //its header - which is what a RouterDb with no reachable roads produces.
+                int households = CountPopulationRows(InRoot(PopulationFile));
+                LogStep($"Population file holds {households} households.");
+                if (households == 0)
+                {
+                    throw new System.Exception("The population file came out empty - no household could be placed. "
+                        + "Check that the RouterDb covers the area and that WorldPop has people in it.");
+                }
+
+                //Stored as a bare file name so the scenario folder stays relocatable.
+                Input.Population.PopulationFile = PopulationFile;
+                return System.Threading.Tasks.Task.CompletedTask;
+            });
+        }
+
+        /// <summary>Data rows in a population CSV, excluding its header.</summary>
+        private static int CountPopulationRows(string path)
+        {
+            int rows = 0;
+            using (StreamReader reader = new StreamReader(path))
+            {
+                //header
+                reader.ReadLine();
+                while (reader.ReadLine() is string line)
+                {
+                    if (!string.IsNullOrWhiteSpace(line)) ++rows;
+                }
+            }
+            return rows;
+        }
+
+        public static void DownloadLandfire()
+        {
+            RunStep("Downloading LANDFIRE data", async () =>
+            {
+                await PREACT.Tools.LandfireLandscapeDownloader.Download(
+                    Input.Simulation.StartDateTime.Year, UseAnderson13,
+                    Input.Simulation.LowerLeftLatLon, UpperRightLatLon(), Input.RootFolder);
+            });
+        }
+
+        public static void DownloadWeather()
+        {
+            RunStep("Downloading weather", async () =>
+            {
+                Vector2d ll = Input.Simulation.LowerLeftLatLon;
+                Vector2d ur = UpperRightLatLon();
+                await PREACT.Tools.OpenMeteoDownloader.Download(
+                    new Vector2d(0.5 * (ll.x + ur.x), 0.5 * (ll.y + ur.y)),
+                    Input.Simulation.StartDateTime, Input.Simulation.EndDateTime,
+                    InRoot(WeatherFile));
+
+                Input.Weather.WeatherFile = WeatherFile;
+            });
+        }
+    }
+}

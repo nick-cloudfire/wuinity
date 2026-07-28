@@ -18,42 +18,15 @@ namespace Assets.WUInity.GUI.DearIMGUI
         private static bool _havePopulation, _haveSumo, _haveWildfireLandscape, _haveWeather;
         private static bool _wantPedestrian, _wantTraffic, _wantWildfire, _wantSmoke;
 
-        //Feedback for the data-preparation steps. Without it even a working download looks like a
-        //dead button: these take tens of seconds to minutes and the window would otherwise sit
-        //silent throughout, which is indistinguishable from nothing having happened.
-        private static string _stepStatus = string.Empty;
-        private static volatile bool _stepBusy;
-
-        //Steps run on a background thread, but the console is a LinkedList the GUI thread walks
-        //while drawing - appending to it from another thread risks corrupting that walk. Messages
-        //are therefore queued here and flushed into the engine log from Draw, on the GUI thread.
-        private static readonly object _logSync = new object();
-        private static readonly System.Collections.Generic.List<string> _pendingLog = new System.Collections.Generic.List<string>();
-
-        //Progress popup. The fraction is negative while a step is running without a measurable
-        //total, which the bar renders as a sweep rather than pretending to a percentage it does
-        //not have.
-        private static bool _progressPopupOpen;
-        private static string _progressTitle = string.Empty;
-        private static volatile float _progressFraction = -1f;
-        private static string _progressDetail = string.Empty;
-        private static readonly System.Collections.Generic.List<string> _progressLog = new System.Collections.Generic.List<string>();
-
-        //Files the steps produce, relative to the scenario root so the generated .wui stays portable.
-        private static string WorldPopFile => _input.Simulation.Name + "_worldpop.tif";
-        private static string OsmFile => _input.Simulation.Name + ".osm.xml";
-        private static string RouterDbFile => _input.Simulation.Name + ".routerdb";
-        private static string PopulationFile => _input.Simulation.Name + "_population.csv";
-        private static string WeatherFile => _input.Simulation.Name + "_weather.csv";
-
-        //The SUMO network and configuration live in their own folder, since netconvert writes several
-        //files beside the one named here.
-        private const string SumoFolder = "sumo";
-        private static string SumoConfigFile => Path.Combine(SumoFolder, PREACT.Utility.SumoNetworkBuilder.ConfigurationFileName);
-
-        private static int _minHouseholdSize = 1;
-        private static int _maxHouseholdSize = 5;
-        private static bool _useAnderson13 = true;
+        //The data-preparation steps, their progress reporting and the names of the files they produce
+        //all live in ScenarioDataSteps, because they are equally needed for a scenario loaded from
+        //disk and this window cannot serve that case: opening it clears the loaded scenario.
+        private static string WorldPopFile => ScenarioDataSteps.WorldPopFile;
+        private static string OsmFile => ScenarioDataSteps.OsmFile;
+        private static string RouterDbFile => ScenarioDataSteps.RouterDbFile;
+        private static string PopulationFile => ScenarioDataSteps.PopulationFile;
+        private static string WeatherFile => ScenarioDataSteps.WeatherFile;
+        private static string SumoConfigFile => ScenarioDataSteps.SumoConfigFile;
 
         //Which spread module the wildfire hazard uses. This has to be chosen explicitly: the field
         //defaults to None, and a scenario that enables the module while leaving it None fails to
@@ -111,7 +84,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 return;
             }
 
-            FlushStepLog();
+            ScenarioDataSteps.FlushStepLog();
 
             ImGui.Begin("New scenario creator", ref _isOpen, PreactGUI.NoDockingNoCollapse);
 
@@ -127,6 +100,17 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 return;
             }
             ImGui.Text($"{nameof(_input.RootFolder)}: {_input.RootFolder}");
+
+            //Re-pointed every frame rather than once, since this window and the one for an already
+            //loaded scenario share the steps and either may have run last.
+            ScenarioDataSteps.Input = _input;
+
+            //The SUMO step sets the configuration on the scenario, so the choice above it follows.
+            if (ScenarioDataSteps.SumoNetworkBuilt)
+            {
+                _haveSumo = true;
+                ScenarioDataSteps.SumoNetworkBuilt = false;
+            }
 
             SimulationInput simIn = _input.Simulation;
 
@@ -166,14 +150,14 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 }
                 else
                 {
-                    ImGui.InputInt("Min household size", ref _minHouseholdSize);
-                    ImGui.InputInt("Max household size", ref _maxHouseholdSize);
+                    ImGui.InputInt("Min household size", ref ScenarioDataSteps.MinHouseholdSize);
+                    ImGui.InputInt("Max household size", ref ScenarioDataSteps.MaxHouseholdSize);
 
-                    ImGui.BeginDisabled(_stepBusy);
-                    if (StepButton("Step 1: Download WorldPop", WorldPopFile)) { DownloadWorldPop(); }
-                    if (StepButton("Step 2: Download OSM data", OsmFile)) { DownloadOsm(); }
-                    if (StepButton("Step 3: Build RouterDb", RouterDbFile)) { BuildRouterDb(); }
-                    if (StepButton("Step 4: Generate population", PopulationFile)) { GeneratePopulation(); }
+                    ImGui.BeginDisabled(ScenarioDataSteps.Busy);
+                    if (ScenarioDataSteps.StepButton("Step 1: Download WorldPop", WorldPopFile)) { ScenarioDataSteps.DownloadWorldPop(); }
+                    if (ScenarioDataSteps.StepButton("Step 2: Download OSM data", OsmFile)) { ScenarioDataSteps.DownloadOsm(); }
+                    if (ScenarioDataSteps.StepButton("Step 3: Build RouterDb", RouterDbFile)) { ScenarioDataSteps.BuildRouterDb(); }
+                    if (ScenarioDataSteps.StepButton("Step 4: Generate population", PopulationFile)) { ScenarioDataSteps.GeneratePopulation(); }
                     ImGui.EndDisabled();
                 }
             }
@@ -190,9 +174,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 }
                 else
                 {
-                    ImGui.BeginDisabled(_stepBusy);
-                    if (StepButton("Step 1: Download OSM data", OsmFile)) { DownloadOsm(); }
-                    if (StepButton("Step 2: Build SUMO network", SumoConfigFile)) { BuildSumoNetwork(); }
+                    ImGui.BeginDisabled(ScenarioDataSteps.Busy);
+                    if (ScenarioDataSteps.StepButton("Step 1: Download OSM data", OsmFile)) { ScenarioDataSteps.DownloadOsm(); }
+                    if (ScenarioDataSteps.StepButton("Step 2: Build SUMO network", SumoConfigFile)) { ScenarioDataSteps.BuildSumoNetwork(); }
                     ImGui.EndDisabled();
                     ImGui.TextWrapped("Step 2 runs SUMO's own netconvert on the downloaded OSM and writes the configuration, which is then set on the scenario. It needs SUMO installed.");
                 }
@@ -219,9 +203,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 }
                 else
                 {
-                    ImGui.Checkbox("Anderson 13 fuel models (otherwise Scott & Burgan 40)", ref _useAnderson13);
-                    ImGui.BeginDisabled(_stepBusy);
-                    if (ImGui.Button("Step 1: Download Landfire data")) { DownloadLandfire(); }
+                    ImGui.Checkbox("Anderson 13 fuel models (otherwise Scott & Burgan 40)", ref ScenarioDataSteps.UseAnderson13);
+                    ImGui.BeginDisabled(ScenarioDataSteps.Busy);
+                    if (ImGui.Button("Step 1: Download Landfire data")) { ScenarioDataSteps.DownloadLandfire(); }
                     ImGui.EndDisabled();
                     //LANDFIRE is US-only; outside it the request simply returns nothing useful.
                     ImGui.TextWrapped("LANDFIRE covers the United States only. Elsewhere, supply the landscape file yourself.");
@@ -234,20 +218,16 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 }
                 else
                 {
-                    ImGui.BeginDisabled(_stepBusy);
-                    if (StepButton("Step 1: Download weather file", WeatherFile)) { DownloadWeather(); }
+                    ImGui.BeginDisabled(ScenarioDataSteps.Busy);
+                    if (ScenarioDataSteps.StepButton("Step 1: Download weather file", WeatherFile)) { ScenarioDataSteps.DownloadWeather(); }
                     ImGui.EndDisabled();
                 }
             }
 
-            if (!string.IsNullOrEmpty(_stepStatus))
+            if (!string.IsNullOrEmpty(ScenarioDataSteps.Status))
             {
                 ImGui.SeparatorText("Data preparation");
-                ImGui.TextWrapped(_stepStatus);
-                if (!_progressPopupOpen && ImGui.Button("Show progress"))
-                {
-                    _progressPopupOpen = true;
-                }
+                ScenarioDataSteps.DrawStatus();
             }
 
             ImGui.Separator();
@@ -335,369 +315,12 @@ namespace Assets.WUInity.GUI.DearIMGUI
             //Drawn after the main window is closed off, so it is a sibling window rather than
             //nested inside the creator. It is still tied to the creator's lifetime - Draw returns
             //early once that closes - which is why a running step keeps the creator open.
-            DrawProgressWindow();
+            ScenarioDataSteps.DrawProgressWindow();
 
             if (!_isOpen)
             {
                 PreactGUI.CloseWindow(Draw);
             }
-        }
-
-        /// <summary>
-        /// The AIO's north-east corner. The window stores the domain as a south-west corner plus a
-        /// size in metres, while every downloader wants a lat/lon bounding box, so the size is
-        /// converted with the same flat-earth approximation the population tools already use to
-        /// interpret DomainSize.
-        /// </summary>
-        private static Vector2d UpperRightLatLon()
-        {
-            Vector2d ll = _input.Simulation.LowerLeftLatLon;
-            //SizeToDegrees returns (lonDegrees, latDegrees) for a size given as (east, north)
-            Vector2d deg = PREACT.Population.LocalGPWData.SizeToDegrees(ll, _input.Simulation.DomainSize);
-            return new Vector2d(ll.x + deg.y, ll.y + deg.x);
-        }
-
-        /// <summary>
-        /// Runs one data-preparation step off the UI thread, reporting start, success and failure.
-        ///
-        /// The reporting is the point: these steps take tens of seconds to minutes, and an
-        /// unreported one is indistinguishable from a button that does nothing. Exceptions are
-        /// caught and shown rather than left to vanish into a faulted Task, which is what happens
-        /// by default with the fire-and-forget Task.Run used elsewhere in the GUI.
-        /// </summary>
-        private static void RunStep(string what, System.Func<System.Threading.Tasks.Task> work)
-        {
-            if (_stepBusy)
-            {
-                return;
-            }
-
-            if (!ValidateAio(out string problem))
-            {
-                _stepStatus = problem;
-                LogStep(problem);
-                return;
-            }
-
-            _stepBusy = true;
-            _stepStatus = what + "...";
-            _progressPopupOpen = true;
-            _progressTitle = what;
-            _progressDetail = string.Empty;
-            _progressFraction = -1f;
-            lock (_logSync) { _progressLog.Clear(); }
-            LogStep(what + "...");
-
-            System.Threading.Tasks.Task.Run(async () =>
-            {
-                try
-                {
-                    await work();
-                    _stepStatus = what + ": done.";
-                    LogStep(what + ": done.");
-                }
-                catch (System.Exception e)
-                {
-                    _stepStatus = what + " FAILED: " + e.Message;
-                    LogStep(what + " FAILED: " + e.Message);
-                }
-                finally
-                {
-                    _stepBusy = false;
-                    //Completed steps show a full bar rather than freezing wherever they stopped.
-                    _progressFraction = 1f;
-                }
-            });
-        }
-
-        /// <summary>
-        /// A step button with a completion marker. Completion is judged by the output file
-        /// existing rather than by a flag set when the button was pressed, so it stays correct
-        /// across a restart, and after a step is re-run or its file deleted outside the editor.
-        /// </summary>
-        private static bool StepButton(string label, string producedFile)
-        {
-            bool done = !string.IsNullOrEmpty(_input.Simulation.Name) && File.Exists(InRoot(producedFile));
-
-            bool pressed = ImGui.Button(done ? label + " (redo)" : label);
-
-            ImGui.SameLine();
-            if (done)
-            {
-                //ImGui has no tick glyph in the default font, so this uses text that renders in
-                //any font rather than a symbol that might come out as a box.
-                ImGui.TextColored(new Vector4(0.35f, 0.8f, 0.35f, 1f), "[done] " + producedFile);
-            }
-            else
-            {
-                ImGui.TextDisabled("[pending]");
-            }
-
-            return pressed;
-        }
-
-        /// <summary>
-        /// The step progress window: what is running, how far along, and the messages it produced.
-        /// Drawn as its own window rather than a modal so the map and console stay usable while a
-        /// long download runs.
-        /// </summary>
-        private static void DrawProgressWindow()
-        {
-            if (!_progressPopupOpen)
-            {
-                return;
-            }
-
-            ImGui.Begin("Scenario data preparation", ref _progressPopupOpen, ImGuiWindowFlags.NoCollapse);
-
-            ImGui.TextWrapped(_progressTitle);
-
-            float fraction = _progressFraction;
-            if (fraction >= 0f)
-            {
-                ImGui.ProgressBar(fraction, new Vector2(-1, 0), $"{fraction * 100f:F0} %");
-            }
-            else if (_stepBusy)
-            {
-                //No measurable total: a sweeping bar says "working" without inventing a
-                //percentage. Driven by time so it animates regardless of what the step is doing.
-                //Both qualified: PREACT.Math defines its own Mathf, and PREACT.Time is a namespace
-                //that shadows UnityEngine.Time under this file's "using PREACT".
-                float sweep = UnityEngine.Mathf.PingPong(UnityEngine.Time.realtimeSinceStartup * 0.6f, 1f);
-                ImGui.ProgressBar(sweep, new Vector2(-1, 0), "working...");
-            }
-            else
-            {
-                ImGui.ProgressBar(1f, new Vector2(-1, 0), "idle");
-            }
-
-            if (!string.IsNullOrEmpty(_progressDetail))
-            {
-                ImGui.TextWrapped(_progressDetail);
-            }
-
-            ImGui.Separator();
-
-            ImGui.BeginChild("step_log", new Vector2(0, 160), (ImGuiChildFlags)1, ImGuiWindowFlags.HorizontalScrollbar);
-            lock (_logSync)
-            {
-                for (int i = 0; i < _progressLog.Count; ++i)
-                {
-                    ImGui.TextUnformatted(_progressLog[i]);
-                }
-            }
-            if (_stepBusy)
-            {
-                ImGui.SetScrollHereY(1.0f);
-            }
-            ImGui.EndChild();
-
-            ImGui.BeginDisabled(_stepBusy);
-            if (ImGui.Button("Close"))
-            {
-                _progressPopupOpen = false;
-            }
-            ImGui.EndDisabled();
-
-            ImGui.End();
-        }
-
-        /// <summary>Queues a message for the console and the progress window; safe to call from a
-        /// step's worker thread.</summary>
-        private static void LogStep(string message)
-        {
-            lock (_logSync)
-            {
-                _pendingLog.Add(message);
-                _progressLog.Add(message);
-                //bounded so a chatty step cannot grow this without limit
-                if (_progressLog.Count > 200) _progressLog.RemoveAt(0);
-            }
-        }
-
-        /// <summary>
-        /// Reports download progress from a worker thread. Only the numbers are stored; they are
-        /// formatted while drawing, so this stays cheap enough to call per buffer.
-        /// </summary>
-        private static void ReportBytes(long received, long total)
-        {
-            if (total > 0)
-            {
-                _progressFraction = (float)received / total;
-                _progressDetail = $"{received / (1024.0 * 1024.0):F1} of {total / (1024.0 * 1024.0):F1} MB";
-            }
-            else
-            {
-                _progressFraction = -1f;
-                _progressDetail = $"{received / (1024.0 * 1024.0):F1} MB received";
-            }
-        }
-
-        /// <summary>
-        /// Moves queued step messages into the engine log, from the GUI thread. Engine.Message
-        /// ultimately appends to the console's LinkedList and calls Debug.Log, neither of which is
-        /// safe to touch from the worker threads the steps run on.
-        /// </summary>
-        private static void FlushStepLog()
-        {
-            lock (_logSync)
-            {
-                for (int i = 0; i < _pendingLog.Count; ++i)
-                {
-                    Engine.Message(null, Engine.LogType.Log, _pendingLog[i]);
-                }
-                _pendingLog.Clear();
-            }
-        }
-
-        /// <summary>Checked up front because every step depends on it, and an unset area of
-        /// interest otherwise produces a confusing failure from deep inside a downloader.</summary>
-        private static bool ValidateAio(out string problem)
-        {
-            problem = null;
-
-            if (_input.Simulation.DomainSize.x <= 0.0 || _input.Simulation.DomainSize.y <= 0.0)
-            {
-                //Reports what was actually read rather than just asserting the area is unset - the
-                //values are what distinguish "never picked" from "picked but not stored".
-                problem = "Set the area of interest first. Currently lower-left " +
-                          $"{_input.Simulation.LowerLeftLatLon.x:F5}, {_input.Simulation.LowerLeftLatLon.y:F5} " +
-                          $"with domain {_input.Simulation.DomainSize.x:F0} x {_input.Simulation.DomainSize.y:F0} m " +
-                          "(click two opposite corners on the map, or type the values in directly).";
-                return false;
-            }
-
-            if (string.IsNullOrEmpty(_input.Simulation.Name))
-            {
-                problem = "Give the scenario a name first - it is used for the downloaded file names.";
-                return false;
-            }
-
-            return true;
-        }
-
-        private static string InRoot(string fileName)
-        {
-            return Path.Combine(_input.RootFolder, fileName);
-        }
-
-        private static void DownloadWorldPop()
-        {
-            RunStep("Downloading WorldPop", async () =>
-            {
-                await PREACT.Tools.WorldPopDownloader.DownloadRegionUTM(
-                    _input.Simulation.StartDateTime.Year,
-                    _input.Simulation.LowerLeftLatLon, UpperRightLatLon(),
-                    _input.RootFolder, Path.GetFileNameWithoutExtension(WorldPopFile),
-                    ReportBytes);
-            });
-        }
-
-        private static void DownloadOsm()
-        {
-            RunStep("Downloading OSM data", async () =>
-            {
-                await PREACT.Tools.OSMDownloader.Download(
-                    _input.Simulation.LowerLeftLatLon, UpperRightLatLon(), InRoot(OsmFile));
-            });
-        }
-
-        private static void BuildSumoNetwork()
-        {
-            RunStep("Building SUMO network", () =>
-            {
-                string osmPath = InRoot(OsmFile);
-                if (!File.Exists(osmPath))
-                {
-                    throw new System.IO.FileNotFoundException("Download the OSM data first (step 1).", osmPath);
-                }
-
-                //The engine already locates SUMO's bin folder from the machine PATH, so the builder is
-                //given that before it starts looking for netconvert itself.
-                string configurationPath = PREACT.Utility.SumoNetworkBuilder.Build(
-                    osmPath, InRoot(SumoFolder), PreactGUI.Engine.SumoPath, LogStep);
-
-                if (configurationPath == null)
-                {
-                    throw new System.Exception("netconvert did not produce a network; see the messages above.");
-                }
-
-                //Stored relative to the scenario root, like every other generated path, so the
-                //scenario stays portable. Setting it here is the point of automating the step: the
-                //configuration is the thing the scenario actually refers to.
-                _input.TrafficModule.SumoInput.ConfigurationFile = SumoConfigFile;
-                _haveSumo = true;
-                LogStep("Scenario now points at " + SumoConfigFile + ".");
-
-                return System.Threading.Tasks.Task.CompletedTask;
-            });
-        }
-
-        private static void BuildRouterDb()
-        {
-            RunStep("Building RouterDb", () =>
-            {
-                string osm = InRoot(OsmFile);
-                if (!File.Exists(osm))
-                {
-                    throw new FileNotFoundException("Download the OSM data first (step 2).", osm);
-                }
-
-                PREACT.Tools.PopulationTools.CreateAndSaveRouterDb(osm, InRoot(RouterDbFile), out bool ok);
-                if (!ok)
-                {
-                    throw new System.Exception("RouterDb creation failed - see the log.");
-                }
-                return System.Threading.Tasks.Task.CompletedTask;
-            });
-        }
-
-        private static void GeneratePopulation()
-        {
-            RunStep("Generating population", () =>
-            {
-                string worldPop = InRoot(WorldPopFile);
-                string routerDb = InRoot(RouterDbFile);
-
-                if (!File.Exists(worldPop)) throw new FileNotFoundException("Download WorldPop first (step 1).", worldPop);
-                if (!File.Exists(routerDb)) throw new FileNotFoundException("Build the RouterDb first (step 3).", routerDb);
-
-                PREACT.Tools.PopulationTools.CreatePopulationFromWorldPop(
-                    _minHouseholdSize, _maxHouseholdSize, worldPop, routerDb, InRoot(PopulationFile), out bool ok);
-                if (!ok)
-                {
-                    throw new System.Exception("Population generation failed - see the log.");
-                }
-
-                //Stored as a bare file name so the scenario folder stays relocatable.
-                _input.Population.PopulationFile = PopulationFile;
-                return System.Threading.Tasks.Task.CompletedTask;
-            });
-        }
-
-        private static void DownloadLandfire()
-        {
-            RunStep("Downloading LANDFIRE data", async () =>
-            {
-                await PREACT.Tools.LandfireLandscapeDownloader.Download(
-                    _input.Simulation.StartDateTime.Year, _useAnderson13,
-                    _input.Simulation.LowerLeftLatLon, UpperRightLatLon(), _input.RootFolder);
-            });
-        }
-
-        private static void DownloadWeather()
-        {
-            RunStep("Downloading weather", async () =>
-            {
-                Vector2d ll = _input.Simulation.LowerLeftLatLon;
-                Vector2d ur = UpperRightLatLon();
-                await PREACT.Tools.OpenMeteoDownloader.Download(
-                    new Vector2d(0.5 * (ll.x + ur.x), 0.5 * (ll.y + ur.y)),
-                    _input.Simulation.StartDateTime, _input.Simulation.EndDateTime,
-                    InRoot(WeatherFile));
-
-                _input.Weather.WeatherFile = WeatherFile;
-            });
         }
 
         /// <summary>

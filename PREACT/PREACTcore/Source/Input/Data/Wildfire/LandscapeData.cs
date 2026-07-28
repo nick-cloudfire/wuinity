@@ -1086,7 +1086,9 @@ namespace PREACT.Wildfire
 
         public void SaveLCP(string filePath)
         {
-            using (BinaryWriter writer = new BinaryWriter(File.Open(filePath, FileMode.OpenOrCreate, FileAccess.ReadWrite)))
+            //Create, not OpenOrCreate: the latter does not truncate, so saving over a larger existing
+            //LCP left its tail behind on the end of the new one.
+            using (BinaryWriter writer = new BinaryWriter(File.Open(filePath, FileMode.Create, FileAccess.ReadWrite)))
             {
 				writer.Write(Header.CrownFuels);
 				writer.Write(Header.GroundFuels);
