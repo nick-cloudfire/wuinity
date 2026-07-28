@@ -13,7 +13,7 @@ namespace WUInity
 {
     public class Painter : MonoBehaviour
     {
-        public enum PaintMode { WUIArea, RandomIgnitionArea, InitialIgnition };
+        public enum PaintMode { WUIArea, RandomIgnitionArea, InitialIgnition, EvacGroup };
         PaintMode paintMode = PaintMode.WUIArea;
 
         Color currentColor = Color.red;
@@ -33,6 +33,13 @@ namespace WUInity
         Texture2D evacGroupTex;
         int evacGroupIndex;
         Color[] evacGroupColorArray;
+
+        //Which group owns each cell, -1 for none. Painting a group writes its index here, so an area
+        //can be reassigned from one group to another and every group's extent stays recoverable from
+        //a single array rather than one mask per group held open at once.
+        int[] _evacGroupCells;
+        string[] _evacGroupNames = new string[0];
+        Color[] _evacGroupColors = new Color[0];
 
         //general fire stuff
         Vector2d fireDataRealSize;
@@ -164,6 +171,24 @@ namespace WUInity
                 currentColor = arrayIndex == 1 ? activeAreaColor : inactiveAreaColor;
                 addingArea = arrayIndex == 1;
             }
+            else if (paintMode == PaintMode.EvacGroup)
+            {
+                //An index past the end means "erase", which is how a cell is taken out of every
+                //group - there is no other way to unassign one.
+                evacGroupIndex = arrayIndex;
+                if (arrayIndex >= 0 && arrayIndex < _evacGroupColors.Length)
+                {
+                    currentColor = _evacGroupColors[arrayIndex];
+                    currentColor.a = transparency;
+                    addingArea = true;
+                }
+                else
+                {
+                    evacGroupIndex = -1;
+                    currentColor = inactiveAreaColor;
+                    addingArea = false;
+                }
+            }
         }
 
         public void SetPainterMode(PaintMode mode)
@@ -180,10 +205,122 @@ namespace WUInity
             {
                 SetPainterInitialIgnition();
             }
+            else if (mode == PaintMode.EvacGroup)
+            {
+                SetPainterEvacGroup(evacGroupIndex);
+            }
             else
             {
                 Engine.Message(null, Engine.LogType.SimulationError, "Desired paint mode not yet implemented.");
             }
+        }
+
+        /// <summary>
+        /// Tells the painter which groups exist, in the order their indices refer to. Called before
+        /// painting so the painter can colour each group as the scenario defines it rather than
+        /// inventing its own palette.
+        /// </summary>
+        public void SetEvacGroups(string[] names, Color[] colors)
+        {
+            _evacGroupNames = names ?? new string[0];
+            _evacGroupColors = colors ?? new Color[0];
+        }
+
+        public string[] GetEvacGroupNames()
+        {
+            return _evacGroupNames;
+        }
+
+        /// <summary>
+        /// Cell ownership as painted, indexed x + y*width with y running north, matching the WUI mask
+        /// and k-PERIL. -1 means no group owns the cell.
+        /// </summary>
+        public int[] GetEvacGroupCells(out Vector2int cellCount)
+        {
+            cellCount = fireDataCellCount;
+            return _evacGroupCells;
+        }
+
+        /// <summary>
+        /// Writes one mask per painted group and returns their file names, or null if nothing has
+        /// been painted.
+        ///
+        /// The header carries the fire grid's SIMULATION-space origin and cell size rather than a
+        /// projected corner, which is the frame EvacuationGroup.LoadMask reads them back in. The two
+        /// have to agree: a mask written in one frame and read in another lands the group somewhere
+        /// else entirely, and nothing downstream would flag it.
+        /// </summary>
+        public string[] ExportEvacGroupMasks(string folder)
+        {
+            if (_evacGroupCells == null || _lcpData == null)
+            {
+                Engine.Message(null, Engine.LogType.Warning, "No painted evacuation groups to export.");
+                return null;
+            }
+
+            int xCount = fireDataCellCount.x;
+            int yCount = fireDataCellCount.y;
+
+            var header = new PREACT.Utility.AscRaster.Header
+            {
+                Ncols = xCount,
+                Nrows = yCount,
+                XllCorner = _lcpData.OriginOffset.x,
+                YllCorner = _lcpData.OriginOffset.y,
+                CellSize = fireDataRealSize.x / xCount,
+                NoDataValue = -9999.0
+            };
+
+            var written = new System.Collections.Generic.List<string>();
+
+            for (int g = 0; g < _evacGroupNames.Length; ++g)
+            {
+                float[,] data = new float[xCount, yCount];
+                int cells = 0;
+                for (int y = 0; y < yCount; ++y)
+                {
+                    for (int x = 0; x < xCount; ++x)
+                    {
+                        if (_evacGroupCells[x + y * xCount] == g)
+                        {
+                            data[x, y] = 1f;
+                            ++cells;
+                        }
+                    }
+                }
+
+                //A group with nothing painted gets no file, rather than one marking no cells - which
+                //would load as a group nobody belongs to.
+                if (cells == 0)
+                {
+                    Engine.Message(null, Engine.LogType.Warning, $"Evacuation group {_evacGroupNames[g]} has no painted cells; no mask written.");
+                    written.Add(string.Empty);
+                    continue;
+                }
+
+                string fileName = "evac_group_" + _evacGroupNames[g] + ".asc";
+                PREACT.Utility.AscRaster.Write(data, header, System.IO.Path.Combine(folder, fileName));
+                Engine.Message(null, Engine.LogType.Log, $"Evacuation group {_evacGroupNames[g]}: wrote {fileName} with {cells} cells.");
+                written.Add(fileName);
+            }
+
+            return written.ToArray();
+        }
+
+        void SetPainterEvacGroup(int groupIndex)
+        {
+            if (_lcpData == null)
+            {
+                Engine.Message(null, Engine.LogType.Warning, "Painting an evacuation group needs the landscape loaded, since groups are painted on the fire grid.");
+                return;
+            }
+
+            paintMode = PaintMode.EvacGroup;
+            evacGroupIndex = groupIndex;
+            CheckDataResources(evacGroupTex, evacGroupColorArray);
+            SetColor(groupIndex);
+            _brushSize = 5;
+            _offset = new Vector3((float)_lcpData.OriginOffset.x, 0f, (float)_lcpData.OriginOffset.y);
         }
 
         void SetPainterWUIArea()
@@ -265,6 +402,30 @@ namespace WUInity
                         {
                             c = _manager.PREACTInput.WildfireModule.Data.InitialIgnition[x + y * fireDataCellCount.x] == false ? inactiveAreaColor : activeAreaColor;
                         }
+                        else if (paintMode == PaintMode.EvacGroup)
+                        {
+                            //Allocated on first use and kept, so switching between groups does not
+                            //discard what has already been painted.
+                            if (_evacGroupCells == null || _evacGroupCells.Length != cellCount.x * cellCount.y)
+                            {
+                                _evacGroupCells = new int[cellCount.x * cellCount.y];
+                                for (int i = 0; i < _evacGroupCells.Length; ++i)
+                                {
+                                    _evacGroupCells[i] = -1;
+                                }
+                            }
+
+                            int owner = _evacGroupCells[x + y * cellCount.x];
+                            if (owner >= 0 && owner < _evacGroupColors.Length)
+                            {
+                                c = _evacGroupColors[owner];
+                                c.a = transparency;
+                            }
+                            else
+                            {
+                                c = inactiveAreaColor;
+                            }
+                        }
                         requestedColorArray[x + y * cellCount.x] = c;
                         requestedTexture.SetPixel(x, y, c);
                     }
@@ -287,10 +448,19 @@ namespace WUInity
                     initialIgnitionTex = requestedTexture;
                     initialIgnitionColorArray = requestedColorArray;
                 }
+                else if (paintMode == PaintMode.EvacGroup)
+                {
+                    evacGroupTex = requestedTexture;
+                    evacGroupColorArray = requestedColorArray;
+                }
             }
 
-            if (paintMode == PaintMode.WUIArea || paintMode == PaintMode.RandomIgnitionArea || paintMode == PaintMode.InitialIgnition)
-            {                
+            //EvacGroup belongs with the others: groups are painted on the fire grid, which is the
+            //grid k-PERIL and the WUI mask use, so a painted group lines up with them cell for cell.
+            //Falling through to the evac branch would have used a cell count of zero.
+            if (paintMode == PaintMode.WUIArea || paintMode == PaintMode.RandomIgnitionArea
+                || paintMode == PaintMode.InitialIgnition || paintMode == PaintMode.EvacGroup)
+            {
                 activeCellCount = fireDataCellCount;
                 activeRealSize = fireDataRealSize;
             }
@@ -416,6 +586,12 @@ namespace WUInity
             else if (paintMode == PaintMode.InitialIgnition)
             {
                 _manager.PREACTInput.WildfireModule.Data.InitialIgnition[x + y * activeCellCount.x] = addingArea;
+            }
+            else if (paintMode == PaintMode.EvacGroup && _evacGroupCells != null)
+            {
+                //Ownership is exclusive: painting a cell for one group takes it from whichever group
+                //held it, so no cell can end up in two groups.
+                _evacGroupCells[x + y * activeCellCount.x] = evacGroupIndex;
             }
         }
 

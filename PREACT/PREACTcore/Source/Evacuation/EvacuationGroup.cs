@@ -27,6 +27,14 @@ namespace PREACT.Evacuation
         private Vector2d _boundingBoxMin;
         private Vector2d _boundingBoxMax;
 
+        //Painted area, when the group defines itself with a mask instead of a shapefile. Kept with
+        //the geometry needed to turn a simulation position into a cell of it, since the mask alone
+        //says nothing about where on the ground it sits.
+        private bool[] _mask;
+        private Vector2int _maskCells;
+        private Vector2d _maskLowerLeft;
+        private double _maskCellSize;
+
         public string Name { get => _name; }
         public System.DateTime EvacuationOrderDateTime { get => _evacuationOrderDateTime; }
         public PREACTColor Color { get => _color; }
@@ -81,8 +89,18 @@ namespace PREACT.Evacuation
 
             _responseCurvesCDF = groupInput.ResponseCurvesCDF;
 
-            string shapeFilePath = System.IO.Path.Combine(simulation.Input.RootFolder, groupInput.ShapeFile);
-            CreateShapeFilePolygon(simulation, shapeFilePath);
+            //A painted mask defines the area directly, so there is no polygon to build from a
+            //shapefile that may not even be present.
+            if (!string.IsNullOrEmpty(groupInput.MaskFile))
+            {
+                LoadMask(simulation, System.IO.Path.Combine(simulation.Input.RootFolder, groupInput.MaskFile));
+            }
+
+            if (_mask == null)
+            {
+                string shapeFilePath = System.IO.Path.Combine(simulation.Input.RootFolder, groupInput.ShapeFile);
+                CreateShapeFilePolygon(simulation, shapeFilePath);
+            }
         }
 
         public static EvacuationGroup[] CreateGroupsFromInput(Dictionary<string, EvacuationGroupInput> groupsInput, Dictionary<string, 
@@ -97,6 +115,55 @@ namespace PREACT.Evacuation
             }
 
             return groups;
+        }
+
+        /// <summary>
+        /// Loads a painted area mask. Any positive value marks a cell in the group.
+        ///
+        /// The header's lower-left corner and cell size are read as SIMULATION coordinates, not as a
+        /// projected CRS: the mask is painted on the fire grid, which sits at a known offset in
+        /// simulation space, and writing it out in that frame is what lets it be read back into the
+        /// same one. Georeferencing it would mean re-projecting on every lookup to answer a question
+        /// that is already settled.
+        /// </summary>
+        private void LoadMask(Simulation simulation, string maskFilePath)
+        {
+            float[,] raster = Utility.AscRaster.Read(maskFilePath, out Utility.AscRaster.Header header, out bool ok);
+            if (!ok || raster == null)
+            {
+                Engine.Message(simulation, Engine.LogType.SimulationError, $"Evacuation group {_name}: could not read its area mask {maskFilePath}.");
+                return;
+            }
+
+            _maskCells = new Vector2int(header.Ncols, header.Nrows);
+            _maskLowerLeft = new Vector2d(header.XllCorner, header.YllCorner);
+            _maskCellSize = header.CellSize;
+
+            if (_maskCellSize <= 0.0)
+            {
+                Engine.Message(simulation, Engine.LogType.SimulationError, $"Evacuation group {_name}: its area mask has a cell size of {_maskCellSize}.");
+                return;
+            }
+
+            _mask = new bool[header.Ncols * header.Nrows];
+            int cells = 0;
+            for (int y = 0; y < header.Nrows; ++y)
+            {
+                for (int x = 0; x < header.Ncols; ++x)
+                {
+                    float v = raster[x, y];
+                    if (v > 0f && v != (float)header.NoDataValue)
+                    {
+                        _mask[x + y * header.Ncols] = true;
+                        ++cells;
+                    }
+                }
+            }
+
+            if (cells == 0)
+            {
+                Engine.Message(simulation, Engine.LogType.Warning, $"Evacuation group {_name}: its area mask marks no cells, so nobody belongs to it.");
+            }
         }
 
         private void CreateShapeFilePolygon(Simulation simulation, string shapeFilePath)
@@ -200,6 +267,18 @@ namespace PREACT.Evacuation
         public bool SimulationPositionBelongsToGroup(Vector2d testedPoint)
         {
             bool result = false;
+
+            //A painted mask answers directly: which cell the point lands in, and whether it is set.
+            if (_mask != null)
+            {
+                int x = (int)((testedPoint.x - _maskLowerLeft.x) / _maskCellSize);
+                int y = (int)((testedPoint.y - _maskLowerLeft.y) / _maskCellSize);
+                if (x < 0 || y < 0 || x >= _maskCells.x || y >= _maskCells.y)
+                {
+                    return false;
+                }
+                return _mask[x + y * _maskCells.x];
+            }
 
             //a group whose shapefile failed to load has no polygon to test against
             if (_shapePolygonLocal == null || _shapePolygonLocal.Count == 0)

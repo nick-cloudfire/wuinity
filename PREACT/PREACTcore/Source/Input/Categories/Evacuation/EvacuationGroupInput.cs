@@ -20,6 +20,15 @@ namespace PREACT.Evacuation
         public List<double> ResponseCurvesCDF = new List<double>(16);
         public string Demographics = string.Empty;
         public string ShapeFile = string.Empty;
+
+        /// <summary>
+        /// A raster mask of the group's area, any positive value marking a cell that belongs to it.
+        /// An alternative to <see cref="ShapeFile"/>, and what painting a group on the map produces:
+        /// a painted area is a set of cells, and round-tripping that through a polygon would only
+        /// lose fidelity. Takes precedence when both are given.
+        /// </summary>
+        public string MaskFile = string.Empty;
+
         public bool Default = false;
 
         public EvacuationGroupInput()
@@ -274,17 +283,30 @@ namespace PREACT.Evacuation
                     }
                 }
 
-                //maybe critical
-                nameOfInput = nameof(ShapeFile);
+                //A group's area comes from either a painted mask or a shapefile. The mask is checked
+                //first and wins when both are present, so a group that has been painted is not
+                //silently overridden by whatever shapefile it was originally defined from.
+                nameOfInput = nameof(MaskFile);
                 if (inputToParse.TryGetValue(nameOfInput, out userInput))
                 {
-                    newInput.ShapeFile = userInput;
+                    newInput.MaskFile = userInput;
                     PREACTInput.CheckIfFileExist(nameOfInput, userInput, rootFolder, out success);
                 }
-                else
+
+                //maybe critical
+                if (string.IsNullOrEmpty(newInput.MaskFile))
                 {
-                    success = false;
-                    PREACTInput.InputNotFoundMessage(nameOfInput, true);
+                    nameOfInput = nameof(ShapeFile);
+                    if (inputToParse.TryGetValue(nameOfInput, out userInput))
+                    {
+                        newInput.ShapeFile = userInput;
+                        PREACTInput.CheckIfFileExist(nameOfInput, userInput, rootFolder, out success);
+                    }
+                    else
+                    {
+                        success = false;
+                        PREACTInput.InputNotFoundMessage(nameOfInput, true);
+                    }
                 }
                 if (!success && evacGroupLineIndices.Count > 1) //if only one then it is not critical
                 {

@@ -162,7 +162,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             if (ImGui.BeginTabItem("Evacuation groups"))
             {
-                ImGui.TextDisabled("Evacuation groups are read-only here; edit them in the .wui file.");
+                if (ImGui.Button("New evacuation group")) { EvacuationGroupEditWindow.Open(eInput.EvacuationGroupInputs, null); }
+                ImGui.SameLine();
+                if (ImGui.Button("Paint group areas")) { EvacuationGroupPaintWindow.Open(eInput.EvacuationGroupInputs); }
 
                 string removeGroup = null;
                 foreach (KeyValuePair<string, EvacuationGroupInput> kV in eInput.EvacuationGroupInputs)
@@ -170,13 +172,23 @@ namespace Assets.WUInity.GUI.DearIMGUI
                     EvacuationGroupInput eGI = kV.Value;
                     if (ImGui.TreeNode(eGI.Name))
                     {
-                        ImGui.Text($"{nameof(eGI.ShapeFile)}: {eGI.ShapeFile}");
+                        if (ImGui.Button("Edit")) { EvacuationGroupEditWindow.Open(eInput.EvacuationGroupInputs, eGI); }
+                        ImGui.SameLine();
+                        if (ImGui.Button("Remove")) { removeGroup = kV.Key; }
+
+                        //Says which of the two actually defines the area, since the mask wins.
+                        if (!string.IsNullOrEmpty(eGI.MaskFile))
+                        {
+                            ImGui.Text($"{nameof(eGI.MaskFile)}: {eGI.MaskFile} (painted)");
+                        }
+                        else
+                        {
+                            ImGui.Text($"{nameof(eGI.ShapeFile)}: {eGI.ShapeFile}");
+                        }
                         ImGui.Text($"{nameof(eGI.Demographics)}: {eGI.Demographics}");
                         ImGui.Text($"{nameof(eGI.Destinations)}: {(eGI.Destinations == null ? 0 : eGI.Destinations.Count)}");
                         ImGui.Text($"{nameof(eGI.DestinationChoice)}: {eGI.DestinationChoice}");
                         ImGui.Text($"{nameof(eGI.Default)}: {eGI.Default}");
-
-                        if (ImGui.Button("Remove")) { removeGroup = kV.Key; }
 
                         ImGui.TreePop();
                     }
