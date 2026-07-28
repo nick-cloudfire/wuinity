@@ -51,8 +51,9 @@ namespace PREACT.Evacuation
         public List<TrafficModuleVehicle> Vehicles { get => _vehicles; }
         public double CurrentVehicleFlow { get => _currentVehicleFlow; }
         public double FirstArrivalTime { get => _firstArrivalTime; }
-        public double CurrentTimeStep { get => CurrentTimeStep; }
-        public int TimeStepCars { get => TimeStepCars; }
+        //These two returned themselves, so reading either one recursed until the stack ran out.
+        public double CurrentTimeStep { get => _currentSimulationTime; }
+        public int TimeStepCars { get => _timeStepVehicles; }
         public double TotalTravelTime { get => _totalTravelTime; }
         public double AverageTravelTime { get => _averageTravelTime; }
         
@@ -191,7 +192,12 @@ namespace PREACT.Evacuation
 
                 if(_blocked)
                 {
-                    Engine.Message(_simulation, Engine.LogType.Event, "Shelter " + _name + " has reached people capacity, arriving vehicles will be re-directed.");
+                    //Which limit was hit, rather than always naming people: a shelter can fill up on
+                    //either count, and knowing which one did it is the difference between adding
+                    //parking and adding beds.
+                    string limit = _maxVehicles > 0 && _vehicles.Count >= _maxVehicles ? "vehicle" : "people";
+                    Engine.Message(_simulation, Engine.LogType.Event, "Shelter " + _name + " has reached " + limit
+                        + " capacity (" + _vehicles.Count + " vehicles, " + _currentPeople + " people), arriving vehicles will be re-directed.");
                 }
             }
         }        

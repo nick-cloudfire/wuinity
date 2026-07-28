@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Threading.Tasks;
 
 namespace PREACT.Utility
 {
@@ -82,15 +83,19 @@ namespace PREACT.Utility
             {
                 using (Process process = Process.Start(psi))
                 {
-                    //Read both streams before waiting: netconvert is talkative on stderr, and a full
-                    //pipe buffer would deadlock a wait that never drains it.
-                    string stdout = process.StandardOutput.ReadToEnd();
-                    string stderr = process.StandardError.ReadToEnd();
+                    //Both pipes have to be drained at the same time. Reading one to the end and only
+                    //then the other deadlocks: netconvert emits thousands of warnings on stderr while
+                    //it works, that pipe's buffer fills, and it blocks on the write while this side
+                    //blocks on stdout - which never closes, because the process is stuck. Observed as
+                    //netconvert sitting at 5 seconds of CPU after half an hour, having written nothing.
+                    Task<string> stdoutTask = process.StandardOutput.ReadToEndAsync();
+                    Task<string> stderrTask = process.StandardError.ReadToEndAsync();
+                    Task.WaitAll(stdoutTask, stderrTask);
                     process.WaitForExit();
 
                     if (process.ExitCode != 0)
                     {
-                        Report(log, "netconvert failed: " + LastMeaningfulLine(stderr + stdout));
+                        Report(log, "netconvert failed: " + LastMeaningfulLine(stderrTask.Result + stdoutTask.Result));
                         return null;
                     }
                 }
@@ -197,14 +202,19 @@ namespace PREACT.Utility
             if (string.IsNullOrWhiteSpace(output)) return "no output";
 
             string[] lines = output.Split('\n');
+            string lastNonEmpty = null;
             for (int i = lines.Length - 1; i >= 0; --i)
             {
                 string line = lines[i].Trim();
                 if (line.Length == 0) continue;
+                if (lastNonEmpty == null) lastNonEmpty = line;
                 if (line.StartsWith("Warning:", StringComparison.OrdinalIgnoreCase)) continue;
                 return line;
             }
-            return lines[lines.Length - 1].Trim();
+
+            //Everything was a warning, so the last of those says more than the empty string this used
+            //to fall back to when the final line happened to be blank.
+            return lastNonEmpty ?? "no output";
         }
 
         private static void Report(Action<string> log, string message)
