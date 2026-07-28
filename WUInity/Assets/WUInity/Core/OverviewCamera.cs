@@ -18,6 +18,9 @@ namespace WUInity
         [SerializeField] float camHeightPos = 200.0f;
         [SerializeField] Camera cam;
         [SerializeField] private LineRenderer _rtsSlection;
+        //Views per second at full tilt, so the keyboard crosses the visible area in about a second
+        //whatever the zoom level.
+        [SerializeField] float keyboardPanSpeed = 1.0f;
 
         float maximumY;
         bool dragging = false;
@@ -86,37 +89,8 @@ namespace WUInity
             // also zoom/pan the map.
             bool guiWantsMouse = ImGui.GetIO().WantCaptureMouse;
 
-            if (Input.GetButtonDown("Fire3") && !guiWantsMouse)
-            {
-                dragging = true;
-                startMousePos = Input.mousePosition;
-                startDragPos = transform.position;
-            }
-            else if (Input.GetButtonUp("Fire3"))
-            {
-                dragging = false;
-            }
-
-            if (dragging)
-            {
-                float mapHeight = cam.orthographicSize * 2;
-                float mapWidth = mapHeight * cam.aspect;
-                Vector2 res = new Vector2(Screen.width, Screen.height);
-                float relDeltaX = (Input.mousePosition.x - startMousePos.x) / res.x;
-                float relDeltaY = (Input.mousePosition.y - startMousePos.y) / res.y;
-                transform.position = startDragPos + mapWidth * Vector3.left * relDeltaX + mapHeight * Vector3.back * relDeltaY;
-            }
-            else
-            {
-                float d = Input.mouseScrollDelta.y;
-                if (d != 0.0f && !guiWantsMouse)
-                {
-                    float mod = cam.orthographicSize * 0.1f;
-                    mod = Mathf.Max(1.0f, mod);
-                    cam.orthographicSize -= zoomSpeed * Mathf.Sign(d) * mod;
-                    cam.orthographicSize = Mathf.Clamp(cam.orthographicSize, 50f, maxSizeOrtho);
-                }
-            }
+            HandlePanning(guiWantsMouse);
+            HandleZoom(guiWantsMouse);
 
             //clamp to within map
             Vector3 clampedPos = transform.position;
@@ -133,6 +107,121 @@ namespace WUInity
             transform.position = clampedPos;
 
             VehicleSelection();
+        }
+
+        /// <summary>
+        /// Moves the camera over the map. "Fire3" (left shift, or the middle mouse button) used to be
+        /// the only way to do it, which is undiscoverable and impossible on a trackpad - so a plain
+        /// left-drag pans as well, wherever the left button is not already owned by something else,
+        /// and the arrow keys / WASD pan too.
+        /// </summary>
+        private void HandlePanning(bool guiWantsMouse)
+        {
+            //Painting is a left-drag by its nature, and so is the box-selection of vehicles in a
+            //paused run; in those modes the left button belongs to them and only Fire3 pans.
+            bool leftButtonIsFree = !LeftButtonIsClaimed();
+
+            bool dragStarted = Input.GetButtonDown("Fire3")
+                               || (leftButtonIsFree && Input.GetMouseButtonDown(0));
+            bool dragHeld = Input.GetButton("Fire3")
+                            || (leftButtonIsFree && Input.GetMouseButton(0));
+
+            if (dragStarted && !guiWantsMouse)
+            {
+                dragging = true;
+                startMousePos = Input.mousePosition;
+                startDragPos = transform.position;
+            }
+            else if (!dragHeld)
+            {
+                dragging = false;
+            }
+
+            if (dragging)
+            {
+                float mapHeight = cam.orthographicSize * 2;
+                float mapWidth = mapHeight * cam.aspect;
+                Vector2 res = new Vector2(Screen.width, Screen.height);
+                float relDeltaX = (Input.mousePosition.x - startMousePos.x) / res.x;
+                float relDeltaY = (Input.mousePosition.y - startMousePos.y) / res.y;
+                transform.position = startDragPos + mapWidth * Vector3.left * relDeltaX + mapHeight * Vector3.back * relDeltaY;
+                return;
+            }
+
+            //Keyboard panning is skipped while a text field has focus, or naming a destination
+            //"Kalamos" would send the map off to the north-east as it was typed.
+            if (ImGui.GetIO().WantCaptureKeyboard || ImGui.GetIO().WantTextInput)
+            {
+                return;
+            }
+
+            float x = Input.GetAxisRaw("Horizontal");
+            float z = Input.GetAxisRaw("Vertical");
+            if (x != 0f || z != 0f)
+            {
+                float step = cam.orthographicSize * 2f * keyboardPanSpeed * Time.unscaledDeltaTime;
+                transform.position += new Vector3(x, 0f, z).normalized * step;
+            }
+        }
+
+        /// <summary>
+        /// Zooms towards whatever is under the cursor, rather than towards the middle of the screen:
+        /// centre-anchored zoom means reaching a corner needs a pan for every zoom step.
+        /// </summary>
+        private void HandleZoom(bool guiWantsMouse)
+        {
+            float d = Input.mouseScrollDelta.y;
+            if (d == 0.0f || guiWantsMouse || dragging)
+            {
+                return;
+            }
+
+            //One notch is a fixed proportion of the current size, so zooming feels the same at every
+            //scale. The old form (size -= zoomSpeed * 0.1 * size) is the same 20% step for the
+            //configured speed of 2, but it inverts into negative sizes for any speed above 10.
+            float scale = Mathf.Pow(1f + 0.1f * Mathf.Max(0.1f, zoomSpeed), -Mathf.Sign(d));
+
+            bool haveAnchor = TryGetGroundPointUnderMouse(out Vector3 anchorBefore);
+
+            cam.orthographicSize = Mathf.Clamp(cam.orthographicSize * scale, 50f, maxSizeOrtho);
+
+            //Keep the point under the cursor where it was. Valid for an orthographic camera looking
+            //straight down, where a change of size scales the world offsets on screen linearly.
+            if (haveAnchor && TryGetGroundPointUnderMouse(out Vector3 anchorAfter))
+            {
+                Vector3 correction = anchorBefore - anchorAfter;
+                correction.y = 0f;
+                transform.position += correction;
+            }
+        }
+
+        private bool TryGetGroundPointUnderMouse(out Vector3 point)
+        {
+            Ray ray = cam.ScreenPointToRay(Input.mousePosition);
+            if (_yPlane.Raycast(ray, out float enter))
+            {
+                point = ray.GetPoint(enter);
+                return true;
+            }
+            point = Vector3.zero;
+            return false;
+        }
+
+        /// <summary>
+        /// True when something other than the camera is using the left mouse button.
+        /// </summary>
+        private bool LeftButtonIsClaimed()
+        {
+            if (_manager != null && _manager.dataSampleMode == DataSampleMode.Paint)
+            {
+                return true;
+            }
+
+            //Box-selecting vehicles to redirect them, which is only possible in a paused run.
+            return _engine != null
+                   && _engine.Simulation != null
+                   && _engine.Simulation.State == Simulation.SimulationState.Running
+                   && _engine.Simulation.IsPaused;
         }
 
         Vector3 boundingBoxPos1, boundingBoxPos2, manualDestination;

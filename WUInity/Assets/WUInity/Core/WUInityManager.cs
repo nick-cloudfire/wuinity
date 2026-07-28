@@ -15,6 +15,7 @@ using PREACT.Population;
 using WUInity.Visualization;
 using Assets.WUInity.GUI.DearIMGUI;
 using Mapbox.Utils;
+using ImGuiNET;
 
 namespace WUInity
 {
@@ -305,6 +306,8 @@ namespace WUInity
                 return;
             }
 
+            UpdateWebMercatorMapInteraction();
+
             //always update visuals, even when paused
             if (_engine.Simulation != null)
             {
@@ -319,10 +322,28 @@ namespace WUInity
                 }
             }   
 
+            //The map is panned by left-dragging it, so a press that moved is a pan and not a pick.
+            //Both picking modes therefore act on release, and only when the pointer stayed put.
+            if (Input.GetMouseButtonDown(0))
+            {
+                _mouseDownPos = Input.mousePosition;
+            }
+            bool clickedOnMap = Input.GetMouseButtonUp(0)
+                                && !ImGui.GetIO().WantCaptureMouse
+                                && (Input.mousePosition - _mouseDownPos).sqrMagnitude < _clickSlop * _clickSlop;
+
             if(_pickingPos)
             {
+                //Abandoning the pick has to be possible: otherwise the next click anywhere on the map
+                //moves whatever was being placed, with no way back.
+                if (Input.GetKeyDown(KeyCode.Escape))
+                {
+                    _pickingPos = false;
+                    _onClick = null;
+                    NewLogMessage("Picking a position on the map was cancelled.");
+                }
                 //collect click
-                if (Input.GetMouseButtonDown(0))
+                else if (clickedOnMap)
                 {
                     Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
                     if (_yPlane.Raycast(ray, out float enter))
@@ -331,18 +352,25 @@ namespace WUInity
                         FinishPickPosOnMap(pos);
                     }
                 }
-            }            
+            }
             else if(_pickingBoundingBox)
             {
+                if (Input.GetKeyDown(KeyCode.Escape))
+                {
+                    _boundingBoxRenderer.gameObject.SetActive(false);
+                    _pickingBoundingBox = false;
+                    _onClicks = null;
+                    NewLogMessage("Picking the area of interest was cancelled.");
+                    return;
+                }
+
                 //collect clicks
-                if(Input.GetMouseButtonDown(0))
+                if(clickedOnMap)
                 {
                     Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
                     if (_yPlane.Raycast(ray, out float enter))
                     {
-                        _webMercatorCameraMovement.enabled = false;
                         Vector3 pos = ray.GetPoint(enter);
-                        _boundingBoxRenderer.SetPosition(0, new Vector3(pos.x, 10f, pos.z));
                         var clickLatLon = _webMercatorMap.WorldToGeoPosition(pos);
                         _clickLatLons[_clicks] = new PREACT.Math.Vector2d(clickLatLon.x, clickLatLon.y);
                         ++_clicks;
@@ -365,9 +393,16 @@ namespace WUInity
                     if (_yPlane.Raycast(ray, out enter))
                     {
                         Vector3 pos = ray.GetPoint(enter);
-                        _boundingBoxRenderer.SetPosition(1, new Vector3(pos.x, 10f, _boundingBoxRenderer.GetPosition(0).z));
+                        //The first corner is re-derived from its latitude and longitude every frame
+                        //rather than remembered as a world position, because the map may be panned or
+                        //zoomed between the two clicks, which moves world space under the geography.
+                        //Freezing the map after the first click is what this used to do instead.
+                        Vector3 corner = _webMercatorMap.GeoToWorldPosition(
+                            new Vector2d(_clickLatLons[0].x, _clickLatLons[0].y), false);
+                        _boundingBoxRenderer.SetPosition(0, new Vector3(corner.x, 10f, corner.z));
+                        _boundingBoxRenderer.SetPosition(1, new Vector3(pos.x, 10f, corner.z));
                         _boundingBoxRenderer.SetPosition(2, new Vector3(pos.x, 10f, pos.z));
-                        _boundingBoxRenderer.SetPosition(3, new Vector3(_boundingBoxRenderer.GetPosition(0).x, 10f, pos.z));
+                        _boundingBoxRenderer.SetPosition(3, new Vector3(corner.x, 10f, pos.z));
                     }
                 }
             }            
@@ -544,6 +579,14 @@ namespace WUInity
             {
                 fireEdit = true;
                 DisplayInitialIgnitionMap();
+            }
+            //Groups are painted on the fire grid, the same grid the other three use, so this belongs
+            //with them. It used to fall through to the warning below, which meant the painter was
+            //never switched on for it and the map plane was never shown.
+            else if (paintMode == Painter.PaintMode.EvacGroup)
+            {
+                fireEdit = true;
+                DisplayEvacGroupMap();
             }
             else
             {
@@ -887,6 +930,10 @@ namespace WUInity
 
         private bool _pickingBoundingBox;
         private bool _pickingPos;
+        //Where the left button went down, and how far it may travel before the press counts as a drag
+        //of the map rather than a click on it.
+        private Vector3 _mouseDownPos;
+        private const float _clickSlop = 6f;
         private int _clicks = 0;
         private PREACT.Math.Vector2d[] _clickLatLons = new PREACT.Math.Vector2d[2];
         private System.Action<PREACT.Math.Vector2d[]> _onClicks;
@@ -909,7 +956,6 @@ namespace WUInity
         private void FinishPickBoundingBoxOnMap()
         {
             _boundingBoxRenderer.gameObject.SetActive(false);
-            SetWebMercatorMapInteraction(false);
             _pickingBoundingBox = false;
             _onClicks(_clickLatLons);
             _onClicks = null;
@@ -919,6 +965,9 @@ namespace WUInity
         {
             _pickingPos = true;
             _onClick = onClick;
+            //The editor window closes to get out of the way, so without this nothing on screen says
+            //the application is waiting for a click, or how to move the map while looking for the spot.
+            NewLogMessage("Click the map to place. Drag to pan, scroll to zoom, arrow keys to move, Escape to cancel.");
         }
 
         private void FinishPickPosOnMap(Vector3 clickPos)
@@ -932,6 +981,26 @@ namespace WUInity
         public void SetWebMercatorMapInteraction(bool canInteract)
         {
             _webMercatorCameraMovement.enabled = canInteract;
+        }
+
+        /// <summary>
+        /// The world map is navigable for as long as it is on screen. It used to be movable only while
+        /// two corners of an area of interest were being clicked, and frozen at every other moment -
+        /// including while the scenario creator was open on top of it - which made finding a place on
+        /// it a matter of luck.
+        ///
+        /// Movement is suspended while the pointer is over the GUI, because Mapbox's camera does not
+        /// know ImGui exists and would otherwise zoom the map when a menu is scrolled.
+        /// </summary>
+        private void UpdateWebMercatorMapInteraction()
+        {
+            if (_webMercatorMap == null || !_webMercatorMap.gameObject.activeInHierarchy)
+            {
+                return;
+            }
+
+            bool guiOwnsInput = ImGui.GetIO().WantCaptureMouse || ImGui.GetIO().WantCaptureKeyboard;
+            _webMercatorCameraMovement.enabled = !guiOwnsInput;
         }
 
         public void ShowUTMMap()

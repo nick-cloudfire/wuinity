@@ -8,6 +8,7 @@
 using UnityEngine;
 using PREACT;
 using PREACT.Math;
+using ImGuiNET;
 
 namespace WUInity
 {
@@ -481,6 +482,13 @@ namespace WUInity
 
         void UpdatePainter()
         {
+            //The brush follows the pointer wherever it is, so without this it paints through the
+            //windows on top of the map - including through the button that ends the painting.
+            if (ImGui.GetIO().WantCaptureMouse)
+            {
+                return;
+            }
+
             if(Input.GetKeyDown(KeyCode.KeypadPlus))
             {
                 ++_brushSize;

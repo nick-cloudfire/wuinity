@@ -79,12 +79,27 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             ImGui.Combo(nameof(_input.Type), ref _destinationTypeIndex, DestinationTypesStrings, DestinationTypesStrings.Length);
             _input.Type = (DestinationTypes)_destinationTypeIndex;
 
+            //Capacity is a shelter's property: an Exit is a way out of the domain and holds everyone
+            //who reaches it. Flow is not - it throttles arrivals at either kind - so it is asked for
+            //in both cases. Every one of the three is off when negative, which the labels now say,
+            //because a blank-looking "-1" reads as unset rather than as unlimited.
+            ImGui.InputFloat("Max arrival flow (cars/hour, -1 for no limit)", ref _input.MaxFlow);
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Vehicles beyond this rate wait rather than arriving. It does not turn them away.");
+            }
+
             if(_input.Type == DestinationTypes.Shelter)
             {
-                ImGui.InputFloat(nameof(_input.MaxFlow), ref _input.MaxFlow);
-                ImGui.InputInt(nameof(_input.MaxVehicles), ref _input.MaxVehicles);
-                ImGui.InputInt(nameof(_input.MaxPeople), ref _input.MaxPeople);
-            }            
+                ImGui.InputInt("Max vehicles (-1 for no limit)", ref _input.MaxVehicles);
+                ImGui.InputInt("Max people (-1 for no limit)", ref _input.MaxPeople);
+                ImGui.TextWrapped("Whichever limit is reached first closes the shelter for good, and vehicles "
+                    + "still heading for it are re-routed to another destination. Capacity is never freed again.");
+            }
+            else
+            {
+                ImGui.TextDisabled("Exits have no capacity: everyone who reaches one leaves the domain.");
+            }
 
             Vector3 color = new Vector3((float)_input.Color.r, (float)_input.Color.g, (float)_input.Color.b);
             ImGui.ColorEdit3(nameof(_input.Color), ref color);

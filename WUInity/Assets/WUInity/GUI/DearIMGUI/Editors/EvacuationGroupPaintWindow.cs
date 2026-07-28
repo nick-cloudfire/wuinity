@@ -131,7 +131,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             {
                 if (ImGui.Button("Stop painting"))
                 {
-                    _painting = false;
+                    StopPainting();
                 }
 
                 ImGui.SameLine();
@@ -145,6 +145,12 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             ImGui.End();
             if (!_isOpen)
             {
+                //Closing the window with its title bar has to stop the brush too, or it keeps painting
+                //with no way left to turn it off.
+                if (_painting)
+                {
+                    StopPainting();
+                }
                 PreactGUI.CloseWindow(Draw);
             }
         }
@@ -153,9 +159,20 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
         {
             PushGroupsToPainter();
             _painting = true;
-            SelectForPainting();
             PreactGUI.WUInity.ShowUTMMap();
+            //Through the manager, so the painter object is actually switched on and the sample mode
+            //says painting is happening. Setting the mode on the painter alone left it inert whenever
+            //another painter had been stopped earlier, and left the map draggable out from under the
+            //brush, since a left-drag pans unless something claims the button.
+            PreactGUI.WUInity.StartPainter(global::WUInity.Painter.PaintMode.EvacGroup);
+            PreactGUI.WUInity.Painter.SetEvacGroupColor(_selected);
             PreactGUI.WUInity.DisplayEvacGroupMap();
+        }
+
+        private static void StopPainting()
+        {
+            _painting = false;
+            PreactGUI.WUInity.StopPainter();
         }
 
         private static void SelectForPainting()
