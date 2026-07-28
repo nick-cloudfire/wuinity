@@ -50,6 +50,26 @@ namespace Assets.WUInity.GUI.DearIMGUI
         private static int _maxHouseholdSize = 5;
         private static bool _useAnderson13 = true;
 
+        //Which spread module the wildfire hazard uses. This has to be chosen explicitly: the field
+        //defaults to None, and a scenario that enables the module while leaving it None fails to
+        //load outright with "Could not interpret user input None for Module". AscImport is the
+        //default here because it is what the ELMFIRE-driven trigger pipeline feeds - precomputed
+        //arrival time rasters - and what the working Mati case uses.
+        private static readonly string[] WildfireModulesStrings = System.Enum.GetNames(typeof(WildfireModuleInput.WildfireModules));
+        private static int _wildfireModuleIndex = (int)WildfireModuleInput.WildfireModules.AscImport;
+
+        //Trigger buffer. The rate of spread deliberately defaults to coming from the fire module
+        //rather than from Behave, because that is what the ELMFIRE-driven trigger campaign does,
+        //and because computing it with Behave makes an initial fuel moisture file mandatory - the
+        //field default of true would otherwise produce a scenario that cannot be loaded back.
+        private static bool _wantTriggerBuffer;
+        private static float _midflameWindspeed = 5.0f;
+        private static bool _calculateRosFromBehave;
+
+        //Amber, for inputs that are required but not yet given. Matches how StepButton colours its
+        //own marker rather than introducing a theme dependency.
+        private static Vector4 WarningColor => new Vector4(0.9f, 0.7f, 0.2f, 1f);
+
         public static void Open(bool resetInput)
         {
             if (!_isOpen)
@@ -174,6 +194,12 @@ namespace Assets.WUInity.GUI.DearIMGUI
             ImGui.Checkbox("Wildfire spread?", ref _wantWildfire);
             if (_wantWildfire)
             {
+                ImGui.Combo("Spread module", ref _wildfireModuleIndex, WildfireModulesStrings, WildfireModulesStrings.Length);
+                if (_wildfireModuleIndex == (int)WildfireModuleInput.WildfireModules.None)
+                {
+                    ImGui.TextColored(WarningColor, "Pick a module: an enabled wildfire hazard set to None cannot be loaded back.");
+                }
+
                 ImGui.Checkbox("Have wildfire landscape?", ref _haveWildfireLandscape);
                 if(_haveWildfireLandscape)
                 {
@@ -224,7 +250,53 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 if(!_wantWildfire)
                 {
                     ImGui.Text("Smoke dispersion needs wildfire spread active as source term.");
-                }                  
+                }
+            }
+
+            ImGui.SeparatorText("Trigger buffer");
+            ImGui.Checkbox("Trigger boundary (k-PERIL)?", ref _wantTriggerBuffer);
+            if (_wantTriggerBuffer)
+            {
+                //The property is read-only but hands back the instance, so its fields are set here
+                //and the section is written out once Module is set to kPERIL in GenerateScenario.
+                kPERILInput peril = _input.TriggerBufferModule.kPERILInput;
+
+                ImGui.InputFloat("Midflame windspeed", ref _midflameWindspeed);
+
+                ImGui.Checkbox("Compute rate of spread with Behave", ref _calculateRosFromBehave);
+                if (_calculateRosFromBehave)
+                {
+                    if (ImGui.Button("Select initial fuel moisture file"))
+                    {
+                        FileBrowser.OpenSetFilePath(path => peril.InitialFuelMoistureFile = path, "Select initial fuel moisture file", true);
+                    }
+                    ImGui.Text($"{nameof(peril.InitialFuelMoistureFile)}: {peril.InitialFuelMoistureFile}");
+                    //Required in this mode, and a missing one fails the load rather than degrading.
+                    if (string.IsNullOrEmpty(peril.InitialFuelMoistureFile))
+                    {
+                        ImGui.TextColored(WarningColor, "Required when the rate of spread is computed with Behave.");
+                    }
+                }
+                else
+                {
+                    ImGui.TextWrapped("Rate of spread comes from the fire module's own output, which is what the ELMFIRE-driven trigger campaign uses.");
+                }
+
+                if (ImGui.Button("Select WUI area mask"))
+                {
+                    FileBrowser.OpenSetFilePath(path => peril.WuiAreaFile = path, "Select WUI area mask", true);
+                }
+                ImGui.Text($"{nameof(peril.WuiAreaFile)}: {peril.WuiAreaFile}");
+                ImGui.TextWrapped("The area being protected, one per cell inside it. This is what the painted WUI selection exports.");
+                if (string.IsNullOrEmpty(peril.WuiAreaFile))
+                {
+                    ImGui.TextColored(WarningColor, "Required: without it there is no area to compute a trigger boundary around.");
+                }
+
+                if (!_wantWildfire)
+                {
+                    ImGui.TextColored(WarningColor, "Needs wildfire spread active to have an arrival time to work back from.");
+                }
             }
 
             ImGui.SeparatorText("Finished?");
@@ -635,6 +707,39 @@ namespace Assets.WUInity.GUI.DearIMGUI
             _input.TrafficModule.Enabled = _wantTraffic;
             _input.WildfireModule.Enabled = _wantWildfire;
             _input.SmokeModule.Enabled = _wantSmoke && _wantWildfire;
+
+            //Selecting the module matters as much as enabling it. Both of these default to None,
+            //and the parsers reject None for a module that is switched on, so a scenario generated
+            //with either hazard ticked could not be loaded back at all until this was set.
+            //GlobalSmoke is simply the only smoke module there is.
+            _input.WildfireModule.Module = _wantWildfire
+                ? (WildfireModuleInput.WildfireModules)_wildfireModuleIndex
+                : WildfireModuleInput.WildfireModules.None;
+            _input.SmokeModule.Module = _input.SmokeModule.Enabled
+                ? SmokeInput.SmokeModules.GlobalSmoke
+                : SmokeInput.SmokeModules.None;
+
+            //Module has to be set, not just Enabled: it is what tells the writer which sub-section
+            //to emit, so leaving it at None produces a scenario with no [kPERIL] section at all.
+            //The trigger campaign then finds nothing to configure and quietly computes no boundary.
+            _input.TriggerBufferModule.Enabled = _wantTriggerBuffer && _wantWildfire;
+            _input.TriggerBufferModule.Module = _wantTriggerBuffer
+                ? TriggerBufferModuleInput.TriggerBufferModules.kPERIL
+                : TriggerBufferModuleInput.TriggerBufferModules.None;
+
+            if (_wantTriggerBuffer)
+            {
+                kPERILInput peril = _input.TriggerBufferModule.kPERILInput;
+                peril.MidflameWindspeed = _midflameWindspeed;
+                peril.CalculateROSFromBehave = _calculateRosFromBehave;
+
+                //A required key, and an empty value is omitted rather than written, so the scenario
+                //would fail to load without a name here. The campaign overwrites it per realization.
+                if (string.IsNullOrEmpty(peril.OutputName))
+                {
+                    peril.OutputName = _input.Simulation.Name + "_trigger";
+                }
+            }
 
             _isOpen = false;
             _folderSet = false;
