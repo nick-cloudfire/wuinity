@@ -17,9 +17,10 @@ namespace FeatureTester
             PREACT.Math.Vector2d upperRight = new PREACT.Math.Vector2d(39.5213373891081, -105.00632656522413);
             PREACT.Math.Vector2d center = (lowerLeft + upperRight) * 0.5;
 
-            WorldPopDownloader client = new PREACT.Tools.WorldPopDownloader();            
-            await client.DownloadRegionUTM(2015, lowerLeft, upperRight, "_output");
-            Console.WriteLine("Finished WorldPop download.");
+            //WorldPopDownloader is a static class, and the clipped output name is required rather
+            //than derived, so it is named here.
+            string clipped = await WorldPopDownloader.DownloadRegionUTM(2015, lowerLeft, upperRight, "_output", "worldpop_utm.tif");
+            Console.WriteLine($"Finished WorldPop download: {clipped}");
         }
     }
 }
