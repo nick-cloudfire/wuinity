@@ -35,6 +35,11 @@ namespace PREACT.Input
 
         public void Parse(string[] inputLines, int startIndex, SimulationInput simulationInput, WeatherInput weatherInput, Dictionary<string, int> headerLineIndex, string rootFolder, out bool success)
         {
+            Parse(inputLines, startIndex, simulationInput, weatherInput, null, headerLineIndex, rootFolder, out success);
+        }
+
+        public void Parse(string[] inputLines, int startIndex, SimulationInput simulationInput, WeatherInput weatherInput, LandscapeInput landscapeInput, Dictionary<string, int> headerLineIndex, string rootFolder, out bool success)
+        {
             success = false;
             int issues = 0;
             Dictionary<string, string> inputToParse = PREACTInput.GetHeaderInput(inputLines, startIndex);
@@ -147,7 +152,7 @@ namespace PREACT.Input
                 }
             }
 
-            _data.LoadAll(simulationInput, this, rootFolder, out success);
+            _data.LoadAll(simulationInput, this, landscapeInput, rootFolder, out success);
         }
     }
 }  

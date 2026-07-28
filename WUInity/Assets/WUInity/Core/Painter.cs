@@ -239,26 +239,56 @@ namespace WUInity
                 return _haveFireGrid;
             }
 
-            if (input.WildfireModule.Module != PREACT.Input.WildfireModuleInput.WildfireModules.AscImport)
+            //Any georeferenced raster on the domain will do, in this order of preference:
+            //
+            //  1. the imported fire's arrival times - the grid the fire is on and k-PERIL computes on,
+            //     so a mask painted against it needs no reconciling at all;
+            //  2. the landscape, whatever of it exists;
+            //  3. the elevation on its own - a DEM, which can be had for anywhere on Earth and is
+            //     therefore the one thing a scenario outside LANDFIRE coverage can always have.
+            //
+            //Nothing is invented when none of them is there. A grid made up from the domain and an
+            //arbitrary cell size would let painting proceed and produce masks that line up with nothing,
+            //which is worse than not painting: the misalignment would only surface as a trigger boundary
+            //in the wrong place, with no error anywhere.
+            string reference = string.Empty;
+            string what = string.Empty;
+
+            if (input.WildfireModule.Module == PREACT.Input.WildfireModuleInput.WildfireModules.AscImport
+                && !string.IsNullOrEmpty(input.WildfireModule.AscImportInput.TimeOfArrivalFile))
+            {
+                reference = input.WildfireModule.AscImportInput.TimeOfArrivalFile;
+                what = "the imported fire's arrival times";
+            }
+            else if (input.Landscape != null && !string.IsNullOrEmpty(input.Landscape.GetReferenceFile()))
+            {
+                reference = input.Landscape.GetReferenceFile();
+                what = reference == input.Landscape.ElevationFile ? "the elevation raster" : "the landscape";
+            }
+
+            if (string.IsNullOrEmpty(reference))
             {
                 Engine.Message(null, Engine.LogType.Warning,
-                    "Painting needs the fire grid, which comes from the landscape file for this wildfire module. Load the landscape first.");
+                    "There is nothing to paint on. Painting needs a raster that defines the cells and where they are: "
+                    + "an imported fire's time of arrival, a landscape, or just an elevation raster - a DEM is enough, "
+                    + "and one can be downloaded for anywhere. Add one under the Landscape section.");
                 return false;
             }
 
-            string arrivalFile = input.WildfireModule.AscImportInput.TimeOfArrivalFile;
-            if (string.IsNullOrEmpty(arrivalFile))
+            //A .lcp holds no georeferencing this can read, but LandscapeData does read one - so it would
+            //have been caught by the branch above if it had loaded.
+            if (reference.ToLowerInvariant().EndsWith(".lcp"))
             {
                 Engine.Message(null, Engine.LogType.Warning,
-                    "Painting needs the fire grid, which for an imported fire comes from the time of arrival raster. None is set on this scenario.");
+                    "The landscape file could not be loaded, so there is no grid to paint on.");
                 return false;
             }
 
-            string path = System.IO.Path.Combine(input.RootFolder, arrivalFile);
+            string path = System.IO.Path.Combine(input.RootFolder, reference);
             PREACT.Utility.AscRaster.Header header = PREACT.Utility.AscRaster.ReadHeader(path, out bool ok);
             if (!ok)
             {
-                Engine.Message(null, Engine.LogType.Warning, "Could not read the fire grid from " + path + ".");
+                Engine.Message(null, Engine.LogType.Warning, "Could not read a cell grid from " + path + ".");
                 return false;
             }
 
@@ -271,7 +301,7 @@ namespace WUInity
             _haveFireGrid = true;
 
             Engine.Message(null, Engine.LogType.Log,
-                $"Painting on the imported fire grid: {header.Ncols} x {header.Nrows} cells of {header.CellSize:F1} m.");
+                $"Painting on the grid of {what}: {header.Ncols} x {header.Nrows} cells of {header.CellSize:F1} m.");
 
             //A fire grid that does not reach the domain at all cannot be painted on usefully - the
             //brush would be somewhere off-screen - and the cause is always the same: the raster and the

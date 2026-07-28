@@ -30,6 +30,7 @@ namespace PREACT.Input
 
             Section(lines, nameof(PREACTInput.Simulation), input.Simulation);
             Section(lines, nameof(PREACTInput.Map), input.Map);
+            Section(lines, nameof(PREACTInput.Landscape), input.Landscape);
             Section(lines, nameof(PREACTInput.Population), input.Population);
 
             //Demographics belong to the population section and are read from their own repeated

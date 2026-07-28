@@ -41,7 +41,19 @@ namespace PREACT.Input
 
         public void LoadAll(SimulationInput simulationInput, WildfireModuleInput wildfireInput, string rootFolder, out bool success)
         {
+            LoadAll(simulationInput, wildfireInput, null, rootFolder, out success);
+        }
+
+        public void LoadAll(SimulationInput simulationInput, WildfireModuleInput wildfireInput, LandscapeInput landscapeInput, string rootFolder, out bool success)
+        {
             success = false;
+
+            //The landscape is loaded whether or not a fire is being modelled. It is terrain, and the
+            //rest of the scenario has uses for it that have nothing to do with fire spread - somewhere
+            //to paint, a surface to draw the map on, a slope to correct a trigger boundary by. This used
+            //to be skipped entirely for a disabled fire module and for AscImport, which is why a
+            //scenario with an imported fire had no terrain at all.
+            LoadLandscape(simulationInput, wildfireInput, landscapeInput, rootFolder);
 
             if(!wildfireInput.Enabled)
             {
@@ -51,28 +63,36 @@ namespace PREACT.Input
             }
             Engine.Message(null, Engine.LogType.Log, "Loading wildfire data...");
 
-            //we need LCP for all fires except straight import of results
-            if (wildfireInput.Module == WildfireModuleInput.WildfireModules.AscImport) 
-            { 
-                Engine.Message(null, Engine.LogType.Log, "Skipping loading LCP data as user has specified straight import of fire results.");
+            //An imported fire brings its own arrival times, rates of spread and directions, so it needs
+            //nothing further from the landscape - whatever was loaded above is a bonus rather than a
+            //requirement.
+            if (wildfireInput.Module == WildfireModuleInput.WildfireModules.AscImport)
+            {
                 success = true;
                 return;
             }
 
-            string filePath = Path.Combine(rootFolder, wildfireInput.FireCellInput.LandscapeFile);
-            LoadLCPFile(wildfireInput, filePath, simulationInput.Data.UTMOrigin, false, out success);
-            if(!success)
+            if (_lcpData == null)
             {
+                Engine.Message(null, Engine.LogType.InputError,
+                    "This wildfire module spreads fire itself, so it needs a landscape: either a LandscapeFile, or "
+                    + "at least an ElevationFile and a FuelModelFile in the Landscape section.");
                 return;
             }
 
-            //not critical
-            //filePath = Path.Combine(rootFolder, wildfireInput.GraphicalFireInputFile);
-            //LoadGraphicalFireInput(wildfireInput, filePath, _lcpData, false, out success);
+            if (!_lcpData.HaveFuel)
+            {
+                Engine.Message(null, Engine.LogType.InputError,
+                    "The landscape has no fuel model band, so this wildfire module has nothing to spread fire through.");
+                return;
+            }
+
+            success = true;
 
             if (wildfireInput.Module == WildfireModuleInput.WildfireModules.ElmClone)
             {
                 int issues = 0;
+                string filePath;
 
                 //common 
                 filePath = Path.Combine(rootFolder, wildfireInput.FireCellInput.IgnitionPointsFile);
@@ -110,6 +130,57 @@ namespace PREACT.Input
             }
 
             success = true;
+        }
+
+        /// <summary>
+        /// Loads the landscape from whichever of the three ways of describing one the scenario used:
+        /// separate GeoTIFF bands, a single multiband GeoTIFF, or a FARSITE .lcp.
+        ///
+        /// Separate bands come first because they are the form that can actually be assembled outside the
+        /// United States. A landscape needs elevation, slope, aspect, fuel model and canopy cover on one
+        /// grid, and only LANDFIRE distributes all five as a package; anywhere else the elevation comes
+        /// from a DEM and the fuels, if they exist at all, from somewhere unrelated. Requiring them
+        /// pre-merged into one file made that a GIS exercise to be completed before the scenario could be
+        /// opened. Slope and aspect are computed from the elevation, so in practice a DEM alone is enough
+        /// to have terrain.
+        /// </summary>
+        private void LoadLandscape(SimulationInput simulationInput, WildfireModuleInput wildfireInput,
+            LandscapeInput landscapeInput, string rootFolder)
+        {
+            //The wildfire module's own LandscapeFile still works, and wins if it is set, so no existing
+            //scenario changes behaviour.
+            string moduleLandscape = wildfireInput.FireCellInput.LandscapeFile;
+            if (!string.IsNullOrEmpty(moduleLandscape))
+            {
+                LoadLCPFile(wildfireInput, Path.Combine(rootFolder, moduleLandscape), simulationInput.Data.UTMOrigin, false, out bool _);
+                return;
+            }
+
+            if (landscapeInput == null || !landscapeInput.HaveAnything())
+            {
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(landscapeInput.LandscapeFile))
+            {
+                LoadLCPFile(wildfireInput, Path.Combine(rootFolder, landscapeInput.LandscapeFile), simulationInput.Data.UTMOrigin, false, out bool _);
+                return;
+            }
+
+            string[] bands = landscapeInput.GetOrderedBandFiles();
+            for (int i = 0; i < bands.Length; ++i)
+            {
+                if (!string.IsNullOrEmpty(bands[i]))
+                {
+                    bands[i] = Path.Combine(rootFolder, bands[i]);
+                }
+            }
+
+            Wildfire.LandscapeData landscape = new Wildfire.LandscapeData(bands, simulationInput.Data.UTMOrigin);
+            if (!landscape.CantAllocLCP)
+            {
+                _lcpData = landscape;
+            }
         }
 
         public void LoadLCPFile(WildfireModuleInput fireInput, string filePath, Vector2d simulationUtmOrigin, bool updateInput, out bool success)

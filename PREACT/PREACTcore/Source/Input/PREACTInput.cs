@@ -17,6 +17,10 @@ namespace PREACT.Input
         public string RootFolder;
         public SimulationInput Simulation;
         public MapInput Map;
+        //Terrain, separately from the fire module that consumes most of it: a scenario has ground
+        //before it has fuels, and the elevation alone is enough to georeference a cell grid, correct
+        //spread for slope, and give something to paint on.
+        public LandscapeInput Landscape;
         public WeatherInput Weather;
         public PopulationInput Population;
         public EventsInput Events;
@@ -32,7 +36,8 @@ namespace PREACT.Input
             RootFolder = rootFolder;
 
             Simulation = new SimulationInput();
-            Map = new MapInput();   
+            Map = new MapInput();
+            Landscape = new LandscapeInput();
             Weather = new WeatherInput();
             Population = new PopulationInput();
             Events = new EventsInput();
@@ -193,10 +198,29 @@ namespace PREACT.Input
                 SectionIncomplete(nameOfInput);
             }
 
+            //landscape
+            //Read before the zone is pinned, because it is one of the things that can supply the zone -
+            //and read here, before any section that converts a coordinate, for the same reason the
+            //pinning is done here.
+            success = true;
+            nameOfInput = nameof(Landscape);
+            if (headerLineIndices.TryGetValue(nameOfInput, out lineindex))
+            {
+                ReadingInputMessage(nameOfInput);
+                newInput.Landscape.Parse(inputLines, lineindex, rootFolder, out success);
+            }
+            //No message when absent: a scenario is allowed to have no landscape section at all, which
+            //is the case for every scenario written before this existed.
+            if (!success)
+            {
+                SectionIncomplete(nameOfInput);
+            }
+
             //Done here, immediately after the simulation section and before any section that reads the
             //origin, because pinning changes what every simulation coordinate means. Doing it later
             //would leave whatever had already been converted measured in the old zone.
-            PinSimulationZoneToFireData(newInput, inputLines, headerLineIndices, rootFolder);
+            _currentSection = nameof(Simulation);
+            PinSimulationZoneToGeoreferencedData(newInput, inputLines, headerLineIndices, rootFolder);
 
             //map
             success = true; //each section is judged on its own
@@ -274,7 +298,7 @@ namespace PREACT.Input
             if (headerLineIndices.TryGetValue(nameOfInput, out lineindex))
             {
                 ReadingInputMessage(nameOfInput);
-                newInput.WildfireModule.Parse(inputLines, lineindex, newInput.Simulation, newInput.Weather, headerLineIndices, rootFolder, out success);
+                newInput.WildfireModule.Parse(inputLines, lineindex, newInput.Simulation, newInput.Weather, newInput.Landscape, headerLineIndices, rootFolder, out success);
             }
             else
             {               
@@ -403,31 +427,39 @@ namespace PREACT.Input
         /// is at 23.93 E with the boundary at 24 E, its ELMFIRE output is in zone 35 while the corner is
         /// in zone 34, and the fire was consequently placed 526 km west of the town.
         ///
-        /// Only the imported arrival time raster is consulted. A FARSITE landscape carries no CRS in
-        /// its header at all - the file format has no field for one - so for the modules that use an LCP
-        /// there is nothing to read, and the zone stays the domain's own as before. That is also the
-        /// case where it matters least: an LCP comes from LANDFIRE, which is US-only, and the whole
-        /// point of AscImport is running somewhere LANDFIRE does not cover.
+        /// The fire's arrival time raster is preferred, because that is the grid the fire is placed on
+        /// and the one k-PERIL computes on, so agreeing with it matters most. Failing that, the
+        /// landscape - which for a scenario with no fire data at all may be nothing but a DEM, and a DEM
+        /// can be had for anywhere on Earth. A FARSITE .lcp is skipped: the format has no field for a
+        /// CRS, so there is nothing in it to read.
         /// </summary>
-        private static void PinSimulationZoneToFireData(PREACTInput input, string[] inputLines,
+        private static void PinSimulationZoneToGeoreferencedData(PREACTInput input, string[] inputLines,
             Dictionary<string, int> headerLineIndices, string rootFolder)
         {
-            if (!headerLineIndices.TryGetValue("AscImport", out int lineIndex))
+            string source = FireDataReferenceFile(inputLines, headerLineIndices);
+            if (string.IsNullOrEmpty(source))
+            {
+                source = input.Landscape.GetReferenceFile();
+            }
+
+            if (string.IsNullOrEmpty(source))
+            {
+                //Nothing georeferenced to agree with, so the domain's own zone stands. That is correct
+                //rather than a compromise: with no raster there is nothing whose easting could be
+                //misread.
+                return;
+            }
+
+            //A .lcp keeps no CRS, so reading one would only produce a spurious "does not say" warning.
+            if (source.ToLowerInvariant().EndsWith(".lcp"))
             {
                 return;
             }
 
-            Dictionary<string, string> ascInput = GetHeaderInput(inputLines, lineIndex);
-            if (!ascInput.TryGetValue("TimeOfArrivalFile", out string arrivalFile) || string.IsNullOrEmpty(arrivalFile))
-            {
-                return;
-            }
-
-            string path = System.IO.Path.Combine(rootFolder, arrivalFile);
+            string path = System.IO.Path.Combine(rootFolder, source);
             if (!System.IO.File.Exists(path))
             {
-                //Reported by the wildfire section's own parser as a missing required file; nothing to
-                //add here beyond not pinning.
+                //Reported by whichever section requires it; nothing to add here beyond not pinning.
                 return;
             }
 
@@ -451,11 +483,26 @@ namespace PREACT.Input
             input.Simulation.Data.PinToUtmEpsg(header.EpsgCode, out bool pinned);
             if (!pinned)
             {
-                //_currentSection is still Simulation here, which is where this belongs on the checklist.
+                //_currentSection is Simulation here, which is where this belongs on the checklist.
                 AddRequirement("UTM zone",
-                    $"The fire data is in EPSG:{header.EpsgCode}, which the simulation cannot measure in. "
-                    + "Everything read from that raster will be misplaced.", true);
+                    $"{System.IO.Path.GetFileName(path)} is in EPSG:{header.EpsgCode}, which the simulation cannot "
+                    + "measure in. Everything read from that raster will be misplaced.", true);
             }
+        }
+
+        /// <summary>
+        /// The imported fire's arrival time raster, read straight from the lines rather than from the
+        /// parsed input because the wildfire section has not been read yet at the point this is needed.
+        /// </summary>
+        private static string FireDataReferenceFile(string[] inputLines, Dictionary<string, int> headerLineIndices)
+        {
+            if (!headerLineIndices.TryGetValue("AscImport", out int lineIndex))
+            {
+                return string.Empty;
+            }
+
+            Dictionary<string, string> ascInput = GetHeaderInput(inputLines, lineIndex);
+            return ascInput.TryGetValue("TimeOfArrivalFile", out string arrivalFile) ? arrivalFile : string.Empty;
         }
 
         /// <summary>

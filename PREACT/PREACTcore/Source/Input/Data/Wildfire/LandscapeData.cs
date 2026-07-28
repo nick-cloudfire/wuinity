@@ -151,7 +151,7 @@ namespace PREACT.Wildfire
         //public Vector2int OriginCellOffset { get => originCellOffset; }
 
 
-		public LandscapeData(string filePath, Vector2d simulationUtmOrigin)					
+		public LandscapeData(string filePath, Vector2d simulationUtmOrigin)
 		{
 			bool readGeoTIFF = false;
             if (filePath.ToLower().EndsWith("tif") || filePath.EndsWith("tiff"))
@@ -170,6 +170,44 @@ namespace PREACT.Wildfire
 			CalculateOrigin(simulationUtmOrigin);
 		}
 
+		/// <summary>
+		/// Builds a landscape from separate single-band GeoTIFFs, one per band, in the order a landscape
+		/// stores them: elevation, slope, aspect, fuel model, canopy cover, canopy height, canopy base
+		/// height, canopy bulk density. An empty entry means that band was not supplied.
+		///
+		/// The point of this is that the bands come from different places. A DEM is global; fuels are
+		/// national at best; canopy structure rarer still. Requiring them in one file means either
+		/// finding a source that publishes all of them - which outside the United States is usually not
+		/// possible - or assembling one by hand before the scenario can be opened at all.
+		///
+		/// Only the elevation is needed. Slope and aspect are computed from it when absent, which is how
+		/// they would have been produced anyway, and the rest fall back to values that describe bare
+		/// ground: a landscape that cannot spread fire is still a landscape that can be looked at,
+		/// measured, and painted on.
+		/// </summary>
+		public LandscapeData(string[] orderedBandFiles, Vector2d simulationUtmOrigin)
+		{
+			ReadSeparateGeoTIFFs(orderedBandFiles);
+			CalculateOrigin(simulationUtmOrigin);
+		}
+
+		/// <summary>Bands in the order a landscape stores them.</summary>
+		public enum Band { Elevation = 0, Slope = 1, Aspect = 2, FuelModel = 3, CanopyCover = 4,
+			CanopyHeight = 5, CanopyBaseHeight = 6, CanopyBulkDensity = 7 }
+
+		/// <summary>
+		/// Which bands hold real data rather than a fallback. Consumers that need one can then say so
+		/// instead of silently modelling bare ground: a fuel model of zero spreads no fire, and nothing
+		/// would otherwise distinguish that from ground that genuinely does not burn.
+		/// </summary>
+		private readonly bool[] _bandIsReal = new bool[8];
+		public bool HaveBand(Band band) { return _bandIsReal[(int)band]; }
+		public bool HaveFuel { get => HaveBand(Band.FuelModel); }
+		public bool HaveCrownFuel
+		{
+			get => HaveBand(Band.CanopyHeight) && HaveBand(Band.CanopyBaseHeight) && HaveBand(Band.CanopyBulkDensity);
+		}
+
 		private void ReadGeoTIFF(string filePath)
 		{
             //OSGeo.GDAL.Gdal.AllRegister(); //should be done by engine
@@ -179,9 +217,16 @@ namespace PREACT.Wildfire
                 Header.numnorth = tif.RasterYSize;
                 NumVals = tif.RasterCount;
 
-				if(NumVals != 8)
+                //The layouts a landscape can have: the five basic bands, plus crown fuels and ground
+                //fuels in either combination. Only 8 used to be accepted, which refused a perfectly
+                //ordinary elevation/slope/aspect/fuel/cover stack for want of canopy structure that
+                //nothing outside the United States publishes anyway.
+                if (NumVals != 5 && NumVals != 7 && NumVals != 8 && NumVals != 10)
 				{
-					Engine.Message(null, Engine.LogType.InputError, "The landscape trying to be read from GeoTIFF does not contain the expected 8 raster sets, aborting.");
+					Engine.Message(null, Engine.LogType.InputError,
+                        $"A landscape GeoTIFF has {NumVals} bands. It must have 5 (elevation, slope, aspect, fuel "
+                        + "model, canopy cover), 7 (those plus duff and coarse woody), 8 (those five plus canopy "
+                        + "height, base height and bulk density) or 10 (all of them), in that order.");
 					CantAllocLCP = true;
 
                     return;
@@ -343,25 +388,48 @@ namespace PREACT.Wildfire
                                 Header.hicover = Mathf.Max(landscape[index], Header.hicover);
                             }
 
-                            //canopy height
-                            if (rasterIndex == 5)
+                            //Bands past the fifth are crown fuels, except in the 7-band layout where they
+                            //are duff and coarse woody instead - the crown bands are simply absent. Read
+                            //unconditionally as crown before, which filed a 7-band file's duff loading
+                            //under canopy height.
+                            if (NumVals >= 8)
                             {
-                                Header.loheight = Mathf.Min(landscape[index], Header.loheight);
-                                Header.hiheight = Mathf.Max(landscape[index], Header.hiheight);
-                            }
+                                //canopy height
+                                if (rasterIndex == 5)
+                                {
+                                    Header.loheight = Mathf.Min(landscape[index], Header.loheight);
+                                    Header.hiheight = Mathf.Max(landscape[index], Header.hiheight);
+                                }
 
-                            //canopy base height
-                            if (rasterIndex == 6)
-                            {
-                                Header.lobase = Mathf.Min(landscape[index], Header.lobase);
-                                Header.hibase = Mathf.Max(landscape[index], Header.hibase);
-                            }
+                                //canopy base height
+                                if (rasterIndex == 6)
+                                {
+                                    Header.lobase = Mathf.Min(landscape[index], Header.lobase);
+                                    Header.hibase = Mathf.Max(landscape[index], Header.hibase);
+                                }
 
-                            //canopy bulk density
-                            if (rasterIndex == 7)
+                                //canopy bulk density
+                                if (rasterIndex == 7)
+                                {
+                                    Header.lodensity = Mathf.Min(landscape[index], Header.lodensity);
+                                    Header.hidensity = Mathf.Max(landscape[index], Header.hidensity);
+                                }
+                            }
+                            else if (NumVals == 7)
                             {
-                                Header.lodensity = Mathf.Min(landscape[index], Header.lodensity);
-                                Header.hidensity = Mathf.Max(landscape[index], Header.hidensity);
+                                //duff
+                                if (rasterIndex == 5)
+                                {
+                                    Header.loduff = Mathf.Min(landscape[index], Header.loduff);
+                                    Header.hiduff = Mathf.Max(landscape[index], Header.hiduff);
+                                }
+
+                                //coarse woody
+                                if (rasterIndex == 6)
+                                {
+                                    Header.lowoody = Mathf.Min(landscape[index], Header.lowoody);
+                                    Header.hiwoody = Mathf.Max(landscape[index], Header.hiwoody);
+                                }
                             }
                         }
                     }
@@ -383,9 +451,427 @@ namespace PREACT.Wildfire
                 Header.numduff = 100;
                 Header.numwoody = 100;
 
+                //Whatever the file has is real; the 7-band layout is the one without crown fuels.
+                for (int band = 0; band < 8; ++band)
+                {
+                    _bandIsReal[band] = band < NumVals && !(NumVals == 7 && band >= 5);
+                }
+
                 CantAllocLCP = false;
             }
         }
+
+		/// <summary>
+		/// Assembles the interleaved band array from one GeoTIFF per band. The elevation defines the grid
+		/// every other band has to be on; one that is not is refused rather than resampled, because
+		/// guessing how to line up two grids of different sizes is how data ends up half a cell out with
+		/// nothing to show it.
+		/// </summary>
+		private void ReadSeparateGeoTIFFs(string[] orderedBandFiles)
+		{
+			CantAllocLCP = true;
+
+			if (orderedBandFiles == null || orderedBandFiles.Length == 0 || string.IsNullOrEmpty(orderedBandFiles[(int)Band.Elevation]))
+			{
+				Engine.Message(null, Engine.LogType.InputError,
+					"A landscape built from separate bands needs at least an elevation raster; none was given.");
+				return;
+			}
+
+			//The elevation sets the grid. Read first so everything else can be checked against it, and
+			//read as float rather than as the short the landscape stores: slope is a derivative, and
+			//rounding heights to whole metres before differentiating them puts up to half a metre of noise
+			//on every difference - across a 27 m cell that is a degree of gradient that is not in the
+			//ground, and it biases slope upwards rather than averaging out, because it enters as a
+			//magnitude. It makes no difference to a DEM that is already whole metres, which the ones
+			//tested against here are; it matters for the float DEMs most sources now publish.
+			float[] elevationFloat = ReadElevation(orderedBandFiles[(int)Band.Elevation], out bool elevationOk);
+			if (!elevationOk)
+			{
+				return;
+			}
+			_bandIsReal[(int)Band.Elevation] = true;
+
+			short[] elevation = new short[elevationFloat.Length];
+			for (int i = 0; i < elevationFloat.Length; ++i)
+			{
+				elevation[i] = IsNoElevation(elevationFloat[i])
+					? (short)-9999
+					: (short)System.Math.Round(System.Math.Clamp((double)elevationFloat[i], short.MinValue, short.MaxValue));
+			}
+
+			//Ten values per cell is the full layout. It is allocated in full whether or not every band
+			//was supplied, so that every consumer indexes it the same way regardless of what was
+			//available - the alternative is a stride that varies with the input, which every caller
+			//would then have to know about.
+			NumVals = 10;
+			Header.CrownFuels = 21;
+			Header.GroundFuels = 21;
+			landscape = new short[Header.numeast * Header.numnorth * NumVals];
+
+			WriteBandIntoLandscape(elevation, (int)Band.Elevation);
+
+			//Slope and aspect from the elevation when they were not supplied. This is the normal case
+			//for a bare DEM, and it is what a GIS would have been used to produce them anyway.
+			bool haveSlope = !string.IsNullOrEmpty(orderedBandFiles[(int)Band.Slope]);
+			bool haveAspect = !string.IsNullOrEmpty(orderedBandFiles[(int)Band.Aspect]);
+			if (!haveSlope || !haveAspect)
+			{
+				DeriveSlopeAndAspect(elevationFloat, out short[] derivedSlope, out short[] derivedAspect);
+				if (!haveSlope)
+				{
+					WriteBandIntoLandscape(derivedSlope, (int)Band.Slope);
+					_bandIsReal[(int)Band.Slope] = true;
+				}
+				if (!haveAspect)
+				{
+					WriteBandIntoLandscape(derivedAspect, (int)Band.Aspect);
+					_bandIsReal[(int)Band.Aspect] = true;
+				}
+				Engine.Message(null, Engine.LogType.Log,
+					"Computed " + (!haveSlope && !haveAspect ? "slope and aspect" : (!haveSlope ? "slope" : "aspect"))
+					+ " from the elevation raster.");
+			}
+
+			for (int band = 1; band < orderedBandFiles.Length && band < 8; ++band)
+			{
+				if (string.IsNullOrEmpty(orderedBandFiles[band]))
+				{
+					continue;
+				}
+
+				short[] data = ReadBand(orderedBandFiles[band], false, out bool ok);
+				if (!ok)
+				{
+					continue;
+				}
+
+				WriteBandIntoLandscape(data, band);
+				_bandIsReal[band] = true;
+			}
+
+			//The crown bands are only usable as a set, so a partial set is treated as none - a canopy
+			//height with no bulk density would otherwise be read as a crown fire that carries no fuel.
+			if (!HaveCrownFuel)
+			{
+				_bandIsReal[(int)Band.CanopyHeight] = false;
+				_bandIsReal[(int)Band.CanopyBaseHeight] = false;
+				_bandIsReal[(int)Band.CanopyBulkDensity] = false;
+				Header.CrownFuels = 20;
+			}
+
+			//Duff and coarse woody are not read from separate bands; nothing produces them as rasters.
+			Header.GroundFuels = 20;
+
+			SetHeaderRangesFromLandscape();
+			CantAllocLCP = false;
+
+			Engine.Message(null, Engine.LogType.Log,
+				$"Landscape assembled from separate rasters: {Header.numeast} x {Header.numnorth} cells of "
+				+ $"{RasterCellResolutionX:F1} m, elevation {Header.loelev} to {Header.hielev} m."
+				+ (HaveFuel ? string.Empty : " No fuel model band, so no fire can be spread on it."));
+		}
+
+		/// <summary>
+		/// Reads one band as shorts. When <paramref name="definesGrid"/> the raster's dimensions and
+		/// georeferencing are adopted; otherwise they must match what was adopted already.
+		/// </summary>
+		private short[] ReadBand(string filePath, bool definesGrid, out bool success)
+		{
+			success = false;
+
+			using (OSGeo.GDAL.Dataset tif = OSGeo.GDAL.Gdal.Open(filePath, OSGeo.GDAL.Access.GA_ReadOnly))
+			{
+				if (tif == null)
+				{
+					Engine.Message(null, Engine.LogType.InputError, "Could not open landscape raster: " + filePath);
+					return null;
+				}
+
+				double[] transform = new double[6];
+				tif.GetGeoTransform(transform);
+
+				if (definesGrid)
+				{
+					Header.numeast = tif.RasterXSize;
+					Header.numnorth = tif.RasterYSize;
+					Header.WestUtm = transform[0];
+					Header.EastUtm = transform[0] + transform[1] * tif.RasterXSize;
+					Header.NorthUtm = transform[3];
+					Header.SouthUtm = transform[3] + transform[5] * tif.RasterYSize; //negative cell size when north up
+					Header.XResol = transform[1];
+					Header.YResol = -transform[5];
+					RasterCellResolutionX = Header.XResol;
+					RasterCellResolutionY = Header.YResol;
+
+					SetDefaultHeaderUnits();
+				}
+				else if (tif.RasterXSize != Header.numeast || tif.RasterYSize != Header.numnorth)
+				{
+					//Refused rather than resampled: the bands describe the same ground cell for cell, and
+					//a mismatch means they do not. Aligning them is a GIS job with choices in it.
+					Engine.Message(null, Engine.LogType.InputError,
+						$"{System.IO.Path.GetFileName(filePath)} is {tif.RasterXSize} x {tif.RasterYSize} cells but the "
+						+ $"elevation is {Header.numeast} x {Header.numnorth}. Every band must be on the same grid; "
+						+ "this one is ignored.");
+					return null;
+				}
+
+				short[] data = new short[Header.numeast * Header.numnorth];
+				tif.GetRasterBand(1).ReadRaster(0, 0, Header.numeast, Header.numnorth, data,
+					Header.numeast, Header.numnorth, 0, 0);
+
+				success = true;
+				return data;
+			}
+		}
+
+		/// <summary>
+		/// Writes a north-down band into its slot in the interleaved array, which is the layout the .lcp
+		/// reader produces and every consumer already expects.
+		/// </summary>
+		private void WriteBandIntoLandscape(short[] data, int band)
+		{
+			for (int j = 0; j < Header.numnorth; ++j)
+			{
+				for (int i = 0; i < Header.numeast; ++i)
+				{
+					long index = band + i * NumVals + j * Header.numeast * NumVals;
+					landscape[index] = data[i + j * Header.numeast];
+				}
+			}
+		}
+
+		/// <summary>
+		/// Slope in degrees and aspect in degrees clockwise from north, by Horn's method: the same
+		/// third-order finite difference over the eight neighbours that gdaldem and ArcGIS use, so the
+		/// numbers agree with what a GIS would have written into the bands that are missing.
+		///
+		/// Aspect is the downslope direction, which is what a fire spread model wants. Flat cells have no
+		/// aspect at all and are given -1, the convention the rest of the landscape uses.
+		/// </summary>
+		private void DeriveSlopeAndAspect(float[] elevation, out short[] slope, out short[] aspect)
+		{
+			int w = Header.numeast;
+			int h = Header.numnorth;
+			slope = new short[w * h];
+			aspect = new short[w * h];
+
+			//Cell size in metres, per axis. The rows run north-down, so a positive dz/dy points south.
+			double cellX = RasterCellResolutionX > 0.0 ? RasterCellResolutionX : 1.0;
+			double cellY = RasterCellResolutionY > 0.0 ? RasterCellResolutionY : 1.0;
+
+			for (int y = 0; y < h; ++y)
+			{
+				for (int x = 0; x < w; ++x)
+				{
+					double centre = elevation[x + y * w];
+
+					//A cell with no elevation has no slope or aspect either. Marked as nodata rather than
+					//computed as flat, so a consumer can tell "no data here" from "level ground here".
+					if (IsNoElevation(centre))
+					{
+						slope[x + y * w] = -9999;
+						aspect[x + y * w] = -9999;
+						continue;
+					}
+
+					//Edges clamp to themselves, which flattens the outermost ring rather than inventing
+					//ground beyond the raster.
+					int xm = System.Math.Max(x - 1, 0), xp = System.Math.Min(x + 1, w - 1);
+					int ym = System.Math.Max(y - 1, 0), yp = System.Math.Min(y + 1, h - 1);
+
+					//A nodata neighbour stands in as the centre's own height, which is the same treatment
+					//the raster edge gets and reads as "no change in that direction". Using -9999 as if it
+					//were a height puts a 10 km cliff beside every gap: Mati's DEM has no data over the
+					//sea, and taking those values literally produced 90 degree slopes all along the coast
+					//and a mean slope three and a half degrees too steep across the whole raster.
+					double a = Neighbour(elevation, xm, ym, w, centre), b = Neighbour(elevation, x, ym, w, centre), c = Neighbour(elevation, xp, ym, w, centre);
+					double d = Neighbour(elevation, xm, y, w, centre), f = Neighbour(elevation, xp, y, w, centre);
+					double g = Neighbour(elevation, xm, yp, w, centre), hh = Neighbour(elevation, x, yp, w, centre), i = Neighbour(elevation, xp, yp, w, centre);
+
+					double dzdx = ((c + 2.0 * f + i) - (a + 2.0 * d + g)) / (8.0 * cellX);
+					double dzdy = ((g + 2.0 * hh + i) - (a + 2.0 * b + c)) / (8.0 * cellY);
+
+					double riseRun = System.Math.Sqrt(dzdx * dzdx + dzdy * dzdy);
+					slope[x + y * w] = (short)System.Math.Round(System.Math.Atan(riseRun) * 180.0 / System.Math.PI);
+
+					if (riseRun < 1e-9)
+					{
+						aspect[x + y * w] = -1; //flat
+						continue;
+					}
+
+					//dzdy is measured down the array, which is southward, so it already points the way a
+					//north-down raster does. Downslope is the direction the ground falls towards.
+					double degrees = System.Math.Atan2(dzdy, -dzdx) * 180.0 / System.Math.PI;
+					degrees = 90.0 - degrees;
+					if (degrees < 0.0) degrees += 360.0;
+					if (degrees >= 360.0) degrees -= 360.0;
+					aspect[x + y * w] = (short)System.Math.Round(degrees);
+				}
+			}
+		}
+
+		/// <summary>
+		/// Whether an elevation value is a height or a hole. -9999 is the convention the rest of the
+		/// landscape uses; the wider test catches the other sentinels DEMs are published with, all of
+		/// which are far outside the range of real ground.
+		/// </summary>
+		private static bool IsNoElevation(double value)
+		{
+			return value <= -1000.0 || value >= 30000.0;
+		}
+
+		private static double Neighbour(float[] elevation, int x, int y, int width, double fallback)
+		{
+			double value = elevation[x + y * width];
+			return IsNoElevation(value) ? fallback : value;
+		}
+
+		/// <summary>
+		/// Reads the elevation band as float, and adopts its grid and georeferencing as the landscape's.
+		/// </summary>
+		private float[] ReadElevation(string filePath, out bool success)
+		{
+			success = false;
+
+			using (OSGeo.GDAL.Dataset tif = OSGeo.GDAL.Gdal.Open(filePath, OSGeo.GDAL.Access.GA_ReadOnly))
+			{
+				if (tif == null)
+				{
+					Engine.Message(null, Engine.LogType.InputError, "Could not open the elevation raster: " + filePath);
+					return null;
+				}
+
+				double[] transform = new double[6];
+				tif.GetGeoTransform(transform);
+
+				Header.numeast = tif.RasterXSize;
+				Header.numnorth = tif.RasterYSize;
+				Header.WestUtm = transform[0];
+				Header.EastUtm = transform[0] + transform[1] * tif.RasterXSize;
+				Header.NorthUtm = transform[3];
+				Header.SouthUtm = transform[3] + transform[5] * tif.RasterYSize; //negative cell size when north up
+				Header.XResol = transform[1];
+				Header.YResol = -transform[5];
+				RasterCellResolutionX = Header.XResol;
+				RasterCellResolutionY = Header.YResol;
+
+				SetDefaultHeaderUnits();
+
+				float[] data = new float[Header.numeast * Header.numnorth];
+				tif.GetRasterBand(1).ReadRaster(0, 0, Header.numeast, Header.numnorth, data,
+					Header.numeast, Header.numnorth, 0, 0);
+
+				success = true;
+				return data;
+			}
+		}
+
+		/// <summary>
+		/// The unit and bookkeeping fields a .lcp header carries, for a landscape that did not come from
+		/// one. Metric throughout, which is what every raster used here is in.
+		/// </summary>
+		private void SetDefaultHeaderUnits()
+		{
+			//offset to preserve coordinate precision (legacy from 16-bit OS days), ignore
+			Header.loeast = 0;
+			Header.hieast = 0;
+			Header.lonorth = 0;
+			Header.hinorth = 0;
+
+			Header.GridUnits = 0; //0 = meters
+			Header.EUnits = 0;    //elevation in meters
+			Header.SUnits = 0;    //slope in degrees
+			Header.AUnits = 2;    //aspect in degrees clockwise from north
+			Header.FOptions = 0;
+			Header.CUnits = 1;
+			Header.HUnits = 1;
+			Header.BUnits = 1;
+			Header.PUnits = 1;
+			Header.DUnits = 1;
+			Header.WOptions = 0;
+
+			char[] filePaths = new char[256];
+			Header.ElevFile = filePaths;
+			Header.SlopeFile = filePaths;
+			Header.AspectFile = filePaths;
+			Header.FuelFile = filePaths;
+			Header.CoverFile = filePaths;
+			Header.HeightFile = filePaths;
+			Header.BaseFile = filePaths;
+			Header.DensityFile = filePaths;
+			Header.DuffFile = filePaths;
+			Header.WoodyFile = filePaths;
+			Header.Description = new char[512];
+		}
+
+		/// <summary>
+		/// Fills in the header's per-band ranges from the data, which is what the visualizers colour
+		/// against and what the fuel model check reads.
+		/// </summary>
+		private void SetHeaderRangesFromLandscape()
+		{
+			int[] lo = new int[8];
+			int[] hi = new int[8];
+			for (int band = 0; band < 8; ++band)
+			{
+				lo[band] = int.MaxValue;
+				hi[band] = int.MinValue;
+			}
+
+			int cells = Header.numeast * Header.numnorth;
+			for (int cell = 0; cell < cells; ++cell)
+			{
+				for (int band = 0; band < 8; ++band)
+				{
+					short v = landscape[cell * NumVals + band];
+					if (v == -9999)
+					{
+						continue;
+					}
+					if (v < lo[band]) lo[band] = v;
+					if (v > hi[band]) hi[band] = v;
+				}
+			}
+
+			//An all-nodata band leaves the sentinels in place, which would render as an inverted range.
+			for (int band = 0; band < 8; ++band)
+			{
+				if (lo[band] > hi[band])
+				{
+					lo[band] = 0;
+					hi[band] = 0;
+				}
+			}
+
+			Header.loelev = lo[0]; Header.hielev = hi[0];
+			Header.loslope = lo[1]; Header.hislope = hi[1];
+			Header.loaspect = lo[2]; Header.hiaspect = hi[2];
+			Header.lofuel = lo[3]; Header.hifuel = hi[3];
+			Header.locover = lo[4]; Header.hicover = hi[4];
+			Header.loheight = lo[5]; Header.hiheight = hi[5];
+			Header.lobase = lo[6]; Header.hibase = hi[6];
+			Header.lodensity = lo[7]; Header.hidensity = hi[7];
+			Header.loduff = 0; Header.hiduff = 0;
+			Header.lowoody = 0; Header.hiwoody = 0;
+
+			Header.numelev = System.Math.Max(0, (Header.hielev - Header.loelev) / 200);
+			for (int i = 0; i < Header.numelev && i < Header.elevs.Length; ++i)
+			{
+				Header.elevs[i] = Header.loelev + i * 200;
+			}
+			Header.numslope = 100;
+			Header.numaspect = 100;
+			Header.numfuel = 100;
+			Header.numcover = 100;
+			Header.numheight = 100;
+			Header.numbase = 100;
+			Header.numdensity = 100;
+			Header.numduff = 100;
+			Header.numwoody = 100;
+		}
 
 		private void ReadLCP(string path)
 		{
