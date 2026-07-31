@@ -40,7 +40,30 @@ namespace PREACT.Traffic
             try
             {
                 _sumoVehicles = new Dictionary<string, SUMOVehicle>();
-                string configFile = Path.Combine(_simulation.Engine.WorkingFolder, _simulation.Input.TrafficModule.SumoInput.ConfigurationFile);
+
+                //Resolved rather than combined. The scenario's ConfigurationFile is a free path, and the one
+                //thing that most often ends up in it is the OSM extract the network was built from - at which
+                //point SUMO fails with "could not load configuration", a message about a file it was never
+                //given the right kind of. The locator checks the path is a .sumocfg that exists, and finds
+                //what the build step produced when it is not.
+                string configFile = Utility.SumoConfigurationLocator.Resolve(
+                    _simulation.Engine.WorkingFolder,
+                    _simulation.Input.TrafficModule.SumoInput.ConfigurationFile,
+                    true, out bool corrected, out string explanation);
+
+                if (configFile == null)
+                {
+                    success = false;
+                    Engine.Message(_simulation, Engine.LogType.SimulationError, "Could not start SUMO. " + explanation);
+                    return;
+                }
+
+                if (corrected)
+                {
+                    //A warning, not a silent substitution: the run proceeds, but the scenario is still wrong
+                    //and will be wrong again next time it is opened.
+                    Engine.Message(_simulation, Engine.LogType.Warning, explanation);
+                }
                 //see here for options https://sumo.dlr.de/docs/sumo.html, setting input file, start and end time
                 LIBSUMO.Simulation.start(new LIBSUMO.StringVector(new String[] { "sumo", "-c", configFile, "-b", "0.0", "-e", _simulation.Time.SimulationEndTime.ToString() }));
 

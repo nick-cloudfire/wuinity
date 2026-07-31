@@ -18,6 +18,9 @@ namespace WUInity.Visualization
         private GameObject _lcpDomainPlane;
         MeshRenderer _lcpDomainMeshRenderer;
         LandscapeData _lcpData;
+        //The rectangle the plane currently covers, so a plane made for one grid is rebuilt rather than
+        //reused when a texture on a different grid arrives.
+        Vector2d _planeSize, _planeOffset;
         //textures
         Texture2D _fuelModelsTexture, _elevationTexture, _slopeTexture, _aspectTexture, _triggerBufferTexture;
           
@@ -32,20 +35,52 @@ namespace WUInity.Visualization
 
         public void SetLCPPlaneTexture(Texture2D tex)
         {
-            if (_lcpData == null)
+            if (tex == null)
             {
                 return;
             }
 
-            bool sameSize = _lcpData.GetCellCountX() == tex.width && _lcpData.GetCellCountY() == tex.height;
-            if(!sameSize)
+            //No plane at all is the one thing that cannot be worked around, and it used to be reached by
+            //returning silently above whenever no LCP had been loaded - so a scenario with only a DEM
+            //painted correctly and showed nothing, with nothing said about why.
+            if (_lcpDomainMeshRenderer == null)
             {
-                Engine.Message(null, Engine.LogType.Warning, "Texture provided does not match the given LCP data size.");
+                Engine.Message(null, Engine.LogType.Warning,
+                    "There is no wildfire domain plane to show this on. Call EnsurePlane with the grid the "
+                    + "texture is on first.");
                 return;
+            }
+
+            //Checked against the LCP only when there is one. The painter's textures are on the grid it
+            //resolved, which is the LCP's when a landscape is loaded and the DEM's or the imported arrival
+            //times' when it is not, and in those cases there is no LCP size to compare against.
+            if (_lcpData != null)
+            {
+                bool sameSize = _lcpData.GetCellCountX() == tex.width && _lcpData.GetCellCountY() == tex.height;
+                if (!sameSize)
+                {
+                    Engine.Message(null, Engine.LogType.Warning, "Texture provided does not match the given LCP data size.");
+                    return;
+                }
             }
 
             _lcpDomainMeshRenderer.material.mainTexture = tex;
-        }          
+        }
+
+        /// <summary>
+        /// Makes sure there is a plane of the given extent, at the given simulation-space corner, to show a
+        /// texture on. Used for painted textures, whose grid comes from the painter rather than from an
+        /// LCP - the plane is otherwise only ever created when a landscape is loaded and displayed.
+        /// </summary>
+        public void EnsurePlane(Vector2d size, Vector2d originOffset)
+        {
+            if (_lcpDomainMeshRenderer == null || DomainVisualizerUnity.NeedNewPlane(_planeSize, size, _planeOffset, originOffset))
+            {
+                _lcpDomainMeshRenderer = DomainVisualizerUnity.CreateDomainPlane(_lcpDomainPlane, _lcpDomainMeshRenderer, size, originOffset);
+                _planeSize = size;
+                _planeOffset = originOffset;
+            }
+        }
 
         public override void SetLCPViewMode(LcpViewMode lcpViewMode)
         {
@@ -80,6 +115,10 @@ namespace WUInity.Visualization
             if (_lcpData == null || DomainVisualizerUnity.NeedNewPlane(_lcpData.GetSize(), newLCPData.GetSize(), _lcpData.GetLowerLeftUTM(), newLCPData.GetLowerLeftUTM()))
             {
                 _lcpDomainMeshRenderer = DomainVisualizerUnity.CreateDomainPlane(_lcpDomainPlane, _lcpDomainMeshRenderer, newLCPData.GetSize(), newLCPData.OriginOffset);
+                //Recorded so EnsurePlane below can tell whether the plane already covers the grid a
+                //painted texture is on, instead of rebuilding it on every paint.
+                _planeSize = newLCPData.GetSize();
+                _planeOffset = newLCPData.OriginOffset;
             }
         }
 

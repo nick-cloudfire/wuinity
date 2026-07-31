@@ -563,6 +563,18 @@ namespace PREACT.Evacuation
                         Engine.Message(simulation, Engine.LogType.Warning, "Can't run kPERIL without fire module (user set not to use BEHAVE).");
                         return;
                     }
+                    //Deriving the rate of spread from BEHAVE instead of from the fire module does not remove
+                    //the need for the fire module: everything below is measured on its grid, starting with
+                    //the cell counts on the next few lines. Without this the run reached those and threw a
+                    //NullReferenceException, which says nothing about a module not being enabled.
+                    else if (simulation.Hazards.Wildfire == null)
+                    {
+                        Engine.Message(simulation, Engine.LogType.Warning,
+                            "Can't compute a trigger boundary without a wildfire module: it is back-propagated "
+                            + "from the fire's arrival times, on the fire's own grid. Enable the wildfire module, "
+                            + "or turn the trigger boundary off.");
+                        return;
+                    }
                     else
                     {
                         //WRSET = the required safe egress time this run produced: the last-arrival

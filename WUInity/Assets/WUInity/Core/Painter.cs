@@ -41,6 +41,8 @@ namespace WUInity
         int[] _evacGroupCells;
         string[] _evacGroupNames = new string[0];
         Color[] _evacGroupColors = new Color[0];
+        //Kept separately from the paint texture, since it is what stays on the map after painting stops.
+        Texture2D _evacGroupOverlayTex;
 
         //general fire stuff
         Vector2d fireDataRealSize;
@@ -441,6 +443,58 @@ namespace WUInity
             return written.ToArray();
         }
 
+        /// <summary>
+        /// A view of the painted groups to leave on the map once painting has stopped: each group in its own
+        /// colour at the given opacity, and every unowned cell fully transparent so the map shows through.
+        ///
+        /// Built from group ownership rather than handed out as the paint texture, which is a different
+        /// thing: that one marks unpainted cells with a visible "nothing here" grey, which is right while
+        /// painting - it shows the grid being painted on - and wrong for something meant to sit quietly over
+        /// the map afterwards. Returns null when nothing has been painted.
+        /// </summary>
+        public Texture2D BuildEvacGroupOverlayTexture(float opacity)
+        {
+            if (_evacGroupCells == null || !_haveFireGrid || fireDataCellCount.x <= 0)
+            {
+                return null;
+            }
+
+            int xCount = fireDataCellCount.x;
+            int yCount = fireDataCellCount.y;
+            if (_evacGroupCells.Length != xCount * yCount)
+            {
+                return null;
+            }
+
+            if (Visualization.DomainVisualizerUnity.NeedNewTexture(fireDataCellCount, _evacGroupOverlayTex))
+            {
+                _evacGroupOverlayTex = new Texture2D(xCount, yCount);
+                _evacGroupOverlayTex.filterMode = FilterMode.Point;
+            }
+
+            Color clear = new Color(0f, 0f, 0f, 0f);
+            bool anyPainted = false;
+
+            for (int y = 0; y < yCount; ++y)
+            {
+                for (int x = 0; x < xCount; ++x)
+                {
+                    int owner = _evacGroupCells[x + y * xCount];
+                    Color c = clear;
+                    if (owner >= 0 && owner < _evacGroupColors.Length)
+                    {
+                        c = _evacGroupColors[owner];
+                        c.a = opacity;
+                        anyPainted = true;
+                    }
+                    _evacGroupOverlayTex.SetPixel(x, y, c);
+                }
+            }
+            _evacGroupOverlayTex.Apply();
+
+            return anyPainted ? _evacGroupOverlayTex : null;
+        }
+
         void SetPainterEvacGroup(int groupIndex)
         {
             if (!ResolveFireGrid())
@@ -495,6 +549,28 @@ namespace WUInity
             SetInitialIgnitionAreaColor(true);
             _brushSize = 3;
             _offset = FireGridOffset();
+        }
+
+        /// <summary>
+        /// The grid every painted texture is built on, in the frame the scene draws in: extent in metres
+        /// and the lower-left corner in simulation coordinates.
+        ///
+        /// Needed by whatever is going to show a painted texture, because the plane it goes on has to be
+        /// the same rectangle the texture describes. Resolves the grid if it has not been resolved yet, so
+        /// asking for it is enough - the caller does not have to have started painting first.
+        /// </summary>
+        public bool TryGetPaintGrid(out Vector2d realSize, out Vector2d originOffset)
+        {
+            if (!_haveFireGrid && !ResolveFireGrid())
+            {
+                realSize = Vector2d.zero;
+                originOffset = Vector2d.zero;
+                return false;
+            }
+
+            realSize = fireDataRealSize;
+            originOffset = _fireGridOrigin;
+            return true;
         }
 
         /// <summary>Where the fire grid sits in the scene, which is its simulation-space corner.</summary>
@@ -694,7 +770,14 @@ namespace WUInity
                     //right click
                     else
                     {
-                        Color colorToOverwrite = activeTexture.GetPixel(x, y);
+                        //The colour to spread over is taken from the colour array, not from the texture.
+                        //A Texture2D stores 8 bits per channel, so a colour read back out of it is the
+                        //quantised version of the one that was written - 0.5 comes back as 0.50196 - and
+                        //IncludePixel compares it against the array's exact floats with
+                        //Mathf.Approximately, whose tolerance is far tighter than one 8-bit step. Every
+                        //neighbour therefore failed the "is this the colour we are overwriting" test and
+                        //the fill stopped on the cell that was clicked.
+                        Color colorToOverwrite = GetArrayPixel(x, y, activeColorArray);
                         FloodFill(new Vector2int(x, y), currentColor, colorToOverwrite, activeColorArray);
                         activeTexture.SetPixels(activeColorArray);
                         activeTexture.Apply();
@@ -744,7 +827,9 @@ namespace WUInity
 
         void SetArrayPixel(int x, int y, Color c, Color[] colorArray)
         {
-            if (x < 0 || x > activeCellCount.x || y < 0 || y > activeCellCount.y)
+            //Bounds are exclusive: a cell at activeCellCount.x is not the last column, it is the first
+            //column of the row above, and writing it there is what the index below would have done.
+            if (x < 0 || x >= activeCellCount.x || y < 0 || y >= activeCellCount.y)
             {
                 return;
             }
@@ -774,10 +859,20 @@ namespace WUInity
         {   
             System.Collections.Generic.Stack<Vector2int> queue = new System.Collections.Generic.Stack<Vector2int>();
             queue.Push(startPixel);
+            //Counted down on cells actually filled, not on pops. A cell can be pushed by more than one of
+            //its neighbours before it is reached, so popping is not the same as filling, and budgeting by
+            //pops cut large fills off partway.
             int maxPixels = colorArray.Length;
             while (queue.Count > 0)
             {
                 Vector2int pixel = queue.Pop();
+
+                //Already done, having been queued twice.
+                if (SameColor(GetArrayPixel(pixel.x, pixel.y, colorArray), wantedColor))
+                {
+                    continue;
+                }
+
                 SetArrayPixel(pixel.x, pixel.y, wantedColor, colorArray);
 
                 Vector2int right = pixel + Vector2int.right;
@@ -824,21 +919,32 @@ namespace WUInity
 
             Color currentColor = GetArrayPixel(pixelIndex.x, pixelIndex.y, colorArray);
 
-            //already the same color in pixel
-            if (UnityEngine.Mathf.Approximately(currentColor.r, wantedColor.r) && UnityEngine.Mathf.Approximately(currentColor.g, wantedColor.g)
-                && UnityEngine.Mathf.Approximately(currentColor.b, wantedColor.b))
+            //already the same color in pixel - and the test the fill terminates on, since the cell it
+            //started from was painted before its neighbours were queued
+            if (SameColor(currentColor, wantedColor))
             {
                 return false;
             }
 
             //not color we want to overwrite
-            if (!UnityEngine.Mathf.Approximately(currentColor.r, colorToOverwrite.r) && !UnityEngine.Mathf.Approximately(currentColor.g, colorToOverwrite.g)
-                && !UnityEngine.Mathf.Approximately(currentColor.b, colorToOverwrite.b))
-            {
-                return false;
-            }
+            return SameColor(currentColor, colorToOverwrite);
+        }
 
-            return true;
+        /// <summary>
+        /// Whether two painted colours are the same one, to within an 8-bit channel step.
+        ///
+        /// Not Mathf.Approximately per channel: these colours make round trips through a Texture2D, which
+        /// holds 8 bits per channel, so the same colour differs by up to 1/255 depending on which side it
+        /// was read from. Alpha counts as well as RGB - erasing differs from an unpainted cell only by its
+        /// alpha in some modes.
+        /// </summary>
+        private static bool SameColor(Color a, Color b)
+        {
+            const float step = 1.5f / 255f;
+            return UnityEngine.Mathf.Abs(a.r - b.r) < step
+                   && UnityEngine.Mathf.Abs(a.g - b.g) < step
+                   && UnityEngine.Mathf.Abs(a.b - b.b) < step
+                   && UnityEngine.Mathf.Abs(a.a - b.a) < step;
         }
     }
 }

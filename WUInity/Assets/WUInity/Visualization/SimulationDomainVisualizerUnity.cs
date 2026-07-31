@@ -155,17 +155,22 @@ namespace WUInity.Visualization
             return _populationMapMaskTexture;
         }
 
+        //The simulation domain plane, which is what this class's other members are about. These three used
+        //to act on the GPW plane instead - a separate plane, in a separate frame, with its own
+        //SetGPWVisibility below - so showing the population density switched something else on and left
+        //the plane holding the texture untouched, while hiding "the domain data" before painting hid
+        //nothing. IsDataPlaneActive already reported the simulation plane, so the pair disagreed.
         public override void SetVisibility(bool activeSelf)
         {
-            _gpwDomainPlane.SetActive(activeSelf);
+            _simulationDomainPlane.SetActive(activeSelf);
         }
 
         public override bool ToggleVisibility()
         {
-            _gpwDomainPlane.SetActive(!_gpwDomainPlane.activeSelf);
+            _simulationDomainPlane.SetActive(!_simulationDomainPlane.activeSelf);
 
-            return _gpwDomainPlane.activeSelf;
-        } 
+            return _simulationDomainPlane.activeSelf;
+        }
 
 
         //GPW below here

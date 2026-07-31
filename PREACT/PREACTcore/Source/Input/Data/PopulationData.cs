@@ -6,6 +6,7 @@
 //You should have received a copy of the GNU General Public License along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using PREACT.Population;
 using PREACT.Input;
@@ -79,11 +80,13 @@ namespace PREACT.Input
                     for (int i = 1; i < lines.Count; ++i)
                     {
                         string[] line = lines[i].Split(",");
-                        double lat = double.Parse(line[0]);
-                        double lon = double.Parse(line[1]);
-                        double carLat = double.Parse(line[2]);
-                        double carLon = double.Parse(line[3]);
-                        int people = int.Parse(line[4]);                        
+                        //Invariant, matching how the file is written. Parsing with the current culture reads
+                        //"38.05" as 3805 wherever the decimal separator is a comma.
+                        double lat = double.Parse(line[0], CultureInfo.InvariantCulture);
+                        double lon = double.Parse(line[1], CultureInfo.InvariantCulture);
+                        double carLat = double.Parse(line[2], CultureInfo.InvariantCulture);
+                        double carLon = double.Parse(line[3], CultureInfo.InvariantCulture);
+                        int people = int.Parse(line[4], CultureInfo.InvariantCulture);
                         householdData[i - 1] = new HouseholdData(new Vector2d(lat, lon), new Vector2d(carLat, carLon), people);
                         totalPopulation += people;
                     }

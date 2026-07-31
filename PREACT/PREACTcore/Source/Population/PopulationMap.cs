@@ -6,6 +6,7 @@
 //You should have received a copy of the GNU General Public License along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using PREACT.Input;
 using PREACT.Math;
@@ -127,6 +128,91 @@ namespace PREACT.Population
             _correctedForRoadAccess = false;
             //_filePath = simulationInput.Name;            
             Engine.Message(null, Engine.LogType.Log, "Created population map from local GPW data.");
+        }
+
+        /// <summary>
+        /// Builds a density map by binning the households a population CSV holds into cells.
+        ///
+        /// This is the only way to see the population a generated scenario actually has. A scenario's
+        /// PopulationFile is a household list - one row per household, with where it lives, where it reaches
+        /// the road network and how many people are in it - which is what the pedestrian module reads and
+        /// what the population step writes. The nine-line grid format LoadFromFile expects is a different,
+        /// older thing, so asking that reader for a household CSV reports the file as invalid and shows
+        /// nothing, for a scenario whose population is perfectly good.
+        ///
+        /// Binned by where households live rather than by their road access point: the question a density
+        /// map answers is where the people are, not where their cars join the network.
+        /// </summary>
+        public void CreateFromHouseholds(PopulationData.HouseholdData[] households, SimulationData simulationData,
+            Vector2d lowerLeftLatLon, Vector2d domainSize, float cellSize, out bool success)
+        {
+            success = false;
+
+            if (households == null || households.Length == 0)
+            {
+                Engine.Message(null, Engine.LogType.Warning, "No households to build a population map from.");
+                return;
+            }
+
+            _lowerLeftLatLong = lowerLeftLatLon;
+            _size = domainSize;
+            _cellSize = cellSize;
+            _cells = new Vector2int((int)(0.5f + _size.x / cellSize), (int)(0.5f + _size.y / cellSize));
+            _size = new Vector2d(cellSize * _cells.x, cellSize * _cells.y);
+            _cellPopulations = new int[_cells.x * _cells.y];
+            _cellRoadAccessLatLon = new Vector2d[_cells.x * _cells.y];
+            _mask = new bool[_cells.x * _cells.y];
+            _cellArea = cellSize * cellSize / 1000000d; // people/square km
+            _totalPopulation = 0;
+            _totalActiveCells = 0;
+
+            int outside = 0;
+            foreach (PopulationData.HouseholdData household in households)
+            {
+                //Through the simulation's own projection, since that is the frame the cells are laid out in
+                //and the frame the plane showing them is placed in.
+                Vector2d pos = simulationData.GetSimulationPosition(household.originLatLon);
+                int x = (int)(pos.x / cellSize);
+                int y = (int)(pos.y / cellSize);
+
+                //A household outside the domain is counted rather than clamped. Clamping would pile
+                //everything beyond the edge onto the border cells and read as a dense suburb there.
+                if (x < 0 || x >= _cells.x || y < 0 || y >= _cells.y)
+                {
+                    outside += household.peopleCount;
+                    continue;
+                }
+
+                int index = x + y * _cells.x;
+                if (_cellPopulations[index] == 0)
+                {
+                    ++_totalActiveCells;
+                    _mask[index] = true;
+                }
+                _cellPopulations[index] += household.peopleCount;
+                _totalPopulation += household.peopleCount;
+            }
+
+            if (_totalPopulation == 0)
+            {
+                Engine.Message(null, Engine.LogType.Warning,
+                    "Every household in the population file lies outside the simulation domain, so there is no "
+                    + "density to show. The domain and the population were probably built for different areas.");
+                return;
+            }
+
+            if (outside > 0)
+            {
+                Engine.Message(null, Engine.LogType.Warning,
+                    $"{outside} people live outside the simulation domain and are not shown.");
+            }
+
+            _haveData = true;
+            _correctedForRoadAccess = false;
+            success = true;
+            Engine.Message(null, Engine.LogType.Log,
+                $"Population map from {households.Length} households: {_totalPopulation} people in "
+                + $"{_totalActiveCells} of {_cells.x} x {_cells.y} cells of {cellSize:F0} m.");
         }
 
         public void UpdatePopulationMapBasedOnRoadAccess(SimulationData simulationData, Itinero.RouterDb routerDb)
@@ -474,8 +560,16 @@ namespace PREACT.Population
 
             OSGeo.OSR.SpatialReference wgs84 = new OSGeo.OSR.SpatialReference("");
             wgs84.SetWellKnownGeogCS("WGS84");
+            //Longitude, latitude order, stated rather than inherited. GDAL 3 honours the authority axis
+            //order by default, which for a geographic CRS is latitude first, and GDAL 2 did not - so which
+            //of the two numbers is the latitude depended on which GDAL was loaded. Every other transform in
+            //this codebase pins the order the same way.
+            wgs84.SetAxisMappingStrategy(OSGeo.OSR.AxisMappingStrategy.OAMS_TRADITIONAL_GIS_ORDER);
+            utm.SetAxisMappingStrategy(OSGeo.OSR.AxisMappingStrategy.OAMS_TRADITIONAL_GIS_ORDER);
             OSGeo.OSR.CoordinateTransformation utmToWGS84 = new OSGeo.OSR.CoordinateTransformation(utm, wgs84);
-            double[] inout = new double[2];
+            //Three long: the binding marshals x, y and z whatever the array's own length, so a two-element
+            //one is read past its end.
+            double[] inout = new double[3];
 
             Itinero.Router router = new Itinero.Router(routerDb);
 
@@ -488,17 +582,33 @@ namespace PREACT.Population
                 for (int i = 0; i < populationNumbers.Length; i++)
                 {
                     int rasterPopCount = (int)(populationNumbers[i] + 0.5f);
-                    if (rasterPopCount > 1)
+                    //Every cell holding anybody, which includes the cell holding one person. The threshold
+                    //used to be "more than one", which discards a person per sparse cell - and a WorldPop
+                    //pixel is 100 m, so most of a rural domain is such cells.
+                    if (rasterPopCount > 0)
                     {
                         totalPeople += rasterPopCount;
 
                         int yIndex = i / xDim;
                         int xIndex = i - yIndex * xDim;
-                        Vector2d rasterCenter = new Vector2d((xIndex + 0.5f) * xSize + westUtm, (yIndex + 0.5) * ySize + southUtm);
+
+                        //Row 0 is the NORTH edge. A GDAL raster is stored top row first, and its geotransform
+                        //describes exactly that: transform[3] is the north edge and transform[5] is negative.
+                        //Measuring row 0 up from the south edge instead mirrors the whole raster about the
+                        //middle latitude, which does not fail, does not look wrong in any total, and puts the
+                        //people from a town at the bottom of the domain onto whatever is at the top of it -
+                        //empty urban cells and a densely populated mountainside.
+                        Vector2d rasterCenter = new Vector2d(
+                            westUtm + (xIndex + 0.5) * xSize,
+                            northUtm - (yIndex + 0.5) * ySize);
+
                         inout[0] = rasterCenter.x;
                         inout[1] = rasterCenter.y;
+                        inout[2] = 0.0;
                         utmToWGS84.TransformPoint(inout);
-                        Vector2d latLon =  new Vector2d(inout[0], inout[1]);
+                        //(easting, northing) came back as (longitude, latitude); a Vector2d holding a
+                        //geographic position here is (latitude, longitude).
+                        Vector2d latLon = new Vector2d(inout[1], inout[0]);
 
                         Itinero.RouterPoint latLonOnNetwork = RoutingData.GetValidRouterPoint(router, latLon, Itinero.Osm.Vehicles.Vehicle.Car.Fastest(), (float)xSize);
                         if (latLonOnNetwork != null)
@@ -525,9 +635,16 @@ namespace PREACT.Population
                                 householdStartPos.y += ySize * Random.Range(-0.5f, 0.5f);
                                 inout[0] = householdStartPos.x;
                                 inout[1] = householdStartPos.y;
+                                inout[2] = 0.0;
                                 utmToWGS84.TransformPoint(inout);
 
-                                sW.WriteLine(inout[0] + "," + inout[1] + "," + latLonOnNetwork.Latitude + "," + latLonOnNetwork.Longitude + "," + householdCounts[j]);
+                                //Latitude then longitude, matching the header and the reader, from the
+                                //(longitude, latitude) the transform returns.
+                                sW.WriteLine(inout[1].ToString(CultureInfo.InvariantCulture) + ","
+                                    + inout[0].ToString(CultureInfo.InvariantCulture) + ","
+                                    + latLonOnNetwork.Latitude.ToString(CultureInfo.InvariantCulture) + ","
+                                    + latLonOnNetwork.Longitude.ToString(CultureInfo.InvariantCulture) + ","
+                                    + householdCounts[j]);
                             }
                         }                        
                     }
@@ -627,7 +744,14 @@ namespace PREACT.Population
                             double householdLat = origin.x + jitterDeg.y;
                             double householdLon = origin.y + jitterDeg.x;
 
-                            sW.WriteLine(householdLat + "," + householdLon + "," + latLonOnNetwork.Latitude + "," + latLonOnNetwork.Longitude + "," + householdCounts[j]);
+                            //Invariant, like the reader: on a machine whose decimal separator is a comma,
+                            //writing with the current culture puts "38,05" into a comma-separated file, and
+                            //every row after the first field is then read as something else.
+                            sW.WriteLine(householdLat.ToString(CultureInfo.InvariantCulture) + ","
+                                + householdLon.ToString(CultureInfo.InvariantCulture) + ","
+                                + latLonOnNetwork.Latitude.ToString(CultureInfo.InvariantCulture) + ","
+                                + latLonOnNetwork.Longitude.ToString(CultureInfo.InvariantCulture) + ","
+                                + householdCounts[j]);
                         }
                     }
                 }

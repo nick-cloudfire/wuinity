@@ -42,7 +42,12 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             if (ImGui.BeginTabItem("Evacuation modules"))
             {
+                //Whether each module runs, which the combo underneath does not decide: the combo says which
+                //module, and the engine creates one only if Enabled is set. These flags could previously
+                //only be set when the scenario was created.
                 ImGui.SeparatorText("Pedestrian");
+                ImGui.Checkbox("Simulate pedestrians (households leaving their homes)", ref pInput.Enabled);
+                ImGui.BeginDisabled(!pInput.Enabled);
                 _pedestrianModuleIndex = (int)pInput.Module;
                 ImGui.Combo(nameof(PedestrianModuleInput.PedestrianModules), ref _pedestrianModuleIndex, PedestrianModulesStrings, PedestrianModulesStrings.Length);
                 pInput.Module = (PedestrianModuleInput.PedestrianModules)_pedestrianModuleIndex;
@@ -50,8 +55,17 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 {
                     DrawMacroHouseholdSimSettings(pInput.MacroHouseholdSimInput);
                 }
+                ImGui.EndDisabled();
+                if (!pInput.Enabled)
+                {
+                    //Said plainly, because this is the flag that decides whether the population file is read
+                    //at all - PopulationData.LoadAll only loads households when the pedestrian module is on.
+                    ImGui.TextDisabled("With this off, the population file is not read and nobody evacuates.");
+                }
 
                 ImGui.SeparatorText("Traffic");
+                ImGui.Checkbox("Simulate traffic (vehicles on the road network)", ref tInput.Enabled);
+                ImGui.BeginDisabled(!tInput.Enabled);
                 _trafficModuleIndex = (int)tInput.Module;
                 ImGui.Combo(nameof(TrafficModuleInput.TrafficModules), ref _trafficModuleIndex, TrafficModulesStrings, TrafficModulesStrings.Length);
                 tInput.Module = (TrafficModuleInput.TrafficModules)_trafficModuleIndex;
@@ -59,6 +73,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 {
                     DrawSumoSettings(tInput.SumoInput);
                 }
+                ImGui.EndDisabled();
 
                 ImGui.EndTabItem();
             }
@@ -125,6 +140,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 if (removeDestination != null)
                 {
                     eInput.EvacuationDestinationInputs.Remove(removeDestination);
+                    //Or its marker stays on the map, marking a destination the scenario no longer has.
+                    PreactGUI.WUInity.RefreshDestinationMarkers();
                 }
 
                 ImGui.EndTabItem();
@@ -234,9 +251,41 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             if (ImGui.Button("Select SUMO configuration file"))
             {
-                FileBrowser.OpenSetFilePath(path => input.ConfigurationFile = path, "Select SUMO configuration file", true);
+                FileBrowser.OpenSetFilePath(path => SetSumoConfiguration(input, path), "Select SUMO configuration file (.sumocfg)", true);
             }
             ImGui.InputText(nameof(input.ConfigurationFile), ref input.ConfigurationFile, 256);
+
+            //Checked as it stands, not only as it is picked: the field is editable text and scenarios exist
+            //that already hold the wrong file - which is how a run fails with "could not load configuration".
+            string root = ScenarioEditorWindow.HasInput ? ScenarioEditorWindow.Input.RootFolder : string.Empty;
+            bool usable = PREACT.Utility.SumoConfigurationLocator.IsConfiguration(input.ConfigurationFile)
+                          && System.IO.File.Exists(System.IO.Path.Combine(root, input.ConfigurationFile ?? string.Empty));
+
+            if (!usable)
+            {
+                ImGui.TextColored(new Vector4(0.9f, 0.7f, 0.2f, 1f),
+                    "SUMO cannot start on this. It has to be the .sumocfg netconvert wrote,");
+                ImGui.TextColored(new Vector4(0.9f, 0.7f, 0.2f, 1f),
+                    "usually sumo/osm.sumocfg - not the OSM extract it was built from.");
+
+                string found = PREACT.Utility.SumoConfigurationLocator.FindInScenario(root, true);
+                if (found != null)
+                {
+                    string relative = found.StartsWith(root, System.StringComparison.OrdinalIgnoreCase)
+                        ? found.Substring(root.Length).TrimStart('\\', '/')
+                        : found;
+
+                    if (ImGui.Button("Use " + relative))
+                    {
+                        //Relative, like everything else the scenario generates, so the folder stays portable.
+                        input.ConfigurationFile = relative;
+                    }
+                }
+                else
+                {
+                    ImGui.TextDisabled("No .sumocfg in the scenario folder either - build the SUMO network first.");
+                }
+            }
 
             //Stored as a double, which ImGui has no two-way binding for here, so it goes through a
             //float and is only written back when actually changed.
@@ -248,6 +297,34 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             ImGui.InputFloat(nameof(input.SmokeAlpha), ref input.SmokeAlpha);
             ImGui.InputFloat(nameof(input.SmokeBeta), ref input.SmokeBeta);
+        }
+
+        /// <summary>
+        /// Whether a path is the kind of file SUMO can be started on. Empty counts as fine: a scenario
+        /// without vehicle evacuation has nothing to complain about. Defers to the locator the engine uses,
+        /// so the pickers accept exactly what a run will accept.
+        /// </summary>
+        public static bool LooksLikeSumoConfiguration(string path)
+        {
+            return string.IsNullOrWhiteSpace(path) || PREACT.Utility.SumoConfigurationLocator.IsSumoFile(path);
+        }
+
+        /// <summary>
+        /// Takes a picked path, saying so when it is not a SUMO configuration rather than storing it and
+        /// leaving the failure for the first run.
+        /// </summary>
+        private static void SetSumoConfiguration(SUMOInput input, string path)
+        {
+            if (!LooksLikeSumoConfiguration(path))
+            {
+                Engine.Message(null, Engine.LogType.Warning,
+                    System.IO.Path.GetFileName(path) + " is not a SUMO configuration. SUMO needs the .sumocfg "
+                    + "netconvert wrote, or a .net.xml. An OSM extract is what the network is built from, not the "
+                    + "network itself.");
+                return;
+            }
+
+            input.ConfigurationFile = path;
         }
     }
 }

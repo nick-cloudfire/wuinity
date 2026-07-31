@@ -92,6 +92,11 @@ namespace WUInity
         private EvacuationRenderer _evacuationRenderer;
         private SimulationDomainVisualizerUnity _simulationDomainVisualizer;
         private FireDomainVisualizerUnity _fireDomainVisualizer;
+        private RoadNetworkVisualizerUnity _roadNetworkVisualizer;
+        //Read once and kept: parsing a town's net.xml takes a moment, and both the drawing and the
+        //destination snapping want the same lanes. Dropped when the scenario changes.
+        private PREACT.Utility.SumoNetworkGeometry _roadNetwork;
+        private bool _roadNetworkBuilt;
 
         public SimulationDomainVisualizerUnity SimulationDomainVisualizer { get => _simulationDomainVisualizer; }
         public FireDomainVisualizerUnity FireDomainVisualizer { get => _fireDomainVisualizer; }
@@ -178,7 +183,8 @@ namespace WUInity
             _godCamera.SetManager(this);
 
             _simulationDomainVisualizer = new SimulationDomainVisualizerUnity(transform);
-            _fireDomainVisualizer = new FireDomainVisualizerUnity(transform);            
+            _fireDomainVisualizer = new FireDomainVisualizerUnity(transform);
+            _roadNetworkVisualizer = new RoadNetworkVisualizerUnity(transform);
         }
 
         /// <summary>
@@ -221,12 +227,30 @@ namespace WUInity
 
         private void Start()
         {
+            //The scenario from last time, before any example. Opening a session on the case that was
+            //being worked on is nearly always what is wanted, and the alternative was reopening it by
+            //hand every run.
+            if (RecentScenario.Have)
+            {
+                string recent = RecentScenario.Path;
+                //The load is accepted even when incomplete, and _input is set by UpdateInput during it,
+                //so that - not the success flag - is what says a scenario is now open.
+                _engine.LoadInputFromFile(recent, out bool _);
+                if (_input != null)
+                {
+                    ScenarioChecklistWindow.ShowFor(Path.GetFileName(recent));
+                }
+                Engine.Message(null, Engine.LogType.Log, "Reopened " + recent
+                    + ". Use File > Load to open another; it becomes the one reopened next time.");
+                return;
+            }
+
             if (AutoLoadExample && DeveloperMode)
             {
                 bool success = false;
-                string file = Path.Combine(Directory.GetParent(Application.dataPath).ToString(), "..\\Examples\\Development\\Development.wui");                
+                string file = Path.Combine(Directory.GetParent(Application.dataPath).ToString(), "..\\Examples\\Development\\Development.wui");
                 if (File.Exists(file))
-                {                    
+                {
                     _engine.LoadInputFromFile(file, out success);
 
                 }
@@ -670,19 +694,46 @@ namespace WUInity
             SetSootRendering(false);
         }
 
+        /// <summary>
+        /// Leaves the painted evacuation groups on the map, dimmed, with the brush switched off.
+        ///
+        /// Wanted after painting stops: the areas are the point of the exercise, and having them vanish the
+        /// moment the brush is put down means checking them against roads, the fire, or each other requires
+        /// picking the brush back up. Dimmed rather than at painting opacity so what is underneath stays
+        /// readable.
+        /// </summary>
+        public bool ShowEvacGroupOverlay(float opacity = 0.3f)
+        {
+            Texture2D overlay = Painter.BuildEvacGroupOverlayTexture(opacity);
+            if (overlay == null)
+            {
+                return false;
+            }
+
+            if (!Painter.TryGetPaintGrid(out PREACT.Math.Vector2d gridSize, out PREACT.Math.Vector2d gridOrigin))
+            {
+                return false;
+            }
+
+            _fireDomainVisualizer.EnsurePlane(gridSize, gridOrigin);
+            _fireDomainVisualizer.SetLCPPlaneTexture(overlay);
+            _fireDomainVisualizer.SetVisibility(true);
+            return true;
+        }
+
+        public void HideEvacGroupOverlay()
+        {
+            _fireDomainVisualizer.SetVisibility(false);
+        }
+
         public void DisplayEvacGroupMap()
         {
-            //The painter builds the texture on the fire grid, so it hands back nothing when no
-            //landscape is loaded. Said plainly here rather than handing a null texture on: the plane
-            //would go blank with no indication of why.
-            Texture2D texture = Painter.GetEvacGroupTexture();
-            if (texture == null)
-            {
-                Engine.Message(null, Engine.LogType.Warning,
-                    "Cannot show the evacuation group areas: they are painted on the fire grid, and no landscape is loaded.");
-                return;
-            }
-            _simulationDomainVisualizer.SetSimulationPlaneTexture(texture);
+            //On the wildfire domain plane with the other three, not the simulation domain plane it used to
+            //go to. Groups are painted on the fire grid, and StartPainter shows the wildfire plane and hides
+            //the simulation one for every fire-grid paint mode - so the texture was being put on the plane
+            //that had just been hidden, on a plane sized for the population map, which itself only exists
+            //once a population map has been displayed.
+            ShowPaintedTexture(Painter.GetEvacGroupTexture(), "the evacuation group areas");
         }
 
         public void DisplayPopulationMask()
@@ -715,18 +766,76 @@ namespace WUInity
                     return false;
                 }
 
-                map = new PREACT.Population.PopulationMap();
-                map.LoadFromFile(path, out bool loaded);
-                if (!loaded)
+                map = LoadPopulationMapForDisplay(path);
+                if (map == null)
                 {
-                    PREACT.Engine.Message(null, PREACT.Engine.LogType.Warning, "Could not read the population file: " + path);
                     return false;
                 }
             }
 
             _simulationDomainVisualizer.SetAndDisplayPopulationMapTexture(map, _engine.WorkingData);
-            ShowWebMercatorMap();
+
+            //The UTM map, not the web mercator one. The population plane is built in simulation
+            //coordinates - metres from the simulation's UTM origin - and ShowWebMercatorMap hides the UTM
+            //map, moves the camera into mercator mode and leaves the plane sitting in a frame nothing else
+            //is in. The density was being drawn correctly and shown off the edge of the world.
+            ShowUTMMap();
+            _simulationDomainVisualizer.SetVisibility(true);
             return true;
+        }
+
+        /// <summary>
+        /// Reads whichever of the two population formats the scenario's file actually is, and returns a
+        /// density map, or null with the reason reported.
+        ///
+        /// A generated scenario's PopulationFile is a household CSV - the format the population step writes
+        /// and the pedestrian module reads. The grid format PopulationMap.LoadFromFile expects is an older,
+        /// separate thing whose only check is that the file has exactly nine lines, so handed a household
+        /// CSV it says "Population data not valid for current map" and nothing appears. Every scenario built
+        /// through the new scenario window landed in exactly that case.
+        /// </summary>
+        private PREACT.Population.PopulationMap LoadPopulationMapForDisplay(string path)
+        {
+            var map = new PREACT.Population.PopulationMap();
+
+            //The grid format first, so scenarios that carry one keep behaving as they did.
+            map.LoadFromFile(path, out bool loadedGrid);
+            if (loadedGrid)
+            {
+                return map;
+            }
+
+            PREACT.Input.PopulationData.HouseholdData[] households =
+                PREACT.Input.PopulationData.LoadPopulation(path, out int totalPopulation, out bool loadedHouseholds);
+
+            if (!loadedHouseholds || households == null || households.Length == 0)
+            {
+                //LoadPopulation reports an empty file itself, but not what to do about it. This is a real
+                //state: the population step used to write the CSV whether or not it could place anybody, so
+                //a scenario can be pointing at a file holding nothing but its header.
+                PREACT.Engine.Message(null, PREACT.Engine.LogType.Warning,
+                    "The population file holds no households: " + path + ". Re-run the population step "
+                    + "(WorldPop, then RouterDb, then Generate population) - it now refuses to leave an empty "
+                    + "file behind, so a file with only a header was written before that check existed.");
+                return null;
+            }
+
+            //Cells of about a hectare, but never more than 256 to a side: a 16 km domain at 100 m is fine,
+            //and the same code on a 100 km domain would otherwise ask for a million-cell texture.
+            double longestSide = System.Math.Max(PREACTInput.Simulation.DomainSize.x, PREACTInput.Simulation.DomainSize.y);
+            float cellSize = (float)System.Math.Max(100.0, longestSide / 256.0);
+
+            map.CreateFromHouseholds(households, PREACTInput.Simulation.Data,
+                PREACTInput.Simulation.LowerLeftLatLon, PREACTInput.Simulation.DomainSize, cellSize, out bool built);
+
+            if (!built)
+            {
+                return null;
+            }
+
+            PREACT.Engine.Message(null, PREACT.Engine.LogType.Log,
+                $"Showing {totalPopulation} people from {households.Length} households.");
+            return map;
         }
 
         public void DisplayTrafficUsageMap()
@@ -741,17 +850,47 @@ namespace WUInity
 
         private void DisplayWUIAreaMap()
         {
-            _fireDomainVisualizer.SetLCPPlaneTexture(Painter.GetWUIAreaTexture());
+            ShowPaintedTexture(Painter.GetWUIAreaTexture(), "the WUI area");
         }
 
         public void DisplayRandomIgnitionAreaMap()
         {
-            _fireDomainVisualizer.SetLCPPlaneTexture(Painter.GetRandomIgnitionTexture());
+            ShowPaintedTexture(Painter.GetRandomIgnitionTexture(), "the random ignition area");
         }
 
         public void DisplayInitialIgnitionMap()
         {
-            _fireDomainVisualizer.SetLCPPlaneTexture(Painter.GetInitialIgnitionTexture());
+            ShowPaintedTexture(Painter.GetInitialIgnitionTexture(), "the initial ignition");
+        }
+
+        /// <summary>
+        /// Shows a painted texture on the wildfire domain plane, making that plane cover the grid the
+        /// texture is on first.
+        ///
+        /// All four paint modes work on the grid the painter resolved - the landscape's, or a DEM's, or the
+        /// imported arrival times' - so all four are shown here, on the plane paint mode makes visible.
+        /// The plane has to be built from that grid rather than from an LCP: a scenario whose terrain is
+        /// only a DEM has no LCP, so there was no plane, and painting worked while showing nothing.
+        /// </summary>
+        private void ShowPaintedTexture(Texture2D texture, string what)
+        {
+            if (texture == null)
+            {
+                Engine.Message(null, Engine.LogType.Warning,
+                    "Cannot show " + what + ": there is no grid to paint on. A landscape, a DEM or an imported "
+                    + "fire's arrival times gives one.");
+                return;
+            }
+
+            //Fully qualified: Mapbox.Utils is imported here too, and has a Vector2d of its own.
+            if (!Painter.TryGetPaintGrid(out PREACT.Math.Vector2d gridSize, out PREACT.Math.Vector2d gridOrigin))
+            {
+                Engine.Message(null, Engine.LogType.Warning, "Cannot show " + what + ": the paint grid is not known.");
+                return;
+            }
+
+            _fireDomainVisualizer.EnsurePlane(gridSize, gridOrigin);
+            _fireDomainVisualizer.SetLCPPlaneTexture(texture);
         }
 
         Texture2D _trafficUsageMap;
@@ -847,7 +986,18 @@ namespace WUInity
         public void UpdateInput(PREACTInput input)
         {
             _input = input;
-            _painter.SetLCPData(_input.WildfireModule.Data.LandscapeData);            
+            _painter.SetLCPData(_input.WildfireModule.Data.LandscapeData);
+
+            //Every route into a scenario passes through here - loading a file, saving a new one, the
+            //engine handing one over - and the engine records the path before it calls this, so this is
+            //the one place that has to remember it.
+            RecentScenario.Remember(_engine.WorkingFile);
+
+            //A different scenario is a different network, in a different frame. Dropped rather than reused,
+            //which would draw the previous scenario's roads at this one's origin.
+            _roadNetwork = null;
+            _roadNetworkBuilt = false;
+            _roadNetworkVisualizer.SetVisibility(false);
             _godCamera.SetInput(_input);
             _wuiGUI.SetInput(_input);            
             //this needs map and evac goals
@@ -863,6 +1013,117 @@ namespace WUInity
         public void UpdateDestinations(List<PREACT.Evacuation.EvacuationDestination> destinations)
         {
             _simulationDomainVisualizer.SpawnEvacuationGoalMarkers(_input, destinations, _destinationMarkerPrefab);
+        }
+
+        /// <summary>
+        /// Rebuilds the destination markers from the scenario as it now stands.
+        ///
+        /// Needed after any edit to a destination. The markers were only ever spawned when a scenario was
+        /// loaded and when the running simulation reported its destinations, so moving, adding, renaming,
+        /// recolouring or removing one changed the scenario and left the map showing where it used to be -
+        /// which reads as an edit that did not take.
+        /// </summary>
+        public void RefreshDestinationMarkers()
+        {
+            if (_input == null)
+            {
+                return;
+            }
+
+            _simulationDomainVisualizer.SpawnEvacuationGoalMarkers(_input, _destinationMarkerPrefab);
+        }
+
+        /// <summary>
+        /// The lanes of the scenario's SUMO network, in simulation coordinates, or null when there is no
+        /// network to read. Read once and kept.
+        /// </summary>
+        public PREACT.Utility.SumoNetworkGeometry GetRoadNetwork()
+        {
+            if (_roadNetwork != null)
+            {
+                return _roadNetwork;
+            }
+
+            if (_input == null)
+            {
+                Engine.Message(null, Engine.LogType.Warning, "Load a scenario before asking for its road network.");
+                return null;
+            }
+
+            //The same resolver the engine starts SUMO with, so what is drawn is what will be run - or, when
+            //the scenario's path is wrong, the same substitution with the same warning rather than a second
+            //opinion about where the network is. Geometry can come from a bare .net.xml too, hence false.
+            string path = PREACT.Utility.SumoConfigurationLocator.Resolve(
+                _input.RootFolder, _input.TrafficModule.SumoInput.ConfigurationFile,
+                false, out bool corrected, out string explanation);
+
+            if (path == null)
+            {
+                Engine.Message(null, Engine.LogType.Warning, explanation);
+                return null;
+            }
+
+            if (corrected)
+            {
+                Engine.Message(null, Engine.LogType.Warning, explanation);
+            }
+
+            _roadNetwork = PREACT.Utility.SumoNetworkGeometry.Load(path, _input.Simulation.Data.UTMOrigin);
+            return _roadNetwork;
+        }
+
+        /// <summary>
+        /// Puts a position onto the nearest lane of the road network, reporting which lane and how far it
+        /// moved. False when there is no network to snap to.
+        /// </summary>
+        public bool TrySnapToRoadNetwork(PREACT.Math.Vector2d simulationPos, out PREACT.Utility.SumoNetworkGeometry.Snap snap)
+        {
+            snap = new PREACT.Utility.SumoNetworkGeometry.Snap();
+            PREACT.Utility.SumoNetworkGeometry network = GetRoadNetwork();
+            return network != null && network.TrySnap(simulationPos, out snap);
+        }
+
+        public bool IsRoadNetworkVisible { get => _roadNetworkVisualizer != null && _roadNetworkVisualizer.IsVisible; }
+
+        /// <summary>
+        /// Shows or hides the road network. Building the mesh is deferred to the first time it is shown,
+        /// since most sessions never ask for it.
+        /// </summary>
+        public bool ShowRoadNetwork(bool show)
+        {
+            if (!show)
+            {
+                _roadNetworkVisualizer.SetVisibility(false);
+                return false;
+            }
+
+            if (!_roadNetworkBuilt)
+            {
+                PREACT.Utility.SumoNetworkGeometry network = GetRoadNetwork();
+                if (network == null)
+                {
+                    return false;
+                }
+
+                //Dark enough to read against a satellite image, which is what is usually underneath.
+                if (!_roadNetworkVisualizer.Build(network, new Color(0.1f, 0.85f, 1f, 1f)))
+                {
+                    Engine.Message(null, Engine.LogType.Warning, "The road network had no lanes to draw.");
+                    return false;
+                }
+                _roadNetworkBuilt = true;
+            }
+
+            //The network is measured in simulation coordinates, like everything else placed by hand, so it
+            //only lines up on the UTM map.
+            ShowUTMMap();
+            _roadNetworkVisualizer.SetVisibility(true);
+            return true;
+        }
+
+        public bool ToggleRoadNetwork()
+        {
+            return ShowRoadNetwork(!IsRoadNetworkVisible);
         }
 
         public void LoadUTMMap(PREACTInput input)

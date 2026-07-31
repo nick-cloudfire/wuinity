@@ -18,6 +18,9 @@ namespace PREACT.Utility
     {
         public const string NetworkFileName = "osm.net.xml";
         public const string ConfigurationFileName = "osm.sumocfg";
+        //The subfolder of a scenario these are written into. Here rather than only in the GUI step that
+        //passes it, so whatever has to find a network later looks in the place the build step used.
+        public const string SumoFolderName = "sumo";
 
         /// <summary>
         /// Converts <paramref name="osmFilePath"/> into a SUMO network and configuration under

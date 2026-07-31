@@ -122,7 +122,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
             ImGui.SeparatorText("Population");
             ImGui.InputInt("Min household size", ref ScenarioDataSteps.MinHouseholdSize);
             ImGui.InputInt("Max household size", ref ScenarioDataSteps.MaxHouseholdSize);
-            if (ScenarioDataSteps.StepButton("Download WorldPop", ScenarioDataSteps.WorldPopFile)) { ScenarioDataSteps.DownloadWorldPop(); }
+            //Judged by the reprojected raster, which is what the population step actually reads.
+            if (ScenarioDataSteps.StepButton("Download WorldPop", ScenarioDataSteps.WorldPopUtmFile)) { ScenarioDataSteps.DownloadWorldPop(); }
             if (ScenarioDataSteps.StepButton("Generate population", ScenarioDataSteps.PopulationFile)) { ScenarioDataSteps.GeneratePopulation(); }
             ImGui.TextDisabled("Needs WorldPop and the RouterDb. Sets PopulationFile on the scenario.");
 

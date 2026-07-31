@@ -21,7 +21,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
         //The data-preparation steps, their progress reporting and the names of the files they produce
         //all live in ScenarioDataSteps, because they are equally needed for a scenario loaded from
         //disk and this window cannot serve that case: opening it clears the loaded scenario.
-        private static string WorldPopFile => ScenarioDataSteps.WorldPopFile;
+        //The reprojected raster, since that is the one the population step reads: a scenario holding only
+        //the WGS84 clip is not ready for step 4, and marking the download done would say it was.
+        private static string WorldPopFile => ScenarioDataSteps.WorldPopUtmFile;
         private static string OsmFile => ScenarioDataSteps.OsmFile;
         private static string RouterDbFile => ScenarioDataSteps.RouterDbFile;
         private static string PopulationFile => ScenarioDataSteps.PopulationFile;
@@ -170,7 +172,27 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 ImGui.Checkbox("Have SUMO input?", ref _haveSumo);
                 if (_haveSumo)
                 {
-                    if (ImGui.Button("Set SUMO input file")) { FileBrowser.OpenSetFilePath(path => _input.TrafficModule.SumoInput.ConfigurationFile = path, "Select SUMOP input file", true); }
+                    //Named for what it has to be. "SUMO input file" reads as "the file SUMO takes as input",
+                    //which is how the OSM extract ends up here - and it is accepted silently, leaving a
+                    //scenario that cannot draw or route on its network.
+                    if (ImGui.Button("Set SUMO configuration file (.sumocfg)"))
+                    {
+                        FileBrowser.OpenSetFilePath(path =>
+                        {
+                            if (!EvacuationTabs.LooksLikeSumoConfiguration(path))
+                            {
+                                Engine.Message(null, Engine.LogType.Warning,
+                                    System.IO.Path.GetFileName(path) + " is not a SUMO configuration. It should be a "
+                                    + ".sumocfg or a .net.xml. To make one from an OSM extract, untick \"Have SUMO "
+                                    + "input?\" and use the build step instead.");
+                                return;
+                            }
+                            _input.TrafficModule.SumoInput.ConfigurationFile = path;
+                        }, "Select SUMO configuration file (.sumocfg)", true);
+                    }
+                    ImGui.SameLine();
+                    ImGui.TextDisabled(string.IsNullOrEmpty(_input.TrafficModule.SumoInput.ConfigurationFile)
+                        ? "none set" : _input.TrafficModule.SumoInput.ConfigurationFile);
                 }
                 else
                 {

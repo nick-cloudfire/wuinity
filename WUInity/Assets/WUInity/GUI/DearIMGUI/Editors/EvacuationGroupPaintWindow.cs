@@ -22,6 +22,9 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
         private static int _selected;
         private static bool _painting;
         private static bool _startFailed;
+        //Dimmed enough to read the map through, strong enough to tell two groups apart.
+        private const float GroupOverlayOpacity = 0.3f;
+        private static bool _keepGroupsVisible = true;
 
         public static void Open(Dictionary<string, EvacuationGroupInput> inputs)
         {
@@ -120,6 +123,22 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
 
             ImGui.SeparatorText("Painting");
 
+            if (ImGui.Checkbox("Keep groups on the map when not painting", ref _keepGroupsVisible))
+            {
+                //Acted on at once rather than only at the next stop, so the checkbox shows what it does.
+                if (!_painting)
+                {
+                    if (_keepGroupsVisible)
+                    {
+                        PreactGUI.WUInity.ShowEvacGroupOverlay(GroupOverlayOpacity);
+                    }
+                    else
+                    {
+                        PreactGUI.WUInity.HideEvacGroupOverlay();
+                    }
+                }
+            }
+
             if (!_painting)
             {
                 if (ImGui.Button("Start painting"))
@@ -191,7 +210,14 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
         private static void StopPainting()
         {
             _painting = false;
+            //Hides both map planes along with switching the brush off, so the dimmed view of what was
+            //painted goes back up afterwards rather than instead.
             PreactGUI.WUInity.StopPainter();
+
+            if (_keepGroupsVisible)
+            {
+                PreactGUI.WUInity.ShowEvacGroupOverlay(GroupOverlayOpacity);
+            }
         }
 
         private static void SelectForPainting()

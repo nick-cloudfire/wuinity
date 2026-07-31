@@ -83,6 +83,19 @@ namespace Assets.WUInity.GUI.DearIMGUI
                         PreactGUI.WUInity.DisplayPopulationDensityMap();
                     }
 
+                    //A checkable item rather than two: the roads are a background layer, either on or off,
+                    //and the tick is what says which.
+                    bool roadsVisible = ScenarioEditorWindow.HasInput && PreactGUI.WUInity.IsRoadNetworkVisible;
+                    if (ImGui.MenuItem("Show road network", string.Empty, roadsVisible, ScenarioEditorWindow.HasInput))
+                    {
+                        PreactGUI.WUInity.ShowRoadNetwork(!roadsVisible);
+                    }
+                    if (ImGui.IsItemHovered())
+                    {
+                        ImGui.SetTooltip("The lanes of the scenario's SUMO network - the roads traffic is actually "
+                            + "routed on. Needs the SUMO network to have been built.");
+                    }
+
                     ImGui.EndMenu();
                 }
 

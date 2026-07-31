@@ -120,6 +120,13 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
         //Files the steps produce, relative to the scenario root.
         public static string WorldPopFile => Input.Simulation.Name + "_worldpop.tif";
+        //The reprojected raster the download also writes, and the one the population step has to read:
+        //PopulationMap.CreatePopulation treats the geotransform as UTM metres. Handed the WGS84 clip above
+        //it computes cell centres in degrees, transforms them as though they were eastings, and finds no
+        //road within a cell of anywhere - so it writes a CSV holding nothing but its header, and says
+        //"0 people with access to road network" in a log line that is easy to miss. WorldPopDownloader
+        //names it by appending _UTM, which is what is repeated here.
+        public static string WorldPopUtmFile => Path.GetFileNameWithoutExtension(WorldPopFile) + "_UTM.tif";
         public static string DemFile => Input.Simulation.Name + "_dem.tif";
         //Written out rather than only computed in memory. ELMFIRE takes all three as separate GeoTIFF
         //inputs, and a derived raster that exists only inside a load cannot be handed to anything else,
@@ -136,7 +143,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
         //The SUMO network and configuration live in their own folder, since netconvert writes several
         //files beside the one named here.
-        public const string SumoFolder = "sumo";
+        public const string SumoFolder = PREACT.Utility.SumoNetworkBuilder.SumoFolderName;
         public static string SumoConfigFile => Path.Combine(SumoFolder, PREACT.Utility.SumoNetworkBuilder.ConfigurationFileName);
 
         /// <summary>
@@ -501,10 +508,16 @@ namespace Assets.WUInity.GUI.DearIMGUI
         {
             RunStep("Generating population", () =>
             {
-                string worldPop = InRoot(WorldPopFile);
+                //The UTM reprojection, not the WGS84 clip beside it - see WorldPopUtmFile.
+                string worldPop = InRoot(WorldPopUtmFile);
                 string routerDb = InRoot(RouterDbFile);
 
-                if (!File.Exists(worldPop)) throw new FileNotFoundException("Download WorldPop first.", worldPop);
+                if (!File.Exists(worldPop))
+                {
+                    throw new FileNotFoundException(
+                        "The reprojected WorldPop raster is missing. Re-run the WorldPop download, which writes it "
+                        + "beside the clip.", worldPop);
+                }
                 if (!File.Exists(routerDb)) throw new FileNotFoundException("Build the RouterDb first.", routerDb);
 
                 PREACT.Tools.PopulationTools.CreatePopulationFromWorldPop(
