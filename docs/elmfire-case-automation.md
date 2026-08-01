@@ -23,6 +23,32 @@ EPSG:32634 — the value the hand-repaired case needed — and ELMFIRE 1.1 ran t
 (exit 0, 46.7 ac in 1 h), with the earliest-burning cell 41 m from the placed point. A second point at
 10 N 10 E in the same scenario was reported as 526 km outside the domain and dropped rather than clamped.
 
+**`Module=ELMFIRE` runs ELMFIRE.** It is a batch program, so the module runs it once when the simulation
+starts and then reads the rasters back through the `AscImport` reader; output for an unchanged case is
+reused. This supersedes P5's "Unity-side runner". The cell-based model that held this slot (`ElmClone`) has
+been removed — see `docs/modules.md`.
+
+### Where to pick up
+
+**Open thread: an ELMFIRE run of the Mati case is failing and the cause is not yet known.** The symptom was
+`Attempting to use an MPI routine (internal_barrier) before initializing or after finalizing MPICH`, which is
+not the fault — every ELMFIRE error path is a bare Fortran `STOP` that skips `MPI_FINALIZE`, so Intel MPI
+always says that on the way out. `ElmfireRunner` now mines `elmfire.log` for ELMFIRE's own diagnostic and
+filters the MPI epilogue, so re-running should name the real problem. The two likely causes, neither ruled
+out:
+
+1. A raster the namelist references is missing from `inputs/`. Reproduced deliberately by deleting
+   `fbfm40.tif`, which now reports `ERROR 4: ./inputs\fbfm40.tif: No such file or directory`.
+2. **The fuel model stem mismatch, which is P1 and still outstanding.** `ElmfireCaseBuilder.BuildNamelist`
+   hardcodes `FBFM_FILENAME = 'fbfm13'` and `RestrictIgnitionToBurnableFuel` reads `inputs/fbfm13.tif`, while
+   the Mati case's fuel raster is `fbfm40.tif`. A hand-written namelist referencing `fbfm40` works; anything
+   generated does not.
+
+Also unfinished, and known: the painted masks in the Mati case are on the 616×590 @ 27.6 m landscape grid
+while ELMFIRE's fire grid is 566×541 @ 30 m, so k-PERIL refuses the painted WUI area (correctly, with a
+message). Repaint with `Module=ELMFIRE` selected and the painter will resolve the grid from ELMFIRE's arrival
+time raster.
+
 ## What P0 established
 
 The input contract every layer must satisfy, and which the automation has to guarantee:
@@ -182,14 +208,19 @@ What now exists:
 - `PREACTcli build-case` reads the sections out of the `.wui` with the same local parse it uses for the
   domain, so the CLI honours them without a full scenario load.
 
-### P1 - `sample.data` as a patched template
+### P1 - `sample.data` as a patched template — **next**
 
 Promote the corrected `mati.data` to a repo `sample.data` and drive it through
 `ElmfireNamelist.SetKeyInGroup` instead of `BuildNamelist()`'s string list, so the template owns the
 physics and WUInity only patches keys. Extend `ElmfireNamelistKeys` with the spotting, `&WUI`, ember,
-`CBD_TIMES_100` / `*_TIMES_10` keys; promote FBFM40 to a first-class stem (`CategoricalStems` knows
-it, but `BuildNamelist` hardcodes `fbfm13` and `RestrictIgnitionToBurnableFuel` reads
-`inputs/fbfm13.tif`).
+`CBD_TIMES_100` / `*_TIMES_10` keys.
+
+**Start with the FBFM40 stem**, which is the most likely cause of the ELMFIRE failure noted under Status:
+`CategoricalStems` knows `fbfm40`, but `BuildNamelist` hardcodes `FBFM_FILENAME = 'fbfm13'` and
+`RestrictIgnitionToBurnableFuel` reads `inputs/fbfm13.tif`. The Mati case's raster is `fbfm40.tif`, so a
+generated namelist points at a file that is not there while the hand-written one works. The builder already
+patches the keys it owns into an existing namelist (`ElmfireCoupling.PatchNamelist`), so the shape to follow
+exists.
 
 ### P2 - grid discipline and a validator
 
