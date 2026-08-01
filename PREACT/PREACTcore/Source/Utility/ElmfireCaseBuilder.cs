@@ -31,6 +31,19 @@ namespace PREACT.Utility
         /// <summary>Per-realization weather rasters, written later by <see cref="ElmfireRealizationWriter"/>.</summary>
         private const string InputsFolder = "inputs";
 
+        /// <summary>An ignition in WGS84, with when it starts relative to the simulation start.</summary>
+        public class IgnitionPoint
+        {
+            public Vector2d LatLon;
+            public double TimeSeconds;
+        }
+
+        /// <summary>An ignition placed in the case's own coordinates, ready for the namelist.</summary>
+        public class PlacedIgnition
+        {
+            public double X, Y, TimeSeconds;
+        }
+
         public class Options
         {
             /// <summary>Case name; only used for messages and the default namelist filename.</summary>
@@ -92,7 +105,24 @@ namespace PREACT.Utility
             /// <summary>Where the case is written. Must be empty or <see cref="Force"/> must be set.</summary>
             public string OutputDirectory;
 
+            /// <summary>Permission to write into a folder that is not empty. Says nothing about
+            /// overwriting individual layers - see <see cref="OverwriteExistingLayers"/>.</summary>
             public bool Force;
+
+            /// <summary>
+            /// Rewrite layers the case already has, instead of keeping them.
+            /// </summary>
+            /// <remarks>
+            /// Off by default, because a prepared case is work: its rasters have been harmonized onto one
+            /// grid, and some of them - canopy above all - cannot be re-derived from anything the builder
+            /// has. Rebuilding unconditionally is what this used to do, and the canopy case was the worst of
+            /// it: cc/ch/cbh/cbd not passed in on a given run were overwritten with the zero-fill default, so
+            /// a case with real canopy silently lost it and modelled surface fire only.
+            ///
+            /// On means "build this case again from scratch", which is what a changed domain or cell size
+            /// needs, since every raster then has to be re-cut to the new grid.
+            /// </remarks>
+            public bool OverwriteExistingLayers;
 
             /// <summary>Zero the ignition mask wherever the fuel model cannot burn, so ELMFIRE's
             /// random ignition never lands on water, urban or bare ground.</summary>
@@ -101,6 +131,18 @@ namespace PREACT.Utility
             /// <summary>Extra non-burnable fuel codes beyond the 91-99 block, for a fuel model
             /// whose unburnable classes sit elsewhere (14 is Anderson FBFM13's).</summary>
             public HashSet<int> NonBurnableFuelCodes = new HashSet<int> { 14 };
+
+            /// <summary>
+            /// Explicit ignitions, in WGS84 - the scenario's <c>[IgnitionPoint]</c> sections, as placed
+            /// in the ignition point editor. Given in latitude and longitude rather than in case
+            /// coordinates because the case's CRS is not known until its DEM has been warped: the
+            /// transform is <see cref="ApplyIgnitionPoints"/>'s job, and doing it anywhere else is what
+            /// put zone-35 eastings into a zone-34 case by hand.
+            ///
+            /// These win over a painted initial ignition, which is a brush stroke reduced to its
+            /// centroid, and they switch <c>RANDOM_IGNITIONS</c> off.
+            /// </summary>
+            public List<IgnitionPoint> IgnitionPoints = new List<IgnitionPoint>();
 
             /// <summary>Simulation start, for the namelist's CURRENT_YEAR / BAND_ONE_HOUR_OF_YEAR.</summary>
             public DateTime StartDateTime = new DateTime(2020, 7, 1, 12, 0, 0);
@@ -126,15 +168,23 @@ namespace PREACT.Utility
             /// <summary>Layers ELMFIRE requires that nobody supplied, filled with a neutral default.</summary>
             public List<string> Defaulted = new List<string>();
 
+            /// <summary>Layers the case already had, kept rather than rebuilt.</summary>
+            public List<string> Reused = new List<string>();
+
             /// <summary>Cells an ignition may be placed in after the burnable-fuel restriction; 0 if not applied.</summary>
             public int IgnitableCells;
 
             /// <summary>Anything the builder had to work around, surfaced so it is not silent.</summary>
             public List<string> Fallbacks = new List<string>();
 
-            /// <summary>An explicit ignition point from a painted initial ignition, in grid coordinates.</summary>
-            public bool HasIgnitionPoint;
-            public double IgnitionX, IgnitionY;
+            /// <summary>Every explicit ignition, in the case's own coordinates - from the scenario's
+            /// ignition points, or failing that from a painted initial ignition. Empty means ELMFIRE
+            /// draws its own from the ignition mask.</summary>
+            public List<PlacedIgnition> Ignitions = new List<PlacedIgnition>();
+
+            public bool HasIgnitionPoint => Ignitions.Count > 0;
+            public double IgnitionX => Ignitions.Count > 0 ? Ignitions[0].X : 0.0;
+            public double IgnitionY => Ignitions.Count > 0 ? Ignitions[0].Y : 0.0;
 
             /// <summary>The exported painted WUI area, for k-PERIL's WuiAreaFile; null if none was painted.</summary>
             public string WuiAreaFile;
@@ -159,58 +209,111 @@ namespace PREACT.Utility
             (Vector2d southWest, Vector2d northEast) = PaddedBounds(o);
             Log($"Domain (padded {o.PaddingMetres:F0} m): {southWest.x:F5},{southWest.y:F5} -> {northEast.x:F5},{northEast.y:F5}");
 
-            string rawDem = Path.Combine(inputs, "dem_source.tif");
-            if (!string.IsNullOrEmpty(o.LocalDemPath))
+            var result = new Result { InputsDirectory = inputs };
+
+            //Whether a layer has to be produced at all. A case that already has one is left alone unless the
+            //caller asked for a rebuild - see Options.OverwriteExistingLayers for why that is the default.
+            bool Needed(string stem)
             {
-                if (!File.Exists(o.LocalDemPath)) throw new FileNotFoundException("No such DEM: " + o.LocalDemPath);
-                Log($"Using local DEM {o.LocalDemPath}.");
-                File.Copy(o.LocalDemPath, rawDem, overwrite: true);
+                string path = Path.Combine(inputs, stem + ".tif");
+                if (o.OverwriteExistingLayers || !File.Exists(path))
+                {
+                    return true;
+                }
+
+                result.Reused.Add(stem);
+                result.Written.Add(stem);
+                return false;
             }
-            else if (File.Exists(rawDem))
+
+            //---------------------------------------------------------------- 1-2. DEM and master grid
+            //The grid comes from dem.tif, which ELMFIRE also reads the domain and CRS from, so when the case
+            //already has one it is the grid - there is nothing to download, warp or decide. This is also why
+            //a prepared case needs no OpenTopography key.
+            string demPath = Path.Combine(inputs, "dem.tif");
+            MasterGrid grid;
+
+            if (!Needed("dem"))
             {
-                //A downloaded DEM is reused even under --force: --force is about writing into a
-                //non-empty case folder, not about re-fetching data that cannot have changed.
-                Log("Reusing the previously downloaded DEM.");
+                grid = MasterGrid.FromRasterFile(demPath);
+                Log($"Reusing the case's own DEM: {grid.Header.Ncols}x{grid.Header.Nrows} @ "
+                    + $"{grid.Header.CellSize:F1} m, {grid.Epsg}.");
             }
             else
             {
-                Log($"Downloading {o.DemType} DEM from OpenTopography...");
-                await OpenTopographyDownloader.Download(southWest, northEast, o.OpenTopographyApiKey, rawDem, o.DemType);
+                string rawDem = Path.Combine(inputs, "dem_source.tif");
+                if (!string.IsNullOrEmpty(o.LocalDemPath))
+                {
+                    if (!File.Exists(o.LocalDemPath)) throw new FileNotFoundException("No such DEM: " + o.LocalDemPath);
+                    Log($"Using local DEM {o.LocalDemPath}.");
+                    File.Copy(o.LocalDemPath, rawDem, overwrite: true);
+                }
+                else if (File.Exists(rawDem))
+                {
+                    //A downloaded DEM is reused even under --force: --force is about writing into a
+                    //non-empty case folder, not about re-fetching data that cannot have changed.
+                    Log("Reusing the previously downloaded DEM.");
+                }
+                else
+                {
+                    if (string.IsNullOrEmpty(o.OpenTopographyApiKey))
+                    {
+                        throw new Exception(
+                            "A DEM is needed and there is none in the case, so one has to be downloaded - but no "
+                            + "OpenTopography key was found. Put it in "
+                            + "WUInity/Assets/Resources/OpenTopography/OpenTopographyConfiguration.txt or set "
+                            + "OPENTOPOGRAPHY_API_KEY, or point the case at a DEM you already have.");
+                    }
+
+                    Log($"Downloading {o.DemType} DEM from OpenTopography...");
+                    await OpenTopographyDownloader.Download(southWest, northEast, o.OpenTopographyApiKey, rawDem, o.DemType);
+                }
+
+                Log($"Warping DEM to the local UTM zone at {o.CellSizeMetres:F0} m...");
+                grid = RasterHarmonizer.BuildUtmMasterGrid(
+                    rawDem, demPath,
+                    southWest.x, southWest.y, northEast.x, northEast.y,
+                    o.CellSizeMetres);
+                Log($"Master grid: {grid.Header.Ncols}x{grid.Header.Nrows} @ {grid.Header.CellSize:F1} m, {grid.Epsg}");
+                result.Written.Add("dem");
             }
 
-            //---------------------------------------------------------------- 2. Master grid
-            string demPath = Path.Combine(inputs, "dem.tif");
-            Log($"Warping DEM to the local UTM zone at {o.CellSizeMetres:F0} m...");
-            MasterGrid grid = RasterHarmonizer.BuildUtmMasterGrid(
-                rawDem, demPath,
-                southWest.x, southWest.y, northEast.x, northEast.y,
-                o.CellSizeMetres);
-            Log($"Master grid: {grid.Header.Ncols}x{grid.Header.Nrows} @ {grid.Header.CellSize:F1} m, {grid.Epsg}");
-
-            var result = new Result { Grid = grid, InputsDirectory = inputs };
-            result.Written.Add("dem");
+            result.Grid = grid;
 
             //---------------------------------------------------------------- 3. Slope / aspect
-            Log("Deriving slope and aspect (Horn's method)...");
-            float[,] elevation = AscRaster.ReadGeoTiff(demPath, out AscRaster.Header demHeader, out bool demOk);
-            if (!demOk || elevation == null)
+            bool needSlope = Needed("slp");
+            bool needAspect = Needed("asp");
+            if (needSlope || needAspect)
             {
-                throw new Exception("Could not read the warped DEM back: " + demPath);
-            }
+                Log("Deriving slope and aspect (Horn's method)...");
+                float[,] elevation = AscRaster.ReadGeoTiff(demPath, out AscRaster.Header demHeader, out bool demOk);
+                if (!demOk || elevation == null)
+                {
+                    throw new Exception("Could not read the warped DEM back: " + demPath);
+                }
 
-            SlopeAspect.Compute(elevation, grid.Header.CellSize, out float[,] slope, out float[,] aspect);
-            GeoTiffRasterWriter.WriteBand(grid, slope, Path.Combine(inputs, "slp.tif"));
-            GeoTiffRasterWriter.WriteBand(grid, aspect, Path.Combine(inputs, "asp.tif"));
-            result.Written.Add("slp");
-            result.Written.Add("asp");
+                SlopeAspect.Compute(elevation, grid.Header.CellSize, out float[,] slope, out float[,] aspect);
+                if (needSlope)
+                {
+                    GeoTiffRasterWriter.WriteBand(grid, slope, Path.Combine(inputs, "slp.tif"));
+                    result.Written.Add("slp");
+                }
+                if (needAspect)
+                {
+                    GeoTiffRasterWriter.WriteBand(grid, aspect, Path.Combine(inputs, "asp.tif"));
+                    result.Written.Add("asp");
+                }
+            }
 
             //---------------------------------------------------------------- 4. adj / phi
             //Both are just 1.0 everywhere, same shape/CRS as the DEM (WildfireAV's
             //makePhiAndAdjFiles.py) - they are not related to ignition.
-            GeoTiffRasterWriter.WriteConstant(grid, 1.0f, Path.Combine(inputs, "adj.tif"));
-            GeoTiffRasterWriter.WriteConstant(grid, 1.0f, Path.Combine(inputs, "phi.tif"));
-            result.Written.Add("adj");
-            result.Written.Add("phi");
+            foreach (string stem in new[] { "adj", "phi" })
+            {
+                if (!Needed(stem)) continue;
+                GeoTiffRasterWriter.WriteConstant(grid, 1.0f, Path.Combine(inputs, stem + ".tif"));
+                result.Written.Add(stem);
+            }
 
             //---------------------------------------------------------------- 5. User rasters
             foreach (KeyValuePair<string, string> kv in o.UserRasters)
@@ -222,6 +325,15 @@ namespace PREACT.Utility
                 {
                     Log($"  {stem}: source not found, skipping ({source}).");
                     result.Skipped.Add(stem);
+                    continue;
+                }
+
+                //A raster handed in explicitly still does not overwrite one the case has, unless a rebuild
+                //was asked for: the one on the grid is the harmonized copy, and re-warping from the source
+                //can only lose to it.
+                if (!Needed(stem))
+                {
+                    Log($"  {stem}: the case already has it; keeping it.");
                     continue;
                 }
 
@@ -237,9 +349,13 @@ namespace PREACT.Utility
             //produces a case that builds cleanly and then cannot run. Canopy is also precisely the
             //layer that has no global source, so defaulting it to zero - no canopy fuel, hence
             //surface fire only, no crown fire - is what makes an arbitrary domain runnable at all.
+            //Needed() is what keeps this from destroying real canopy: it used to test only whether this run
+            //had warped the stem, so a case whose cc/ch/cbh/cbd were prepared earlier had them overwritten
+            //with zeros the next time the builder ran without being handed them again - and zero canopy is a
+            //silent switch from crown fire to surface fire only.
             foreach (string stem in new[] { "cc", "ch", "cbh", "cbd" })
             {
-                if (result.Written.Contains(stem)) continue;
+                if (result.Written.Contains(stem) || !Needed(stem)) continue;
                 GeoTiffRasterWriter.WriteConstant(grid, 0.0f, Path.Combine(inputs, stem + ".tif"));
                 result.Written.Add(stem);
                 result.Defaulted.Add(stem);
@@ -255,6 +371,11 @@ namespace PREACT.Utility
             //Run before the ignition-mask default below, so a painted ignition area is used rather
             //than being overwritten by the ignite-anywhere fallback.
             ApplyPaintedMasks(o, result, inputs, grid, Log);
+
+            //---------------------------------------------------------------- 5d. Ignition points
+            //After the painted masks, because an explicitly placed point supersedes the centroid of a
+            //painted stroke.
+            ApplyIgnitionPoints(o, result, grid, Log);
 
             //---------------------------------------------------------------- 6. Ignition mask
             //Only generated when the user did not supply one: an all-ones mask lets ELMFIRE's
@@ -275,22 +396,43 @@ namespace PREACT.Utility
             //---------------------------------------------------------------- 7. Baseline weather
             //Runs after the user rasters so Nelson can shade its sticks with the canopy cover
             //layer if one was supplied.
-            Log("Building baseline weather (climatology -> WindNinja -> Nelson)...");
-
-            WeatherRasterPipeline.Options w = o.Weather ?? new WeatherRasterPipeline.Options();
-            w.Grid = grid;
-            w.InputsDirectory = inputs;
-            w.LatLon = new Vector2d(0.5 * (southWest.x + northEast.x), 0.5 * (southWest.y + northEast.y));
-            w.Log = o.Log;
-            if (string.IsNullOrEmpty(w.ArchiveCsvPath))
+            //
+            //All five together, or none: they are one weather series split across five files, and a mixture
+            //of a case's own wind and freshly sampled moisture is not a description of any day. The wind is
+            //also what k-PERIL derives its spread ellipse from, so silently redrawing it changes a trigger
+            //boundary computed against the fire that came before.
+            string[] weatherStems = { "ws", "wd", "m1", "m10", "m100" };
+            bool haveAllWeather = true;
+            foreach (string stem in weatherStems)
             {
-                //Beside the case rather than inside inputs/: it is a cache shared by every
-                //realization, not one of ELMFIRE's inputs.
-                w.ArchiveCsvPath = Path.Combine(o.OutputDirectory, "climatology", $"{o.Name}_era5_hourly.csv");
+                if (!File.Exists(Path.Combine(inputs, stem + ".tif"))) { haveAllWeather = false; break; }
             }
 
-            result.Weather = await WeatherRasterPipeline.Run(w);
-            result.Written.AddRange(new[] { "ws", "wd", "m1", "m10", "m100" });
+            if (haveAllWeather && !o.OverwriteExistingLayers)
+            {
+                Log("  weather: the case already has ws/wd/m1/m10/m100; keeping them.");
+                result.Reused.AddRange(weatherStems);
+                result.Written.AddRange(weatherStems);
+            }
+            else
+            {
+                Log("Building baseline weather (climatology -> WindNinja -> Nelson)...");
+
+                WeatherRasterPipeline.Options w = o.Weather ?? new WeatherRasterPipeline.Options();
+                w.Grid = grid;
+                w.InputsDirectory = inputs;
+                w.LatLon = new Vector2d(0.5 * (southWest.x + northEast.x), 0.5 * (southWest.y + northEast.y));
+                w.Log = o.Log;
+                if (string.IsNullOrEmpty(w.ArchiveCsvPath))
+                {
+                    //Beside the case rather than inside inputs/: it is a cache shared by every
+                    //realization, not one of ELMFIRE's inputs.
+                    w.ArchiveCsvPath = Path.Combine(o.OutputDirectory, "climatology", $"{o.Name}_era5_hourly.csv");
+                }
+
+                result.Weather = await WeatherRasterPipeline.Run(w);
+                result.Written.AddRange(weatherStems);
+            }
 
             //---------------------------------------------------------------- 8. Loose files
             foreach (string f in o.CopyFiles)
@@ -301,9 +443,21 @@ namespace PREACT.Utility
             }
 
             //---------------------------------------------------------------- 9. Namelist
+            //Kept when the case has one, for the same reason the rasters are: the namelist is where the
+            //physics is tuned, and a generated one is a starting point rather than an improvement on a
+            //template someone has worked on. Overwriting it was the most expensive thing this could quietly
+            //undo.
             result.NamelistPath = Path.Combine(o.OutputDirectory, "elmfire.data");
-            File.WriteAllLines(result.NamelistPath, BuildNamelist(o, result));
-            Log($"Wrote {result.NamelistPath}");
+            if (File.Exists(result.NamelistPath) && !o.OverwriteExistingLayers)
+            {
+                Log($"Keeping the case's own namelist, {Path.GetFileName(result.NamelistPath)}.");
+                result.Reused.Add("elmfire.data");
+            }
+            else
+            {
+                File.WriteAllLines(result.NamelistPath, BuildNamelist(o, result));
+                Log($"Wrote {result.NamelistPath}");
+            }
 
             Directory.CreateDirectory(Path.Combine(o.OutputDirectory, "outputs"));
             Directory.CreateDirectory(Path.Combine(o.OutputDirectory, "scratch"));
@@ -405,9 +559,7 @@ namespace PREACT.Utility
                 if (masks.Any(masks.InitialIgnition) &&
                     PaintedMaskExporter.TryGetIgnitionPoint(masks.InitialIgnition, masks, painted, grid, out double ix, out double iy))
                 {
-                    result.IgnitionX = ix;
-                    result.IgnitionY = iy;
-                    result.HasIgnitionPoint = true;
+                    result.Ignitions.Add(new PlacedIgnition { X = ix, Y = iy, TimeSeconds = 0.0 });
                     log($"  painted: initial ignition -> X_IGN/Y_IGN ({ix:F1}, {iy:F1}), random ignition disabled.");
                 }
             }
@@ -416,6 +568,78 @@ namespace PREACT.Utility
                 result.Fallbacks.Add("painted masks: " + e.Message);
                 log("  painted: could not apply (" + e.Message + ").");
             }
+        }
+
+        /// <summary>
+        /// Places the scenario's ignition points in the case's own coordinates.
+        ///
+        /// The transform is the whole point of this method and the one thing the hand-built Mati case got
+        /// wrong: its ignition was written as <c>(232043.4, 4215113.9)</c>, which is that point measured
+        /// in UTM zone 35 while the case is in zone 34. Mati sits on the 24 E boundary, so the same
+        /// ground is at easting 232 km in one zone and 758 km in the other - the ignition was half a zone
+        /// outside the domain, and ELMFIRE said nothing about it. So the CRS is taken from the case grid
+        /// that now exists rather than from the scenario, from a raster, or from the zone the domain
+        /// corner happens to fall in.
+        ///
+        /// A point outside the domain is dropped rather than clamped: clamping would ignite a fire
+        /// somewhere nobody asked for and the run would look successful.
+        /// </summary>
+        private static void ApplyIgnitionPoints(Options o, Result result, MasterGrid grid, Action<string> log)
+        {
+            if (o.IgnitionPoints == null || o.IgnitionPoints.Count == 0)
+            {
+                return;
+            }
+
+            if (string.IsNullOrEmpty(grid.Epsg))
+            {
+                result.Fallbacks.Add("ignition points: the case grid has no resolvable CRS, so they could not be placed");
+                log("  ignition: the case grid has no resolvable CRS; ignition points skipped.");
+                return;
+            }
+
+            var placed = new List<PlacedIgnition>();
+            foreach (IgnitionPoint point in o.IgnitionPoints)
+            {
+                if (!CrsTransform.TryWgs84To(grid.Epsg, point.LatLon.x, point.LatLon.y, out double x, out double y))
+                {
+                    result.Fallbacks.Add($"ignition point {point.LatLon.x:F5},{point.LatLon.y:F5}: could not be measured in {grid.Epsg}");
+                    log($"  ignition: {point.LatLon.x:F5},{point.LatLon.y:F5} could not be measured in {grid.Epsg}; dropped.");
+                    continue;
+                }
+
+                if (x < grid.XMin || x > grid.XMax || y < grid.YMin || y > grid.YMax)
+                {
+                    //Said with both numbers, because the useful part is how far outside it is: a few
+                    //hundred metres is a point placed just off the edge, and hundreds of kilometres is a
+                    //scenario whose coordinates were never in this zone to begin with.
+                    string outside = $"ignition point {point.LatLon.x:F5},{point.LatLon.y:F5} is at {x:F0},{y:F0} in "
+                                     + $"{grid.Epsg}, outside the case domain ({grid.XMin:F0}..{grid.XMax:F0}, "
+                                     + $"{grid.YMin:F0}..{grid.YMax:F0})";
+                    result.Fallbacks.Add(outside + "; dropped");
+                    log("  ignition: " + outside + "; dropped. Increase --padding, or move the point.");
+                    continue;
+                }
+
+                placed.Add(new PlacedIgnition { X = x, Y = y, TimeSeconds = point.TimeSeconds });
+                log($"  ignition: {point.LatLon.x:F5},{point.LatLon.y:F5} -> {x:F1}, {y:F1} in {grid.Epsg}"
+                    + (point.TimeSeconds > 0.0 ? $" at t = {point.TimeSeconds:F0} s." : "."));
+            }
+
+            if (placed.Count == 0)
+            {
+                return;
+            }
+
+            if (result.Ignitions.Count > 0)
+            {
+                //Both were given, which is not an error - a painted initial ignition is easy to leave
+                //behind - but only one of them can be the ignition, so which one is worth saying.
+                log($"  ignition: {placed.Count} placed ignition point(s) used instead of the painted initial ignition.");
+                result.Ignitions.Clear();
+            }
+
+            result.Ignitions.AddRange(placed);
         }
 
         /// <summary>
@@ -618,10 +842,18 @@ namespace PREACT.Utility
             l.Add("CLEAN_SCRATCH  = .TRUE.");
             if (r.HasIgnitionPoint)
             {
-                l.Add("NUM_IGNITIONS  = 1");
-                l.Add($"X_IGN(1)       = {C(r.IgnitionX)}");
-                l.Add($"Y_IGN(1)       = {C(r.IgnitionY)}");
-                l.Add("T_IGN(1)       = 0.00");
+                //Fortran's own 1-based indexing, since these are namelist array elements.
+                l.Add($"NUM_IGNITIONS  = {r.Ignitions.Count.ToString(CultureInfo.InvariantCulture)}");
+                for (int i = 0; i < r.Ignitions.Count; ++i)
+                {
+                    PlacedIgnition ign = r.Ignitions[i];
+                    string n = (i + 1).ToString(CultureInfo.InvariantCulture);
+                    l.Add($"X_IGN({n})       = {C(ign.X)}");
+                    l.Add($"Y_IGN({n})       = {C(ign.Y)}");
+                    //Two decimals rather than the shortest round trip: a whole number of seconds would be
+                    //written "0", and a namelist REAL is clearer read as one.
+                    l.Add($"T_IGN({n})       = {ign.TimeSeconds.ToString("0.00", CultureInfo.InvariantCulture)}");
+                }
             }
             l.Add("/");
             l.Add("");

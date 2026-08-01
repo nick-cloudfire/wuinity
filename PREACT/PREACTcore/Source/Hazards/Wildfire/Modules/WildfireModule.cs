@@ -49,6 +49,16 @@ namespace PREACT.Wildfire
         public abstract void ConsumeIgnitedFireCells();
         public abstract bool Ignited();
 
+        /// <summary>
+        /// Whether the fire ever reached this cell during the simulated period.
+        /// </summary>
+        /// <remarks>
+        /// Asked by the trigger boundary, which is only meaningful for an area a fire actually threatens. It
+        /// is a question about the whole run rather than about now, so it stays true once the cell has burned
+        /// - unlike <see cref="GetFireCellState"/>, which describes the current moment.
+        /// </remarks>
+        public abstract bool CellHasBurned(int x, int y);
+
         public abstract void GetOffsetAndSize(out Vector2d offset, out Vector2d size);
 
         /// <summary>

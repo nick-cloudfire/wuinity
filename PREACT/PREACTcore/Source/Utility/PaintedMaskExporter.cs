@@ -22,7 +22,7 @@ namespace PREACT.Utility
     /// </summary>
     public static class PaintedMaskExporter
     {
-        /// <summary>The four masks <see cref="Input.GraphicalFireInput.SaveGraphicalFireInput"/> writes, in file order.</summary>
+        /// <summary>The four masks <see cref="GraphicalFireInput.SaveGraphicalFireInput"/> writes, in file order.</summary>
         public class Masks
         {
             public int Ncols, Nrows;
@@ -45,11 +45,11 @@ namespace PREACT.Utility
         }
 
         /// <summary>
-        /// Reads a graphical-fire-input file without needing the LCP loaded.
-        /// <see cref="Input.GraphicalFireInput.LoadGraphicalFireInput"/> requires a
-        /// <c>LandscapeData</c> purely to check the dimensions match, which a case builder running
-        /// before the case exists cannot supply — the file states its own dimensions in its first
-        /// two integers, so they are read from there and checked against the grid instead.
+        /// Reads a graphical-fire-input file into the shape this exporter works in.
+        ///
+        /// The file states its own dimensions in its first two integers, so they are read from there
+        /// and checked against the target grid rather than against a <c>LandscapeData</c> — a case
+        /// builder running before the case exists has none to check against.
         /// </summary>
         public static Masks Load(string path)
         {

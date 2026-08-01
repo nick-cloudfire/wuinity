@@ -54,7 +54,7 @@ namespace PREACT.Input
             if (inputToParse.TryGetValue(nameOfInput, out userInput))
             {
                 newInput.TimeOfArrivalFile = userInput;
-                PREACTInput.CheckIfFileExist(nameOfInput, userInput, rootFolder, out success);                
+                PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.TimeOfArrivalFile, rootFolder, out success);                
             }
             else
             {
@@ -71,7 +71,7 @@ namespace PREACT.Input
             if (inputToParse.TryGetValue(nameOfInput, out userInput))
             {
                 newInput.RateOfSpreadFile = userInput;
-                PREACTInput.CheckIfFileExist(nameOfInput, userInput, rootFolder, out success);                
+                PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.RateOfSpreadFile, rootFolder, out success);                
             }
             else
             {
@@ -88,7 +88,7 @@ namespace PREACT.Input
             if (inputToParse.TryGetValue(nameOfInput, out userInput))
             {
                 newInput.SpreadDirectionFile = userInput;
-                PREACTInput.CheckIfFileExist(nameOfInput, userInput, rootFolder, out success);                
+                PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.SpreadDirectionFile, rootFolder, out success);                
             }
             else
             {
@@ -105,7 +105,7 @@ namespace PREACT.Input
             if (inputToParse.TryGetValue(nameOfInput, out userInput))
             {
                 newInput.FirelineIntensityFile = userInput;
-                PREACTInput.CheckIfFileExist(nameOfInput, userInput, rootFolder,out success);
+                PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.FirelineIntensityFile, rootFolder,out success);
             }
             else
             {

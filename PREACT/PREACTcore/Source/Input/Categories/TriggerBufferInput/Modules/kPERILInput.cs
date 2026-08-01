@@ -29,7 +29,29 @@ namespace PREACT.Input
 
         public bool CalculateROSFromBehave = true;
         public string InitialFuelMoistureFile = string.Empty;
-        public string OutputName = string.Empty;
+        /// <summary>
+        /// The BEHAVE fuel model table, when the rate of spread is computed here rather than taken from the
+        /// fire module. A <c>.fuel</c> file - see <c>Examples/Development/fireCell/default.fuel</c>.
+        /// </summary>
+        public string FuelModelsFile = string.Empty;
+
+        /// <summary>
+        /// Which band of the wind rasters to use, 1-based.
+        /// </summary>
+        /// <remarks>
+        /// The wind rasters an ELMFIRE case carries hold one band per hour of the run, and k-PERIL takes a
+        /// single wind field: its solver has no time axis, and the wind enters it once, as the
+        /// length-to-breadth ratio of the Huygens ellipse at each cell. So one hour has to be chosen, and it
+        /// was being chosen silently - band 1, the first hour, whatever the fire went on to do.
+        ///
+        /// Hour of the run, not hour of the day: band 1 is the first meteorology band the case starts from.
+        /// </remarks>
+        public int WindBand = 1;
+
+        /// <summary>What the trigger boundary's output files are named after. Only a label.</summary>
+        public string OutputName = DefaultOutputName;
+
+        public const string DefaultOutputName = "trigger_boundary";
         public string WuiAreaFile = string.Empty; //.asc mask, 1 = protected WUI cell
         public WuiAreaSources WuiAreaSource = WuiAreaSources.Raster;
 
@@ -67,15 +89,17 @@ namespace PREACT.Input
             Dictionary<string, string> inputToParse = PREACTInput.GetHeaderInput(inputLines, startIndex);
             string nameOfInput, userInput;
 
-            //critical, both of them. These replace the single MidflameWindspeed scalar this section
-            //used to carry: k-PERIL accepts a full wind field and the weather pipeline already
-            //produces one with WindNinja, so representing the whole domain by one number threw away
-            //exactly the terrain-driven variation WindNinja exists to resolve.
+            //A wind field is required, but not necessarily from here: the ELMFIRE module hands over the case's
+            //own ws/wd when this is unset, which is the arrangement that cannot disagree with the fire. So an
+            //absent key is not a defect - it is left to be filled in, and the run says so if nothing does.
+            //These replace the single MidflameWindspeed scalar this section used to carry: k-PERIL accepts a
+            //full wind field and the weather pipeline produces one with WindNinja, so representing the whole
+            //domain by one number threw away exactly the terrain-driven variation WindNinja exists to resolve.
             nameOfInput = nameof(WindSpeedFile);
-            if (inputToParse.TryGetValue(nameOfInput, out userInput))
+            if (inputToParse.TryGetValue(nameOfInput, out userInput) && userInput.Length > 0)
             {
                 newInput.WindSpeedFile = userInput;
-                PREACTInput.CheckIfFileExist(nameOfInput, userInput, rootFolder, out bool windSpeedExists);
+                PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.WindSpeedFile, rootFolder, out bool windSpeedExists);
                 if (!windSpeedExists)
                 {
                     success = false;
@@ -85,28 +109,22 @@ namespace PREACT.Input
             }
             else
             {
-                success = false;
-                PREACTInput.InputNotFoundMessage(nameOfInput, true);
-                return newInput;
+                PREACTInput.OptionalInputMissing(nameOfInput,
+                    "No wind field named for the trigger boundary. Running ELMFIRE supplies the case's own; "
+                    + "otherwise set it here, or the run stops when it needs one.");
             }
 
             nameOfInput = nameof(WindDirectionFile);
-            if (inputToParse.TryGetValue(nameOfInput, out userInput))
+            if (inputToParse.TryGetValue(nameOfInput, out userInput) && userInput.Length > 0)
             {
                 newInput.WindDirectionFile = userInput;
-                PREACTInput.CheckIfFileExist(nameOfInput, userInput, rootFolder, out bool windDirectionExists);
+                PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.WindDirectionFile, rootFolder, out bool windDirectionExists);
                 if (!windDirectionExists)
                 {
                     success = false;
                     PREACTInput.InputNotFoundMessage(nameOfInput, true);
                     return newInput;
                 }
-            }
-            else
-            {
-                success = false;
-                PREACTInput.InputNotFoundMessage(nameOfInput, true);
-                return newInput;
             }
 
             //not critical
@@ -135,7 +153,7 @@ namespace PREACT.Input
             if (inputToParse.TryGetValue(nameOfInput, out userInput))
             {
                 newInput.InitialFuelMoistureFile = userInput;
-                PREACTInput.CheckIfFileExist(nameOfInput, userInput, rootFolder, out bool moistureFileExists);
+                PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.InitialFuelMoistureFile, rootFolder, out bool moistureFileExists);
                 if (!moistureFileExists && newInput.CalculateROSFromBehave)
                 {
                     success = false;
@@ -149,10 +167,39 @@ namespace PREACT.Input
                 return newInput;
             }
 
-            //critical. Returns directly rather than falling through to a shared "if (!success)"
-            //check: success is still false at this point in every path (it is only set true at the
-            //end), because the checks above signal failure by returning, not by leaving the flag
-            //set. Testing the flag here would reject a perfectly valid input.
+            //Critical on the same terms, and for the same reason: with BEHAVE deriving the rate of spread it
+            //needs a fuel model table, and it used to take the fire module's - so a trigger boundary computed
+            //this way depended on a fire module that has nothing to do with it.
+            nameOfInput = nameof(FuelModelsFile);
+            if (inputToParse.TryGetValue(nameOfInput, out userInput))
+            {
+                newInput.FuelModelsFile = userInput;
+                PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.FuelModelsFile, rootFolder, out bool fuelModelsExist);
+                if (!fuelModelsExist && newInput.CalculateROSFromBehave)
+                {
+                    success = false;
+                    return newInput;
+                }
+            }
+            else if (newInput.CalculateROSFromBehave)
+            {
+                success = false;
+                PREACTInput.InputNotFoundMessage(nameOfInput, true);
+                return newInput;
+            }
+
+            nameOfInput = nameof(WindBand);
+            if (inputToParse.TryGetValue(nameOfInput, out userInput)
+                && int.TryParse(userInput, out int parsedBand) && parsedBand >= 1)
+            {
+                newInput.WindBand = parsedBand;
+            }
+
+            //Optional. It names the output files and nothing reads it back, so its absence cannot make a
+            //run wrong - yet a missing key used to abort the whole section, which presented as "this
+            //section could not be read completely" with no indication that the thing missing was a label.
+            //A scenario that gains a trigger boundary from the GUI has never had one, so this was every
+            //such scenario.
             nameOfInput = nameof(OutputName);
             if (inputToParse.TryGetValue(nameOfInput, out userInput))
             {
@@ -160,9 +207,7 @@ namespace PREACT.Input
             }
             else
             {
-                success = false;
-                PREACTInput.InputNotFoundMessage(nameOfInput);
-                return newInput;
+                newInput.OutputName = DefaultOutputName;
             }
 
             //optional: defaults to reading the raster below, which is how existing scenarios behave.
@@ -193,7 +238,7 @@ namespace PREACT.Input
             if (inputToParse.TryGetValue(nameOfInput, out userInput))
             {
                 newInput.WuiAreaFile = userInput;
-                PREACTInput.CheckIfFileExist(nameOfInput, userInput, rootFolder, out bool wuiExists);
+                PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.WuiAreaFile, rootFolder, out bool wuiExists);
                 if (!wuiExists)
                 {
                     Engine.Message(null, Engine.LogType.Warning, nameOfInput + " was specified but not found: " + userInput);

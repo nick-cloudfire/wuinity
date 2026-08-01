@@ -9,6 +9,18 @@ namespace PREACT.Input
         public string WeatherFile = string.Empty;
         public Vector2d DesiredLatLon = Vector2d.zero;
 
+        //Starting values for the fire weather indices the weather manager carries forward: the Canadian
+        //FFMC/DMC/DC, its hourly FFMC, and the Keetch-Byram drought index. They live here because they are
+        //weather, computed from the weather series whatever fire module is running - and because they used
+        //to live on the cell-based spread model's settings, which meant they were only read when that module
+        //was selected and silently defaulted for every other scenario.
+        public double StartFFMC = 85.0;
+        public double StartDMC = 6.0;
+        public double StartDC = 15.0;
+        public double StartHourlyFFMC = 85.0;
+        public double StartKBDI = 100.0;
+        public double MeanAnnualPrcp = 1000.0;
+
         public WeatherInput()
         {
 
@@ -25,7 +37,7 @@ namespace PREACT.Input
             if (inputToParse.TryGetValue(nameOfInput, out userInput))
             {
                 WeatherFile = userInput;
-                PREACTInput.CheckIfFileExist(nameOfInput, userInput, rootFolder, out success);
+                PREACTInput.CheckIfFileExist(nameOfInput, ref WeatherFile, rootFolder, out success);
             }
             else
             {
@@ -59,7 +71,26 @@ namespace PREACT.Input
             }
             issues = 0;
 
+            //All optional and silent when absent: an index has a standard starting value, and asking every
+            //scenario to state six of them would bury the keys that matter.
+            ReadDouble(inputToParse, nameof(StartFFMC), ref StartFFMC);
+            ReadDouble(inputToParse, nameof(StartDMC), ref StartDMC);
+            ReadDouble(inputToParse, nameof(StartDC), ref StartDC);
+            ReadDouble(inputToParse, nameof(StartHourlyFFMC), ref StartHourlyFFMC);
+            ReadDouble(inputToParse, nameof(StartKBDI), ref StartKBDI);
+            ReadDouble(inputToParse, nameof(MeanAnnualPrcp), ref MeanAnnualPrcp);
+
             success = true;
+        }
+
+        private static void ReadDouble(Dictionary<string, string> input, string key, ref double field)
+        {
+            if (input.TryGetValue(key, out string userInput)
+                && double.TryParse(userInput, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out double parsed))
+            {
+                field = parsed;
+            }
         }
     }
 }

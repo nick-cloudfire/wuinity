@@ -1034,6 +1034,66 @@ namespace WUInity
         }
 
         /// <summary>
+        /// Rebuilds the wildfire ignition markers from the scenario as it now stands, for the same reason
+        /// the destination markers need it: they were only ever spawned on load, so a point added or moved
+        /// in the editor left the map marking where it used to be.
+        /// </summary>
+        public void RefreshWildfireIgnitionMarkers()
+        {
+            if (_input == null)
+            {
+                return;
+            }
+
+            _simulationDomainVisualizer.SpawnWildfireIgnitionMarkers(_input, _wildfireIgnitionMarkerPrefab);
+        }
+
+        /// <summary>
+        /// Moves a position to the centre of the fire grid cell containing it, and says which cell that
+        /// is. False when there is no fire grid, or when the position is off it.
+        ///
+        /// This is the snap that means something for an ignition. ELMFIRE resolves X_IGN/Y_IGN to a cell
+        /// and ignites the whole of it, so a point placed anywhere in a cell is the same ignition as the
+        /// cell's centre - and seeing which cell it landed in is how an ignition that is one cell into the
+        /// sea, or one cell outside the domain, becomes visible before the run rather than after it.
+        /// </summary>
+        public bool TrySnapToFireGridCell(PREACT.Math.Vector2d simulationPos,
+            out PREACT.Math.Vector2d snapped, out PREACT.Math.Vector2int cell, out double cellSize)
+        {
+            snapped = simulationPos;
+            cell = new PREACT.Math.Vector2int(0, 0);
+            cellSize = 0.0;
+
+            if (!Painter.TryGetPaintGrid(out PREACT.Math.Vector2d gridSize, out PREACT.Math.Vector2d gridOrigin,
+                    out PREACT.Math.Vector2int cellCount, out cellSize)
+                || cellSize <= 0.0)
+            {
+                return false;
+            }
+
+            double localX = simulationPos.x - gridOrigin.x;
+            double localY = simulationPos.y - gridOrigin.y;
+
+            if (localX < 0.0 || localY < 0.0 || localX >= gridSize.x || localY >= gridSize.y)
+            {
+                return false;
+            }
+
+            int x = (int)(localX / cellSize);
+            int y = (int)(localY / cellSize);
+            if (x < 0 || y < 0 || x >= cellCount.x || y >= cellCount.y)
+            {
+                return false;
+            }
+
+            cell = new PREACT.Math.Vector2int(x, y);
+            snapped = new PREACT.Math.Vector2d(
+                gridOrigin.x + (x + 0.5) * cellSize,
+                gridOrigin.y + (y + 0.5) * cellSize);
+            return true;
+        }
+
+        /// <summary>
         /// The lanes of the scenario's SUMO network, in simulation coordinates, or null when there is no
         /// network to read. Read once and kept.
         /// </summary>

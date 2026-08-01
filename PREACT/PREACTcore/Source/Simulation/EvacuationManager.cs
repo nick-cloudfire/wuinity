@@ -258,11 +258,25 @@ namespace PREACT.Evacuation
             }
 
             string path = System.IO.Path.Combine(rootFolder, windFile);
-            float[,] raster = Utility.AscRaster.Read(path, out Utility.AscRaster.Header header, out bool ok);
+            int band = _input.TriggerBufferModule.kPERILInput.WindBand;
+            float[,] raster = Utility.AscRaster.Read(path, band, out Utility.AscRaster.Header header, out bool ok,
+                out int bandCount);
             if (!ok || raster == null)
             {
                 Engine.Message(null, Engine.LogType.InputError, what + " could not be read: " + path);
                 return null;
+            }
+
+            //Said out loud whenever there is more than one hour in the file. k-PERIL's solver has no time
+            //axis - the wind enters it once, as each cell's length-to-breadth ratio - so one band has to be
+            //picked, and picking it silently meant an 8-hour case was always evaluated on its first hour
+            //however the wind turned during the burn.
+            if (bandCount > 1)
+            {
+                Engine.Message(null, Engine.LogType.Warning,
+                    $"{what} holds {bandCount} hourly bands; k-PERIL is using band {band}. It computes on one wind "
+                    + "field, so the other " + (bandCount - 1) + " are not used. Set [kPERIL] WindBand to choose a "
+                    + "different hour.");
             }
 
             if (header.Ncols != xCount || header.Nrows != yCount)
@@ -324,6 +338,68 @@ namespace PREACT.Evacuation
         /// <summary>
         /// Works out which areas k-PERIL should protect, one entry per boundary to compute.
         /// </summary>
+        /// <summary>
+        /// The painted WUI area, but only if it was painted on the grid k-PERIL is about to compute on.
+        ///
+        /// Checked because the two can legitimately differ: the masks are painted on whatever grid the
+        /// scenario had at the time, and changing the landscape - swapping a 27.6 m DEM for a 30 m one, say
+        /// - changes the fire grid under them. Indexed as x + y*xCount against the wrong width, a mask
+        /// silently marks a sheared, offset region as the community to protect, and the trigger boundary
+        /// that comes out looks perfectly plausible. Refused with a reason instead.
+        /// </summary>
+        private bool[] PaintedWuiArea(Simulation simulation, int xCount, int yCount)
+        {
+            bool[] painted = _input.WildfireModule.Data.WuiArea;
+            if (painted == null)
+            {
+                return null;
+            }
+
+            if (painted.Length == xCount * yCount)
+            {
+                return painted;
+            }
+
+            Math.Vector2int cells = _input.WildfireModule.Data.PaintedCellCount;
+            Engine.Message(simulation, Engine.LogType.SimulationError,
+                $"The painted WUI area covers {cells.x} x {cells.y} cells but the fire grid is {xCount} x {yCount}. "
+                + "It was painted against a different landscape, so it cannot be used here - repaint it, or set "
+                + "[kPERIL] WuiAreaFile to a mask on this grid.");
+            return null;
+        }
+
+        /// <summary>
+        /// Whether the fire reached any cell of a WUI area within the simulated period, and how many.
+        ///
+        /// Any cell, not all of them: a fire that reaches the edge of a community is a fire that community
+        /// has to leave ahead of, and the trigger boundary is what says when. Counted rather than just
+        /// tested so the log can say how much of the area burned, which is the difference between a fire that
+        /// brushed one corner and one that went through it.
+        /// </summary>
+        private bool FireReachedArea(Simulation simulation, bool[] wuiArea, int xCount, int yCount, out int burnedCells)
+        {
+            burnedCells = 0;
+
+            if (wuiArea == null || simulation.Hazards.Wildfire == null)
+            {
+                return false;
+            }
+
+            for (int y = 0; y < yCount; ++y)
+            {
+                for (int x = 0; x < xCount; ++x)
+                {
+                    int index = x + y * xCount;
+                    if (index < wuiArea.Length && wuiArea[index] && simulation.Hazards.Wildfire.CellHasBurned(x, y))
+                    {
+                        ++burnedCells;
+                    }
+                }
+            }
+
+            return burnedCells > 0;
+        }
+
         private List<WuiAreaRun> BuildWuiAreaRuns(Simulation simulation, int xCount, int yCount)
         {
             var runs = new List<WuiAreaRun>();
@@ -333,7 +409,7 @@ namespace PREACT.Evacuation
             {
                 //As before: an explicit mask when given, otherwise whatever the wildfire data carried.
                 bool[] wuiArea = LoadWuiAreaMask(peril.WuiAreaFile, _input.RootFolder, xCount, yCount)
-                                 ?? _input.WildfireModule.Data.WuiArea;
+                                 ?? PaintedWuiArea(simulation, xCount, yCount);
                 if (wuiArea != null)
                 {
                     runs.Add(new WuiAreaRun { WuiArea = wuiArea, Label = "wui" });
@@ -626,9 +702,33 @@ namespace PREACT.Evacuation
 
                         for (int i = 0; i < runs.Count; ++i)
                         {
+                            //A trigger boundary around an area this fire never reached is not a result. The
+                            //boundary answers "when must this area leave, given the fire coming at it" - and
+                            //with no fire arriving there is nothing to be given. Producing one anyway is
+                            //worse than producing none: it looks like every other boundary, so a case whose
+                            //fire went the other way, or whose ELMFIRE run simply stopped too early, is
+                            //indistinguishable from one that was genuinely threatened.
+                            if (!FireReachedArea(simulation, runs[i].WuiArea, xCount, yCount, out int burnedCells))
+                            {
+                                Engine.Message(simulation, Engine.LogType.Warning,
+                                    $"The fire never reached {runs[i].Label}, so no trigger boundary was computed for "
+                                    + "it. Either it is not threatened in this scenario, or the fire was not run for "
+                                    + "long enough to get there - a probabilistic campaign runs ELMFIRE for days for "
+                                    + "exactly this reason. Raise [ELMFIRE] SimulationTstopSeconds to give the fire "
+                                    + "time to arrive.");
+                                continue;
+                            }
+
                             if (_input.TriggerBufferModule.kPERILInput.CalculateROSFromBehave)
                             {
-                                _triggerBufferModule = new kPERIL(_input.WildfireModule.Data.LandscapeData, wrsetMinutes, runs[i].WuiArea, windSpeedMph, windDirectionDegrees, _input.WildfireModule.Data.InitialFuelMoistureData, _input.WildfireModule.Data.FuelModelsData);
+                                //k-PERIL's own moisture and fuel model table, from the [kPERIL] section.
+                                //These used to be the fire module's, which made a BEHAVE-derived trigger
+                                //boundary depend on a fire module that has nothing to do with it - and the
+                                //moisture file [kPERIL] already declared was loaded and then ignored.
+                                _triggerBufferModule = new kPERIL(_input.WildfireModule.Data.LandscapeData, wrsetMinutes,
+                                    runs[i].WuiArea, windSpeedMph, windDirectionDegrees,
+                                    _input.TriggerBufferModule.Data.kPERILInitialFuelMoistureData,
+                                    _input.TriggerBufferModule.Data.kPERILFuelModelsData);
                             }
                             else
                             {
@@ -642,10 +742,9 @@ namespace PREACT.Evacuation
                                     simulation.Hazards.Wildfire.GetCellSizeX(), elevation, slope, aspect);
                             }
 
-                            if (runs.Count > 1)
-                            {
-                                Engine.Message(simulation, Engine.LogType.Log, $"k-PERIL run {i + 1} of {runs.Count}: {runs[i].Label}.");
-                            }
+                            Engine.Message(simulation, Engine.LogType.Log,
+                                $"k-PERIL run {i + 1} of {runs.Count}: {runs[i].Label}, which the fire reached in "
+                                + $"{burnedCells} cell(s).");
 
                             _triggerBufferModule.Run();
 

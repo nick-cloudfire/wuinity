@@ -43,6 +43,15 @@ namespace PREACTcli
         {
             var opts = ParseArgs(args);
 
+            //Same treatment as build-case: the tools are located when --gdal was not given, so a campaign of
+            //hundreds of realizations does not fail on every one of them for want of a path that could have
+            //been worked out. ELMFIRE still resolves it itself from the PATH this puts them on.
+            opts.PathToGdal ??= GdalTools.FindBinDirectory();
+            if (opts.GenerateRealizations && opts.PathToGdal != null)
+            {
+                Console.WriteLine($"GDAL tools: {opts.PathToGdal}");
+            }
+
             if (opts.BaseWui == null || opts.MaxRealizations <= 0)
             {
                 Console.Error.WriteLine("ERROR: --wui and --max are required.");
@@ -650,7 +659,20 @@ namespace PREACTcli
             public string ElmfireTemplate;
             public string ElmfireInputs;
             public string PathToGdal;
-            public double TstopSeconds;
+            /// <summary>
+            /// How long each realization's ELMFIRE run simulates, in seconds. Three days.
+            /// </summary>
+            /// <remarks>
+            /// Long on purpose, and much longer than a single case needs. A realization only contributes to
+            /// the burn probability and to the trigger boundary if its fire actually reaches the community,
+            /// and ignitions are drawn from across the whole domain - so the ones started furthest away, which
+            /// are precisely the ones that decide how far out the boundary has to sit, need days to arrive. A
+            /// run cut short does not merely lose those realizations: it counts them as fires that did not
+            /// threaten the town, and the boundary comes out too tight.
+            ///
+            /// Overridden with --tstop. Zero leaves the template's own value alone.
+            /// </remarks>
+            public double TstopSeconds = 3.0 * 24.0 * 3600.0;
             public int Seed = 12345;
             /// <summary>Emit machine-readable per-realization progress (PROGRESS_JSON lines plus a
             /// PROGRESS_RASTER snapshot) for the Unity window, which drives its live view from this
@@ -726,7 +748,7 @@ namespace PREACTcli
             Console.WriteLine("    or, generating realizations instead of reading them from --dir:");
             Console.WriteLine("  PREACTcli converge-trigger --wui <base.wui> --max <N> \\");
             Console.WriteLine("      --elmfire <elmfire.exe> --elmfire-template <elmfire.data> --elmfire-inputs <inputsFolder>");
-            Console.WriteLine("      [--tstop <seconds>] [--seed <n=12345>] [--gdal <gdalBinFolder>]");
+            Console.WriteLine("      [--tstop <seconds=259200, i.e. 3 days>] [--seed <n=12345>] [--gdal <gdalBinFolder>]");
             Console.WriteLine("      [--start <n=1>] [--pad <width=4>]");
             Console.WriteLine("      [--toa TOA_{i}.tif] [--ros ROS_{i}.tif] [--sd SD_{i}.tif] [--fi FI_{i}.tif]");
             Console.WriteLine("      [--preact <PREACT.exe>] [--out <probability.asc>] [--diagnostics <convergence.csv>]");

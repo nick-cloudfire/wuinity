@@ -79,7 +79,7 @@ namespace PREACT.Input
                 if (inputToParse.TryGetValue(nameOfInput, out userInput))
                 {
                     TriggerBufferFile = userInput;
-                    PREACTInput.CheckIfFileExist(nameOfInput, userInput, rootFolder, out success);
+                    PREACTInput.CheckIfFileExist(nameOfInput, ref TriggerBufferFile, rootFolder, out success);
                 }
                 else
                 {

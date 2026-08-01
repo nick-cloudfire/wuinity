@@ -49,10 +49,15 @@ namespace PREACT
         {
             _simulation = simulation;
 
-            //todo: move fire specific stuff to where it is actually used?
-            _fwi = new Wildfire.FireWeatherIndex(simulation.Input.WildfireModule.FireCellInput.StartFFMC, simulation.Input.WildfireModule.FireCellInput.StartDMC, simulation.Input.WildfireModule.FireCellInput.StartDC);
-            _ffmcHourly = new Wildfire.HourlyFFMC(simulation.Input.WildfireModule.FireCellInput.StartHourlyFFMC);
-            _DailyKBDI = new DailyKBDI(simulation.Input.WildfireModule.FireCellInput.StartKBDI, 1500); //TODO: user input
+            //From the weather section, which is where these belong: they are indices computed from the
+            //weather series and carried forward, whatever fire module is running. They used to be read off
+            //the cell-based spread model's settings, so they were only ever set for a scenario using that
+            //module and silently took their defaults for every other one - including the mean annual
+            //precipitation, which was not read at all and hardcoded to 1500 here.
+            Input.WeatherInput weatherInput = simulation.Input.Weather;
+            _fwi = new Wildfire.FireWeatherIndex(weatherInput.StartFFMC, weatherInput.StartDMC, weatherInput.StartDC);
+            _ffmcHourly = new Wildfire.HourlyFFMC(weatherInput.StartHourlyFFMC);
+            _DailyKBDI = new DailyKBDI(weatherInput.StartKBDI, weatherInput.MeanAnnualPrcp);
 
             LoadOrDownloadWeather(time);
             Update(time.StartDateTime, true);

@@ -15,6 +15,14 @@ then ran it to completion: exit 0, 724.6 ac / 293 ha burned in 8 h, outputs veri
 
 P0 proves the input contract and the template. It does **not** mean WUInity can reproduce any of it.
 
+**P0.5 and P0.6 are done.** Painted fire areas are now saved, referenced by the scenario and loaded back;
+ignition points are a first-class part of the `.wui` with a map-picking editor, and the case builder
+measures them in the case's own CRS. Verified end to end: a scenario carrying
+`LatLon=38.0441296693475,23.9465295359622` builds to `X_IGN(1) = 758569.98`, `Y_IGN(1) = 4214810.74` in
+EPSG:32634 — the value the hand-repaired case needed — and ELMFIRE 1.1 ran that case to completion
+(exit 0, 46.7 ac in 1 h), with the earliest-burning cell 41 m from the placed point. A second point at
+10 N 10 E in the same scenario was reported as 526 km outside the domain and dropped rather than clamped.
+
 ## What P0 established
 
 The input contract every layer must satisfy, and which the automation has to guarantee:
@@ -47,7 +55,50 @@ Canonical stems written to `elmfire/inputs`: `dem slp asp fbfm40 cc ch cbh cbd a
 m100 ignition_mask baa ssd nbf_h ff_h bfm_h`. Weather is 8 hourly bands.
 
 Placeholders still in the case: `m10`/`m100` are `m1` + 1.5 / 3.0 (P4 replaces them with Nelson), and
-`ignition_mask` is `fbfm40 > 100` rather than painted (P0.5).
+`ignition_mask` is `fbfm40 > 100` rather than painted — the painting path exists now, that particular
+case's mask simply predates it.
+
+## GDAL for ELMFIRE
+
+ELMFIRE shells out to `gdal_translate`, `gdalinfo` and `gdalsrsinfo` **as programs**, which is a different
+dependency from the GDAL PREACT itself uses: `Runtimes/Native/GDAL` holds only the SWIG bindings
+(`gdal_wrap.dll` and friends), and **no GDAL executables ship with WUInity** — so there is nothing local to
+point `PATH_TO_GDAL` at.
+
+This ELMFIRE build resolves them itself. `build/source/elmfire_namelists.f90` defaults `PATH_TO_GDAL` to
+`'auto'`, runs `where gdal_translate`, and prints `Auto-detected PATH_TO_GDAL: ...`. That only works if the
+tools are on the PATH of the process running it, which on Windows they usually are not. So `GdalTools`
+locates them — PATH, then the newest QGIS under Program Files, then OSGeo4W, then `SUMO_HOME` — and puts
+them on the child's PATH, leaving ELMFIRE's own detection to succeed rather than overriding it with an
+explicit key. `[ELMFIRE] PathToGdal` exists only to force a particular install, and `build-case` /
+`converge-trigger` default `--gdal` the same way.
+
+Getting this wrong is unusually hard to diagnose: with no GDAL reachable, ELMFIRE fails its startup CRS
+check and reports **"DEM CRS does not appear to use metre linear units"** — an error about the DEM, when the
+DEM is fine.
+
+## Scenario folder layout
+
+The data steps write into folders rather than dropping everything beside the `.wui`:
+
+| Folder | Holds | Written by |
+|---|---|---|
+| *root* | the `.wui`, the population CSV, the weather CSV, the RouterDb, painted masks | steps, paint windows |
+| `downloads/` | raw downloads before clipping or warping: the WGS84 DEM, WorldPop and its `_UTM` reprojection, the OSM extract | steps |
+| `elmfire/inputs/` | the terrain the scenario runs on (`<name>_dem/_slope/_aspect.tif`), plus everything `ElmfireCaseBuilder` generates | steps, case builder |
+| `canopy/` | reprojected canopy layers | external |
+| `sumo/` | the SUMO network and configuration | `SumoNetworkBuilder` |
+
+Recorded paths use forward slashes, since they are resolved on disk *and* stored in the `.wui`, and a
+backslash written on Windows is not a separator anywhere else.
+
+`ScenarioFileLocator` covers files that have since been moved: when the recorded path misses, the same
+filename is looked for one level down in each folder above, and in the root. It warns which copy it used,
+names any other candidate rather than choosing silently, and corrects the field - so saving the scenario
+records the new path and the search stops being needed. The root is in that list for the reverse case: a
+scenario written by the current steps, opened on a folder still laid out the old way. It is deliberately
+not recursive; `_output`, `scratch` and `cache` hold results and intermediates, and "first file with this
+name anywhere underneath" is as likely to find the wrong copy as the right one.
 
 ## Existing code, and what it needs
 
@@ -60,7 +111,8 @@ references from `WUInity/Assets`).
 | Slope/aspect | `SlopeAspect`, `GeoTiffRasterWriter` | non-square cell bug; aspect must not be bilinear |
 | adj/phi | `GeoTiffRasterWriter.WriteConstant` | already correct |
 | Weather | `WeatherRasterPipeline` (ERA5 -> WindNinja -> Nelson) | single-band -> N-band time series |
-| Painted masks | `PaintedMaskExporter`, `GraphicalFireInput` | nothing saves the file (see P0.5) |
+| Painted masks | `PaintedMaskExporter`, `GraphicalFireInput`, `FirePaintWindow` | **done** (P0.5) |
+| Ignition point | `[IgnitionPoint]` sections, `IgnitionPointEditWindow`, `CrsTransform` | **done** (P0.6) |
 | Namelist | `ElmfireNamelist.SetKeyInGroup`, `ElmfireCaseBuilder.BuildNamelist` | FBFM40, spotting, `&WUI`, ember keys, N bands |
 | Case build | `ElmfireCaseBuilder` | GUI entry point |
 | Run | `ElmfireRunner` (PREACTcli) | Unity-side runner |
@@ -68,43 +120,67 @@ references from `WUInity/Assets`).
 
 ## Plan
 
-### P0.5 - persist painted fire masks (blocker for everything ignition-related)
+### P0.5 - persist painted fire masks (done)
 
-`GraphicalFireInput.SaveGraphicalFireInput()` has **no callers**, and
-`WildfireModuleInput.GraphicalFireInputFile` is **commented out** (lines 26, 106-113). A user can
-paint a WUI area, a random-ignition area and an initial ignition - they land in
-`WildfireModule.Data.*` - but nothing writes them to disk, the scenario has no field to reference
-them, and `WildfireData.LoadGraphicalFireInput` is never called. Evacuation groups have their own
-`SaveMasks()`; the fire masks never got one.
+The problem was that `GraphicalFireInput.SaveGraphicalFireInput()` had no callers and
+`WildfireModuleInput.GraphicalFireInputFile` was commented out, so a WUI area, a random-ignition area
+and an initial ignition could all be painted into `WildfireModule.Data.*` and none of it ever reached
+disk. There was also nothing in the GUI that opened those three paint modes at all. Which is why
+`ElmfireCaseBuilder.ApplyPaintedMasks()` had never run: it reads a file nothing produced.
 
-Consequence: `ElmfireCaseBuilder --painted` expects a file nothing produces, so
-`ApplyPaintedMasks()` - the code that turns the painted random-ignition area into `ignition_mask.tif`,
-the painted WUI area into `wui_area.tif`, and a painted initial ignition into `X_IGN`/`Y_IGN` - is
-currently unreachable.
+What now exists:
 
-- Save button in the fire paint windows calling `SaveGraphicalFireInput`.
-- Re-enable `GraphicalFireInputFile`: write it, parse it, load it when the scenario opens.
-- Checklist entry so an unpainted case says so.
+- **`FirePaintWindow`** (Run/edit > Hazards > Paint fire areas): the three modes, add/erase brush, and a
+  Save button. Not disabled with the wildfire module, because the WUI area matters to a scenario whose
+  fire is imported.
+- **`GraphicalFireInputFile`** is a live scenario field again - written by the reflection-based writer,
+  parsed, and loaded by `WildfireData.LoadAll` whatever the module is and whether or not a fire is
+  modelled. That last part also makes `EvacuationManager`'s existing fallback to `Data.WuiArea` for
+  k-PERIL's protected area reachable for the first time.
+- **The grid is written into the file** rather than taken from the landscape. Masks are painted on
+  whichever raster the painter resolved, so a scenario with an imported fire - which has no
+  `LandscapeData` at all - used to throw on save. `WildfireData.PaintedCellCount` carries the grid the
+  loaded masks are on, and the painter says so plainly when it no longer matches.
+- A **checklist entry** (`PREACTInput.OptionalInputMissing`, non-critical) for a scenario with nothing
+  painted, because otherwise the case builder's ignite-anywhere fallback and k-PERIL's no-WUI-area both
+  look like deliberate choices.
+- A missing `.gfi` **keeps its reference** instead of clearing it. Every other file field in these
+  parsers clears; here clearing is silent data loss, since the writer omits empty values and the masks
+  were painted by hand.
 
 **The ignition mask is the user's to paint.** `RestrictIgnitionToBurnableFuel` then *intersects* the
 painted mask with burnable fuel; it is not the mask.
 
-### P0.6 - one ignition point from the GUI
+### P0.6 - one ignition point from the GUI (done)
 
-Today there is no supported way to place a single ignition for ELMFIRE:
+Ignition points existed as a type and were drawn as markers, but could only arrive from a CSV named by
+the legacy `[ElmClone] IgnitionPointsFile`, only for that module, with no editor - and
+`ElmfireCaseBuilder` ignored them entirely. So an ELMFIRE ignition had to be written into the namelist
+by hand, which is how the Mati case acquired zone-35 coordinates in a zone-34 case.
 
-- `Painter.PaintMode.InitialIgnition` exists and `PaintedMaskExporter.TryGetIgnitionPoint` turns it
-  into `X_IGN`/`Y_IGN`, but it cannot be saved (P0.5).
-- `WildfireModule.Data.IgnitionPoints` (`IgnitionPointInput`: LatLon, absolute/relative time) is read
-  only from a CSV named by the legacy `[FireCell] IgnitionPointsFile`, and only when the module is
-  `ElmClone`. There is no editor for it - the GUI only draws markers for it
-  (`SpawnWildfireIgnitionMarkers`).
-- `ElmfireCaseBuilder` ignores `Data.IgnitionPoints` entirely.
+What now exists:
 
-Work: an ignition-point editor with map picking (like the destination editor, including snapping and
-marker refresh), persisted in the scenario, and read by `ElmfireCaseBuilder` so a single-scenario run
-gets `NUM_IGNITIONS=1` + `X_IGN`/`Y_IGN`/`T_IGN` in the case CRS - the transform being exactly what
-the case got wrong by hand.
+- **`[IgnitionPoint]` sections** in the `.wui`, repeated like `[Destination]` and `[EvacuationGroup]`,
+  parsed on the module rather than in the `ElmClone` sub-section - an ignition is not that module's
+  property. They replace what the legacy CSV loaded, and say so, so which is in effect is never in
+  question. Round-trip verified through writer and parser, including the absolute/relative time split
+  (`IgnitionTime` is derived from `IgnitionDateTime`, so moving the scenario's start moves the ignition
+  with it).
+- **`IgnitionPointEditWindow`**: map picking, lat/lon at full precision, relative seconds or an absolute
+  date, and marker refresh via `WUInityManager.RefreshWildfireIgnitionMarkers`. The snap is to the
+  **fire grid cell centre**, not to a road: ELMFIRE resolves `X_IGN`/`Y_IGN` to a cell and ignites the
+  whole of it, so which cell it landed in is the question worth answering - and a point one cell into
+  the sea becomes visible before the run.
+- **`CrsTransform.TryWgs84To`** and `ElmfireCaseBuilder.ApplyIgnitionPoints`: the transform happens once,
+  in code, against the CRS of the case grid that actually exists - not the scenario's, not a raster's,
+  not the zone the domain corner falls in. A point outside the domain is dropped with both its
+  coordinates and the domain's stated, never clamped: clamping would ignite a fire nobody asked for and
+  the run would look successful.
+- `NUM_IGNITIONS` = however many were placed, with `X_IGN(i)`/`Y_IGN(i)`/`T_IGN(i)`, and
+  `RANDOM_IGNITIONS`/`USE_IGNITION_MASK` off. Explicit points supersede a painted initial ignition, with
+  a line saying which was used.
+- `PREACTcli build-case` reads the sections out of the `.wui` with the same local parse it uses for the
+  domain, so the CLI honours them without a full scenario load.
 
 ### P1 - `sample.data` as a patched template
 
@@ -148,6 +224,19 @@ parallel-safe, already what `converge-trigger` does) rather than ELMFIRE's inter
 `NUM_ENSEMBLE_MEMBERS`, because k-PERIL needs per-realization time-of-arrival rasters. Ignitions drawn
 by `IgnitionSampler` inside the painted mask intersected with burnable fuel; weather drawn from
 `ClimatologySampler`. Aggregate to burn probability and mean/percentile arrival time.
+
+**Each realization simulates three days** (`converge-trigger --tstop`, default 259200 s). Much longer than a
+single case needs, and deliberately so: a realization only contributes to the boundary if its fire reaches
+the community, ignitions are drawn from across the whole domain, and the ones started furthest away are
+exactly the ones that decide how far out the boundary must sit. A run cut short does not merely lose those
+realizations — it counts them as fires that did not threaten the town, and the boundary comes out too tight.
+
+**No boundary is produced for an area the fire never reached.** Checked per WUI area against the arrival
+times (`WildfireModule.CellHasBurned`), so with per-group areas one group can get a boundary and another
+correctly not. A boundary computed for an unreached area would look like every other boundary, making a
+case whose fire went the other way — or whose run stopped too early — indistinguishable from one that was
+genuinely threatened. For single cases this is the expected outcome rather than an error, which is why the
+message names both possibilities.
 
 Open decisions: whether the ensemble varies ignition only or ignition **and** weather (that decides
 whether `RASTER_TO_PERTURB` blocks belong in the template), and the master cell size (30 m matches

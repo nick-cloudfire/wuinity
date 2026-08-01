@@ -115,19 +115,28 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 ImGui.BulletText($"Vehicles left: {sim.Evacuation.TrafficModule.GetNumberOfCarsInSystem()} / {sim.Evacuation.TrafficModule.GetTotalCarsSimulated()}");                
             }
 
-            if (sim.Input.PedestrianModule.Enabled)
+            //The module, not just the scenario's intention to have one. A window that redraws every frame
+            //turns one null dereference into a wall of identical exceptions, which buries whatever the
+            //console was trying to say about why the module is missing - and it is missing for a reason that
+            //is always logged.
+            if (sim.Input.PedestrianModule.Enabled && sim.Evacuation.PedestrianModule != null)
             {
                 for (int i = 0; i < sim.Evacuation.Destinations.Count; i++)
                 {
                     string name = sim.Evacuation.Destinations[i].Name;
                     ImGui.BulletText($"{name}: {sim.Evacuation.Destinations[i].CurrentPeople} ({ sim.Evacuation.Destinations[i].Vehicles.Count})");
-                    
+
                 }
-                ImGui.BulletText($"Total evacuated: {sim.Evacuation.GetTotalEvacuated()} / {sim.Evacuation.PedestrianModule.GetTotalPopulation() - sim.Evacuation.PedestrianModule.GetPeopleStaying()}");                
+                ImGui.BulletText($"Total evacuated: {sim.Evacuation.GetTotalEvacuated()} / {sim.Evacuation.PedestrianModule.GetTotalPopulation() - sim.Evacuation.PedestrianModule.GetPeopleStaying()}");
+            }
+            else if (sim.Input.PedestrianModule.Enabled)
+            {
+                ImGui.TextDisabled("The pedestrian module was not created; see the console.");
             }
 
             ImGui.SeparatorText("Wildfire spread");
-            if (sim.Input.WildfireModule.Enabled && sim.State == Simulation.SimulationState.Running)
+            if (sim.Input.WildfireModule.Enabled && sim.Hazards.Wildfire != null
+                && sim.State == Simulation.SimulationState.Running)
             {
                 ImGui.BulletText($"Active cells (FireMesh): {sim.Hazards.Wildfire.GetActiveCellCount()}");
                 //fire visual mode

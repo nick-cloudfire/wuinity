@@ -56,6 +56,55 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
         public static bool HasItems { get => _items.Count > 0; }
 
+        //What the last re-check found, so pressing the button visibly does something even when the list
+        //comes back identical.
+        private static string _refreshNote = string.Empty;
+
+        /// <summary>
+        /// Runs the checks again against the loaded scenario as it currently stands, unsaved edits included,
+        /// and re-snapshots the list.
+        /// </summary>
+        private static void Refresh()
+        {
+            if (!ScenarioEditorWindow.HasInput)
+            {
+                _refreshNote = "No scenario is loaded, so there is nothing to check.";
+                return;
+            }
+
+            int before = 0;
+            for (int i = 0; i < _items.Count; ++i)
+            {
+                if (_items[i].Critical) ++before;
+            }
+
+            PREACTInput.Revalidate(ScenarioEditorWindow.Input);
+
+            _items.Clear();
+            _items.AddRange(PREACTInput.Requirements);
+
+            int after = 0;
+            for (int i = 0; i < _items.Count; ++i)
+            {
+                if (_items[i].Critical) ++after;
+            }
+
+            if (after == 0)
+            {
+                _refreshNote = before > 0
+                    ? $"Re-checked: all {before} required item(s) are now set."
+                    : "Re-checked: nothing required is outstanding.";
+            }
+            else if (after == before)
+            {
+                _refreshNote = $"Re-checked: still {after} required item(s).";
+            }
+            else
+            {
+                _refreshNote = $"Re-checked: {after} required item(s), was {before}.";
+            }
+        }
+
         public static void Draw()
         {
             if (!_isOpen)
@@ -131,6 +180,25 @@ namespace Assets.WUInity.GUI.DearIMGUI
             ImGui.EndChild();
 
             ImGui.Separator();
+
+            //Wanted because the list is a snapshot taken when the scenario was read, and the whole point of
+            //the window is to work through it - so it went stale the moment the first item was dealt with,
+            //and the only way to see progress was to save and reopen the scenario.
+            if (ImGui.Button("Re-check"))
+            {
+                Refresh();
+            }
+            if (ImGui.IsItemHovered())
+            {
+                //Said because an item can disappear on the first re-check without anything being fixed: the
+                //check is a write-and-read-back, so a section the file is missing gets written on the way
+                //through, exactly as saving would write it.
+                ImGui.SetTooltip("Runs the checks again against the scenario as it stands now, including edits "
+                    + "that have not been saved yet.\nIt checks what saving would produce, so an item can clear "
+                    + "because saving would write something the file is currently missing.");
+            }
+            ImGui.SameLine();
+
             if (ImGui.Button("Open scenario editor"))
             {
                 ScenarioEditorWindow.Open();
@@ -139,6 +207,11 @@ namespace Assets.WUInity.GUI.DearIMGUI
             if (ImGui.Button("Close"))
             {
                 _isOpen = false;
+            }
+
+            if (!string.IsNullOrEmpty(_refreshNote))
+            {
+                ImGui.TextDisabled(_refreshNote);
             }
 
             ImGui.End();

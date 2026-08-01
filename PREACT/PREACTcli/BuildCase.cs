@@ -68,6 +68,7 @@ namespace PREACTcli
                     case "--painted":      o.PaintedMasksPath = Next(args, ref i); break;
                     case "--painted-grid": o.PaintedMasksGridPath = Next(args, ref i); break;
                     case "--force":     o.Force = true; break;
+                    case "--rebuild":   o.OverwriteExistingLayers = true; break;
                     default:
                         if (a.StartsWith("--") && Array.IndexOf(UserRasterStems, a.Substring(2)) >= 0)
                         {
@@ -98,11 +99,10 @@ namespace PREACTcli
                 return 1;
             }
 
-            //Env var as well as a flag: the key is a secret, and putting it in a flag puts it in
-            //the shell history of every campaign launch. Not needed at all with --dem.
-            o.OpenTopographyApiKey = apiKey
-                ?? Environment.GetEnvironmentVariable("OPENTOPOGRAPHY_API_KEY")
-                ?? TryReadUnityApiKey();
+            //A flag as a last resort: the key is a secret, and putting it in one puts it in the shell history
+            //of every campaign launch. One resolver, shared with the Unity side, so the two cannot disagree
+            //about which key is in force. Not needed at all with --dem, or for a case that has a DEM already.
+            o.OpenTopographyApiKey = apiKey ?? OpenTopographyKey.Resolve();
 
             if (string.IsNullOrEmpty(o.LocalDemPath) && string.IsNullOrEmpty(o.OpenTopographyApiKey))
             {
@@ -114,6 +114,16 @@ namespace PREACTcli
             }
 
             o.Weather.WindNinjaExe ??= FindWindNinja();
+
+            //Located rather than required. ELMFIRE resolves GDAL itself from the PATH when PATH_TO_GDAL is
+            //left at 'auto', so the namelist is better off without the key than with a guessed one - but a
+            //machine where the tools are installed somewhere off the PATH, which is the normal Windows case,
+            //needs to be told where they are.
+            o.PathToGdal ??= GdalTools.FindBinDirectory();
+            if (o.PathToGdal != null)
+            {
+                Console.WriteLine($"GDAL tools: {o.PathToGdal}");
+            }
 
             try
             {
@@ -127,6 +137,10 @@ namespace PREACTcli
                 {
                     Console.WriteLine($"  missing   {string.Join(", ", r.Skipped)}");
                 }
+                if (r.Reused.Count > 0)
+                {
+                    Console.WriteLine($"  kept      {string.Join(", ", r.Reused)} (already in the case; --rebuild replaces them)");
+                }
                 if (r.Defaulted.Count > 0)
                 {
                     Console.WriteLine($"  defaulted {string.Join(", ", r.Defaulted)} to zero (surface fire only)");
@@ -138,7 +152,11 @@ namespace PREACTcli
                 }
                 if (r.HasIgnitionPoint)
                 {
-                    Console.WriteLine($"  ignition  fixed at {r.IgnitionX:F1}, {r.IgnitionY:F1} (random ignition disabled)");
+                    Console.WriteLine($"  ignition  {r.Ignitions.Count} fixed point(s) in {r.Grid.Epsg} (random ignition disabled)");
+                    foreach (ElmfireCaseBuilder.PlacedIgnition ign in r.Ignitions)
+                    {
+                        Console.WriteLine($"            {ign.X:F1}, {ign.Y:F1} at t = {ign.TimeSeconds:F0} s");
+                    }
                 }
                 foreach (string f in r.Fallbacks) Console.WriteLine($"  !         {f}");
                 if (!r.Written.Contains("fbfm13"))
@@ -234,11 +252,80 @@ namespace PREACTcli
                 o.StartDateTime = dt;
             }
 
+            ReadIgnitionPoints(lines, o, quiet);
+
             if (!quiet)
             {
                 Console.WriteLine($"Case '{o.Name}': lower-left {lat},{lon}, domain {east}x{north} m, start {o.StartDateTime:u}");
             }
             return true;
+        }
+
+        /// <summary>
+        /// Reads the scenario's <c>[IgnitionPoint]</c> sections. Local like the rest of this parse, and
+        /// for the same reason: a full <c>PREACTInput</c> load validates the whole scenario, which at
+        /// case-build time is not yet complete.
+        ///
+        /// Times are relative seconds. An absolute <c>IgnitionDateTime</c> is turned into seconds from
+        /// the scenario's start, which is the only form ELMFIRE's <c>T_IGN</c> has.
+        /// </summary>
+        private static void ReadIgnitionPoints(string[] lines, ElmfireCaseBuilder.Options o, bool quiet)
+        {
+            o.IgnitionPoints.Clear();
+
+            for (int i = 0; i < lines.Length; ++i)
+            {
+                if (!string.Equals(lines[i].Trim(), "[IgnitionPoint]", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                string latLon = null, absolute = null, seconds = null, when = null;
+                for (int j = i + 1; j < lines.Length; ++j)
+                {
+                    string line = lines[j].Trim();
+                    if (line.StartsWith("[")) break;
+
+                    int eq = line.IndexOf('=');
+                    if (eq <= 0) continue;
+
+                    string key = line.Substring(0, eq).Trim();
+                    string value = line.Substring(eq + 1).Trim();
+                    if (string.Equals(key, "LatLon", StringComparison.OrdinalIgnoreCase)) latLon = value;
+                    else if (string.Equals(key, "AbsoluteTime", StringComparison.OrdinalIgnoreCase)) absolute = value;
+                    else if (string.Equals(key, "IgnitionTime", StringComparison.OrdinalIgnoreCase)) seconds = value;
+                    else if (string.Equals(key, "IgnitionDateTime", StringComparison.OrdinalIgnoreCase)) when = value;
+                }
+
+                if (!TryPair(latLon, out double lat, out double lon))
+                {
+                    if (!quiet) Console.Error.WriteLine("[IgnitionPoint] with no readable LatLon, skipped.");
+                    continue;
+                }
+
+                double t = 0.0;
+                bool isAbsolute = bool.TryParse(absolute, out bool parsedAbsolute) && parsedAbsolute;
+                if (isAbsolute && DateTime.TryParse(when, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime dateTime))
+                {
+                    t = (dateTime - o.StartDateTime).TotalSeconds;
+                }
+                else if (!isAbsolute)
+                {
+                    double.TryParse(seconds, NumberStyles.Any, CultureInfo.InvariantCulture, out t);
+                }
+
+                o.IgnitionPoints.Add(new ElmfireCaseBuilder.IgnitionPoint
+                {
+                    LatLon = new Vector2d(lat, lon),
+                    TimeSeconds = t,
+                });
+            }
+
+            if (!quiet && o.IgnitionPoints.Count > 0)
+            {
+                Console.WriteLine($"  {o.IgnitionPoints.Count} ignition point(s) from the scenario; they will be "
+                                  + "measured in the case's own CRS and RANDOM_IGNITIONS switched off.");
+            }
         }
 
         private static string Get(string[] lines, string section, string key)
@@ -275,35 +362,6 @@ namespace PREACTcli
                    && double.TryParse(parts[1].Trim(), NumberStyles.Any, CultureInfo.InvariantCulture, out b);
         }
 
-        /// <summary>
-        /// Falls back to the gitignored Unity resource the editor already reads the key from, so a
-        /// machine set up for the Unity build does not need the key configured twice.
-        /// </summary>
-        private static string TryReadUnityApiKey()
-        {
-            try
-            {
-                string dir = Path.GetDirectoryName(Path.GetFullPath(Environment.GetCommandLineArgs()[0]));
-                for (int up = 0; up < 8 && dir != null; ++up, dir = Path.GetDirectoryName(dir))
-                {
-                    string p = Path.Combine(dir, "WUInity", "Assets", "Resources", "OpenTopography", "OpenTopographyConfiguration.txt");
-                    if (!File.Exists(p)) continue;
-
-                    foreach (string part in File.ReadAllText(p).Split('"'))
-                    {
-                        //{"ApiKey":"<key>"} - the value is the first non-empty token that is
-                        //neither the property name nor JSON punctuation.
-                        string t = part.Trim();
-                        if (t.Length > 0 && t != "ApiKey" && !t.StartsWith("{") && !t.StartsWith(":") && !t.StartsWith("}"))
-                        {
-                            return t;
-                        }
-                    }
-                }
-            }
-            catch { }
-            return null;
-        }
 
         /// <summary>
         /// Looks for the Windows installer's <c>WindNinja_cli.exe</c> so the terrain-wind stage

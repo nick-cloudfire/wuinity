@@ -249,6 +249,23 @@ namespace PREACT.Wildfire
         }
 
         /// <summary>
+        /// Whether the fire reached this cell at all.
+        ///
+        /// Read off the arrival time rather than the cell's current state: an unburned cell is stored as
+        /// float.MaxValue by the reader above, which is exactly "the fire never got here" - within however
+        /// long the fire that produced these rasters was run for.
+        /// </summary>
+        public override bool CellHasBurned(int x, int y)
+        {
+            if (!IsInside(x, y))
+            {
+                return false;
+            }
+
+            return _data[x, y].TimeOfAArrival != float.MaxValue;
+        }
+
+        /// <summary>
         /// Returns state of cell on mesh based on lat/long. Returns dead if outside of mesh.
         /// </summary>
         /// <param name="latLon"></param>

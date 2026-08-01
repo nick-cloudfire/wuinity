@@ -50,9 +50,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="Runtimes\Native\Behave\x64\Behave.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
     <None Update="Runtimes\Native\FOFEM\x64\FOFEM.dll">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>

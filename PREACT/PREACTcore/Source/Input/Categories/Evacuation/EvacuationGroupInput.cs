@@ -154,7 +154,7 @@ namespace PREACT.Evacuation
                 if (inputToParse.TryGetValue(nameOfInput, out userInput))
                 {
                     success = true;
-                    string[] data = userInput.Split(',');
+                    string[] data = PREACTInput.TrimAll(userInput.Split(','));
                     for (int j = 0; j < data.Length; ++j)
                     {
                         if (destinationInputs.ContainsKey(data[j]))
@@ -188,7 +188,7 @@ namespace PREACT.Evacuation
                     nameOfInput = nameof(DestinationsCDF);
                     if (inputToParse.TryGetValue(nameOfInput, out userInput))
                     {
-                        string[] data = userInput.Split(',');
+                        string[] data = PREACTInput.TrimAll(userInput.Split(','));
                         for (int j = 0; j < data.Length; ++j)
                         {
                             double cumulativeProbability;
@@ -225,7 +225,7 @@ namespace PREACT.Evacuation
                 if (inputToParse.TryGetValue(nameOfInput, out userInput))
                 {
                     success = true;
-                    string[] data = userInput.Split(',');
+                    string[] data = PREACTInput.TrimAll(userInput.Split(','));
                     for (int j = 0; j < data.Length; ++j)
                     {
                         newInput.ResponseCurves.Add(data[j]);
@@ -251,7 +251,7 @@ namespace PREACT.Evacuation
                     nameOfInput = nameof(ResponseCurvesCDF);
                     if (inputToParse.TryGetValue(nameOfInput, out userInput))
                     {
-                        string[] data = userInput.Split(',');
+                        string[] data = PREACTInput.TrimAll(userInput.Split(','));
                         for (int j = 0; j < data.Length; ++j)
                         {
                             double cumulativeProbability;
@@ -290,7 +290,7 @@ namespace PREACT.Evacuation
                 if (inputToParse.TryGetValue(nameOfInput, out userInput))
                 {
                     newInput.MaskFile = userInput;
-                    PREACTInput.CheckIfFileExist(nameOfInput, userInput, rootFolder, out success);
+                    PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.MaskFile, rootFolder, out success);
                 }
 
                 //maybe critical
@@ -300,7 +300,7 @@ namespace PREACT.Evacuation
                     if (inputToParse.TryGetValue(nameOfInput, out userInput))
                     {
                         newInput.ShapeFile = userInput;
-                        PREACTInput.CheckIfFileExist(nameOfInput, userInput, rootFolder, out success);
+                        PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.ShapeFile, rootFolder, out success);
                     }
                     else
                     {
@@ -348,7 +348,7 @@ namespace PREACT.Evacuation
                 success = true;
                 if (inputToParse.TryGetValue(nameOfInput, out userInput))
                 {
-                    string[] data = userInput.Split(',');
+                    string[] data = PREACTInput.TrimAll(userInput.Split(','));
                     if (data.Length == 3)
                     {
                         issues += float.TryParse(data[0], out newInput.Color.r) ? 0 : 1;

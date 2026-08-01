@@ -91,14 +91,16 @@ namespace PREACT
         private void SetupNativeLibraries()
         {
             string root = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "Runtimes", "Native");
-            string behave = Path.Combine(root, "Behave", "x64");
+            //No Behave entry: the native BEHAVE library it pointed at was called from nothing. The only
+            //BEHAVE in use is the managed port under SpreadModels/BehaveCSharp, which k-PERIL uses to
+            //derive its own rate of spread and which needs no native library.
             string fofem = Path.Combine(root, "FOFEM", "x64");
             string gdal = Path.Combine(root, "GDAL", "x64");
             string nfdrs4 = Path.Combine(root, "NFDRS4", "x64");
 
             bool isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
             string NEXT = isWindows ? ";" : ":";
-            string runtimes = behave + NEXT + fofem + NEXT + gdal + NEXT + nfdrs4;
+            string runtimes = fofem + NEXT + gdal + NEXT + nfdrs4;
 
             string machineEnvirtonmentVariables;
             if (isWindows)

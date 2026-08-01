@@ -118,33 +118,55 @@ namespace Assets.WUInity.GUI.DearIMGUI
             PREACT.Tools.OpenTopographyDownloader.DemTypeSrtm90
         };
 
-        //Files the steps produce, relative to the scenario root.
-        public static string WorldPopFile => Input.Simulation.Name + "_worldpop.tif";
+        //Where the steps write, relative to the scenario root.
+        //
+        //A scenario folder holds twenty-odd files by the time it runs, and every step used to drop its
+        //output straight into the root beside the .wui. Sorting them afterwards broke the scenario, since
+        //the paths recorded in it were bare file names - so the folders are the steps' own convention now,
+        //and what they record is the path including the folder.
+        //
+        //Separators are forward slashes rather than Path.Combine's. These strings go into the .wui as well
+        //as being resolved on disk, and a backslash written on Windows is not a separator anywhere else,
+        //which would make the scenario unreadable on another machine. Windows accepts either.
+
+        /// <summary>Raw downloads, as they arrive: before clipping, warping, or conversion.</summary>
+        public const string DownloadsFolder = "downloads";
+
+        /// <summary>The terrain rasters a scenario runs on, on the simulation's own grid.</summary>
+        public const string LandscapeFolder = "elmfire/inputs";
+
+        private static string Named(string suffix) => Input.Simulation.Name + suffix;
+
+        public static string WorldPopBaseName => Named("_worldpop");
+        public static string WorldPopFile => DownloadsFolder + "/" + WorldPopBaseName + ".tif";
         //The reprojected raster the download also writes, and the one the population step has to read:
         //PopulationMap.CreatePopulation treats the geotransform as UTM metres. Handed the WGS84 clip above
         //it computes cell centres in degrees, transforms them as though they were eastings, and finds no
         //road within a cell of anywhere - so it writes a CSV holding nothing but its header, and says
         //"0 people with access to road network" in a log line that is easy to miss. WorldPopDownloader
         //names it by appending _UTM, which is what is repeated here.
-        public static string WorldPopUtmFile => Path.GetFileNameWithoutExtension(WorldPopFile) + "_UTM.tif";
-        public static string DemFile => Input.Simulation.Name + "_dem.tif";
+        public static string WorldPopUtmFile => DownloadsFolder + "/" + WorldPopBaseName + "_UTM.tif";
+        public static string DemFile => LandscapeFolder + "/" + Named("_dem.tif");
         //Written out rather than only computed in memory. ELMFIRE takes all three as separate GeoTIFF
         //inputs, and a derived raster that exists only inside a load cannot be handed to anything else,
         //inspected in QGIS, or compared against what a previous run used.
-        public static string SlopeFile => Input.Simulation.Name + "_slope.tif";
-        public static string AspectFile => Input.Simulation.Name + "_aspect.tif";
+        public static string SlopeFile => LandscapeFolder + "/" + Named("_slope.tif");
+        public static string AspectFile => LandscapeFolder + "/" + Named("_aspect.tif");
         //The download as it arrives, in degrees, before it is warped into the simulation's zone. Kept
         //rather than deleted: it is the slow part to obtain, and a failed warp can be retried from it.
-        public static string DemDownloadFile => Input.Simulation.Name + "_dem_wgs84.tif";
-        public static string OsmFile => Input.Simulation.Name + ".osm.xml";
-        public static string RouterDbFile => Input.Simulation.Name + ".routerdb";
-        public static string PopulationFile => Input.Simulation.Name + "_population.csv";
-        public static string WeatherFile => Input.Simulation.Name + "_weather.csv";
+        public static string DemDownloadFile => DownloadsFolder + "/" + Named("_dem_wgs84.tif");
+        public static string OsmFile => DownloadsFolder + "/" + Named(".osm.xml");
+
+        //These three stay in the root: they are the scenario's own description of itself rather than
+        //data fetched or derived for it, and they are what a person opening the folder looks for.
+        public static string RouterDbFile => Named(".routerdb");
+        public static string PopulationFile => Named("_population.csv");
+        public static string WeatherFile => Named("_weather.csv");
 
         //The SUMO network and configuration live in their own folder, since netconvert writes several
         //files beside the one named here.
         public const string SumoFolder = PREACT.Utility.SumoNetworkBuilder.SumoFolderName;
-        public static string SumoConfigFile => Path.Combine(SumoFolder, PREACT.Utility.SumoNetworkBuilder.ConfigurationFileName);
+        public static string SumoConfigFile => SumoFolder + "/" + PREACT.Utility.SumoNetworkBuilder.ConfigurationFileName;
 
         /// <summary>
         /// Set when the SUMO step succeeds, so a caller showing a "have SUMO input?" choice can follow
@@ -164,7 +186,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
         {
             bool done = Input != null
                         && !string.IsNullOrEmpty(Input.Simulation.Name)
-                        && File.Exists(InRoot(producedFile));
+                        && File.Exists(FindInRoot(producedFile));
 
             bool pressed = ImGui.Button(done ? label + " (redo)" : label);
 
@@ -176,7 +198,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 ImGui.TextColored(new Vector4(0.35f, 0.8f, 0.35f, 1f), "[done] " + producedFile);
                 if (ImGui.IsItemHovered())
                 {
-                    FileInfo info = new FileInfo(InRoot(producedFile));
+                    FileInfo info = new FileInfo(FindInRoot(producedFile));
                     ImGui.SetTooltip($"{info.Length / (1024.0 * 1024.0):F2} MB, written {info.LastWriteTime:yyyy-MM-dd HH:mm}."
                         + "\nRunning the step again overwrites it.");
                 }
@@ -420,6 +442,45 @@ namespace Assets.WUInity.GUI.DearIMGUI
         }
 
         /// <summary>
+        /// Where a step's output actually is: the folder it writes to now, or wherever the file has since
+        /// been moved to among the scenario's own subfolders - including the scenario root, which is where
+        /// every one of these lived before the steps started using subfolders.
+        ///
+        /// Reads and "has this step already run?" go through here while writes go to the new folders, so
+        /// changing the layout does not make finished work look unfinished, or a prerequisite that is
+        /// plainly on disk look missing.
+        /// </summary>
+        public static string FindInRoot(string fileName)
+        {
+            if (PREACT.Utility.ScenarioFileLocator.TryResolve(Input.RootFolder, fileName, out string resolved, out string _))
+            {
+                return InRoot(resolved);
+            }
+
+            //The path it would be written to, so a caller reporting "not found" names where it should be.
+            return InRoot(fileName);
+        }
+
+        /// <summary>
+        /// Where a step is about to write, with the folder created.
+        ///
+        /// Separate from <see cref="InRoot"/>, which is also used to ask whether a step has already run:
+        /// creating folders as a side effect of that would leave an empty <c>downloads</c> beside every
+        /// scenario that had never downloaded anything. Every writer goes through here, because the outputs
+        /// now sit in subfolders and none of the downloaders or raster writers creates its own.
+        /// </summary>
+        public static string InRootForWriting(string fileName)
+        {
+            string path = InRoot(fileName);
+            string folder = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(folder))
+            {
+                Directory.CreateDirectory(folder);
+            }
+            return path;
+        }
+
+        /// <summary>
         /// The area of interest's north-east corner. A scenario stores the domain as a south-west
         /// corner plus a size in metres, while every downloader wants a lat/lon bounding box, so the
         /// size is converted with the same flat-earth approximation the population tools already use
@@ -437,10 +498,15 @@ namespace Assets.WUInity.GUI.DearIMGUI
         {
             RunStep("Downloading WorldPop", async () =>
             {
+                //The downloader takes a folder and a bare name, and writes both the clip and its _UTM
+                //reprojection into that folder - so the folder is peeled off the path here rather than
+                //passing the root and letting it decide.
+                string folder = Path.GetDirectoryName(InRootForWriting(WorldPopFile));
+
                 await PREACT.Tools.WorldPopDownloader.DownloadRegionUTM(
                     Input.Simulation.StartDateTime.Year,
                     Input.Simulation.LowerLeftLatLon, UpperRightLatLon(),
-                    Input.RootFolder, Path.GetFileNameWithoutExtension(WorldPopFile),
+                    folder, WorldPopBaseName,
                     ReportBytes);
             });
         }
@@ -450,7 +516,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             RunStep("Downloading OSM data", async () =>
             {
                 await PREACT.Tools.OSMDownloader.Download(
-                    Input.Simulation.LowerLeftLatLon, UpperRightLatLon(), InRoot(OsmFile));
+                    Input.Simulation.LowerLeftLatLon, UpperRightLatLon(), InRootForWriting(OsmFile));
             });
         }
 
@@ -458,7 +524,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
         {
             RunStep("Building SUMO network", () =>
             {
-                string osmPath = InRoot(OsmFile);
+                string osmPath = FindInRoot(OsmFile);
                 if (!File.Exists(osmPath))
                 {
                     throw new FileNotFoundException("Download the OSM data first.", osmPath);
@@ -489,13 +555,13 @@ namespace Assets.WUInity.GUI.DearIMGUI
         {
             RunStep("Building RouterDb", () =>
             {
-                string osm = InRoot(OsmFile);
+                string osm = FindInRoot(OsmFile);
                 if (!File.Exists(osm))
                 {
                     throw new FileNotFoundException("Download the OSM data first.", osm);
                 }
 
-                PREACT.Tools.PopulationTools.CreateAndSaveRouterDb(osm, InRoot(RouterDbFile), out bool ok);
+                PREACT.Tools.PopulationTools.CreateAndSaveRouterDb(osm, InRootForWriting(RouterDbFile), out bool ok);
                 if (!ok)
                 {
                     throw new System.Exception("RouterDb creation failed - see the log.");
@@ -509,8 +575,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
             RunStep("Generating population", () =>
             {
                 //The UTM reprojection, not the WGS84 clip beside it - see WorldPopUtmFile.
-                string worldPop = InRoot(WorldPopUtmFile);
-                string routerDb = InRoot(RouterDbFile);
+                string worldPop = FindInRoot(WorldPopUtmFile);
+                string routerDb = FindInRoot(RouterDbFile);
 
                 if (!File.Exists(worldPop))
                 {
@@ -521,7 +587,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 if (!File.Exists(routerDb)) throw new FileNotFoundException("Build the RouterDb first.", routerDb);
 
                 PREACT.Tools.PopulationTools.CreatePopulationFromWorldPop(
-                    MinHouseholdSize, MaxHouseholdSize, worldPop, routerDb, InRoot(PopulationFile), out bool ok);
+                    MinHouseholdSize, MaxHouseholdSize, worldPop, routerDb, InRootForWriting(PopulationFile), out bool ok);
                 if (!ok)
                 {
                     throw new System.Exception("Population generation failed - see the log.");
@@ -530,7 +596,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 //Reported because an empty result is otherwise indistinguishable from a full one: the
                 //file is written either way, so the [done] marker appears for a CSV holding nothing but
                 //its header - which is what a RouterDb with no reachable roads produces.
-                int households = CountPopulationRows(InRoot(PopulationFile));
+                int households = CountPopulationRows(FindInRoot(PopulationFile));
                 LogStep($"Population file holds {households} households.");
                 if (households == 0)
                 {
@@ -538,7 +604,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                         + "Check that the RouterDb covers the area and that WorldPop has people in it.");
                 }
 
-                //Stored as a bare file name so the scenario folder stays relocatable.
+                //Stored relative to the scenario folder, so it stays relocatable.
                 Input.Population.PopulationFile = PopulationFile;
                 return System.Threading.Tasks.Task.CompletedTask;
             });
@@ -598,7 +664,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 Vector2d paddedLowerLeft = new Vector2d(requestLowerLeft.x - marginDegrees, requestLowerLeft.y - marginDegrees);
                 Vector2d paddedUpperRight = new Vector2d(requestUpperRight.x + marginDegrees, requestUpperRight.y + marginDegrees);
 
-                string downloaded = InRoot(DemDownloadFile);
+                string downloaded = InRootForWriting(DemDownloadFile);
                 await PREACT.Tools.OpenTopographyDownloader.Download(
                     paddedLowerLeft, paddedUpperRight, apiKey, downloaded, DemType);
 
@@ -618,7 +684,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 //the domain's centre. For a domain on a zone boundary the two differ, and a DEM in one
                 //zone beside a fire in the next is half a million metres of disagreement.
                 PREACT.Utility.MasterGrid grid = PREACT.Utility.RasterHarmonizer.BuildUtmMasterGrid(
-                    downloaded, InRoot(DemFile), ll.x, ll.y, ur.x, ur.y,
+                    downloaded, InRootForWriting(DemFile), ll.x, ll.y, ur.x, ur.y,
                     null, Input.Simulation.Data.UtmEpsgCode);
 
                 LogStep($"DEM on the simulation's grid: {grid.Header.Ncols} x {grid.Header.Nrows} cells of "
@@ -644,7 +710,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
         /// </summary>
         private static void WriteSlopeAndAspect(PREACT.Utility.MasterGrid grid)
         {
-            float[,] elevation = PREACT.Utility.AscRaster.ReadGeoTiff(InRoot(DemFile),
+            float[,] elevation = PREACT.Utility.AscRaster.ReadGeoTiff(FindInRoot(DemFile),
                 out PREACT.Utility.AscRaster.Header header, out bool ok);
             if (!ok || elevation == null)
             {
@@ -655,8 +721,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
             PREACT.Utility.SlopeAspect.Compute(elevation, header.CellSize,
                 out float[,] slope, out float[,] aspect);
 
-            PREACT.Utility.GeoTiffRasterWriter.WriteBand(grid, slope, InRoot(SlopeFile));
-            PREACT.Utility.GeoTiffRasterWriter.WriteBand(grid, aspect, InRoot(AspectFile));
+            PREACT.Utility.GeoTiffRasterWriter.WriteBand(grid, slope, InRootForWriting(SlopeFile));
+            PREACT.Utility.GeoTiffRasterWriter.WriteBand(grid, aspect, InRootForWriting(AspectFile));
 
             Input.Landscape.SlopeFile = SlopeFile;
             Input.Landscape.AspectFile = AspectFile;
@@ -698,7 +764,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 await PREACT.Tools.OpenMeteoDownloader.Download(
                     new Vector2d(0.5 * (ll.x + ur.x), 0.5 * (ll.y + ur.y)),
                     Input.Simulation.StartDateTime, Input.Simulation.EndDateTime,
-                    InRoot(WeatherFile));
+                    InRootForWriting(WeatherFile));
 
                 Input.Weather.WeatherFile = WeatherFile;
             });

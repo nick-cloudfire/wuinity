@@ -561,16 +561,113 @@ namespace WUInity
         /// </summary>
         public bool TryGetPaintGrid(out Vector2d realSize, out Vector2d originOffset)
         {
+            return TryGetPaintGrid(out realSize, out originOffset, out Vector2int _, out double _);
+        }
+
+        /// <summary>
+        /// The paint grid in full: extent, corner, cell count and cell size, all in simulation
+        /// coordinates. Wanted by anything that has to place a single point on the grid rather than draw
+        /// the whole of it - which cell it falls in is a question only the cell size can answer.
+        /// </summary>
+        public bool TryGetPaintGrid(out Vector2d realSize, out Vector2d originOffset,
+            out Vector2int cellCount, out double cellSize)
+        {
             if (!_haveFireGrid && !ResolveFireGrid())
             {
                 realSize = Vector2d.zero;
                 originOffset = Vector2d.zero;
+                cellCount = new Vector2int(0, 0);
+                cellSize = 0.0;
                 return false;
             }
 
             realSize = fireDataRealSize;
             originOffset = _fireGridOrigin;
+            cellCount = fireDataCellCount;
+            cellSize = _fireGridCellSize;
             return true;
+        }
+
+        /// <summary>
+        /// Writes the painted fire areas beside the scenario and returns the file name, or null when
+        /// there is nothing to write.
+        ///
+        /// The grid written into the file is the one the masks were painted on, taken from the painter
+        /// rather than from the landscape: a scenario with an imported fire has no landscape at all, and
+        /// its masks are painted on the arrival time raster's grid.
+        /// </summary>
+        public string SavePaintedFireAreas(string folder, string fileName = null)
+        {
+            if (_manager == null || _manager.PREACTInput == null)
+            {
+                Engine.Message(null, Engine.LogType.Warning, "No scenario to save painted fire areas for.");
+                return null;
+            }
+
+            if (!_haveFireGrid && !ResolveFireGrid())
+            {
+                Engine.Message(null, Engine.LogType.Warning,
+                    "The painted fire areas cannot be saved without knowing the grid they are on.");
+                return null;
+            }
+
+            PREACT.Input.WildfireData fireData = _manager.PREACTInput.WildfireModule.Data;
+            int cells = fireDataCellCount.x * fireDataCellCount.y;
+
+            if (!AnyPainted(fireData.WuiArea, cells) && !AnyPainted(fireData.RandomIgnition, cells)
+                && !AnyPainted(fireData.InitialIgnition, cells) && !AnyPainted(fireData.ManualTriggerBuffer, cells))
+            {
+                //Refused rather than written empty, because an empty file is not the same as no file: the
+                //case builder reads an all-false ignition area as "not painted" and falls back to
+                //ignite-anywhere, so a file saying nothing looks exactly like a file that was never saved
+                //while making the checklist claim the scenario has painted areas.
+                Engine.Message(null, Engine.LogType.Warning,
+                    "Nothing has been painted, so there is nothing to save. Paint a WUI area, an ignition area "
+                    + "or an initial ignition first.");
+                return null;
+            }
+
+            string name = string.IsNullOrEmpty(fileName) ? GraphicalFireInput.DefaultFileName : fileName;
+            string path = System.IO.Path.Combine(folder, name);
+
+            GraphicalFireInput.SaveGraphicalFireInput(path, fireData, fireDataCellCount.x, fireDataCellCount.y);
+            fireData.PaintedCellCount = fireDataCellCount;
+
+            Engine.Message(null, Engine.LogType.Log,
+                $"Wrote {name}: {Count(fireData.WuiArea)} WUI cells, {Count(fireData.RandomIgnition)} ignition area "
+                + $"cells, {Count(fireData.InitialIgnition)} initial ignition cells on a "
+                + $"{fireDataCellCount.x} x {fireDataCellCount.y} grid of {_fireGridCellSize:F1} m.");
+
+            return name;
+        }
+
+        private static bool AnyPainted(bool[] mask, int cells)
+        {
+            if (mask == null)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < mask.Length && i < cells; ++i)
+            {
+                if (mask[i]) return true;
+            }
+            return false;
+        }
+
+        private static int Count(bool[] mask)
+        {
+            if (mask == null)
+            {
+                return 0;
+            }
+
+            int n = 0;
+            for (int i = 0; i < mask.Length; ++i)
+            {
+                if (mask[i]) ++n;
+            }
+            return n;
         }
 
         /// <summary>Where the fire grid sits in the scene, which is its simulation-space corner.</summary>
@@ -604,6 +701,22 @@ namespace WUInity
                 //are only filled in by a graphical fire input file, which most scenarios do not have.
                 PREACT.Input.WildfireData fireData = _manager.PREACTInput.WildfireModule.Data;
                 int cells = cellCount.x * cellCount.y;
+
+                //Masks that were painted on a different grid cannot be carried onto this one, and the
+                //reallocation below silently discards them. Said out loud, because the user sees a blank
+                //map for a scenario that does have painted areas, and the cause is not on screen: the
+                //grid changed under them - a landscape was added, or the imported fire was replaced.
+                if (fireData.PaintedCellCount.x > 0
+                    && (fireData.PaintedCellCount.x != cellCount.x || fireData.PaintedCellCount.y != cellCount.y))
+                {
+                    Engine.Message(null, Engine.LogType.Warning,
+                        $"The saved fire areas were painted on a {fireData.PaintedCellCount.x} x "
+                        + $"{fireData.PaintedCellCount.y} grid, but this scenario now paints on a "
+                        + $"{cellCount.x} x {cellCount.y} one, so they cannot be shown or added to. They are still "
+                        + "on disk; painting and saving again replaces them.");
+                    fireData.PaintedCellCount = new Vector2int(0, 0);
+                }
+
                 if (fireData.WuiArea == null || fireData.WuiArea.Length != cells)
                 {
                     fireData.UpdateWUIArea(null, cellCount.x, cellCount.y);

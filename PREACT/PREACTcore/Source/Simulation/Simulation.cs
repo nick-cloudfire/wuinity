@@ -91,6 +91,21 @@ namespace PREACT
             _state = SimulationState.Initializing;
             PreRun();
 
+            //A failed setup ends the run here. PreRun sets the Error state and returns, and this used to
+            //carry straight on and overwrite it with Running - so a simulation whose modules could not be
+            //created skipped the loop (_stopRun being set), ran PostRun over uninitialised state, and
+            //finished as Completed. Which is a lie twice over: it says the run succeeded, and it leaves
+            //everything that reads a completed simulation - the output window above all - dereferencing
+            //modules that were never made.
+            if (_stopRun)
+            {
+                _state = SimulationState.Error;
+                _isRunning = false;
+                Engine.Message(this, Engine.LogType.SimulationError,
+                    "Simulation " + _simulationIndex + " did not start: see the errors above. No results were produced.");
+                return;
+            }
+
             //actual time step loop
             _state = SimulationState.Running;
             _haveResults = true;

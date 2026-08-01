@@ -37,7 +37,7 @@ namespace PREACT.Input
             if (inputToParse.TryGetValue(nameOfInput, out userInput))
             {
                 newInput.ExtinctionFile = userInput;
-                PREACTInput.CheckIfFileExist(nameOfInput, userInput, rootFolder, out success);
+                PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.ExtinctionFile, rootFolder, out success);
             }
             else
             {

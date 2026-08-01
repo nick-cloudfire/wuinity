@@ -15,24 +15,26 @@ namespace PREACT.Input
     public class WildfireData
     {
         private LandscapeData _lcpData;
-        private FuelModelInput _fuelModelsData;
         private List<IgnitionPointInput> _ignitionPoints = new List<IgnitionPointInput>();
-        private InitialFuelMoistureLibrary _initialFuelMoistureData;
-        private CanadianFBPLookupTable _canadianFBPLookupTable = new CanadianFBPLookupTable();
-        private LookupROSTable _lookupROSTable = new LookupROSTable();
 
         public bool[] WuiArea;
         public bool[] RandomIgnition;
         public bool[] InitialIgnition;
         public bool[] ManualTriggerBuffer;
 
-               
-        public LandscapeData LandscapeData { get => _lcpData; }        
-        public FuelModelInput FuelModelsData { get => _fuelModelsData; }        
-        public List<IgnitionPointInput> IgnitionPoints { get => _ignitionPoints; }       
-        public InitialFuelMoistureLibrary InitialFuelMoistureData { get => _initialFuelMoistureData; }   
-        public CanadianFBPLookupTable CanadianFBPLookupTable { get => _canadianFBPLookupTable; }
-        public LookupROSTable LookupROSTable { get => _lookupROSTable; }
+        /// <summary>
+        /// The grid the loaded masks were painted on, or (0,0) when none were loaded.
+        ///
+        /// Kept because the masks are the one thing in a scenario whose grid is not implied by anything
+        /// else in it: they are painted on whichever raster the painter resolved, so a scenario that
+        /// since gained a landscape, or had its imported fire replaced, can be holding masks measured in
+        /// cells that no longer exist. Whoever uses them can then say so instead of indexing into them.
+        /// </summary>
+        public Vector2int PaintedCellCount;
+
+
+        public LandscapeData LandscapeData { get => _lcpData; }
+        public List<IgnitionPointInput> IgnitionPoints { get => _ignitionPoints; }
 
         public WildfireData()
         {
@@ -55,6 +57,17 @@ namespace PREACT.Input
             //scenario with an imported fire had no terrain at all.
             LoadLandscape(simulationInput, wildfireInput, landscapeInput, rootFolder);
 
+            //Loaded whatever the module is, and whether or not a fire is being modelled, because the
+            //masks are not the fire module's alone: k-PERIL falls back to WuiArea for the area it
+            //protects (EvacuationManager.BuildWuiAreaRuns), and the painter needs what was painted last
+            //time in order to carry on painting it. Nothing called this at all before, which is why
+            //painting a WUI area and reopening the scenario showed nothing.
+            if (!string.IsNullOrEmpty(wildfireInput.GraphicalFireInputFile))
+            {
+                LoadGraphicalFireInput(wildfireInput, Path.Combine(rootFolder, wildfireInput.GraphicalFireInputFile),
+                    false, out bool _);
+            }
+
             if(!wildfireInput.Enabled)
             {
                 Engine.Message(null, Engine.LogType.Log, "Skipping loading fire data as user has specified not running fire module.");
@@ -63,10 +76,12 @@ namespace PREACT.Input
             }
             Engine.Message(null, Engine.LogType.Log, "Loading wildfire data...");
 
-            //An imported fire brings its own arrival times, rates of spread and directions, so it needs
-            //nothing further from the landscape - whatever was loaded above is a bonus rather than a
-            //requirement.
-            if (wildfireInput.Module == WildfireModuleInput.WildfireModules.AscImport)
+            //Neither of these needs anything further from the landscape. An imported fire brings its own
+            //arrival times, rates of spread and directions; ELMFIRE computes them from its own case, whose
+            //rasters are on its own grid and are not WUInity's to assemble. Whatever was loaded above is a
+            //bonus for both - something to paint on, a surface for the map - rather than a requirement.
+            if (wildfireInput.Module == WildfireModuleInput.WildfireModules.AscImport
+                || wildfireInput.Module == WildfireModuleInput.WildfireModules.ELMFIRE)
             {
                 success = true;
                 return;
@@ -88,48 +103,6 @@ namespace PREACT.Input
             }
 
             success = true;
-
-            if (wildfireInput.Module == WildfireModuleInput.WildfireModules.ElmClone)
-            {
-                int issues = 0;
-                string filePath;
-
-                //common 
-                filePath = Path.Combine(rootFolder, wildfireInput.FireCellInput.IgnitionPointsFile);
-                LoadIgnitionPoints(wildfireInput, simulationInput, filePath, false, out success);
-                issues += success ? 0 : 1;
-
-                //spread model dependent
-                if (wildfireInput.FireCellInput.SpreadRateModel == FireCellInput.SpreadRateModels.Behave)
-                {
-                    filePath = Path.Combine(rootFolder, wildfireInput.FireCellInput.FuelModelsFile);
-                    LoadFuelModelsInput(wildfireInput, filePath, false, out success);
-                    issues += success ? 0 : 1;
-
-                    filePath = Path.Combine(rootFolder, wildfireInput.FireCellInput.InitialFuelMoistureFile);
-                    LoadInitialFuelMoistureData(wildfireInput, filePath, false, out success);
-                    issues += success ? 0 : 1;
-                }
-                else if (wildfireInput.FireCellInput.SpreadRateModel == FireCellInput.SpreadRateModels.CanadianFBP)
-                {
-                    filePath = Path.Combine(rootFolder, wildfireInput.FireCellInput.FBPLookupTableFile);
-                    _canadianFBPLookupTable.Parse(Path.Combine(rootFolder, wildfireInput.FireCellInput.FBPLookupTableFile), out success);
-                    issues += success ? 0 : 1;
-                }
-                else if (wildfireInput.FireCellInput.SpreadRateModel == FireCellInput.SpreadRateModels.LookupROS)
-                {
-                    filePath = Path.Combine(rootFolder, wildfireInput.FireCellInput.LookUpTableFile);
-                    _lookupROSTable.Parse(Path.Combine(rootFolder, wildfireInput.FireCellInput.LookUpTableFile), out success);
-                    issues += success ? 0 : 1;
-                }
-
-                if (issues > 0)
-                {
-                    return;
-                }
-            }
-
-            success = true;
         }
 
         /// <summary>
@@ -147,15 +120,9 @@ namespace PREACT.Input
         private void LoadLandscape(SimulationInput simulationInput, WildfireModuleInput wildfireInput,
             LandscapeInput landscapeInput, string rootFolder)
         {
-            //The wildfire module's own LandscapeFile still works, and wins if it is set, so no existing
-            //scenario changes behaviour.
-            string moduleLandscape = wildfireInput.FireCellInput.LandscapeFile;
-            if (!string.IsNullOrEmpty(moduleLandscape))
-            {
-                LoadLCPFile(wildfireInput, Path.Combine(rootFolder, moduleLandscape), simulationInput.Data.UTMOrigin, false, out bool _);
-                return;
-            }
-
+            //Only the [Landscape] section now. The fire module used to be able to name a .lcp of its own and
+            //that took precedence, but the module that read it is gone - and a landscape is terrain, not a
+            //fire module's property, which is why the section exists.
             if (landscapeInput == null || !landscapeInput.HaveAnything())
             {
                 return;
@@ -212,38 +179,7 @@ namespace PREACT.Input
                 Engine.Message(null, Engine.LogType.Log, message);
             }
 
-            if (success && updateInput)
-            {
-                fireInput.FireCellInput.LandscapeFile = Path.GetFileName(filePath);
-            }
         }
-
-        public void LoadFuelModelsInput(WildfireModuleInput fireInput, string filePath, bool updateInput, out bool success)
-        {
-            _fuelModelsData = FuelModelInput.LoadFromFile(filePath, out success);
-            if (success && updateInput)
-            {
-                fireInput.FireCellInput.FuelModelsFile = Path.GetFileName(filePath);
-            }
-        }
-
-        public void LoadIgnitionPoints(WildfireModuleInput fireInput, SimulationInput simulationInput, string filePath, bool updateInput, out bool success)
-        {
-            IgnitionPointInput.LoadIgnitionPointsFile(_ignitionPoints, filePath, simulationInput, out success);
-            if (success && updateInput)
-            {
-                fireInput.FireCellInput.IgnitionPointsFile = Path.GetFileName(filePath);
-            }
-        }
-
-        public void LoadInitialFuelMoistureData(WildfireModuleInput fireInput, string filePath, bool updateInput, out bool success)
-        {
-            _initialFuelMoistureData = InitialFuelMoistureLibrary.LoadInitialFuelMoistureDataFile(filePath, out success);
-            if (success && updateInput)
-            {
-                fireInput.FireCellInput.InitialFuelMoistureFile = Path.GetFileName(filePath);
-            }
-        }        
 
         /*public void LoadWeatherInput(WildfireModuleInput fireInput, string filePath, bool updateInput, out bool success)
         {
@@ -266,6 +202,51 @@ namespace PREACT.Input
         public void LoadGraphicalFireInput(WildfireModuleInput fireInput, string filePath, LandscapeData lcpData, bool updateInput, out bool success)
         {
             GraphicalFireInput.LoadGraphicalFireInput(filePath, lcpData, out WuiArea, out RandomIgnition, out InitialIgnition, out ManualTriggerBuffer, out success);
+            if (success)
+            {
+                PaintedCellCount = new Vector2int(lcpData.GetCellCountX(), lcpData.GetCellCountY());
+            }
+        }
+
+        /// <summary>
+        /// Loads painted masks on the grid the file itself declares, which is the only grid that can be
+        /// known here - see <see cref="PaintedCellCount"/>.
+        /// </summary>
+        public void LoadGraphicalFireInput(WildfireModuleInput fireInput, string filePath, bool updateInput, out bool success)
+        {
+            GraphicalFireInput.LoadGraphicalFireInput(filePath, out int ncols, out int nrows,
+                out WuiArea, out RandomIgnition, out InitialIgnition, out ManualTriggerBuffer, out success);
+
+            if (!success)
+            {
+                return;
+            }
+
+            PaintedCellCount = new Vector2int(ncols, nrows);
+            Engine.Message(null, Engine.LogType.Log,
+                $"Loaded painted fire areas on a {ncols} x {nrows} grid: "
+                + $"{Count(WuiArea)} WUI cells, {Count(RandomIgnition)} ignition area cells, "
+                + $"{Count(InitialIgnition)} initial ignition cells.");
+
+            if (updateInput)
+            {
+                fireInput.GraphicalFireInputFile = Path.GetFileName(filePath);
+            }
+        }
+
+        private static int Count(bool[] mask)
+        {
+            if (mask == null)
+            {
+                return 0;
+            }
+
+            int n = 0;
+            for (int i = 0; i < mask.Length; ++i)
+            {
+                if (mask[i]) ++n;
+            }
+            return n;
         }
 
         public void UpdateWUIArea(bool[] wuiAreaIndices, int xCount, int yCount)

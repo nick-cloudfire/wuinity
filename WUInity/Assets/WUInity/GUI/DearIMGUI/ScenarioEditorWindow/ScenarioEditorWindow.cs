@@ -83,6 +83,14 @@ namespace Assets.WUInity.GUI.DearIMGUI
                             ImGui.EndTabItem();
                         }
 
+                        //Beside the map and the weather rather than under Hazards: the terrain is what the
+                        //domain is drawn on and painted against, not a property of the fire.
+                        if (ImGui.BeginTabItem("Landscape"))
+                        {
+                            LandscapeInputTab.Draw(_input.Landscape);
+                            ImGui.EndTabItem();
+                        }
+
                         ImGui.EndTabBar();
                     }
 

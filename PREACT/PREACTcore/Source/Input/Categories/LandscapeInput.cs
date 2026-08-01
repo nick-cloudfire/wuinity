@@ -109,7 +109,9 @@ namespace PREACT.Input
             }
 
             field = userInput;
-            PREACTInput.CheckIfFileExist(key, userInput, rootFolder, out bool exists);
+            //By reference, so a band that has been moved into one of the scenario's subfolders is found
+            //and the path corrected in place rather than merely reported.
+            PREACTInput.CheckIfFileExist(key, ref field, rootFolder, out bool exists);
             if (!exists)
             {
                 //Kept rather than cleared, so the path stays visible and editable instead of vanishing

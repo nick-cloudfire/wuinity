@@ -74,6 +74,17 @@ namespace PREACT.Input
             Section(lines, nameof(PREACTInput.WildfireModule), input.WildfireModule);
             ModuleSubSection(lines, input.WildfireModule, "Module", WildfireSubInput(input));
 
+            //Ignition points live on WildfireData, which Section skips along with every other "Data"
+            //member, so they are written here explicitly - one repeated section each, the same shape
+            //destinations and evacuation groups use.
+            if (input.WildfireModule?.Data?.IgnitionPoints != null)
+            {
+                foreach (Wildfire.IgnitionPointInput point in input.WildfireModule.Data.IgnitionPoints)
+                {
+                    IgnitionPointSection(lines, point);
+                }
+            }
+
             Section(lines, nameof(PREACTInput.SmokeModule), input.SmokeModule);
             ModuleSubSection(lines, input.SmokeModule, "Module", SmokeSubInput(input));
 
@@ -91,6 +102,11 @@ namespace PREACT.Input
         private static object WildfireSubInput(PREACTInput input)
         {
             if (input.WildfireModule == null) return null;
+
+            //Both fire modules' sub-inputs follow the naming this matches on - ElmfireInput and
+            //AscImportInput - so neither needs a special case. The one that did was the cell-based model,
+            //configured by a FireCellInput whose name matched nothing, which is why its section was silently
+            //never written; it has since been removed.
             return FindSubInput(input.WildfireModule, input.WildfireModule.Module.ToString());
         }
 
@@ -164,6 +180,27 @@ namespace PREACT.Input
                     ResponseDataPoint p = curve.DataPoints[i];
                     lines.Add(F(p.Time) + "," + F(p.Probability));
                 }
+            }
+            lines.Add(string.Empty);
+        }
+
+        /// <summary>
+        /// One ignition point. Written by hand rather than reflected over, because only two of the four
+        /// fields are input: <c>IgnitionTime</c> and <c>IgnitionDateTime</c> are each derived from the
+        /// other, and writing both would let a file disagree with itself about when the fire starts.
+        /// </summary>
+        private static void IgnitionPointSection(List<string> lines, Wildfire.IgnitionPointInput point)
+        {
+            lines.Add("[IgnitionPoint]");
+            lines.Add("LatLon=" + F(point.LatLon.x) + "," + F(point.LatLon.y));
+            lines.Add("AbsoluteTime=" + (point.AbsoluteTime ? "true" : "false"));
+            if (point.AbsoluteTime)
+            {
+                lines.Add("IgnitionDateTime=" + point.IgnitionDateTime.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture));
+            }
+            else
+            {
+                lines.Add("IgnitionTime=" + F(point.IgnitionTime));
             }
             lines.Add(string.Empty);
         }

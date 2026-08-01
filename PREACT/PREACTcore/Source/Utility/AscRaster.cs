@@ -112,11 +112,20 @@ namespace PREACT.Utility
         /// </summary>
         public static float[,] Read(string filePath, out Header header, out bool success)
         {
+            return Read(filePath, 1, out header, out success, out int _);
+        }
+
+        /// <summary>Reads one band, whichever format the file is. An .asc has exactly one.</summary>
+        public static float[,] Read(string filePath, int bandNumber, out Header header, out bool success,
+            out int bandCount)
+        {
             string ext = Path.GetExtension(filePath).ToLowerInvariant();
             if (ext == ".tif" || ext == ".tiff")
             {
-                return ReadGeoTiff(filePath, out header, out success);
+                return ReadGeoTiff(filePath, bandNumber, out header, out success, out bandCount);
             }
+
+            bandCount = 1;
             return ReadAsc(filePath, out header, out success);
         }
 
@@ -177,8 +186,24 @@ namespace PREACT.Utility
         /// </summary>
         public static float[,] ReadGeoTiff(string filePath, out Header header, out bool success)
         {
+            return ReadGeoTiff(filePath, 1, out header, out success, out int _);
+        }
+
+        /// <summary>
+        /// Reads one band of a GeoTIFF, and reports how many it has.
+        ///
+        /// The band matters for the weather rasters an ELMFIRE case carries: <c>ws.tif</c> and
+        /// <c>wd.tif</c> hold one band per hour, and reading such a file as though it were single-band -
+        /// which is what happened - silently uses the first hour for whatever the caller is doing. The band
+        /// count comes back so a caller can say which hour it is using instead of implying there is only
+        /// one.
+        /// </summary>
+        public static float[,] ReadGeoTiff(string filePath, int bandNumber, out Header header, out bool success,
+            out int bandCount)
+        {
             header = new Header();
             success = false;
+            bandCount = 0;
 
             if (!File.Exists(filePath))
             {
@@ -204,7 +229,15 @@ namespace PREACT.Utility
                 double originX = gt[0];
                 double originY = gt[3];
 
-                OSGeo.GDAL.Band band = ds.GetRasterBand(1);
+                bandCount = ds.RasterCount;
+                if (bandNumber < 1 || bandNumber > bandCount)
+                {
+                    Engine.Message(null, Engine.LogType.SimulationError,
+                        $"{Path.GetFileName(filePath)} has {bandCount} band(s); band {bandNumber} was asked for.");
+                    return null;
+                }
+
+                OSGeo.GDAL.Band band = ds.GetRasterBand(bandNumber);
                 band.GetNoDataValue(out double nodata, out int hasNodata);
 
                 header.Ncols = ncols;

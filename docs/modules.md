@@ -32,7 +32,15 @@ exporting a small area from <https://www.openstreetmap.org>.
 | Module | Status | Notes |
 |--------|--------|-------|
 | `AscImport` | ✅ | Imports pre-computed fire rasters (FARSITE, FlamMap, Prometheus, WISE — anything that outputs `.asc`). The recommended, validated fire input. |
-| `ElmClone` | 🚧 | Cell-based spread model; kept as the integration point for the planned **ELMFIRE** coupling. Not validated for production use yet. |
+| `ELMFIRE` | 🚧 | Runs **ELMFIRE itself** and reads the fire back. It is a batch program, so it runs once when the simulation starts and its rasters are then read through the same path `AscImport` uses; output for an unchanged case is reused. Not validated for production use yet. |
+
+`ElmClone` — the cell-based spread model that used to sit here — has been **removed**. Only its
+`LookupROS` rate-of-spread path was ever implemented; `Behave` and `CanadianFBP` built no spread model at
+all and crashed on the first step. A scenario naming it says so on load and points at `ELMFIRE` or
+`AscImport`. Removed with it: the orphaned `SpreadModels` wrappers (AFDRS, the CFFDRS FBP system,
+LookupROS, the `SpreadModel` base) and the native BEHAVE layer, which nothing instantiated. What stayed is
+what is still used — the managed `BehaveCSharp` port and Rothermel (k-PERIL's own rate of spread), and the
+CFFDRS fire-weather indices (the weather manager's FFMC/DMC/DC).
 
 Required `AscImport` rasters: `FI.asc` (fireline intensity), `ROS.asc` (rate of
 spread), `SD.asc` (spread direction), `TOA.asc` (time of arrival). LCP and

@@ -15,19 +15,34 @@ namespace PREACT.Input
         public enum TriggerBufferModules { None, kPERIL }
 
         private kPERILInput _kPERILInput;
+        private TriggerBufferData _data;
 
         public bool Enabled = false;
         public TriggerBufferModules Module = TriggerBufferModules.None;
-        public kPERILInput kPERILInput { get => _kPERILInput; }             
-        
-        
+        public kPERILInput kPERILInput { get => _kPERILInput; }
 
-        public TriggerBufferModuleInput() 
-        { 
+        /// <summary>
+        /// What the module's files hold, once read. Named Data like the other modules', which is also how the
+        /// writer knows not to try to write it.
+        ///
+        /// The class existed but was never instantiated and its LoadAll never called, so the fuel moisture
+        /// this section declares was not merely unused - it was never read. k-PERIL was handed the fire
+        /// module's instead.
+        /// </summary>
+        public TriggerBufferData Data { get => _data; }
+
+        public TriggerBufferModuleInput()
+        {
             _kPERILInput = new kPERILInput();
+            _data = new TriggerBufferData();
         }
 
         public void Parse(string[] inputLines, int startIndex, Dictionary<string, int> headerLineIndex, string rootFolder, out bool success)
+        {
+            Parse(inputLines, startIndex, headerLineIndex, null, rootFolder, out success);
+        }
+
+        public void Parse(string[] inputLines, int startIndex, Dictionary<string, int> headerLineIndex, SimulationInput simulationInput, string rootFolder, out bool success)
         {
             success = false;
             int issues = 0;             
@@ -93,6 +108,14 @@ namespace PREACT.Input
                         PREACTInput.InputNotFoundMessage(nameOfInput);
                     }
                     if(!success)
+                    {
+                        return;
+                    }
+
+                    //Reads what the section names. Nothing called this before, so k-PERIL's own fuel moisture
+                    //and fuel model table were never loaded.
+                    _data.LoadAll(simulationInput, this, rootFolder, out success);
+                    if (!success)
                     {
                         return;
                     }

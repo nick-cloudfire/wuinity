@@ -98,6 +98,27 @@ namespace PREACT.Input
             return input;
         }
 
+        /// <summary>
+        /// Trims each element of a comma-separated value.
+        ///
+        /// Needed since values stopped having their spaces stripped: a list written <c>a, b</c> used to
+        /// arrive as <c>a,b</c>, and several of these lists are names looked up in a dictionary, where a
+        /// leading space means "no such destination".
+        /// </summary>
+        public static string[] TrimAll(string[] values)
+        {
+            if (values == null)
+            {
+                return values;
+            }
+
+            for (int i = 0; i < values.Length; ++i)
+            {
+                values[i] = values[i].Trim();
+            }
+            return values;
+        }
+
         public static readonly char[] inputSplit = { '=', '#' };
         static readonly char[] headerBrackets = new char[] { '[', ']' };
         public const string pleaseCheckInput = " Please check your input file.";  
@@ -116,6 +137,31 @@ namespace PREACT.Input
             return new string(chars.ToArray());
         }
 
+        /// <summary>
+        /// Tidies a line for the parsers without destroying what it says.
+        ///
+        /// Spaces used to be stripped from the whole line, which is fine for a key and for a row of numbers
+        /// and quietly ruinous for a value: <c>C:/Program Files/QGIS 3.44.2/bin</c> was read back as
+        /// <c>C:/ProgramFiles/QGIS3.44.2/bin</c>, so any path with a space in it - which on Windows means
+        /// most absolute paths - named something that does not exist. The failure surfaces far away, as
+        /// whatever was going to use the file complaining that it is missing, or worse: ELMFIRE, handed a
+        /// GDAL directory mangled this way, reports "DEM CRS does not appear to use metre linear units".
+        ///
+        /// So the key is stripped, the value is only trimmed, and anything that is not a key/value pair -
+        /// a section header, a bare row of data - is stripped as before.
+        /// </summary>
+        private static string NormaliseLine(string input)
+        {
+            int equals = input.IndexOf('=');
+            if (equals <= 0)
+            {
+                return RemoveSpace(input);
+            }
+
+            //A comment marker is part of the value's syntax, not the value: GetHeaderInput splits on both.
+            return RemoveSpace(input.Substring(0, equals)) + "=" + input.Substring(equals + 1).Trim();
+        }
+
         private static PREACTInput ParseInput(string rootFolder, string[] inputLines, out bool success)
         {
             success = false;
@@ -130,6 +176,7 @@ namespace PREACT.Input
             List<int> responseLineIndices = new List<int>();
             List<int> groupLineIndices = new List<int>();
             List<int> demographicsLineIndices = new List<int>();
+            List<int> ignitionPointLineIndices = new List<int>();
 
             //first index all headers
             for (int i = 0; i < inputLines.Length; ++i)
@@ -140,7 +187,7 @@ namespace PREACT.Input
                 }
 
                 //inputLines[i] = inputLines[i].Trim();
-                inputLines[i] = RemoveSpace(inputLines[i]);
+                inputLines[i] = NormaliseLine(inputLines[i]);
                 string line = inputLines[i];
                 if (line.StartsWith("["))
                 {      
@@ -160,6 +207,10 @@ namespace PREACT.Input
                     else if (line.Equals("Demographics"))
                     {
                         demographicsLineIndices.Add(i);
+                    }
+                    else if (line.Equals("IgnitionPoint"))
+                    {
+                        ignitionPointLineIndices.Add(i);
                     }
                     else
                     {
@@ -298,7 +349,7 @@ namespace PREACT.Input
             if (headerLineIndices.TryGetValue(nameOfInput, out lineindex))
             {
                 ReadingInputMessage(nameOfInput);
-                newInput.WildfireModule.Parse(inputLines, lineindex, newInput.Simulation, newInput.Weather, newInput.Landscape, headerLineIndices, rootFolder, out success);
+                newInput.WildfireModule.Parse(inputLines, lineindex, newInput.Simulation, newInput.Weather, newInput.Landscape, headerLineIndices, ignitionPointLineIndices, rootFolder, out success);
             }
             else
             {               
@@ -332,7 +383,7 @@ namespace PREACT.Input
             if (headerLineIndices.TryGetValue(nameOfInput, out lineindex))
             {
                 ReadingInputMessage(nameOfInput);
-                newInput.TriggerBufferModule.Parse(inputLines, lineindex, headerLineIndices, rootFolder, out success);
+                newInput.TriggerBufferModule.Parse(inputLines, lineindex, headerLineIndices, newInput.Simulation, rootFolder, out success);
             }
             else
             {
@@ -586,6 +637,47 @@ namespace PREACT.Input
         /// <summary>What the last read scenario still needs. Rebuilt by every load.</summary>
         public static List<InputRequirement> Requirements { get => _requirements; }
 
+        /// <summary>
+        /// Re-runs the checks against a scenario as it currently stands in memory, rebuilding
+        /// <see cref="Requirements"/>, and returns whether anything critical is still outstanding.
+        ///
+        /// Done by writing the scenario out and reading it back, because the parsers <em>are</em> the
+        /// validator - every requirement on the checklist is produced by one of them while reading a key.
+        /// There is no separate set of rules to run instead, and inventing one would be a second place to
+        /// forget a field. The round trip also checks something worth checking on its own: that what would
+        /// be saved can be loaded back.
+        ///
+        /// Into the scenario's own folder, because half the checks resolve paths relative to it, and a
+        /// temporary file anywhere else would report every one of them as missing. Removed afterwards.
+        ///
+        /// The parsed copy is discarded: only the requirements it produced are wanted. The scenario the
+        /// caller holds is untouched.
+        /// </summary>
+        public static bool Revalidate(PREACTInput input)
+        {
+            if (input == null)
+            {
+                return false;
+            }
+
+            string probe = Path.Combine(input.RootFolder, ".checklist-recheck.wui.tmp");
+            try
+            {
+                File.WriteAllLines(probe, PREACTInputWriter.Write(input));
+                ParseInput(input.RootFolder, File.ReadAllLines(probe), out bool _);
+                return RequirementsMet;
+            }
+            catch (System.Exception e)
+            {
+                Engine.Message(null, Engine.LogType.Exception, "Could not re-check the scenario: " + e.Message);
+                return false;
+            }
+            finally
+            {
+                try { if (File.Exists(probe)) File.Delete(probe); } catch { }
+            }
+        }
+
         /// <summary>True when nothing critical is outstanding, so the scenario can actually be run.</summary>
         public static bool RequirementsMet
         {
@@ -644,6 +736,19 @@ namespace PREACT.Input
             }
         }
 
+        /// <summary>
+        /// Records something the scenario could have but has not, in the reader's own words.
+        ///
+        /// Distinct from <see cref="InputNotFoundMessage"/>, whose non-critical form says "defaulted to
+        /// VALUE" - which is the wrong thing to say about a key whose absence is not a value at all but a
+        /// step nobody has taken yet. Never critical: the scenario runs, it just runs without this.
+        /// </summary>
+        public static void OptionalInputMissing(string nameOfInput, string consequence)
+        {
+            Engine.Message(null, Engine.LogType.Log, nameOfInput + " is not set. " + consequence);
+            AddRequirement(nameOfInput, consequence, false);
+        }
+
         public static void CriticalDependency(string missingDependency)
         {
             Engine.Message(null, Engine.LogType.InputError, $"Current module requires {missingDependency} to be set." + pleaseCheckInput);
@@ -689,17 +794,46 @@ namespace PREACT.Input
             AddRequirement(nameOfInput, "This section could not be read completely.", true);
         }
 
+        /// <summary>
+        /// Checks a scenario file is there, looking in the scenario's own subfolders when it is not, and
+        /// correcting <paramref name="inputData"/> to where it was actually found.
+        ///
+        /// The correction is the point of the <c>ref</c>: resolving for the sake of the checklist alone
+        /// would report the scenario as complete and then load nothing, because every reader goes on to
+        /// use the field, not this. Since the field is what the writer writes, a scenario saved after
+        /// this has run records the corrected path and stops needing the search.
+        /// </summary>
+        public static void CheckIfFileExist(string nameOfInput, ref string inputData, string rootFolder, out bool success, bool critical = true)
+        {
+            success = Utility.ScenarioFileLocator.TryResolve(rootFolder, inputData, out string resolved, out string explanation);
+
+            if (!success)
+            {
+                PREACTInput.InputNotFoundMessage(nameOfInput + "(" + inputData + ")", critical);
+                return;
+            }
+
+            if (resolved == inputData)
+            {
+                return;
+            }
+
+            Engine.Message(null, Engine.LogType.Warning, explanation + " Save the scenario to record the new path.");
+            //Non-critical, and recorded, because the scenario as it stands on disk is still wrong: this
+            //load works, and the next one works only because the same search runs again.
+            AddRequirement(nameOfInput, "Found at " + resolved.Replace('\\', '/')
+                + " rather than " + inputData.Replace('\\', '/') + ". Save the scenario to record it.", false);
+            inputData = resolved;
+        }
+
+        /// <summary>
+        /// For callers with nothing to correct - a path held somewhere this cannot assign to. Still
+        /// searches, so the checklist agrees with the ref version about whether the file exists.
+        /// </summary>
         public static void CheckIfFileExist(string nameOfInput, string inputData, string rootFolder, out bool success, bool critical = true)
         {
-            success = true;
-            string filePath = Path.Combine(rootFolder, inputData);
-
-            if (!File.Exists(filePath))
-            {
-                success = false;
-                nameOfInput += "(" + inputData + ")";
-                PREACTInput.InputNotFoundMessage(nameOfInput, critical);
-            }
+            string copy = inputData;
+            CheckIfFileExist(nameOfInput, ref copy, rootFolder, out success, critical);
         }
 
         public static void CheckIfFilesExists(string nameOfInput, string[] inputData, string rootFolder, out bool success)

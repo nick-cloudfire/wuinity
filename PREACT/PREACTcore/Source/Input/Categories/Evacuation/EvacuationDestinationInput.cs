@@ -66,7 +66,7 @@ namespace PREACT.Input
                 nameOfInput = nameof(LatLon);
                 if (inputToParse.TryGetValue(nameOfInput, out userInput))
                 {
-                    string[] data = userInput.Split(',');
+                    string[] data = PREACTInput.TrimAll(userInput.Split(','));
                     issues += double.TryParse(data[0], out newInput.LatLon.x) ? 0 : 1;
                     issues += double.TryParse(data[1], out newInput.LatLon.y) ? 0 : 1;
                     if (issues > 0)
@@ -179,7 +179,7 @@ namespace PREACT.Input
                 nameOfInput = nameof(Color);
                 if (inputToParse.TryGetValue(nameOfInput, out userInput))
                 {
-                    string[] data = userInput.Split(',');
+                    string[] data = PREACTInput.TrimAll(userInput.Split(','));
                     if(data.Length == 3)
                     {
                         issues += float.TryParse(data[0], out newInput.Color.r) ? 0 : 1;

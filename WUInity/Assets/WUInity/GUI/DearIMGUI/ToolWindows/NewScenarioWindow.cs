@@ -237,11 +237,14 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 ImGui.Checkbox("Have wildfire landscape?", ref _haveWildfireLandscape);
                 if(_haveWildfireLandscape)
                 {
+                    //Into the [Landscape] section, which is where terrain lives. It used to go to the fire
+                    //module's own LandscapeFile, which only the cell-based spread model read - so a landscape
+                    //picked here was invisible to everything else, including the painter.
                     if (ImGui.Button("Set landscape file"))
                     {
-                        FileBrowser.OpenSetFilePath(path => _input.WildfireModule.FireCellInput.LandscapeFile = path, "Select landscape (.lcp) file", true);
+                        FileBrowser.OpenSetFilePath(path => _input.Landscape.LandscapeFile = path, "Select landscape (.lcp or multiband GeoTIFF)", true, FileBrowser.lcpFilter);
                     }
-                    ImGui.Text($"LandscapeFile: {_input.WildfireModule.FireCellInput.LandscapeFile}");
+                    ImGui.Text($"LandscapeFile: {_input.Landscape.LandscapeFile}");
                 }
                 else
                 {

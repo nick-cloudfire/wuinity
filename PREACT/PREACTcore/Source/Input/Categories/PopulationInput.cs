@@ -45,7 +45,7 @@ namespace PREACT.Input
             if (inputToParse.TryGetValue(nameOfInput, out userInput))
             {
                 PopulationFile = userInput;
-                PREACTInput.CheckIfFileExist(nameOfInput, userInput, rootFolder, out success);
+                PREACTInput.CheckIfFileExist(nameOfInput, ref PopulationFile, rootFolder, out success);
             }
             else
             {
