@@ -151,6 +151,7 @@ GraphicalFireInputFile=fire/example.gfi
 [AscImport]
 StartDateTime=2001-06-05T11:00:00
 TimeOfArrivalFile=flammap/output/TOA.asc
+TimeOfArrivalUnits=Minutes
 RateOfSpreadFile=flammap/output/ROS.asc
 SpreadDirectionFile=flammap/output/SD.asc
 FirelineIntensityFile=flammap/output/FI.asc

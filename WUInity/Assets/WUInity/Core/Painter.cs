@@ -221,6 +221,35 @@ namespace WUInity
         /// and evacuation groups painted. That raster is also the grid k-PERIL computes on, so a mask
         /// painted against it lines up with the boundary cell for cell, which is what matters.
         /// </summary>
+        /// <summary>
+        /// The ELMFIRE case's DEM, relative to the scenario folder, or null if the case has none yet.
+        /// </summary>
+        /// <remarks>
+        /// The DEM rather than an output raster because it exists as soon as the case is built, and because
+        /// it is the grid of record: ELMFIRE reads its domain, CRS and cell size from this file, so every
+        /// raster it writes lands on it. Painting before the first run is the normal order - the ignition
+        /// mask is an input to the run.
+        /// </remarks>
+        private static bool TryFindElmfireGridReference(PREACT.Input.PREACTInput input, out string reference)
+        {
+            reference = null;
+
+            string caseDirectory = input.WildfireModule.ElmfireInput?.CaseDirectory;
+            if (string.IsNullOrEmpty(caseDirectory))
+            {
+                return false;
+            }
+
+            string relative = caseDirectory.Replace('\\', '/').TrimEnd('/') + "/inputs/dem.tif";
+            if (!System.IO.File.Exists(System.IO.Path.Combine(input.RootFolder, relative)))
+            {
+                return false;
+            }
+
+            reference = relative;
+            return true;
+        }
+
         private bool ResolveFireGrid()
         {
             if (_manager == null || _manager.PREACTInput == null)
@@ -231,23 +260,21 @@ namespace WUInity
 
             PREACT.Input.PREACTInput input = _manager.PREACTInput;
 
-            if (_lcpData != null)
-            {
-                fireDataCellCount = _lcpData.GetCellCount();
-                fireDataRealSize = _lcpData.GetSize();
-                _fireGridOrigin = _lcpData.OriginOffset;
-                _fireGridCellSize = fireDataCellCount.x > 0 ? fireDataRealSize.x / fireDataCellCount.x : 0.0;
-                _haveFireGrid = _fireGridCellSize > 0.0;
-                return _haveFireGrid;
-            }
-
             //Any georeferenced raster on the domain will do, in this order of preference:
             //
-            //  1. the imported fire's arrival times - the grid the fire is on and k-PERIL computes on,
-            //     so a mask painted against it needs no reconciling at all;
-            //  2. the landscape, whatever of it exists;
+            //  1. the fire's own grid - the arrival times for an imported fire, the case's DEM for an
+            //     ELMFIRE one. This is the grid the fire is on and the grid k-PERIL computes on, so a mask
+            //     painted against it needs no reconciling at all;
+            //  2. the loaded landscape, or the landscape files, whatever of them exists;
             //  3. the elevation on its own - a DEM, which can be had for anywhere on Earth and is
             //     therefore the one thing a scenario outside LANDFIRE coverage can always have.
+            //
+            //The fire's grid comes first, ahead of the loaded landscape. It used to come second, in effect:
+            //an `if (_lcpData != null)` returned the landscape grid before this list was consulted at all.
+            //So a scenario with both - which every prepared ELMFIRE case is - could only ever paint on the
+            //landscape, and k-PERIL then refused the mask for being on the wrong grid however many times it
+            //was repainted, with the message telling the user to do the one thing that could not work. The
+            //two genuinely differ: Mati's landscape is 616 x 590 at 27.6 m and its fire grid 566 x 541 at 30 m.
             //
             //Nothing is invented when none of them is there. A grid made up from the domain and an
             //arbitrary cell size would let painting proceed and produce masks that line up with nothing,
@@ -256,11 +283,31 @@ namespace WUInity
             string reference = string.Empty;
             string what = string.Empty;
 
-            if (input.WildfireModule.Module == PREACT.Input.WildfireModuleInput.WildfireModules.AscImport
-                && !string.IsNullOrEmpty(input.WildfireModule.AscImportInput.TimeOfArrivalFile))
+            if (!string.IsNullOrEmpty(input.WildfireModule.AscImportInput.TimeOfArrivalFile))
             {
+                //Set for an imported fire, and set by HazardManager once ELMFIRE has run - either way it is
+                //the arrival-time raster the fire is actually read from. No longer gated on
+                //Module == AscImport, which excluded the ELMFIRE case that most needs it.
                 reference = input.WildfireModule.AscImportInput.TimeOfArrivalFile;
-                what = "the imported fire's arrival times";
+                what = "the fire's arrival times";
+            }
+            else if (input.WildfireModule.Module == PREACT.Input.WildfireModuleInput.WildfireModules.ELMFIRE
+                     && TryFindElmfireGridReference(input, out string elmfireReference))
+            {
+                //Before the first run there is no arrival-time raster, but the case's DEM is the grid of
+                //record: ELMFIRE takes its domain, CRS and cell size from that file, so its output lands on
+                //exactly this grid. That makes the mask paintable before the fire has ever been computed.
+                reference = elmfireReference;
+                what = "the ELMFIRE case's DEM, which its output lands on";
+            }
+            else if (_lcpData != null)
+            {
+                fireDataCellCount = _lcpData.GetCellCount();
+                fireDataRealSize = _lcpData.GetSize();
+                _fireGridOrigin = _lcpData.OriginOffset;
+                _fireGridCellSize = fireDataCellCount.x > 0 ? fireDataRealSize.x / fireDataCellCount.x : 0.0;
+                _haveFireGrid = _fireGridCellSize > 0.0;
+                return _haveFireGrid;
             }
             else if (input.Landscape != null && !string.IsNullOrEmpty(input.Landscape.GetReferenceFile()))
             {

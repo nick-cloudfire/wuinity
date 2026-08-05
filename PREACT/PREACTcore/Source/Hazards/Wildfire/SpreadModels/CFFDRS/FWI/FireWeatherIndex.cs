@@ -87,25 +87,46 @@ namespace PREACT.Wildfire
             return v * 2.2369356;
         }
 
-        public static void FFWIcalc(double temp, double rhum, double wind, out double ffwi)
+        /// <summary>
+        /// Simard's (1968) equilibrium moisture content of a fine dead fuel in equilibrium with air
+        /// at <paramref name="temp"/> (deg C) and <paramref name="rhum"/> (%), as a percentage of
+        /// oven-dry weight. The three branches are Simard's own piecewise fit over humidity.
+        /// </summary>
+        /// <remarks>
+        /// This is the relation underneath the Fosberg fire-weather index below, and the same one
+        /// NFDRS and BEHAVE use for a fine-fuel moisture from a spot observation. Made public
+        /// because a "constant conditions" run — one where the air temperature and humidity are
+        /// given rather than integrated out of a weather record — has no other route to a dead fuel
+        /// moisture: Nelson's engine answers the same question far better, but only from a real
+        /// series of antecedent hours, which such a run does not have.
+        ///
+        /// It is an equilibrium, so it describes the 1-hour stick and nothing slower. A 10- or
+        /// 100-hour fuel lags behind the air by design and cannot be read off a single hour of it.
+        /// </remarks>
+        public static double EquilibriumMoisturePercent(double temp, double rhum)
         {
-            double m, eta, fTemp, mphWind;
-
-            fTemp = CtoF(temp);
-            mphWind = MeterPerSecondToMPH(wind);
+            double fTemp = CtoF(temp);
 
             if (rhum < 10.0)
             {
-                m = 0.03229 + 0.281073 * rhum - 0.000578 * rhum * fTemp;
+                return 0.03229 + 0.281073 * rhum - 0.000578 * rhum * fTemp;
             }
-            else if (rhum <= 50.0)
+
+            if (rhum <= 50.0)
             {
-                m = 2.22749 + 0.160107 * rhum - 0.01478 * fTemp;
+                return 2.22749 + 0.160107 * rhum - 0.01478 * fTemp;
             }
-            else
-            {
-                m = 21.0606 + 0.005565 * rhum * rhum - 0.00035 * rhum * fTemp - 0.483199 * rhum;
-            }
+
+            return 21.0606 + 0.005565 * rhum * rhum - 0.00035 * rhum * fTemp - 0.483199 * rhum;
+        }
+
+        public static void FFWIcalc(double temp, double rhum, double wind, out double ffwi)
+        {
+            double m, eta, mphWind;
+
+            mphWind = MeterPerSecondToMPH(wind);
+
+            m = EquilibriumMoisturePercent(temp, rhum);
             m /= 30.0;
             eta = 1.0 - 2.0 * m + 1.5 * m * m - 0.5 * m * m * m;
 

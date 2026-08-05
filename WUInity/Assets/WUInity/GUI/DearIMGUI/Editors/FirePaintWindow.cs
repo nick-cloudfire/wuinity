@@ -23,9 +23,22 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
         private static bool _isOpen;
         private static global::WUInity.Painter.PaintMode _mode = global::WUInity.Painter.PaintMode.WUIArea;
         private static bool _adding = true;
-        private static bool _painting;
         private static bool _startFailed;
         private static string _savedAs = string.Empty;
+
+        /// <summary>
+        /// Whether this window's brush is live, asked of the painter rather than remembered.
+        /// </summary>
+        /// <remarks>
+        /// This was a <c>_painting</c> bool kept here, and an identical one kept by the evacuation group paint
+        /// window, with nothing keeping the two in step with each other or with the painter. Painting in both
+        /// and closing one left the other offering "Stop painting" for a brush already down — and pressing it
+        /// stopped a brush that was not running, from a window that did not own it.
+        /// </remarks>
+        private static bool Painting
+        {
+            get { return PreactGUI.WUInity != null && PreactGUI.WUInity.IsPaintingFireArea; }
+        }
 
         private static readonly global::WUInity.Painter.PaintMode[] Modes =
         {
@@ -84,7 +97,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                 if (ImGui.RadioButton(Labels[i], _mode == Modes[i]))
                 {
                     _mode = Modes[i];
-                    if (_painting)
+                    if (Painting)
                     {
                         SelectForPainting();
                     }
@@ -111,7 +124,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
 
             ImGui.SeparatorText("Painting");
 
-            if (!_painting)
+            if (!Painting)
             {
                 if (ImGui.Button("Start painting"))
                 {
@@ -167,7 +180,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             {
                 //Closing the window by its title bar has to stop the brush too, or it keeps painting with
                 //no way left to turn it off.
-                if (_painting)
+                if (Painting)
                 {
                     StopPainting();
                 }
@@ -192,13 +205,11 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             }
 
             _startFailed = false;
-            _painting = true;
             ApplyBrushColour();
         }
 
         private static void StopPainting()
         {
-            _painting = false;
             PreactGUI.WUInity.StopPainter();
         }
 
@@ -215,7 +226,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
         /// </summary>
         private static void ApplyBrushColour()
         {
-            if (!_painting)
+            if (!Painting)
             {
                 return;
             }

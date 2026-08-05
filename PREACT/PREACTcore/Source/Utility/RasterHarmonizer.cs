@@ -160,9 +160,59 @@ namespace PREACT.Utility
                 throw new Exception($"Warp failed: {sourcePath} -> {destPath}");
             }
 
+            //Before the handle is closed, while it is still the writable one the warp produced.
+            ForceAreaPixelConvention(dst, destPath);
+
             dst.FlushCache();
             dst.Dispose();
             src.Dispose();
+        }
+
+        /// <summary>
+        /// Stamps <c>AREA_OR_POINT=Area</c> on a warp output.
+        /// </summary>
+        /// <remarks>
+        /// A raster tagged <c>AREA_OR_POINT=Point</c> declares that its geotransform names cell <b>centres</b>
+        /// rather than corners, which is a half-cell shift in both axes — 15 m on a 30 m grid. gdalwarp honours
+        /// the tag when reading, so the warp itself is correct, but it <b>copies the tag to the output</b>: the
+        /// shift comes back the next time anything reads the harmonized file, and every reader here treats the
+        /// geotransform as corners.
+        ///
+        /// This is not hypothetical. The reference Mati case arrived with a <c>RasterPixelIsPoint</c> DEM and
+        /// its layers half a cell out of register with each other, and clearing the tag by hand was one of the
+        /// steps that had to be repeated every time a raster was re-warped. Doing it in the one function every
+        /// warp goes through is what stops it being a step anyone can forget.
+        ///
+        /// Setting the metadata rather than adjusting the geotransform: the warp already placed the pixels
+        /// correctly, so the only thing wrong is the label describing what the numbers mean.
+        /// </remarks>
+        private static void ForceAreaPixelConvention(Dataset dataset, string path)
+        {
+            try
+            {
+                string current = dataset.GetMetadataItem("AREA_OR_POINT", string.Empty);
+
+                //Already Area, or unset - which GDAL reads as Area anyway. Writing it regardless would be
+                //harmless, but leaving an untouched file untouched keeps the "did this change anything?"
+                //question answerable from the file's own timestamp.
+                if (string.IsNullOrEmpty(current)
+                    || string.Equals(current, "Area", StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
+                dataset.SetMetadataItem("AREA_OR_POINT", "Area", string.Empty);
+            }
+            catch (Exception e)
+            {
+                //Reported rather than thrown: the warp itself succeeded and its pixels are in the right place,
+                //so failing the build over the label would discard good work. Half-cell misregistration in a
+                //later read is what this costs, and the case validator compares origins to a tenth of a cell,
+                //so it is caught there rather than passing unnoticed.
+                Engine.Message(null, Engine.LogType.Warning,
+                    $"Could not set AREA_OR_POINT=Area on {path} ({e.Message}). If it was tagged Point, "
+                    + "readers will see it half a cell out of position.");
+            }
         }
     }
 }

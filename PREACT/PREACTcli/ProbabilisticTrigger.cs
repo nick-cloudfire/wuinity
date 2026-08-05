@@ -52,6 +52,11 @@ namespace PREACTcli
             string baseName = Path.GetFileNameWithoutExtension(opts.BaseWui);
             string[] baseLines = File.ReadAllLines(opts.BaseWui);
 
+            //Same treatment as converge-trigger: the previous campaign's files go aside before this one writes
+            //or reads anything, so its probability raster cannot outlive it and be taken for this one's.
+            CampaignReset.ArchivePrevious(outputDir, caseDir, includeBoundaries: !opts.Resume,
+                new[] { opts.OutPath });
+
             int[,] insideCount = null;
             AscRaster.Header header = default;
             int nSuccess = 0;
@@ -65,10 +70,12 @@ namespace PREACTcli
                 //machine-parseable progress line for GUI consumers (n completed of Count)
                 Console.WriteLine($"PROGRESS {n}/{opts.Count} realization {idx}");
 
-                string toa = Path.Combine(opts.RasterDir, opts.ToaPattern.Replace("{i}", idx));
-                string ros = Path.Combine(opts.RasterDir, opts.RosPattern.Replace("{i}", idx));
-                string sd  = Path.Combine(opts.RasterDir, opts.SdPattern.Replace("{i}", idx));
-                string fi  = Path.Combine(opts.RasterDir, opts.FiPattern.Replace("{i}", idx));
+                //See EnsembleRasters: an ELMFIRE dump's name ends in the run's stop time, which the pattern
+                //should not have to spell out.
+                string toa = EnsembleRasters.Resolve(opts.RasterDir, opts.ToaPattern, idx);
+                string ros = EnsembleRasters.Resolve(opts.RasterDir, opts.RosPattern, idx);
+                string sd  = EnsembleRasters.Resolve(opts.RasterDir, opts.SdPattern, idx);
+                string fi  = EnsembleRasters.Resolve(opts.RasterDir, opts.FiPattern, idx);
 
                 bool ok = RealizationRunner.TryRun(
                     preactExe, caseDir, baseName, baseLines, idx, toa, ros, sd, fi,

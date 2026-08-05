@@ -227,6 +227,28 @@ namespace PREACT.Evacuation
                 return null;
             }
 
+            //Size alone is not registration. Two rasters of the same shape on different ground line up cell for
+            //cell and describe different places, and the boundary would then protect somewhere the community is
+            //not - with nothing about the result looking wrong. Checked to a tenth of a cell, the same tolerance
+            //the case validator uses, since a warped raster's corner can differ in the last bits.
+            Math.Vector2d fireOrigin = _simulation.Hazards.Wildfire.GetGridOriginUtm();
+            if (fireOrigin.x != 0.0 || fireOrigin.y != 0.0)
+            {
+                double tolerance = 0.1 * header.CellSize;
+                double dx = header.XllCorner - fireOrigin.x;
+                double dy = header.YllCorner - fireOrigin.y;
+
+                if (System.Math.Abs(dx) > tolerance || System.Math.Abs(dy) > tolerance)
+                {
+                    Engine.Message(null, Engine.LogType.Warning,
+                        $"The WUI mask starts at ({header.XllCorner:F1}, {header.YllCorner:F1}) but the fire grid "
+                        + $"starts at ({fireOrigin.x:F1}, {fireOrigin.y:F1}) - offset by ({dx:F1}, {dy:F1}) m, about "
+                        + $"({dx / header.CellSize:F1}, {dy / header.CellSize:F1}) cells. It describes different "
+                        + "ground; ignoring it.");
+                    return null;
+                }
+            }
+
             //Any positive value marks a WUI cell. This accepts both a crisp 1/0 mask and a
             //fractional raster such as ELMFIRE's bldg_footprint_frac (0 = no buildings).
             bool[] wuiArea = new bool[xCount * yCount];
@@ -249,7 +271,23 @@ namespace PREACT.Evacuation
         /// only on a non-square domain. Checking here means a square domain cannot slip through
         /// silently transposed.
         /// </summary>
-        private float[,] LoadWindRaster(string windFile, string rootFolder, int xCount, int yCount, string what, bool isDirection)
+        /// <summary>
+        /// One wind value per cell, taken from the band covering the hour the fire reached that cell.
+        /// </summary>
+        /// <remarks>
+        /// k-PERIL's solver has no time axis: the wind enters it once, as the length-to-breadth ratio of the
+        /// spread ellipse at each cell. A multi-hour fire therefore has to be collapsed to a single field,
+        /// and this picks the hour that is actually true of each cell - the one the front passed through it
+        /// in. It used to take one band for the whole domain, so an eight-hour burn was evaluated entirely
+        /// on its first hour however the wind turned; a fire that swung 90 degrees mid-run had its later
+        /// half analysed against wind it never saw.
+        ///
+        /// Cells the fire never reached take the last band. They lie ahead of the front, so the latest wind
+        /// is the closest thing to relevant, and they need some value because k-PERIL evaluates the whole
+        /// grid rather than the burned footprint.
+        /// </remarks>
+        private float[,] LoadWindRaster(string windFile, string rootFolder, int xCount, int yCount, string what,
+            bool isDirection, WildfireModule wildfire, double secondsPerBand)
         {
             if (string.IsNullOrEmpty(windFile))
             {
@@ -258,8 +296,7 @@ namespace PREACT.Evacuation
             }
 
             string path = System.IO.Path.Combine(rootFolder, windFile);
-            int band = _input.TriggerBufferModule.kPERILInput.WindBand;
-            float[,] raster = Utility.AscRaster.Read(path, band, out Utility.AscRaster.Header header, out bool ok,
+            float[,] raster = Utility.AscRaster.Read(path, 1, out Utility.AscRaster.Header header, out bool ok,
                 out int bandCount);
             if (!ok || raster == null)
             {
@@ -267,22 +304,20 @@ namespace PREACT.Evacuation
                 return null;
             }
 
-            //Said out loud whenever there is more than one hour in the file. k-PERIL's solver has no time
-            //axis - the wind enters it once, as each cell's length-to-breadth ratio - so one band has to be
-            //picked, and picking it silently meant an 8-hour case was always evaluated on its first hour
-            //however the wind turned during the burn.
-            if (bandCount > 1)
-            {
-                Engine.Message(null, Engine.LogType.Warning,
-                    $"{what} holds {bandCount} hourly bands; k-PERIL is using band {band}. It computes on one wind "
-                    + "field, so the other " + (bandCount - 1) + " are not used. Set [kPERIL] WindBand to choose a "
-                    + "different hour.");
-            }
-
             if (header.Ncols != xCount || header.Nrows != yCount)
             {
                 Engine.Message(null, Engine.LogType.InputError, $"{what} dimensions ({header.Ncols}x{header.Nrows}) do not match the fire grid ({xCount}x{yCount}).");
                 return null;
+            }
+
+            if (bandCount > 1)
+            {
+                raster = ComposeWindAtArrivalTime(raster, path, xCount, yCount, bandCount, what, wildfire,
+                    secondsPerBand);
+                if (raster == null)
+                {
+                    return null;
+                }
             }
 
             float min = float.MaxValue;
@@ -326,6 +361,130 @@ namespace PREACT.Evacuation
             }
 
             return raster;
+        }
+
+        /// <summary>
+        /// Replaces <paramref name="firstBand"/> cell by cell with the band covering that cell's arrival time.
+        /// </summary>
+        /// <remarks>
+        /// Read one band at a time rather than all of them at once: a band of the Mati grid is 1.2 MB and
+        /// there can be days of them in an ensemble case, and only the cells belonging to a band are needed
+        /// while it is in hand.
+        /// </remarks>
+        private float[,] ComposeWindAtArrivalTime(float[,] firstBand, string path, int xCount, int yCount,
+            int bandCount, string what, WildfireModule wildfire, double secondsPerBand)
+        {
+            if (wildfire == null || secondsPerBand <= 0.0)
+            {
+                //Nothing to map arrival times onto bands with. The first band is what the old behaviour used,
+                //so this degrades to that rather than failing - but it is worth saying, because the boundary
+                //is then computed against one hour of an N-hour fire.
+                Engine.Message(null, Engine.LogType.Warning,
+                    $"{what} holds {bandCount} bands but the arrival times or the band interval are unknown, so "
+                    + "band 1 is used for the whole domain.");
+                return firstBand;
+            }
+
+            //Which band each cell wants, and how many cells want each - the counts are only for the summary,
+            //but a distribution is the one thing that shows at a glance whether this did anything.
+            var wanted = new int[xCount, yCount];
+            var perBand = new int[bandCount + 1];
+            int unburned = 0;
+
+            for (int x = 0; x < xCount; ++x)
+            {
+                for (int y = 0; y < yCount; ++y)
+                {
+                    float arrival = wildfire.GetTimeOfArrival(x, y);
+                    int band;
+
+                    if (arrival == float.MaxValue)
+                    {
+                        band = bandCount;
+                        ++unburned;
+                    }
+                    else
+                    {
+                        //Bands are 1-based and cover [ (b-1)*dt, b*dt ). Clamped at both ends: an arrival
+                        //before the first band belongs to it, and one past the last - which a fire outliving
+                        //its weather produces - belongs to the last.
+                        band = (int)System.Math.Floor(arrival / secondsPerBand) + 1;
+                        if (band < 1) band = 1;
+                        if (band > bandCount) band = bandCount;
+                    }
+
+                    wanted[x, y] = band;
+                    ++perBand[band];
+                }
+            }
+
+            var composed = new float[xCount, yCount];
+
+            for (int band = 1; band <= bandCount; ++band)
+            {
+                if (perBand[band] == 0)
+                {
+                    continue;
+                }
+
+                float[,] source = firstBand;
+                if (band != 1)
+                {
+                    source = Utility.AscRaster.Read(path, band, out Utility.AscRaster.Header _, out bool bandOk,
+                        out int _);
+                    if (source == null || !bandOk)
+                    {
+                        Engine.Message(null, Engine.LogType.InputError,
+                            $"{what} band {band} could not be read: {path}");
+                        return null;
+                    }
+                }
+
+                for (int x = 0; x < xCount; ++x)
+                {
+                    for (int y = 0; y < yCount; ++y)
+                    {
+                        if (wanted[x, y] == band)
+                        {
+                            composed[x, y] = source[x, y];
+                        }
+                    }
+                }
+            }
+
+            var used = new System.Collections.Generic.List<string>();
+            for (int band = 1; band <= bandCount; ++band)
+            {
+                if (perBand[band] > 0) used.Add($"{band}:{perBand[band]}");
+            }
+
+            Engine.Message(null, Engine.LogType.Log,
+                $"{what}: sampled per cell at the fire's arrival time across {bandCount} band(s) of "
+                + $"{secondsPerBand:F0} s. Cells per band - {string.Join(", ", used)}"
+                + (unburned > 0 ? $"; {unburned} cell(s) the fire never reached took the last band." : "."));
+
+            return composed;
+        }
+
+        /// <summary>
+        /// Seconds covered by one band of the weather rasters.
+        /// </summary>
+        /// <remarks>
+        /// The ELMFIRE settings state it, and for an ELMFIRE fire that is authoritative - it is the same
+        /// value written into the namelist the fire was computed with. For a fire imported from elsewhere
+        /// there is nothing in the scenario that says, and hourly is the convention of every product this
+        /// reads, so an hour is assumed and said.
+        /// </remarks>
+        private double ResolveSecondsPerWeatherBand()
+        {
+            if (_input.WildfireModule.Module == Input.WildfireModuleInput.WildfireModules.ELMFIRE
+                && _input.WildfireModule.ElmfireInput?.Namelist != null
+                && _input.WildfireModule.ElmfireInput.Namelist.DT_METEOROLOGY > 0.0)
+            {
+                return _input.WildfireModule.ElmfireInput.Namelist.DT_METEOROLOGY;
+            }
+
+            return 3600.0;
         }
 
         /// <summary>One WUI area to protect, and a label used to name its output.</summary>
@@ -634,16 +793,10 @@ namespace PREACT.Evacuation
             {
                 if (_input.TriggerBufferModule.Module == TriggerBufferModuleInput.TriggerBufferModules.kPERIL)
                 {
-                    if (!_input.WildfireModule.Enabled && !_input.TriggerBufferModule.kPERILInput.CalculateROSFromBehave)
-                    {
-                        Engine.Message(simulation, Engine.LogType.Warning, "Can't run kPERIL without fire module (user set not to use BEHAVE).");
-                        return;
-                    }
-                    //Deriving the rate of spread from BEHAVE instead of from the fire module does not remove
-                    //the need for the fire module: everything below is measured on its grid, starting with
-                    //the cell counts on the next few lines. Without this the run reached those and threw a
-                    //NullReferenceException, which says nothing about a module not being enabled.
-                    else if (simulation.Hazards.Wildfire == null)
+                    //Everything below is measured on the fire's grid, starting with the cell counts a few
+                    //lines down. Without this the run reached those and threw a NullReferenceException,
+                    //which says nothing about a module not being enabled.
+                    if (simulation.Hazards.Wildfire == null)
                     {
                         Engine.Message(simulation, Engine.LogType.Warning,
                             "Can't compute a trigger boundary without a wildfire module: it is back-propagated "
@@ -658,6 +811,23 @@ namespace PREACT.Evacuation
                         float wrsetMinutes = CalculateWRSETMinutes(simulation);
                         Engine.Message(simulation, Engine.LogType.Log, "WRSET (last-arrival evacuation time) = " + wrsetMinutes + " minutes.");
 
+                        //A boundary computed from a zero egress time is the WUI area and nothing more: with no
+                        //time to travel, no cell outside it can reach the community in time. It is not a
+                        //result, and it is dangerous to publish as one - in a campaign it aggregates in
+                        //alongside real boundaries and pulls the probability field *inward*, making the trigger
+                        //look tighter than the evidence supports.
+                        //
+                        //Refused rather than warned about, because nothing downstream can tell the difference.
+                        if (wrsetMinutes <= 0f)
+                        {
+                            Engine.Message(simulation, Engine.LogType.SimulationError,
+                                "No evacuation arrivals were recorded, so the required egress time is zero and "
+                                + "the trigger boundary would collapse onto the WUI area. Not computing one. "
+                                + "Check that the traffic module ran and that the population reaches a "
+                                + "destination - a run that evacuates nobody cannot say when to leave.");
+                            return;
+                        }
+
                         int xCount = simulation.Hazards.Wildfire.GetCellCountX();
                         int yCount = simulation.Hazards.Wildfire.GetCellCountY();
 
@@ -665,10 +835,15 @@ namespace PREACT.Evacuation
                         //required: without them there is nothing to derive the spread ellipse's
                         //elongation from, and silently standing in a constant would discard the
                         //terrain-driven variation the WindNinja step exists to produce.
+                        //Sampled per cell at the hour the fire reached it, so a multi-hour burn is not
+                        //evaluated against a single hour's wind. Needs the fire module for its arrival times.
+                        double secondsPerBand = ResolveSecondsPerWeatherBand();
                         float[,] windSpeedMph = LoadWindRaster(_input.TriggerBufferModule.kPERILInput.WindSpeedFile,
-                            _input.RootFolder, xCount, yCount, nameof(kPERILInput.WindSpeedFile), false);
+                            _input.RootFolder, xCount, yCount, nameof(kPERILInput.WindSpeedFile), false,
+                            simulation.Hazards.Wildfire, secondsPerBand);
                         float[,] windDirectionDegrees = LoadWindRaster(_input.TriggerBufferModule.kPERILInput.WindDirectionFile,
-                            _input.RootFolder, xCount, yCount, nameof(kPERILInput.WindDirectionFile), true);
+                            _input.RootFolder, xCount, yCount, nameof(kPERILInput.WindDirectionFile), true,
+                            simulation.Hazards.Wildfire, secondsPerBand);
 
                         if (windSpeedMph == null || windDirectionDegrees == null)
                         {
@@ -714,33 +889,19 @@ namespace PREACT.Evacuation
                                     $"The fire never reached {runs[i].Label}, so no trigger boundary was computed for "
                                     + "it. Either it is not threatened in this scenario, or the fire was not run for "
                                     + "long enough to get there - a probabilistic campaign runs ELMFIRE for days for "
-                                    + "exactly this reason. Raise [ELMFIRE] SimulationTstopSeconds to give the fire "
+                                    + "exactly this reason. Raise [ELMFIRE] SimulationTstopHours to give the fire "
                                     + "time to arrive.");
                                 continue;
                             }
 
-                            if (_input.TriggerBufferModule.kPERILInput.CalculateROSFromBehave)
-                            {
-                                //k-PERIL's own moisture and fuel model table, from the [kPERIL] section.
-                                //These used to be the fire module's, which made a BEHAVE-derived trigger
-                                //boundary depend on a fire module that has nothing to do with it - and the
-                                //moisture file [kPERIL] already declared was loaded and then ignored.
-                                _triggerBufferModule = new kPERIL(_input.WildfireModule.Data.LandscapeData, wrsetMinutes,
-                                    runs[i].WuiArea, windSpeedMph, windDirectionDegrees,
-                                    _input.TriggerBufferModule.Data.kPERILInitialFuelMoistureData,
-                                    _input.TriggerBufferModule.Data.kPERILFuelModelsData);
-                            }
-                            else
-                            {
-                                //Topography goes in with the rate of spread. k-PERIL vector-adds 0.06 of
-                                //the slope to the wind before deriving how elongated spread is, so
-                                //leaving these out - which is what happened, the optional arguments
-                                //defaulting to null and k-PERIL standing in zeros - meant every boundary
-                                //was computed as if the ground were level.
-                                _triggerBufferModule = new kPERIL(wrsetMinutes, runs[i].WuiArea, windSpeedMph, windDirectionDegrees,
-                                    simulation.Hazards.Wildfire.GetMaxROS(), simulation.Hazards.Wildfire.GetMaxROSAzimuth(),
-                                    simulation.Hazards.Wildfire.GetCellSizeX(), elevation, slope, aspect);
-                            }
+                            //Topography goes in with the rate of spread. k-PERIL vector-adds 0.06 of
+                            //the slope to the wind before deriving how elongated spread is, so
+                            //leaving these out - which is what happened, the optional arguments
+                            //defaulting to null and k-PERIL standing in zeros - meant every boundary
+                            //was computed as if the ground were level.
+                            _triggerBufferModule = new kPERIL(wrsetMinutes, runs[i].WuiArea, windSpeedMph, windDirectionDegrees,
+                                simulation.Hazards.Wildfire.GetMaxROS(), simulation.Hazards.Wildfire.GetMaxROSAzimuth(),
+                                simulation.Hazards.Wildfire.GetCellSizeX(), elevation, slope, aspect);
 
                             Engine.Message(simulation, Engine.LogType.Log,
                                 $"k-PERIL run {i + 1} of {runs.Count}: {runs[i].Label}, which the fire reached in "
@@ -756,7 +917,9 @@ namespace PREACT.Evacuation
                                 outputName = Path.GetFileNameWithoutExtension(outputName) + "_" + runs[i].Label + Path.GetExtension(outputName);
                             }
                             string outputFilePath = Path.Combine(simulation.Engine.OutputFolder, simulation.SimulationIndex + "_" + outputName);
-                            kPERIL.SaveToFile(_triggerBufferModule.TriggerBufferOutput, simulation.Hazards.Wildfire.GetCellSizeX(), outputFilePath);
+                            kPERIL.SaveToFile(_triggerBufferModule.TriggerBufferOutput,
+                                simulation.Hazards.Wildfire.GetCellSizeX(), outputFilePath,
+                                simulation.Hazards.Wildfire.GetGridOriginUtm());
 
                             //Registered here, once per run, rather than once after the loop - which
                             //would have recorded only the last group's boundary.

@@ -15,7 +15,7 @@
 
 ## Prerequisites
 
-- **Windows.** The `dev` branch links native x64 libraries (GDAL, Behave, FOFEM,
+- **Windows.** The `dev` branch links native x64 libraries (GDAL, FOFEM,
   NFDRS4) and SUMO, so it currently runs on Windows only.
 - **.NET 8 SDK** for the engine and CLI tools.
 - **Unity** for the visualizer (version reported by Unity Hub when you add the
@@ -58,7 +58,7 @@ Third-party libraries live under `PREACT/PREACTcore/Runtimes/` (and
 - **GDAL / OGR / OSR** – the C# wrappers ship in the repo; the underlying native
   GDAL comes from your **SUMO** install at run time. This is why the correct
   SUMO version must be installed and readable on `PATH`.
-- **Behave, FOFEM, NFDRS4** – native x64 DLLs, committed.
+- **FOFEM, NFDRS4** – native x64 DLLs, committed.
 - **k-PERIL** (`kPERILcore.dll`) and **Open-Meteo** – managed DLLs, committed
   under `Runtimes/Managed/`. The project references the in-repo copy, so a clean
   checkout builds without any sibling repositories.

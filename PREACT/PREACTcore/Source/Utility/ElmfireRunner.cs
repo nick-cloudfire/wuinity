@@ -43,7 +43,7 @@ namespace PREACT.Utility
         /// <summary>
         /// Runs (or reuses) realization <paramref name="runId"/> in <paramref name="runDir"/>.
         /// <paramref name="namelistLines"/> is a template already patched by
-        /// <c>ElmfireRealizationWriter</c>, whose OUTPUTS_DIRECTORY / SCRATCH must be the
+        /// the campaign driver, whose OUTPUTS_DIRECTORY / SCRATCH must be the
         /// './outputs' and './scratch' inside <paramref name="runDir"/>.
         /// </summary>
         public static Result Run(string elmfireExe, string runDir, string runId, string[] namelistLines,
@@ -55,6 +55,21 @@ namespace PREACT.Utility
             string scratchDir = Path.Combine(runDir, "scratch");
             Directory.CreateDirectory(outputsDir);
             Directory.CreateDirectory(scratchDir);
+
+            // Resume off means this realization is being computed again, so last time's files must not be
+            // able to stand in for it. Emptied rather than left to be overwritten, because ELMFIRE's dump
+            // names carry the run's stop time and TryCollectOutputs takes the largest one it finds - so a
+            // previous longer run's raster beats this one's and the campaign silently aggregates the old
+            // fire. RANDOMIZE_SIMULATION_TSTOP makes that likely even at identical settings, since every
+            // realization draws its own stop time.
+            //
+            // Scratch too: with USE_EXISTING_BSQS on, ELMFIRE reuses the converted rasters it finds there,
+            // which would be the ones made from the case's inputs as they were before they changed.
+            if (!resume)
+            {
+                Empty(outputsDir);
+                Empty(scratchDir);
+            }
 
             // Resume the same way WildfireAV does: an existing time-of-arrival dump means this
             // realization already ran. Checked before writing the namelist so a resumed run does
@@ -124,6 +139,23 @@ namespace PREACT.Utility
 
             result.Ok = true;
             return result;
+        }
+
+        /// <summary>
+        /// Deletes the directory's contents, keeping the directory. Best-effort per entry: a file held open
+        /// by something else must not stop the run, and the one real consequence — a stale raster surviving —
+        /// is reported by the caller's own checks rather than papered over here.
+        /// </summary>
+        private static void Empty(string directory)
+        {
+            foreach (string path in Directory.GetFiles(directory))
+            {
+                try { File.Delete(path); } catch { }
+            }
+            foreach (string path in Directory.GetDirectories(directory))
+            {
+                try { Directory.Delete(path, recursive: true); } catch { }
+            }
         }
 
         /// <summary>
@@ -317,14 +349,42 @@ namespace PREACT.Utility
             if (string.IsNullOrEmpty(gdalBinDir) || !Directory.Exists(gdalBinDir)) return;
 
             string existingPath = Environment.GetEnvironmentVariable("PATH") ?? "";
-            psi.Environment["PATH"] = gdalBinDir + Path.PathSeparator + existingPath;
+            SetEnvironmentVariable(psi, "PATH", gdalBinDir + Path.PathSeparator + existingPath);
 
             string projData = Path.GetFullPath(Path.Combine(gdalBinDir, "..", "share", "proj"));
             if (Directory.Exists(projData))
             {
-                psi.Environment["PROJ_DATA"] = projData;
-                psi.Environment["PROJ_LIB"] = projData;
+                SetEnvironmentVariable(psi, "PROJ_DATA", projData);
+                SetEnvironmentVariable(psi, "PROJ_LIB", projData);
             }
+        }
+
+        /// <summary>
+        /// Sets a variable in the child's environment, replacing any entry that differs only in case.
+        /// </summary>
+        /// <remarks>
+        /// Windows environment variable names are case-insensitive, and Windows spells the search path
+        /// <c>Path</c>. Whether assigning <c>psi.Environment["PATH"]</c> overwrites that or adds a second
+        /// entry beside it depends on the runtime: .NET Core keys this dictionary with
+        /// <c>OrdinalIgnoreCase</c> on Windows, Mono keys it ordinally. Under Mono - which is what Unity
+        /// runs - the child therefore inherited both <c>Path</c> (the original) and <c>PATH</c> (ours),
+        /// and the original won, so ELMFIRE's <c>where gdal_translate</c> found nothing and it fell back
+        /// to a blank PATH_TO_GDAL. The failure then surfaced as "DEM CRS does not appear to use metre
+        /// linear units", an error about the DEM, which is fine.
+        ///
+        /// This is why the same code worked from PREACTcli and not from the GUI.
+        /// </remarks>
+        private static void SetEnvironmentVariable(ProcessStartInfo psi, string name, string value)
+        {
+            var stale = new System.Collections.Generic.List<string>();
+            foreach (string key in psi.Environment.Keys)
+            {
+                if (!string.Equals(key, name, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!string.Equals(key, name, StringComparison.Ordinal)) stale.Add(key);
+            }
+
+            foreach (string key in stale) psi.Environment.Remove(key);
+            psi.Environment[name] = value;
         }
 
         /// <summary>Parses the trailing "_&lt;seconds&gt;" of a dump filename; -1 if it does not parse.</summary>

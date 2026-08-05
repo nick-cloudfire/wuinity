@@ -25,6 +25,19 @@ namespace PREACT.Input
         public DateTime EndDateTime = DateTime.Now;
         public bool StopWhenEvacuated = false;
 
+        /// <summary>
+        /// Seeds everything stochastic in the run, so it can be repeated. 0 means draw from the clock.
+        /// </summary>
+        /// <remarks>
+        /// The seed is combined with the simulation index, so run <i>n</i> of a batch is reproducible on its own
+        /// rather than every run of a batch being identical — which would make a multi-run convergence check
+        /// meaningless. Departure times, walking speeds, household sizes and destination choice all come from
+        /// here.
+        ///
+        /// Defaults to 0, keeping the behaviour a scenario had before this key existed.
+        /// </remarks>
+        public int RandomSeed = 0;
+
         public SimulationInput()
         {
             _data = new SimulationData(_lowerLeftLatLon);
@@ -161,6 +174,14 @@ namespace PREACT.Input
             else
             {
                 PREACTInput.InputNotFoundMessage(nameOfInput);
+            }
+
+            //Optional and silent when absent: 0 is the documented default and means the same thing every
+            //scenario written before this key existed already did.
+            nameOfInput = nameof(RandomSeed);
+            if (inputToParse.TryGetValue(nameOfInput, out userInput))
+            {
+                int.TryParse(userInput, out RandomSeed);
             }
 
             _data.UpdateData(LowerLeftLatLon);

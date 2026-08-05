@@ -60,6 +60,37 @@ See [Command-line tools](command-line-tools.md) for the full argument reference.
 4. (Optional) add a Mapbox token — see [Troubleshooting](troubleshooting.md).
 5. Press **Play**, then load a `.wui` project from the in-app menu.
 
+### Finding things in the visualizer
+
+Four menus, grouped by what an entry is:
+
+| Menu | Holds |
+|---|---|
+| **File** | New scenario, Load scenario, Save, Save as — the scenario as a document. |
+| **Scenario** | Edit, Prepare data, Checklist, Output — what you do to the loaded one, in that order. |
+| **View** | Map layers (population density, road network), the console, the theme. Nothing here changes the scenario. |
+| **Tools** | Probabilistic trigger campaign, Population editor, Download data. Things that do work of their own. |
+
+`Scenario > Edit` opens the scenario editor, whose tabs run in the order the work does:
+
+- **Simulation** — General, Map, Terrain, Weather. Where and when the scenario happens, and what it is drawn on.
+- **Evacuation** — General, modules, Population, Demographics, Destinations, Response curves, Evacuation groups.
+- **Hazards** — Fire, Fire behaviour, Ignitions and areas, Smoke, Trigger boundary.
+- **Run** — last, because it closes the editor and starts the simulation.
+
+Two distinctions worth knowing, because both used to be spread across tabs:
+
+- **Fire** is how ELMFIRE is *run* — the case, the executables, what to build, which source layers.
+  **Fire behaviour** is what it is *told*, and becomes the generated `elmfire.data`. Setting a
+  `NamelistTemplate` under Fire replaces the whole of Fire behaviour, and the tab says so.
+- Fuel and canopy rasters are named under **Hazards > Fire > Source layers**, not under
+  Simulation > Terrain. Terrain holds only the elevation, slope and aspect the map and k-PERIL use.
+
+`Scenario > Prepare data` runs every prepare-once step against the loaded scenario — the road network,
+population, the DEM, weather, and the ELMFIRE case — naming each output after the scenario and setting
+the path on it. `Tools > Download data` fetches the same things for a hand-drawn area into a folder of
+your choosing, and wires nothing into a scenario.
+
 ## 5. Prepare your own scenario
 
 The [QGIS plugin](qgis-plugin.md) is the easiest way to build the input data

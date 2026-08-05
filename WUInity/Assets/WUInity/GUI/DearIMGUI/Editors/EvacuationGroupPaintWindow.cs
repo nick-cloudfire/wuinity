@@ -20,7 +20,13 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
         private static Dictionary<string, EvacuationGroupInput> _inputs;
         private static readonly List<EvacuationGroupInput> _ordered = new List<EvacuationGroupInput>();
         private static int _selected;
-        private static bool _painting;
+        /// <summary>Whether this window's brush is live, asked of the painter rather than remembered.</summary>
+        /// <remarks>See FirePaintWindow.Painting: two windows each remembering this separately meant
+        /// neither agreed with the painter, nor with the other.</remarks>
+        private static bool Painting
+        {
+            get { return PreactGUI.WUInity != null && PreactGUI.WUInity.IsPaintingMode(global::WUInity.Painter.PaintMode.EvacGroup); }
+        }
         private static bool _startFailed;
         //Dimmed enough to read the map through, strong enough to tell two groups apart.
         private const float GroupOverlayOpacity = 0.3f;
@@ -87,8 +93,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             if (_ordered.Count == 0)
             {
                 ImGui.TextWrapped("This scenario has no evacuation groups to paint. Create one first.");
-                ImGui.End();
-                if (!_isOpen) { PreactGUI.CloseWindow(Draw); }
+                End();
                 return;
             }
 
@@ -103,7 +108,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                 if (ImGui.RadioButton(_ordered[i].Name, _selected == i))
                 {
                     _selected = i;
-                    if (_painting)
+                    if (Painting)
                     {
                         SelectForPainting();
                     }
@@ -115,7 +120,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             if (ImGui.RadioButton("Erase (no group)", _selected == _ordered.Count))
             {
                 _selected = _ordered.Count;
-                if (_painting)
+                if (Painting)
                 {
                     SelectForPainting();
                 }
@@ -126,7 +131,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             if (ImGui.Checkbox("Keep groups on the map when not painting", ref _keepGroupsVisible))
             {
                 //Acted on at once rather than only at the next stop, so the checkbox shows what it does.
-                if (!_painting)
+                if (!Painting)
                 {
                     if (_keepGroupsVisible)
                     {
@@ -139,7 +144,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                 }
             }
 
-            if (!_painting)
+            if (!Painting)
             {
                 if (ImGui.Button("Start painting"))
                 {
@@ -168,17 +173,33 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                 ImGui.TextWrapped("Saving writes one mask per group into the scenario folder and points each group at its own, replacing any shapefile.");
             }
 
+            End();
+        }
+
+        /// <summary>
+        /// The one way this window closes.
+        /// </summary>
+        /// <remarks>
+        /// Every exit from <see cref="Draw"/> goes through here, because closing the window has to put the
+        /// brush down: the map keeps painting under the cursor otherwise, and with the window gone there is
+        /// nothing left to switch it off with. This was handled at the end of Draw but not on the early
+        /// return for a scenario with no groups, so deleting the last group while painting left the brush
+        /// live and unreachable.
+        /// </remarks>
+        private static void End()
+        {
             ImGui.End();
-            if (!_isOpen)
+
+            if (_isOpen)
             {
-                //Closing the window with its title bar has to stop the brush too, or it keeps painting
-                //with no way left to turn it off.
-                if (_painting)
-                {
-                    StopPainting();
-                }
-                PreactGUI.CloseWindow(Draw);
+                return;
             }
+
+            if (Painting)
+            {
+                StopPainting();
+            }
+            PreactGUI.CloseWindow(Draw);
         }
 
         private static void StartPainting()
@@ -202,14 +223,12 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             }
 
             _startFailed = false;
-            _painting = true;
             PreactGUI.WUInity.Painter.SetEvacGroupColor(_selected);
             PreactGUI.WUInity.DisplayEvacGroupMap();
         }
 
         private static void StopPainting()
         {
-            _painting = false;
             //Hides both map planes along with switching the brush off, so the dimmed view of what was
             //painted goes back up afterwards rather than instead.
             PreactGUI.WUInity.StopPainter();

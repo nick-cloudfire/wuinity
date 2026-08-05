@@ -52,64 +52,22 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             ImGui.Begin("Scenario editor", ref _isOpen, PreactGUI.NoDockingNoCollapse);
 
+            //Configure, then run: the run tab is last because it is the last thing done, and it closes this
+            //window when it starts. It used to be first, so the tab that discards the window you are working
+            //in was the one you landed on.
             if (ImGui.BeginTabBar("Scenario"))
             {
-                if (ImGui.BeginTabItem("Run"))
-                {
-                    RunTab.Draw();
-
-                    ImGui.EndTabItem();
-                }
-
                 if (ImGui.BeginTabItem("Simulation"))
                 {
-                    if (ImGui.BeginTabBar("SimulationBar"))
-                    {
-                        if (ImGui.BeginTabItem("General"))
-                        {
-                            SimulationInputTab.Draw(_input.Simulation);
-                            ImGui.EndTabItem();
-                        }
-
-                        if (ImGui.BeginTabItem("Map"))
-                        {
-                            MapInputTab.Draw(_input.Map);
-                            ImGui.EndTabItem();
-                        }
-
-                        if (ImGui.BeginTabItem("Weather"))
-                        {
-                            WeatherInputTab.Draw(_input.Weather);
-                            ImGui.EndTabItem();
-                        }
-
-                        //Beside the map and the weather rather than under Hazards: the terrain is what the
-                        //domain is drawn on and painted against, not a property of the fire.
-                        if (ImGui.BeginTabItem("Landscape"))
-                        {
-                            LandscapeInputTab.Draw(_input.Landscape);
-                            ImGui.EndTabItem();
-                        }
-
-                        ImGui.EndTabBar();
-                    }
-
+                    SimulationTabs.Draw(_input);
                     ImGui.EndTabItem();
                 }
 
                 if (ImGui.BeginTabItem("Evacuation"))
                 {
-                    if (ImGui.BeginTabBar("EvacuationBar"))
-                    {
-                        EvacuationTabs.Draw(_input, _input.Evacuation, _input.PedestrianModule, _input.TrafficModule);
-
-                        ImGui.EndTabBar();
-                    }                        
-
+                    EvacuationTabs.Draw(_input, _input.Evacuation, _input.PedestrianModule, _input.TrafficModule);
                     ImGui.EndTabItem();
-
                 }
-                                  
 
                 if (ImGui.BeginTabItem("Hazards"))
                 {
@@ -117,8 +75,14 @@ namespace Assets.WUInity.GUI.DearIMGUI
                     ImGui.EndTabItem();
                 }
 
+                if (ImGui.BeginTabItem("Run"))
+                {
+                    RunTab.Draw();
+                    ImGui.EndTabItem();
+                }
+
                 ImGui.EndTabBar();
-            }            
+            }
 
             ImGui.End();
             if (!_isOpen)

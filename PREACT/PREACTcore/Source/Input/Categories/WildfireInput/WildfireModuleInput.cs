@@ -192,7 +192,7 @@ namespace PREACT.Input
                 //is created, where the paths are resolved and the reason can name a file.
                 if (headerLineIndex.TryGetValue(nameOfInput, out int lineindex))
                 {
-                    _elmfireInput = ElmfireInput.Parse(inputLines, lineindex, rootFolder, out success);
+                    _elmfireInput = ElmfireInput.Parse(inputLines, lineindex, headerLineIndex, rootFolder, out success);
                 }
                 else
                 {

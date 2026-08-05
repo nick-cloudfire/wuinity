@@ -116,6 +116,7 @@ StartHourlyFFMC=96
 [AscImport]
 StartDateTime=2021-06-30T16:30:00
 TimeOfArrivalFile=wildfire/TOA.asc
+TimeOfArrivalUnits=Minutes
 RateOfSpreadFile=wildfire/ROS.asc
 SpreadDirectionFile=wildfire/SD.asc
 FirelineIntensityFile=wildfire/FI.asc

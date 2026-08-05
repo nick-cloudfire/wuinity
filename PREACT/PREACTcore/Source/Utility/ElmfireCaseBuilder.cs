@@ -28,7 +28,11 @@ namespace PREACT.Utility
     /// </summary>
     public static class ElmfireCaseBuilder
     {
-        /// <summary>Per-realization weather rasters, written later by <see cref="ElmfireRealizationWriter"/>.</summary>
+        /// <summary>
+        /// Where every raster the namelist references lives, relative to the case. Shared and read-only during
+        /// a campaign: realizations get their own <c>outputs/</c> and <c>scratch/</c>, and their own weather
+        /// folder when weather varies, but they all read one copy of the terrain and fuel.
+        /// </summary>
         private const string InputsFolder = "inputs";
 
         /// <summary>An ignition in WGS84, with when it starts relative to the simulation start.</summary>
@@ -93,6 +97,18 @@ namespace PREACT.Utility
             /// </summary>
             public WeatherRasterPipeline.Options Weather = new WeatherRasterPipeline.Options();
 
+            /// <summary>
+            /// A folder holding the FIRE-RES pan-European canopy rasters, used for whichever of
+            /// <c>cc</c>/<c>ch</c>/<c>cbh</c>/<c>cbd</c> were not named in <see cref="UserRasters"/>.
+            /// </summary>
+            /// <remarks>
+            /// Canopy is the one layer group with no global source the builder can download, and the reason a
+            /// case outside the United States has had zero canopy — hence surface fire only — unless someone
+            /// supplied four rasters by hand. This is that source for Europe. See
+            /// <see cref="FireResCanopy"/> for the unit trap it brings with it.
+            /// </remarks>
+            public string CanopyDatasetFolder;
+
             /// <summary>Optional CSVs (fuel_models.csv, building_fuel_models.csv) copied verbatim.</summary>
             public List<string> CopyFiles = new List<string>();
 
@@ -153,6 +169,14 @@ namespace PREACT.Utility
             /// resolve to a known-good GDAL rather than whatever is first on PATH.</summary>
             public string PathToGdal;
 
+            /// <summary>
+            /// The modelling choices the generated namelist carries - the scenario's <c>[ElmfireNamelist]</c>
+            /// section. Left at its defaults, which are ELMFIRE's own except where the case builder's own
+            /// rasters make another value the only correct one, so a CLI build needs no scenario to produce
+            /// a runnable namelist.
+            /// </summary>
+            public PREACT.Input.ElmfireNamelistInput Namelist = new PREACT.Input.ElmfireNamelistInput();
+
             /// <summary>Reports progress; may be null.</summary>
             public Action<string> Log;
         }
@@ -165,11 +189,21 @@ namespace PREACT.Utility
             public List<string> Written = new List<string>();
             public List<string> Skipped = new List<string>();
 
+            /// <summary>
+            /// True when the canopy layers came from a source that stores real units rather than LANDFIRE's
+            /// scaled integers, which decides three namelist flags. See <see cref="FireResCanopy"/>.
+            /// </summary>
+            public bool CanopyInRealUnits;
+
             /// <summary>Layers ELMFIRE requires that nobody supplied, filled with a neutral default.</summary>
             public List<string> Defaulted = new List<string>();
 
             /// <summary>Layers the case already had, kept rather than rebuilt.</summary>
             public List<string> Reused = new List<string>();
+
+            /// <summary>The fuel model stem the case carries and the namelist references
+            /// (<c>fbfm40</c> or <c>fbfm13</c>), or null if it has neither - which ELMFIRE cannot run.</summary>
+            public string FuelStem;
 
             /// <summary>Cells an ignition may be placed in after the burnable-fuel restriction; 0 if not applied.</summary>
             public int IgnitableCells;
@@ -191,6 +225,12 @@ namespace PREACT.Utility
 
             /// <summary>What the history-based weather chain actually managed to use, and where it fell back.</summary>
             public WeatherRasterPipeline.Result Weather;
+
+            /// <summary>
+            /// Whether the case's rasters actually agree with each other, checked once the case is complete.
+            /// Null only if validation could not be attempted at all.
+            /// </summary>
+            public ElmfireCaseValidator.Report Validation;
         }
 
         public static async Task<Result> Build(Options o)
@@ -316,6 +356,13 @@ namespace PREACT.Utility
             }
 
             //---------------------------------------------------------------- 5. User rasters
+            //
+            //The canopy dataset is folded in here rather than handled separately, because a continent-sized
+            //GeoTIFF and a hand-supplied raster need exactly the same treatment: warp onto the master grid,
+            //scrub non-finite values, keep what the case already has. Added *before* the loop so an explicitly
+            //named raster still wins - naming one is a deliberate choice and the dataset is the fallback.
+            AddCanopyDatasetLayers(o, result, Log);
+
             foreach (KeyValuePair<string, string> kv in o.UserRasters)
             {
                 string stem = kv.Key;
@@ -338,8 +385,24 @@ namespace PREACT.Utility
                 }
 
                 string method = o.CategoricalStems.Contains(stem) ? "near" : "bilinear";
+                string warped = Path.Combine(inputs, stem + ".tif");
                 Log($"  {stem}: warping onto the master grid ({method}).");
-                RasterHarmonizer.WarpToGrid(source, Path.Combine(inputs, stem + ".tif"), grid, method);
+                RasterHarmonizer.WarpToGrid(source, warped, grid, method);
+
+                //Scrubbed here, on the way in, because ELMFIRE traps on floating-point invalid and one NaN
+                //aborts the whole run with a message naming an unrelated line. These external products are
+                //exactly where NaN comes from - several declare no nodata value at all, so voids arrive as NaN
+                //rather than as anything a reader would skip. 0 means "none of this here" for every layer
+                //ingested through this path: no canopy, no buildings, not in the mask.
+                long scrubbed = RasterScrubber.ReplaceNonFinite(warped, 0f, Log);
+                if (scrubbed > 0)
+                {
+                    long cells = (long)grid.Header.Ncols * grid.Header.Nrows;
+                    Log($"    {stem}: {scrubbed} non-finite cell(s) replaced with 0 "
+                        + $"({100.0 * scrubbed / System.Math.Max(1, cells):F1} % of the grid).");
+                    result.Fallbacks.Add($"{stem}: {scrubbed} non-finite cells replaced with 0");
+                }
+
                 result.Written.Add(stem);
             }
 
@@ -413,6 +476,7 @@ namespace PREACT.Utility
                 Log("  weather: the case already has ws/wd/m1/m10/m100; keeping them.");
                 result.Reused.AddRange(weatherStems);
                 result.Written.AddRange(weatherStems);
+                WarnIfKeptWindIsUniform(Path.Combine(inputs, "ws.tif"), Log);
             }
             else
             {
@@ -421,6 +485,20 @@ namespace PREACT.Utility
                 WeatherRasterPipeline.Options w = o.Weather ?? new WeatherRasterPipeline.Options();
                 w.Grid = grid;
                 w.InputsDirectory = inputs;
+
+                //The weather series has to span the fire and be read at the interval it was written at.
+                //DT_METEOROLOGY comes from the namelist settings so the two cannot disagree - a series
+                //written hourly and read at any other interval is silently stretched in time.
+                w.SimulationStartDateTime = o.StartDateTime;
+                w.SimulationTstopSeconds = o.SimulationTstopSeconds;
+                if (o.Namelist != null && o.Namelist.DT_METEOROLOGY > 0)
+                {
+                    w.SecondsPerBand = o.Namelist.DT_METEOROLOGY;
+                }
+
+                //WindNinja is not resolved here: the pipeline probes for it itself when none is named, so no
+                //caller can forget to and quietly get a uniform wind field.
+
                 w.LatLon = new Vector2d(0.5 * (southWest.x + northEast.x), 0.5 * (southWest.y + northEast.y));
                 w.Log = o.Log;
                 if (string.IsNullOrEmpty(w.ArchiveCsvPath))
@@ -447,11 +525,16 @@ namespace PREACT.Utility
             //physics is tuned, and a generated one is a starting point rather than an improvement on a
             //template someone has worked on. Overwriting it was the most expensive thing this could quietly
             //undo.
+            //Resolved once every layer is in place, so it reflects the case as it now stands whether the
+            //namelist is about to be written or kept.
+            result.FuelStem = ResolveStem(result, FuelStems);
+
             result.NamelistPath = Path.Combine(o.OutputDirectory, "elmfire.data");
             if (File.Exists(result.NamelistPath) && !o.OverwriteExistingLayers)
             {
                 Log($"Keeping the case's own namelist, {Path.GetFileName(result.NamelistPath)}.");
                 result.Reused.Add("elmfire.data");
+                WarnIfNamelistLacksFuelModel(result, Log);
             }
             else
             {
@@ -462,7 +545,228 @@ namespace PREACT.Utility
             Directory.CreateDirectory(Path.Combine(o.OutputDirectory, "outputs"));
             Directory.CreateDirectory(Path.Combine(o.OutputDirectory, "scratch"));
 
+            //---------------------------------------------------------------- 9b. Provenance
+            //What each raster was made from, which the namelist cannot say: its *_FILENAME keys name stems
+            //inside inputs/ ('cc'), not the source those stems were warped out of. So once a case was built the
+            //provenance was gone, and the editor could not show - or restore - which layers a case had come
+            //from. Written beside the namelist so the case describes itself.
+            WriteSourceManifest(o, result, Log);
+
+            //---------------------------------------------------------------- 10. Validate
+            //Last, so it sees the case as ELMFIRE will: every layer written or kept, on whatever grid it
+            //actually ended up on. Reported rather than thrown - a case with a misregistered optional layer is
+            //still worth having on disk to look at, and the run is where refusing belongs.
+            result.Validation = ElmfireCaseValidator.Validate(inputs, grid, result.FuelStem, OptionalStems(), Log);
+
             return result;
+        }
+
+        /// <summary>
+        /// Layers a case may or may not carry: validated for registration when present, not missed when absent.
+        /// </summary>
+        /// <summary>The manifest's filename, beside the namelist in the case root.</summary>
+        public const string SourceManifestName = "case_sources.txt";
+
+        /// <summary>
+        /// Records where each of the case's rasters came from, so the case can be read back into the editor.
+        /// </summary>
+        /// <remarks>
+        /// The namelist cannot serve this purpose and never could: <c>CC_FILENAME = 'cc'</c> says the case holds
+        /// a <c>cc.tif</c>, not that it was warped out of a pan-European canopy raster on another drive. Those
+        /// are different facts, and only the second one can be edited and rebuilt from.
+        ///
+        /// Deliberately a flat <c>Key=Value</c> text file rather than anything structured: it is written once
+        /// per build, read once per import, and being obvious in a text editor is worth more here than being
+        /// parseable by something else. Paths are recorded as they were given, absolute or not, because that is
+        /// what would have to be typed back in.
+        /// </remarks>
+        private static void WriteSourceManifest(Options o, Result result, Action<string> log)
+        {
+            try
+            {
+                var lines = new List<string>
+                {
+                    "# Where this case's rasters came from, written by the case builder.",
+                    "# Read back by the scenario editor to restore the source layer fields.",
+                    "# The namelist cannot hold this: its *_FILENAME keys name stems inside inputs/,",
+                    "# not the sources those stems were warped out of.",
+                    "",
+                    "Name=" + o.Name,
+                    "CellSizeMetres=" + o.CellSizeMetres.ToString(CultureInfo.InvariantCulture),
+                    "PaddingMetres=" + o.PaddingMetres.ToString(CultureInfo.InvariantCulture),
+                    "CanopyInRealUnits=" + (result.CanopyInRealUnits ? "true" : "false"),
+                };
+
+                if (!string.IsNullOrWhiteSpace(o.CanopyDatasetFolder))
+                {
+                    lines.Add("CanopyDatasetFolder=" + o.CanopyDatasetFolder);
+                }
+
+                if (!string.IsNullOrWhiteSpace(o.LocalDemPath))
+                {
+                    lines.Add("LocalDemPath=" + o.LocalDemPath);
+                }
+
+                lines.Add("");
+                lines.Add("# stem = source raster it was warped from");
+
+                foreach (KeyValuePair<string, string> kv in o.UserRasters)
+                {
+                    lines.Add(kv.Key + "=" + kv.Value);
+                }
+
+                //What the case *holds*, which is not the same list. UserRasters is only what this build warped
+                //in - a layer the case already had is kept, not re-warped, so it never appears there. The first
+                //manifest written for the Mati case therefore listed four canopy rasters and no fuel and no
+                //buildings, even though the case has all of them. Recorded separately because the two facts are
+                //different: one says where a layer came from, the other says the layer is there at all.
+                lines.Add("");
+                lines.Add("# layers present in inputs/, whether this build made them or kept them");
+                lines.Add("Present=" + string.Join(",", PresentStems(result.InputsDirectory)));
+
+                File.WriteAllLines(Path.Combine(o.OutputDirectory, SourceManifestName), lines);
+                log($"  sources: recorded in {SourceManifestName}, so the editor can read this case back.");
+            }
+            catch (Exception e)
+            {
+                //Never fatal. The case is complete and runnable without it; only the editor's ability to
+                //restore the source fields is lost, and that is not worth failing a build over.
+                log($"  sources: could not write {SourceManifestName} ({e.Message}).");
+            }
+        }
+
+        /// <summary>
+        /// Every ELMFIRE input stem the case actually holds a raster for.
+        /// </summary>
+        /// <remarks>
+        /// Read off the folder rather than tracked through the build, because "what this build produced" and
+        /// "what the case contains" are different lists and the second is the one worth recording: a layer the
+        /// case already had is kept rather than re-warped, so it appears in neither <c>Written</c> nor
+        /// <c>UserRasters</c>. That is why the first manifest written for a case with fuel and five building
+        /// layers listed only the four canopy rasters this build happened to ingest.
+        /// </remarks>
+        private static IEnumerable<string> PresentStems(string inputsDirectory)
+        {
+            var stems = new List<string>();
+
+            if (string.IsNullOrEmpty(inputsDirectory) || !Directory.Exists(inputsDirectory))
+            {
+                return stems;
+            }
+
+            foreach (string stem in KnownStems())
+            {
+                if (File.Exists(Path.Combine(inputsDirectory, stem + ".tif")))
+                {
+                    stems.Add(stem);
+                }
+            }
+
+            return stems;
+        }
+
+        /// <summary>Every stem this builder or the external pipeline can put in a case.</summary>
+        private static IEnumerable<string> KnownStems()
+        {
+            //Terrain and the constants the builder always writes.
+            yield return "dem";
+            yield return "slp";
+            yield return "asp";
+            yield return "adj";
+            yield return "phi";
+
+            //Weather, the five that must agree on band count.
+            yield return "ws";
+            yield return "wd";
+            yield return "m1";
+            yield return "m10";
+            yield return "m100";
+
+            //Fuel, either standard.
+            foreach (string s in FuelStems) yield return s;
+
+            //Canopy.
+            yield return "cc";
+            yield return "ch";
+            yield return "cbh";
+            yield return "cbd";
+
+            //Masks, barriers and the suppression difficulty index.
+            yield return "ignition_mask";
+            yield return "barriers";
+            yield return "sdi";
+
+            //Exposure, ignition-rate and pyrome layers ELMFIRE can read but nothing here produces.
+            yield return "land_value";
+            yield return "population_density";
+            yield return "real_estate_value";
+            yield return "erc";
+            yield return "pyromes";
+
+            //Buildings, under either the descriptive or the pipeline's own names.
+            foreach ((string _, string[] aliases) in BuildingLayers)
+            {
+                foreach (string alias in aliases) yield return alias;
+            }
+        }
+
+        /// <summary>
+        /// Adds the FIRE-RES canopy layers to the rasters to be ingested, and records that they are in real
+        /// units so the namelist can say so.
+        /// </summary>
+        /// <remarks>
+        /// Does not overwrite a stem the caller named explicitly: the dataset is where canopy comes from when
+        /// nothing better was given, not an override. Continuous layers, so they warp bilinearly like any other
+        /// canopy raster — the <c>CategoricalStems</c> set does not contain them, which is already correct.
+        /// </remarks>
+        private static void AddCanopyDatasetLayers(Options o, Result result, Action<string> log)
+        {
+            if (string.IsNullOrWhiteSpace(o.CanopyDatasetFolder))
+            {
+                return;
+            }
+
+            if (!FireResCanopy.TryResolve(o.CanopyDatasetFolder, out List<KeyValuePair<string, string>> layers))
+            {
+                log($"  canopy: no FIRE-RES canopy rasters in {o.CanopyDatasetFolder} "
+                    + $"(expected {FireResCanopy.ExpectedFileNames()}); canopy will be defaulted to zero.");
+                result.Fallbacks.Add("canopy dataset: no usable files in " + o.CanopyDatasetFolder);
+                return;
+            }
+
+            var taken = new List<string>();
+            foreach (KeyValuePair<string, string> layer in layers)
+            {
+                if (o.UserRasters.ContainsKey(layer.Key)) continue; //named explicitly; that wins
+                o.UserRasters[layer.Key] = layer.Value;
+                taken.Add(layer.Key);
+            }
+
+            //Recorded even when every layer was overridden, because it is the dataset's units that decide the
+            //namelist flags and a partial override still leaves FIRE-RES layers in the case.
+            result.CanopyInRealUnits = taken.Count > 0;
+
+            if (taken.Count > 0)
+            {
+                log($"  canopy: {string.Join(", ", taken)} from the FIRE-RES dataset, clipped out of the "
+                    + "pan-European rasters onto this case's grid.");
+                log("    real units (m, kg/m3, percent), so CH_TIMES_10 / CBH_TIMES_10 / CBD_TIMES_100 are "
+                    + "forced off - ELMFIRE's own defaults assume LANDFIRE's scaled integers.");
+            }
+        }
+
+        private static IEnumerable<string> OptionalStems()
+        {
+            yield return "cc";
+            yield return "ch";
+            yield return "cbh";
+            yield return "cbd";
+            yield return "ignition_mask";
+
+            foreach ((string key, string[] stems) in BuildingLayers)
+            {
+                foreach (string stem in stems) yield return stem;
+            }
         }
 
         private static void PrepareOutputDirectory(Options o, string inputs)
@@ -505,7 +809,7 @@ namespace PREACT.Utility
         /// starting point, not a tuned scenario: the doc's contract is that "the user will
         /// fine-tune the ELMFIRE input template; this pipeline only has to produce grid-aligned
         /// inputs and invoke the runner". Per-realization keys (weather stems, SEED, ignition)
-        /// are left for <see cref="ElmfireRealizationWriter"/> to patch in.
+        /// are left for the campaign driver (PREACTcli converge-trigger) to patch in.
         /// </summary>
         /// <summary>
         /// Brings masks painted in Unity into the case: the random-ignition area becomes
@@ -656,7 +960,13 @@ namespace PREACT.Utility
         /// </summary>
         private static void RestrictIgnitionMask(Options o, Result result, string inputs, MasterGrid grid, Action<string> log)
         {
-            string fuelPath = Path.Combine(inputs, "fbfm13.tif");
+            //The same stem the namelist will reference, so the restriction is applied against the fuel
+            //model the run will actually use - reading a fixed fbfm13.tif meant this quietly did nothing
+            //on every case whose fuel raster is fbfm40.tif.
+            string fuelStem = ResolveStem(result, FuelStems);
+            if (fuelStem == null) return;
+
+            string fuelPath = Path.Combine(inputs, fuelStem + ".tif");
             string maskPath = Path.Combine(inputs, "ignition_mask.tif");
             if (!File.Exists(fuelPath) || !File.Exists(maskPath)) return;
 
@@ -715,178 +1025,183 @@ namespace PREACT.Utility
         }
 
         /// <summary>
+        /// Says so when a kept namelist has no fuel model set but the case has one to offer.
+        /// </summary>
+        /// <remarks>
+        /// A namelist the case already has is kept rather than rebuilt, which is right - it is where the
+        /// physics is tuned. But it also means a namelist generated by an earlier, wrong version of this
+        /// builder survives the fix to that version. That is how it went here: the fuel stem was hardcoded
+        /// to <c>fbfm13</c>, cases carrying <c>fbfm40.tif</c> got the key written as a comment, and simply
+        /// correcting the builder left every such case still broken and still silent about it.
+        /// </remarks>
+        /// <summary>
+        /// Says so when the wind field the case is keeping is spatially flat.
+        ///
+        /// A case built before WindNinja was reachable carries a uniform <c>ws.tif</c>, and because the
+        /// weather layers are kept by default, installing WindNinja and rebuilding changes nothing at all —
+        /// the build reports success, the file stays flat, and the only symptom appears much later as a
+        /// circular spread ellipse in k-PERIL. That is a confusing distance between cause and effect, so the
+        /// build says it here, where <c>RebuildExistingLayers</c> is the answer.
+        ///
+        /// Only band 1 is read: the bands are one series, so a flat first hour is enough to recognise the
+        /// uniform fallback, and reading them all would cost the whole raster to say the same thing.
+        /// </summary>
+        private static void WarnIfKeptWindIsUniform(string windSpeedPath, Action<string> log)
+        {
+            if (!File.Exists(windSpeedPath)) return;
+
+            float[,] ws;
+            try
+            {
+                ws = AscRaster.ReadGeoTiff(windSpeedPath, out AscRaster.Header _, out bool ok);
+                if (!ok || ws == null) return;
+            }
+            catch
+            {
+                //Reporting on a kept layer must not be able to fail a build that is otherwise fine.
+                return;
+            }
+
+            float min = float.MaxValue, max = float.MinValue;
+            foreach (float v in ws)
+            {
+                if (v <= -9000f || float.IsNaN(v)) continue;
+                if (v < min) min = v;
+                if (v > max) max = v;
+            }
+
+            if (min > max || min != max) return;
+
+            log($"  wind: the kept ws.tif is uniform at {min:F1} mph, which is the pipeline's fallback rather " +
+                "than terrain-resolved wind. Turn RebuildExistingLayers on (or delete inputs/ws.tif and " +
+                "inputs/wd.tif) to have WindNinja write it.");
+        }
+
+        private static void WarnIfNamelistLacksFuelModel(Result result, Action<string> log)
+        {
+            if (result.FuelStem == null) return;
+
+            foreach (string line in File.ReadAllLines(result.NamelistPath))
+            {
+                string trimmed = line.TrimStart();
+                if (trimmed.StartsWith("!") || trimmed.Length == 0) continue;
+                if (trimmed.StartsWith("FBFM_FILENAME", StringComparison.OrdinalIgnoreCase)) return;
+            }
+
+            result.Fallbacks.Add("namelist: kept, but FBFM_FILENAME is not set in it");
+            log($"  WARNING the case's own {Path.GetFileName(result.NamelistPath)} does not set FBFM_FILENAME, "
+                + $"so ELMFIRE will refuse to start. The case has {result.FuelStem}.tif: add "
+                + $"FBFM_FILENAME = '{result.FuelStem}' to its &INPUTS group, or delete the namelist to have "
+                + "one written.");
+        }
+
+        /// <summary>
+        /// The stems ELMFIRE's <c>FBFM_FILENAME</c> may point at, in the order they are preferred.
+        /// Scott &amp; Burgan's 40 classes first: a case carrying both is carrying the finer one on purpose.
+        /// </summary>
+        private static readonly string[] FuelStems = { "fbfm40", "fbfm13" };
+
+        /// <summary>
         /// The ELMFIRE-WUINITY fork's urban-spread inputs. All five have to be present for the
         /// building spread model to be switched on — it is a complete set or nothing.
+        /// Each carries the stems seen in practice: the builder's own descriptive names, and the
+        /// short ones the external building pipeline writes, which is what the prepared cases hold.
         /// </summary>
-        private static readonly (string Stem, string Key)[] BuildingLayers =
+        private static readonly (string Key, string[] Stems)[] BuildingLayers =
         {
-            ("bldg_area_avg", "BLDG_AREA_FILENAME"),
-            ("bldg_separation_distance", "BLDG_SEPARATION_DIST_FILENAME"),
-            ("bldg_nonburnable_frac", "BLDG_NONBURNABLE_FRAC_FILENAME"),
-            ("bldg_footprint_frac", "BLDG_FOOTPRINT_FRAC_FILENAME"),
-            ("bldg_fuel_model", "BLDG_FUEL_MODEL_FILENAME"),
+            ("BLDG_AREA_FILENAME",            new[] { "bldg_area_avg", "baa" }),
+            ("BLDG_SEPARATION_DIST_FILENAME", new[] { "bldg_separation_distance", "ssd" }),
+            ("BLDG_NONBURNABLE_FRAC_FILENAME",new[] { "bldg_nonburnable_frac", "nbf_h" }),
+            ("BLDG_FOOTPRINT_FRAC_FILENAME",  new[] { "bldg_footprint_frac", "ff_h" }),
+            ("BLDG_FUEL_MODEL_FILENAME",      new[] { "bldg_fuel_model", "bfm_h" }),
         };
 
-        private static string[] BuildNamelist(Options o, Result r)
+        /// <summary>
+        /// The first of <paramref name="stems"/> the case actually has, or null.
+        /// </summary>
+        /// <remarks>
+        /// Resolved against the case rather than hardcoded because the stem is not the builder's to
+        /// choose: fuel and building layers are external products (see P3 in
+        /// <c>docs/elmfire-case-automation.md</c>) and arrive under whichever name the pipeline that made
+        /// them uses. Hardcoding <c>fbfm13</c> here meant a case whose fuel raster is <c>fbfm40.tif</c> —
+        /// which is every case built so far — got <c>FBFM_FILENAME</c> emitted as a comment, and ELMFIRE
+        /// stopped at its own "is this key set?" check before MPI came up.
+        ///
+        /// The file system is the authority, not <see cref="Result.Written"/>: a layer the case already had
+        /// and kept is equally referenceable, and only some of those are recorded as written.
+        /// </remarks>
+        private static string ResolveStem(Result r, params string[] stems)
         {
-            var l = new List<string>();
-            string C(double v) => v.ToString(CultureInfo.InvariantCulture);
-            bool Has(string stem) => r.Written.Contains(stem);
-
-            int hourOfYear = (int)(o.StartDateTime - new DateTime(o.StartDateTime.Year, 1, 1)).TotalHours;
-
-            l.Add($"! ELMFIRE case '{o.Name}', generated by ElmfireCaseBuilder.");
-            l.Add("! Static layers are on the master grid defined by dem.tif; ELMFIRE reads the");
-            l.Add("! domain and CRS from that file's own georeferencing.");
-            l.Add("");
-            l.Add("&INPUTS");
-            l.Add("FUELS_AND_TOPOGRAPHY_DIRECTORY = './inputs'");
-            l.Add("DEM_FILENAME                   = 'dem'");
-            l.Add("SLP_FILENAME                   = 'slp'");
-            l.Add("ASP_FILENAME                   = 'asp'");
-            l.Add("ADJ_FILENAME                   = 'adj'");
-            l.Add("PHI_FILENAME                   = 'phi'");
-
-            //Canopy layers are optional: ELMFIRE only needs them for crown fire, and outside the
-            //US they often simply do not exist for the domain.
-            //All of these are required by ELMFIRE; the canopy set is guaranteed present by the
-            //zero-fill above, so only the fuel model can still be genuinely missing.
-            foreach ((string stem, string key) in new[]
-                     { ("fbfm13", "FBFM_FILENAME"), ("cc", "CC_FILENAME"), ("ch", "CH_FILENAME"),
-                       ("cbh", "CBH_FILENAME"), ("cbd", "CBD_FILENAME") })
+            foreach (string stem in stems)
             {
-                if (Has(stem)) l.Add($"{key,-30} = '{stem}'");
-                else l.Add($"! {key} - no {stem} raster supplied; ELMFIRE will refuse to start");
-            }
-
-            l.Add("DT_METEOROLOGY                 = 3600.0");
-            l.Add("WEATHER_DIRECTORY              = './inputs'");
-            l.Add("WS_FILENAME                    = 'ws'");
-            l.Add("WD_FILENAME                    = 'wd'");
-            l.Add("M1_FILENAME                    = 'm1'");
-            l.Add("M10_FILENAME                   = 'm10'");
-            l.Add("M100_FILENAME                  = 'm100'");
-            l.Add("USE_CONSTANT_LH                = .TRUE.");
-            l.Add("USE_CONSTANT_LW                = .TRUE.");
-            l.Add("LH_MOISTURE_CONTENT            = 60.0");
-            l.Add("LW_MOISTURE_CONTENT            = 90.0");
-            //WS_FILENAME is always mph unless told otherwise; WS_AT_10M only says the raster is
-            //10 m wind rather than ELMFIRE's 20 ft default, it does not change the unit.
-            l.Add("WS_AT_10M                      = .TRUE.");
-            l.Add("IGNITION_MASK_FILENAME         = 'ignition_mask'");
-
-            if (Has("barriers"))
-            {
-                l.Add("USE_BARRIERS                   = .TRUE.");
-                l.Add("BARRIER_FILENAME               = 'barriers'");
-            }
-
-            foreach ((string stem, string key) in BuildingLayers)
-            {
-                if (Has(stem)) l.Add($"{key,-30} = '{stem}'");
-            }
-
-            l.Add("/");
-            l.Add("");
-            l.Add("&OUTPUTS");
-            l.Add("OUTPUTS_DIRECTORY    = './outputs'");
-            l.Add("DTDUMP               = 3600.0");
-            l.Add("DUMP_TIME_OF_ARRIVAL = .TRUE.");
-            l.Add("DUMP_SPREAD_RATE     = .TRUE.");
-            l.Add("DUMP_SPREAD_DIRECTION= .TRUE.");
-            l.Add("DUMP_FLIN            = .TRUE.");
-            l.Add("CONVERT_TO_GEOTIFF   = .TRUE.");
-            //AscImport reads spread rate in m/min; without this ELMFIRE dumps ft/min.
-            l.Add("SPREAD_RATE_IN_M     = .TRUE.");
-            l.Add("/");
-            l.Add("");
-            l.Add("&TIME_CONTROL");
-            l.Add($"CURRENT_YEAR          = {o.StartDateTime.Year.ToString(CultureInfo.InvariantCulture)}");
-            l.Add($"BAND_ONE_HOUR_OF_YEAR = {hourOfYear.ToString(CultureInfo.InvariantCulture)}");
-            l.Add("SIMULATION_DT         = 5.0");
-            l.Add("SIMULATION_DTMAX      = 300.0");
-            l.Add("TARGET_CFL            = 0.4");
-            l.Add($"SIMULATION_TSTOP      = {C(o.SimulationTstopSeconds)}");
-            l.Add("/");
-            l.Add("");
-            l.Add("&MONTE_CARLO");
-            l.Add("METEOROLOGY_BAND_START         = 1");
-            l.Add("METEOROLOGY_BAND_STOP          = 1");
-            l.Add("METEOROLOGY_BAND_SKIP_INTERVAL = 1");
-            l.Add("NUM_METEOROLOGY_TIMES          = 1");
-            //One member per invocation: the realization, not the ensemble member, is this
-            //pipeline's unit of parallelism (the driver re-seeds and reruns per realization).
-            l.Add("NUM_ENSEMBLE_MEMBERS           = 1");
-            l.Add("EDGEBUFFER                     = 30");
-
-            if (r.HasIgnitionPoint)
-            {
-                //An explicitly painted ignition and a random draw are mutually exclusive: leaving
-                //RANDOM_IGNITIONS on would have ELMFIRE ignore the point it was just given.
-                l.Add("RANDOM_IGNITIONS               = .FALSE.");
-                l.Add("USE_IGNITION_MASK              = .FALSE.");
-            }
-            else
-            {
-                l.Add("RANDOM_IGNITIONS               = .TRUE.");
-                l.Add("USE_IGNITION_MASK              = .TRUE.");
-                l.Add("RANDOM_IGNITIONS_TYPE          = 1");
-            }
-            l.Add("");
-            l.Add("! Fill in RASTER_TO_PERTURB blocks here to make the ensemble vary in weather /");
-            l.Add("! moisture as well as ignition location - see the Mati template for the shape.");
-            l.Add("/");
-            l.Add("");
-            l.Add("&SIMULATOR");
-            l.Add("MODE           = 1");
-            l.Add("CLEAN_SCRATCH  = .TRUE.");
-            if (r.HasIgnitionPoint)
-            {
-                //Fortran's own 1-based indexing, since these are namelist array elements.
-                l.Add($"NUM_IGNITIONS  = {r.Ignitions.Count.ToString(CultureInfo.InvariantCulture)}");
-                for (int i = 0; i < r.Ignitions.Count; ++i)
+                if (r.Written.Contains(stem) || File.Exists(Path.Combine(r.InputsDirectory, stem + ".tif")))
                 {
-                    PlacedIgnition ign = r.Ignitions[i];
-                    string n = (i + 1).ToString(CultureInfo.InvariantCulture);
-                    l.Add($"X_IGN({n})       = {C(ign.X)}");
-                    l.Add($"Y_IGN({n})       = {C(ign.Y)}");
-                    //Two decimals rather than the shortest round trip: a whole number of seconds would be
-                    //written "0", and a namelist REAL is clearer read as one.
-                    l.Add($"T_IGN({n})       = {ign.TimeSeconds.ToString("0.00", CultureInfo.InvariantCulture)}");
+                    return stem;
                 }
             }
-            l.Add("/");
-            l.Add("");
 
-            //Only switched on with the complete set of building layers - a partial set makes
-            //ELMFIRE read a raster that was never written.
-            bool allBuildingLayers = true;
-            foreach ((string stem, string _) in BuildingLayers)
+            return null;
+        }
+
+        /// <summary>
+        /// Reads the case as it now stands and hands it to <see cref="ElmfireNamelistBuilder"/>, which owns
+        /// the namelist's shape. This used to be a long string list here; the settings it emits are the
+        /// scenario's now, so the two halves - what the case has, and what the user chose - are written down
+        /// in different places.
+        /// </summary>
+        private static string[] BuildNamelist(Options o, Result r)
+        {
+            var facts = new ElmfireNamelistBuilder.CaseFacts
             {
-                if (!Has(stem)) { allBuildingLayers = false; break; }
+                Name = o.Name,
+                FuelStem = r.FuelStem,
+                StartDateTime = o.StartDateTime,
+                SimulationTstopSeconds = o.SimulationTstopSeconds,
+                PathToGdal = o.PathToGdal,
+                AvailableMeteorologyBands = AscRaster.GetBandCount(Path.Combine(r.InputsDirectory, "ws.tif")),
+                HasBuildingFuelModelFile = File.Exists(Path.Combine(r.InputsDirectory, "building_fuel_models.csv")),
+                HasFuelModelFile = File.Exists(Path.Combine(r.InputsDirectory, "fuel_models.csv")),
+                CanopyInRealUnits = r.CanopyInRealUnits,
+            };
+
+            foreach (string stem in new[]
+            {
+                "cc", "ch", "cbh", "cbd", "ignition_mask", "barriers", "sdi",
+                "land_value", "population_density", "real_estate_value", "erc", "pyromes",
+            })
+            {
+                if (ResolveStem(r, stem) != null) facts.AvailableStems.Add(stem);
             }
 
-            if (allBuildingLayers)
+            //Every non-raster file in inputs/, so the namelist builder can tell a named calibration table that
+            //is there from one that only has a name.
+            try
             {
-                l.Add("&WUI");
-                l.Add("USE_BLDG_SPREAD_MODEL                 = .TRUE.");
-                l.Add("USE_CONSTANT_BLDG_SPREAD_MODEL_PARAMS = .FALSE.");
-                l.Add("BLDG_SPREAD_MODEL_TYPE                = 3");
-                l.Add("INTERFACE_MODEL_TYPE                  = 2");
-                l.Add("/");
-                l.Add("");
+                foreach (string path in Directory.GetFiles(r.InputsDirectory, "*.csv"))
+                {
+                    facts.AvailableInputFiles.Add(Path.GetFileName(path));
+                }
+            }
+            catch
+            {
+                //A case whose inputs cannot be listed has bigger problems, and they are reported elsewhere.
             }
 
-            l.Add("&MISCELLANEOUS");
-            if (!string.IsNullOrEmpty(o.PathToGdal)) l.Add($"PATH_TO_GDAL = '{o.PathToGdal.Replace('\\', '/')}/'");
-            l.Add("SCRATCH      = './scratch'");
-            if (File.Exists(Path.Combine(r.InputsDirectory, "building_fuel_models.csv")))
+            //All five or none: a partial set makes ELMFIRE read a raster nobody produced, and the namelist
+            //builder decides what to do about that from the count.
+            foreach ((string key, string[] stems) in BuildingLayers)
             {
-                l.Add("BUILDING_FUEL_MODEL_FILE = 'building_fuel_models.csv'");
+                string stem = ResolveStem(r, stems);
+                if (stem != null) facts.BuildingLayers.Add((key, stem));
             }
-            l.Add("/");
+            if (facts.BuildingLayers.Count != BuildingLayers.Length) facts.BuildingLayers.Clear();
 
-            return l.ToArray();
+            foreach (PlacedIgnition ignition in r.Ignitions)
+            {
+                facts.Ignitions.Add((ignition.X, ignition.Y, ignition.TimeSeconds));
+            }
+
+            return ElmfireNamelistBuilder.Build(o.Namelist, facts);
         }
     }
 }

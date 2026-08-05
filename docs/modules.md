@@ -38,8 +38,16 @@ exporting a small area from <https://www.openstreetmap.org>.
 `LookupROS` rate-of-spread path was ever implemented; `Behave` and `CanadianFBP` built no spread model at
 all and crashed on the first step. A scenario naming it says so on load and points at `ELMFIRE` or
 `AscImport`. Removed with it: the orphaned `SpreadModels` wrappers (AFDRS, the CFFDRS FBP system,
-LookupROS, the `SpreadModel` base) and the native BEHAVE layer, which nothing instantiated. What stayed is
-what is still used — the managed `BehaveCSharp` port and Rothermel (k-PERIL's own rate of spread), and the
+LookupROS, the `SpreadModel` base) and the native BEHAVE layer, which nothing instantiated.
+
+**BEHAVE is gone entirely**, including the managed `BehaveCSharp` port and Rothermel. Its last use was
+k-PERIL's second rate-of-spread path, which derived the field from the landscape instead of taking the
+fire module's. That path is removed too: with the fire coming from ELMFIRE the derived field was the wrong
+answer anyway — computed from a different fuel model table, one wind field and no crown fire, then used to
+back-propagate through a fire that spread by other rules. k-PERIL now always reads the fire module's `vs`
+and `spread_dir`. Removed with it: `[kPERIL] CalculateROSFromBehave`, `InitialFuelMoistureFile` and
+`FuelModelsFile`, the `FuelModelInput` / `InitialFuelMoistureLibrary` loaders that fed them, and
+`TriggerBufferData`, which existed only to load those two files. What stayed of `SpreadModels` is the
 CFFDRS fire-weather indices (the weather manager's FFMC/DMC/DC).
 
 Required `AscImport` rasters: `FI.asc` (fireline intensity), `ROS.asc` (rate of

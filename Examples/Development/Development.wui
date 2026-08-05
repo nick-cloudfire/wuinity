@@ -137,6 +137,7 @@ LookUpTableFile=fire/constant_spreadrates.csv
 [AscImport]
 RootFolder=flammap
 TimeOfArrivalFile=output/TOA.asc
+TimeOfArrivalUnits=Minutes
 RateOfSpreadFile=output/ROS.asc
 SpreadDirectionFile=output/SD.asc
 FirelineIntensityFile=output/FI.asc

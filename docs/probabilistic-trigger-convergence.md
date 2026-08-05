@@ -700,12 +700,51 @@ pre-generated set from `--dir` using indexed filename patterns. With `--elmfire 
 so the ensemble no longer has to exist up front.
 
 The ensemble comes from **ELMFIRE's own Monte Carlo machinery**, not from a second sampler on the
-C# side: the template keeps whatever `RANDOM_IGNITIONS` / `USE_IGNITION_MASK` /
-`RASTER_TO_PERTURB` configuration it was written with, and only `SEED` changes per realization
-(`NUM_ENSEMBLE_MEMBERS` is pinned to 1, since the unit of parallelism here is the realization).
-This is how the reference Mati ensemble was produced, it keeps the fire physics in one place, and
-it means a hand-tuned template behaves identically under the driver. Verified: two realizations
-from one template produce genuinely different fires (max time-of-arrival 3596 s vs 3249 s).
+C# side: the template keeps whatever `RASTER_TO_PERTURB` configuration it was written with, and
+`SEED` changes per realization (`NUM_ENSEMBLE_MEMBERS` is pinned to 1, since the unit of
+parallelism here is the realization). This is how the reference Mati ensemble was produced, it
+keeps the fire physics in one place, and it means a hand-tuned template behaves identically under
+the driver. Verified: two realizations from one template produce genuinely different fires (max
+time-of-arrival 3596 s vs 3249 s).
+
+### Ignition is overridden per realization
+
+Ignition is the one thing the driver does **not** take from the template.
+`ElmfireNamelist.ForceRandomIgnition` rewrites each realization to draw its ignition out of the
+ignition mask, whatever the template says.
+
+This is a modelling decision, not a convenience: a fixed `[IgnitionPoint]` describes one named
+fire, which is exactly right for a single run through WUInity and is why the scenario keeps it and
+`build-case` writes it into the template. A trigger boundary asks the opposite question — where a
+fire *could* start — so its realizations have to differ in ignition. With a fixed point every
+realization runs the same fire, and the probability raster is that one fire's boundary at
+probability 1 no matter how many realizations are averaged into it. Overriding per realization
+means one template serves both, rather than the user maintaining two that must be kept in step.
+
+Four keys have to agree, and each fails quietly on its own:
+
+| Key | Set to | Why it is not optional |
+| --- | --- | --- |
+| `NUM_IGNITIONS`, `X_IGN`, `Y_IGN`, `T_IGN` | commented out | `elmfire_level_set.f90:724` ignites all `NUM_IGNITIONS` fixed points **in addition to** the drawn one, so a template left as built burns the scenario's fire in every realization with a second, random fire beside it |
+| `RANDOM_IGNITIONS`, `USE_IGNITION_MASK`, `IGNITION_MASK_FILENAME` | on, with the stem from the template (default `ignition_mask`) | ELMFIRE stops without the mask filename — the one failure here that is loudly reported |
+| `METEOROLOGY_BAND_STOP` | equal to `METEOROLOGY_BAND_START` | with random ignitions ELMFIRE runs `NUM_ENSEMBLE_MEMBERS` cases **per starting weather band**, and a case is a fire with its own output rasters — a 72-band case would silently produce 72 fires per realization, of which the driver would read whichever it globbed. How much weather is *read* is `NUM_METEOROLOGY_TIMES`, set separately, so this costs nothing |
+| `ALLOW_NONBURNABLE_PIXEL_IGNITION` | `.FALSE.` | ELMFIRE consults it only when building the mask's candidate list, so it cannot affect a fixed point that no longer exists. A draw on water or tarmac burns nothing and the realization is discarded, so allowing it costs a draw and buys nothing. Not redundant with `build-case` restricting the mask to burnable fuel: `ADD_TO_IGNITION_MASK` lifts every mask cell above zero, which puts the sea back in |
+
+The mask is checked once at startup rather than per realization — missing or all-zero is fatal,
+because ELMFIRE would refuse every realization with "No ignitable pixels found in the ignition
+mask" and a campaign that consumes `--max` realizations to discover that has wasted the run. The
+count of positive-weight cells is logged beside it, since that is the size of the population being
+sampled.
+
+Verified against real `elmfire.exe`: a template with `NUM_IGNITIONS = 1` and bands 1–8 comes out
+with the fixed point commented, one case per run, and two seeds igniting in different cells
+(230994.7, 4218786.5 vs 232019.9, 4218624.5), both burning.
+
+`MISCELLANEOUS_INPUTS_DIRECTORY` is repointed for the same reason and was broken the same way:
+`build-case` writes it as `'./inputs'`, relative to the case root where the namelist sits, but a
+realization runs in its own directory — so **every** generated realization died with "Problem
+opening fuel model table file ./inputs\fuel_models.csv". It is now resolved against the template's
+directory and written absolute.
 
 Two things make concurrent realizations safe, both load-bearing:
 
@@ -796,6 +835,176 @@ convergence criterion is met. `--resume` reuses both existing ELMFIRE outputs an
 boundaries, making an interrupted campaign continuable. `--parallel` is one ELMFIRE *and* one
 SUMO process per slot, and SUMO dominates the wall clock.
 
+### The wind is aimed from the ignition at the WUI area
+
+By default each realization's wind direction is set to blow from **its own ignition** towards the
+centroid of the case's `wui_area.tif`, and that direction is forced into WindNinja *before* it
+solves — so what ELMFIRE reads in `wd.tif` is the terrain's answer to a wind aimed at the community,
+not a uniform field. Only the direction is chosen; the drawn day's speed, moisture and diurnal shape
+are untouched. `--no-wind-to-wui` keeps the day's own direction.
+
+Why not ELMFIRE's `POINT_WIND_TO_CENTER`: it aims at the centre of the **domain**
+(`XCEN = ASP%NCOLS / 2`), which is a different place — 3.4 km from the WUI area centroid on the Mati
+case, enough to aim a fire 10 km out about 19° off the town it is meant to threaten. It also
+overrides `wd` with one constant for every node, discarding WindNinja's field entirely.
+
+**This means the ignition is drawn on this side, not by ELMFIRE.** The bearing needs the ignition
+before the weather rasters exist, and ELMFIRE draws its own several minutes later inside the run. So
+with `--wind-to-wui`, `MaskIgnitionSampler` reproduces ELMFIRE's draw — candidates are mask cells
+above `IGN_MASK_CRIT`, outside `EDGEBUFFER` (read from the template), on burnable fuel, sampled with
+probability proportional to mask weight — and the realization gets `NUM_IGNITIONS = 1` with
+`RANDOM_IGNITIONS = .FALSE.` instead. Same mask, same weighting, same kind of ensemble; only the
+sampler moves. What it does not reproduce is ERC/pyrome weighting (`RANDOM_IGNITIONS_TYPE = 2`).
+
+A bearing that could not be applied fails the realization rather than running it: if the weather
+chain falls back to the shared rasters, the fire would burn under a wind pointing somewhere else
+while the log said otherwise.
+
+Verified on `mati_generated`, two realizations:
+
+| | ignition | distance to WUI | wind set to | WindNinja's field (mean, range) | day's speed |
+| --- | --- | --- | --- | --- | --- |
+| 0001 | 760695, 4208205 | 6.6 km | from 193° | 192.6°, 152–224° | 17.3 mph |
+| 0002 | 753855, 4211205 | 9.0 km | from 248° | 247.7°, 219–305° | 11.8 mph |
+
+The means land on the aim and the spread is the terrain bending it, which is the whole point of
+forcing the direction into the solve rather than writing `wd.tif` afterwards.
+
+**One more namelist trap surfaced here.** With the ignition fixed on this side, nothing was
+collapsing the band range any more — `ForceRandomIgnition` had been doing it — so a template saying
+`METEOROLOGY_BAND_STOP = 72` met a one-band realization and ELMFIRE refused with
+`[ERROR] Error processing ./scratch\ws.hdr slice band end (2`, naming neither the key nor the band
+count. `ApplyMeteorologyBandCount` now owns the whole band window, since it is the only code that
+knows how many bands the rasters actually have: it clamps `METEOROLOGY_BAND_START` into the series,
+collapses `_STOP` onto it, and sets `NUM_METEOROLOGY_TIMES` to `bands - start + 1` rather than
+`bands` — ELMFIRE reads `[START, START + NUM_METEOROLOGY_TIMES - 1]`, so a run starting at band 5 of
+72 has 68 available, not 72.
+
+### Weather is drawn per realization, by default
+
+A realization is a draw of the whole scenario, weather included, so each one runs the climatology
+chain for itself — ERA5 peak fire-weather day → WindNinja terrain wind → Nelson dead fuel moisture —
+into its own `_elmfire/<idx>/weather/`. Terrain and fuels stay shared and read-only. `--shared-weather`
+(GUI: untick "Draw a historical weather day per realization") goes back to the one series the case
+was built with, which is right when replaying a known day.
+
+**This was off by default until 2026-08-04**, on the reasoning that ignition dominates the
+uncertainty and each band costs a WindNinja solve. The consequence was that every realization of
+every campaign burned under identical wind — the ensemble's only variable was where the fire
+started. A campaign of 108 realizations had all 108 namelists pointing at the same `inputs/`
+folder, with no `weather/` directory anywhere, which is how to tell from the artefacts whether it
+ran: the per-realization chain writes five rasters per realization and logs a line naming the day it
+drew.
+
+The cost is reported at startup in solves rather than in flags, since that is the number that decides
+whether the campaign finishes: bands per realization, the approximate WindNinja minutes, and the
+memory the held bands need times `--parallel`. `--max-weather-bands` (default 72) caps it.
+
+`--single-band-weather` composes with this rather than conflicting: the realization still draws its
+own day, but that day is written as one band, so it is one solve per realization instead of one per
+hour of the run. On the 300-hour Mati campaign that is 1 solve rather than 300.
+
+While testing this it turned out the driver's own startup pass — which exists only to download the
+ERA5 archive once, so concurrent realizations cannot race to write the cache — was solving eight
+WindNinja bands and marching Nelson over 34 hours before the campaign began, then deleting all of it
+with its temporary folder. It expressed "skip the expensive stages" by passing a null
+`WindNinjaExe`, and `RunWind` looks the executable up itself when it is not given one. There is now
+an explicit `ArchiveOnly` for that, and it logs `weather: archive only, no rasters written`.
+
+### A one-band weather series is legal at any duration
+
+ELMFIRE's own check exempts it:
+
+```fortran
+if (WS%NBANDS * DT_METEOROLOGY .lt. SIMULATION_TSTOP .and. WS%NBANDS .gt. 1) then
+   WRITE(*,*) "[ERROR] Not enough weather bands for given SIMULATION TSTOP"
+```
+
+One band means "this is the weather", and it is held for however long the fire burns. **Two or more
+bands must cover the run.** So a 72-band case refuses a 300-hour realization, while a one-band case
+runs it — which is what the Mati campaign of 2026-07-27 did: one band, 20-hour fires, 96
+realizations. The driver's shortfall warning used to fire for a single-band case too and advise a
+rebuild that would have changed nothing; it now knows about the exemption.
+
+`--single-band-weather` writes a one-band copy of the case's five weather stems into
+`_elmfire/weather_single_band/` once per campaign and points every realization at it. The band kept
+is the template's `METEOROLOGY_BAND_START`, and the namelist's band range is rewritten to 1 since
+the copy has only that one. Costs no WindNinja and no rebuild.
+
+What it costs instead is stated in the log — "71 later band(s) are not used, so every realization
+burns its whole 300 h under that one hour's wind and moisture". A three-day fire under a fixed
+afternoon wind is not the same fire as one that calms overnight, and the diurnal cycle Nelson put
+into the moisture rasters goes with it. That is a modelling choice, which is why it is a flag rather
+than something the driver reaches for on its own. It refuses to combine with
+`--realization-weather`, which asks for the opposite.
+
+The alternative is a case built with a band per hour of the run — one WindNinja solve per band, done
+once for the case rather than per realization. Raising `DT_METEOROLOGY` so fewer bands span the run
+also satisfies the check, and should not be done: it restates hourly weather as if each hour lasted
+four, stretching the diurnal cycle into a day that never happened.
+
+Verified on the 72-band `mati_generated` case: `--tstop 1080000` (300 h) with
+`--single-band-weather` runs to `End of simulation reached successfully` with
+`NUM_METEOROLOGY_TIMES = 1`, where the same run without it is refused.
+
+### Filename patterns ignore the duration in an ELMFIRE dump name
+
+Only relevant when reading a pre-generated ensemble from `--dir` — generating with `--elmfire` names
+the rasters itself. ELMFIRE dumps are `<stem>_<7-digit case>_<stop time in seconds>.tif`, so an
+ensemble's filenames carry the hours it was run for: change the duration and all four patterns stop
+matching, and the campaign reports "missing TOA/ROS/SD raster" for every realization about files
+that are sitting right there.
+
+`EnsembleRasters.Resolve` handles it two ways. A pattern may contain `*` or `?` and is globbed — the
+GUI's defaults are now `time_of_arrival_{i}_*.tif` and friends, so they no longer carry one
+particular ensemble's `_0072000`. And a pattern whose last underscore-separated part is a literal
+number is retried with that number wildcarded, so an old scenario keeps working and says once that
+it did so.
+
+The relaxation is decided on the pattern **before** `{i}` is substituted, and that is the whole
+safety of it: in `TOA_{i}.tif` the trailing digits are the realization index, and wildcarding those
+would match another realization's fire. Only digits the pattern itself spells out are given up.
+Where several files match one realization the largest trailing number wins — the fully grown fire
+rather than an earlier snapshot — reported once rather than per realization.
+
+Verified: a stale `_0072000` pattern against a 24-hour ensemble resolves to `_0086400` and says so;
+the wildcard default resolves silently; two dumps for one realization pick `_0086400` over
+`_0043200` with a note; and `TOA_{i}.tif` asking for realization 0001 against a folder holding only
+`TOA_0002.tif` reports the raster missing rather than reading the wrong fire.
+
+### Restarting without `--resume` now actually resets
+
+It used to mean only "do not reuse". Every realization was genuinely re-run, but into directories
+still holding the previous campaign's files, and a new file replaced an old one only when it
+happened to have the same name. Three ways stale data was then adopted silently:
+
+- **A dead realization's old boundary counted as a new one.** Success is judged on
+  `exit == 0 && the boundary file exists`, and PREACT can exit 0 having run nothing at all (the
+  `[AscImport] StartDateTime` failure is exactly that). `RealizationRunner` now deletes
+  `0_trigger_<idx>.asc` *before* the run, and refuses the realization if it cannot — one skipped is
+  a smaller error than one faked.
+- **The longest-lived ELMFIRE dump won the glob.** `ElmfireRunner.LatestDump` takes the largest
+  `_<seconds>` suffix, and that suffix is the run's actual stop time — so a previous, longer run's
+  raster beat the new one and the campaign aggregated the old fire, with ROS/SD/FI consistently
+  matched to it. `RANDOMIZE_SIMULATION_TSTOP` makes this likely even at unchanged settings, since
+  each realization draws its own stop time. The run directory's `outputs/` and `scratch/` are now
+  emptied when resume is off (scratch too: with `USE_EXISTING_BSQS` on, ELMFIRE reuses converted
+  rasters made from inputs as they were before they changed).
+- **The previous probability raster outlived its campaign.** The aggregates are only written at the
+  very end, so a campaign ending in "no realizations produced a usable trigger boundary" left last
+  week's `trigger_probability.asc` in `_output` looking current. `CampaignReset.ArchivePrevious`
+  now moves the aggregates — and, when not resuming, the boundaries — into
+  `_output/previous_campaign_<timestamp>/` before anything is written or read.
+
+**Moved, not deleted.** These files cost hours of ELMFIRE and SUMO to produce and cannot be
+regenerated from anything on disk, so destroying them to protect against confusing them would be
+the worse trade. The timestamp means restarting twice cannot overwrite the first restart's archive.
+Interrupted realizations' `__prob_*.wui` leftovers are deleted, since those are regenerated per
+realization. A file that cannot be moved is named in a warning rather than passed over — a
+probability raster left behind is the one file that can be read as this campaign's answer.
+
+Both drivers do this; `--resume` keeps the boundaries, which is the whole point of resuming.
+
 ### Unity constraints
 
 Both `elmfire` and `Nelson-Dead-Fuel-Moisture` are submodules under `Assets/`, and Unity tries to
@@ -823,7 +1032,7 @@ out of `Assets/` — nothing in this pipeline requires them there, since the run
 | 0 | Climatology → WindNinja → Nelson, wired per realization | new — `build-case` draws one historical day for the whole case; `converge-trigger` does not yet draw a fresh day per realization |
 | 0 | Ignition valid-fuel snapping | ✅ built — `build-case` zeroes the ignition mask wherever the fuel model cannot burn, and `ElmfireRunner` now fails any realization that burns 0 acres instead of silently aggregating it (see Burnable-only ignition) |
 | 0 | Ignition sampler (mask → point) | ✅ built (`IgnitionSampler`: uniform mask + weighted-raster sampling); valid-fuel snapping not yet ported |
-| 1 | ELMFIRE realization runner + namelist writer | ✅ built (`ElmfireRunner`, wired into `converge-trigger --elmfire`): per realization the template is re-seeded and `elmfire` runs in its own directory. Ensemble variation comes from ELMFIRE's own Monte Carlo (`SEED` + the template's `RANDOM_IGNITIONS`/`RASTER_TO_PERTURB`), not a second sampler on the C# side — see Realization generation |
+| 1 | ELMFIRE realization runner + namelist writer | ✅ built (`ElmfireRunner`, wired into `converge-trigger --elmfire`): per realization the template is re-seeded and `elmfire` runs in its own directory. Ensemble variation comes from ELMFIRE's own Monte Carlo (`SEED` + mask-drawn ignition, forced on per realization, + the template's `RASTER_TO_PERTURB`), not a second sampler on the C# side — see Realization generation and Ignition is overridden per realization |
 | 2 | WUInity + k-PERIL per realization | ✅ built |
 | 3 | Convergence controller (decile-area, 20-run/<2% streak) | ✅ built (`converge-trigger`), now runs realizations `--parallel`-wide as concurrent OS processes (see Convergence criterion) |
 | 4 | CLI `converge-trigger` | ✅ built | 

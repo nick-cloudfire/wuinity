@@ -59,8 +59,103 @@ namespace PREACT
             _ffmcHourly = new Wildfire.HourlyFFMC(weatherInput.StartHourlyFFMC);
             _DailyKBDI = new DailyKBDI(weatherInput.StartKBDI, weatherInput.MeanAnnualPrcp);
 
+            //Before the weather is loaded, because the offset decides which span of the record has to be
+            //covered - and so whether the file on disk is usable at all.
+            SetAnchor(simulation.Input.Weather.WeatherAnchorDateTime, time.StartDateTime);
+
             LoadOrDownloadWeather(time);
             Update(time.StartDateTime, true);
+        }
+
+        /// <summary>
+        /// How far the weather record is offset from the simulation's own clock.
+        /// </summary>
+        /// <remarks>
+        /// Zero for a scenario that reads weather at its own dates. Non-zero when the fire was computed against
+        /// a historical day drawn out of the record — see <see cref="Input.WeatherInput.WeatherAnchorDateTime"/>.
+        /// </remarks>
+        private TimeSpan _weatherOffset = TimeSpan.Zero;
+
+        /// <summary>The instant in the weather record corresponding to a simulation time.</summary>
+        private DateTime WeatherTime(DateTime simulationTime)
+        {
+            return simulationTime + _weatherOffset;
+        }
+
+        private void SetAnchor(DateTime anchor, DateTime simulationStart)
+        {
+            _weatherOffset = anchor == default ? TimeSpan.Zero : anchor - simulationStart;
+        }
+
+        /// <summary>
+        /// Points the weather at a different span of the record, once something else has established which
+        /// day the run is actually about.
+        /// </summary>
+        /// <remarks>
+        /// Needed because the ELMFIRE module is created <em>after</em> this manager exists, and building a case
+        /// is what draws the historical day. Without this, a scenario that builds its case as part of the run
+        /// would report weather from its own calendar date on that run and the sampled day's only on the next —
+        /// the same scenario giving two different answers depending on whether the case already existed.
+        ///
+        /// <paramref name="weatherFile"/> is scenario-relative and may be null to keep the current file. It is
+        /// reloaded when it differs, since the case's own ERA5 archive spans decades where a scenario's weather
+        /// CSV usually spans one year and would not contain the sampled day at all.
+        ///
+        /// Note what this does <b>not</b> do: the drought codes are not re-marched over the record before the
+        /// sampled day, because no antecedent marching exists — <c>Initialize</c> has been commented out since
+        /// before this change. DMC and DC therefore still begin at their <c>[Weather]</c> seeds. What this fixes
+        /// is that temperature, humidity, wind, precipitation and the hourly FFMC now come from the hours the
+        /// fire was actually computed against.
+        /// </remarks>
+        public void Rebase(DateTime anchor, string weatherFile, TimeManager time)
+        {
+            if (anchor == default)
+            {
+                return;
+            }
+
+            SetAnchor(anchor, time.StartDateTime);
+
+            bool reload = !string.IsNullOrEmpty(weatherFile)
+                          && !string.Equals(weatherFile, _simulation.Input.Weather.WeatherFile, StringComparison.OrdinalIgnoreCase);
+
+            if (reload)
+            {
+                _simulation.Input.Weather.WeatherFile = weatherFile;
+            }
+
+            _simulation.Input.Weather.WeatherAnchorDateTime = anchor;
+
+            if (reload || _weatherData == null)
+            {
+                LoadOrDownloadWeather(time);
+            }
+
+            //Re-read the current hour through the new offset, so the first reported values are already the
+            //sampled day's rather than the previous anchor's.
+            Update(time.StartDateTime, true);
+
+            Engine.Message(_simulation, Engine.LogType.Log,
+                $"Weather rebased onto {anchor:yyyy-MM-dd HH:mm} from the record ("
+                + $"offset {_weatherOffset.TotalDays:F0} days), so the conditions reported match the day the "
+                + "fire was computed against.");
+        }
+
+        /// <summary>
+        /// Whether a weather file spans the part of the record this run reads.
+        /// </summary>
+        /// <remarks>
+        /// The <b>offset</b> span, not the simulation's own dates. With an anchor set, a scenario dated 2020 may
+        /// be reading 2001 out of the archive, and testing the raw simulation range would reject the very file
+        /// that contains the right weather — then fall through to downloading a year the run never looks at.
+        /// </remarks>
+        private bool Covers(WeatherStream stream, TimeManager timeManager)
+        {
+            DateTime first = WeatherTime(timeManager.StartDateTime);
+            DateTime last = WeatherTime(timeManager.EndDateTime);
+
+            return DateTime.Compare(first, stream.FirstEntry) >= 0
+                   && DateTime.Compare(last, stream.LastEntry) <= 0;
         }
 
         private void Initialize(TimeManager timeManager)
@@ -122,8 +217,9 @@ namespace PREACT
 
             if (newHour)
             {
-                //read new values from weather input stream
-                _weatherData.GetHourlyData(currentDateTime, out _currentHourlyData, out _nextHourlyData);
+                //read new values from weather input stream, at the moment in the record this simulation time
+                //corresponds to - the same instant the fire's own weather rasters were written from.
+                _weatherData.GetHourlyData(WeatherTime(currentDateTime), out _currentHourlyData, out _nextHourlyData);
                 _interpolatedHourlyData = _currentHourlyData;                
 
                 //now update hourly values
@@ -150,10 +246,13 @@ namespace PREACT
 
             }
 
+            //The record's date, not the scenario's: the FWI's day-length factor is seasonal, so a fire computed
+            //against an August day must be indexed as August even when the scenario is dated in July.
             if (_fwiNeedsUpdate && currentDateTime.Hour == 12)
             {
                 _fwiNeedsUpdate = false;
-                _fwi.CalculateDay(currentDateTime, _currentHourlyData._temp, _currentHourlyData._rh, _currentHourlyData._windSpeed * 3.6, _currentHourlyData._precip);
+                _fwi.CalculateDay(WeatherTime(currentDateTime), _currentHourlyData._temp, _currentHourlyData._rh,
+                    _currentHourlyData._windSpeed * 3.6, _currentHourlyData._precip);
             }
 
             //lastly just update DateTime
@@ -172,7 +271,7 @@ namespace PREACT
                 Engine.Message(_simulation, Engine.LogType.Log, $"Weather data available from {wD.FirstEntry.ToString()} to {wD.LastEntry.ToString()}");
                 if (success)
                 {
-                    if(DateTime.Compare(timeManager.StartDateTime, wD.FirstEntry) >= 0 && DateTime.Compare(timeManager.EndDateTime, wD.LastEntry) <= 0)
+                    if(Covers(wD, timeManager))
                     {
                         haveCorrectWeather = true;
                         _weatherData = wD;
@@ -194,7 +293,7 @@ namespace PREACT
                     Engine.Message(_simulation, Engine.LogType.Log, $"Weather data available from {wD.FirstEntry.ToString()} to {wD.LastEntry.ToString()}");
                     if (success)
                     {
-                        if (DateTime.Compare(timeManager.StartDateTime, wD.FirstEntry) >= 0 && DateTime.Compare(timeManager.EndDateTime, wD.LastEntry) <= 0)
+                        if (Covers(wD, timeManager))
                         {
                             haveCorrectWeather = true;
                             _weatherData = wD;
@@ -218,8 +317,7 @@ namespace PREACT
                 if (File.Exists(sharedPath))
                 {
                     WeatherStream wD = WeatherStream.LoadFromFile(sharedPath, out success);
-                    if (success && DateTime.Compare(timeManager.StartDateTime, wD.FirstEntry) >= 0
-                                && DateTime.Compare(timeManager.EndDateTime, wD.LastEntry) <= 0)
+                    if (success && Covers(wD, timeManager))
                     {
                         Engine.Message(_simulation, Engine.LogType.Log, $"Using shared weather cache {Path.GetFileName(sharedPath)}.");
                         haveCorrectWeather = true;
@@ -257,9 +355,15 @@ namespace PREACT
         {
             double lat = _simulation.Spatial.SimulationCenterLatLon.x;
             double lon = _simulation.Spatial.SimulationCenterLatLon.y;
+
+            //The anchored years, matching what DownloadWeather fetches. Keying on the scenario's own years
+            //while the file holds the anchored ones would make the name a lie, and two runs with different
+            //anchors would fight over one cache entry.
+            int firstYear = WeatherTime(_simulation.Time.StartDateTime).Year;
+            int lastYear = WeatherTime(_simulation.Time.EndDateTime).Year;
+
             string name = string.Format(System.Globalization.CultureInfo.InvariantCulture,
-                "weather_{0:F4}_{1:F4}_{2}_{3}.csv",
-                lat, lon, _simulation.Time.StartDateTime.Year, _simulation.Time.EndDateTime.Year)
+                "weather_{0:F4}_{1:F4}_{2}_{3}.csv", lat, lon, firstYear, lastYear)
                 .Replace('-', 'm'); //keep negative lat/lon out of the filename as a leading dash
 
             return Path.Combine(_simulation.Input.RootFolder, name);
@@ -274,8 +378,11 @@ namespace PREACT
             OpenMeteo.WeatherForecastOptions options = new OpenMeteo.WeatherForecastOptions((float)_simulation.Spatial.SimulationCenterLatLon.x, (float)_simulation.Spatial.SimulationCenterLatLon.y);
             options.Windspeed_Unit = OpenMeteo.WindspeedUnitType.ms;
             //canadian FBP needs all year data for FWI/BUI/FFMC etc
-            options.Start_date = new string($"{_simulation.Time.StartDateTime.Year}-01-01");
-            options.End_date = new string($"{_simulation.Time.EndDateTime.Year}-12-31");
+            //The years the run actually reads, which with a weather anchor are not the scenario's own: an
+            //anchored run looks up a historical day out of the record, and downloading the scenario's calendar
+            //year would fetch a year nothing ever reads and then still not have the day it needs.
+            options.Start_date = new string($"{WeatherTime(_simulation.Time.StartDateTime).Year}-01-01");
+            options.End_date = new string($"{WeatherTime(_simulation.Time.EndDateTime).Year}-12-31");
             options.Hourly.Add(_parameters);
 
             //do query

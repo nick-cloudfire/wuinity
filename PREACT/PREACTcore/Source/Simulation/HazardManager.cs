@@ -33,14 +33,30 @@ namespace PREACT
             CalculateWildfireDistanceTransform(simulationTime);
         }
                 
+        /// <summary>When the distance-to-fire field was last recomputed. The transform is O(cells) and the
+        /// front moves slowly next to the timestep, so five minutes apart is ample.</summary>
+        private float _lastDistanceTransformTime = float.NegativeInfinity;
+        private const float DistanceTransformIntervalSeconds = 300f;
+
         private void CalculateWildfireDistanceTransform(float simulationTime)
         {
             //_wildfire is null when no wildfire module is enabled (e.g. a
             //traffic- or pedestrian-only run); PostStep still runs every step.
-            if(_wildfire == null || !_wildfire.Ignited() ||  (int)simulationTime % 300 != 0)
+            if (_wildfire == null || !_wildfire.Ignited())
             {
                 return;
             }
+
+            //Elapsed time, not (int)simulationTime % 300 == 0. That only fires when the clock lands exactly
+            //on a multiple of 300, so it depended on the timestep dividing 300: at DeltaTime = 7 the clock
+            //runs 294, 301, 308 and never satisfies it, so the distance field was never computed after t = 0,
+            //DistanceToWildfire returned float.MaxValue forever, and the fire had no effect on when anyone
+            //left - silently. Same defect as the one in AscFireImport.Step.
+            if (simulationTime - _lastDistanceTransformTime < DistanceTransformIntervalSeconds)
+            {
+                return;
+            }
+            _lastDistanceTransformTime = simulationTime;
 
             float[,] front = _wildfire.GetMaxROS();
             if(_wildfireFrontDistance == null)
@@ -132,10 +148,31 @@ namespace PREACT
             //than in the scenario, so nothing is saved: these paths are an artefact of this run.
             AscImportInput asc = input.WildfireModule.AscImportInput;
             asc.StartDateTime = input.Simulation.StartDateTime;
+
+            //ELMFIRE writes the simulation clock straight into time_of_arrival, in seconds. The reader's
+            //other sources - FARSITE, FlamMap, Prometheus - use minutes, which is its default, so this has to
+            //be said or the fire arrives 60 times too late.
+            asc.TimeOfArrivalUnits = AscImportInput.TimeUnits.Seconds;
+
             asc.TimeOfArrivalFile = fire.TimeOfArrivalFile;
             asc.RateOfSpreadFile = fire.RateOfSpreadFile;
             asc.SpreadDirectionFile = fire.SpreadDirectionFile;
             asc.FirelineIntensityFile = fire.FirelineIntensityFile;
+
+            //Display only, and the reason the output window's fuel model mode showed nothing: the reader had no
+            //fuel raster to hand it, since an imported fire needs none to spread.
+            asc.FuelModelFile = fire.FuelModelFile;
+
+            //The weather the fire was actually computed against. ELMFIRE's weather comes from a historical peak
+            //fire-weather day drawn out of the ERA5 record, while the scenario is dated whenever the evacuation
+            //is being modelled - so the temperature, humidity and fire-danger indices the platform reported were
+            //from a date the fire knew nothing about. Rebasing here rather than at construction because the
+            //weather manager exists before this module does, and building the case is what draws the day.
+            if (fire.WeatherAnchor != default)
+            {
+                string archive = string.IsNullOrEmpty(fire.WeatherArchiveFile) ? null : fire.WeatherArchiveFile;
+                simulation.Weather.Rebase(fire.WeatherAnchor, archive, simulation.Time);
+            }
 
             //k-PERIL gets the same wind the fire was computed with, unless the scenario names its own. Two
             //wind fields for one fire is a disagreement waiting to happen: k-PERIL derives how elongated

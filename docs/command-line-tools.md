@@ -91,7 +91,7 @@ PREACTcli probabilistic-trigger --wui <base.wui> --dir <rasterFolder> --count <N
 
 | Option | Required | Default | Meaning |
 |--------|----------|---------|---------|
-| `--wui` | ✔ | – | Base case; every realization inherits its domain, population, SUMO, groups, WUI mask and `[kPERIL]` settings. Its `[WildfireModule]` must be `AscImport` and `[TriggerBufferModule]` must be `kPERIL`. |
+| `--wui` | ✔ | – | Base case; every realization inherits its domain, population, SUMO, groups, WUI mask and `[kPERIL]` settings. `[TriggerBufferModule]` must be `kPERIL`. The fire module does **not** need changing: each realization is written with `Module=AscImport` and `BuildCase=false` forced, so an ELMFIRE scenario can be used as the base directly - which is what you want, since that is the scenario the case was built and tested with. |
 | `--dir` | ✔ | – | Folder holding the indexed realization rasters. |
 | `--count` | ✔ | – | Number of realizations to process. |
 | `--start` | | `1` | First realization index. |
@@ -104,3 +104,61 @@ PREACTcli probabilistic-trigger --wui <base.wui> --dir <rasterFolder> --count <N
 
 Each realization's evacuation needs SUMO installed (it is a full WUInity run).
 Runs are serial and long; `--resume` makes the batch restartable.
+
+### `converge-trigger` — the same campaign, run until it stops moving
+
+Does what `probabilistic-trigger` does, with two differences that make it the one to use for a real campaign:
+it **generates the realizations itself** rather than requiring an ensemble to exist up front, and it stops on
+**convergence** rather than at a fixed count. It also aggregates the fire, not just the boundary.
+
+```sh
+# Generate realizations with ELMFIRE and run until converged
+PREACTcli converge-trigger --wui <base.wui> --max 200 --resume \
+    --elmfire <elmfire.exe> --elmfire-template <case>/elmfire.data \
+    --elmfire-inputs <case>/inputs --gdal "<gdal bin>"
+
+# Or aggregate an ensemble that already exists
+PREACTcli converge-trigger --wui <base.wui> --dir <rasterFolder> --max 200
+```
+
+| Option | Default | Meaning |
+|--------|---------|---------|
+| `--wui` | – | **Required.** Base case, as for `probabilistic-trigger`. |
+| `--max` | – | **Required.** Ceiling on realizations, not a target — a converged campaign stops earlier. |
+| `--dir` | – | Pre-generated realization folder. Required *unless* generating with `--elmfire`. |
+| `--elmfire` / `--elmfire-template` / `--elmfire-inputs` | – | Generate instead of read. All three needed together. `inputs` stays shared and read-only; each realization gets its own `outputs/` and `scratch/`. |
+| `--gdal` | auto-detected | GDAL bin directory, put on ELMFIRE's `PATH`. |
+| `--tstop` | `259200` (3 days) | How long each realization simulates. See below — do not shorten this casually. |
+| `--seed` | `12345` | Base seed; the realization index is added to it and written to the namelist's `SEED`, which is what varies the ignition. |
+| `--streak` | `20` | Consecutive realizations that must all be within tolerance before it declares convergence. |
+| `--tolerance` | `0.02` | Per-decile area change allowed, as a fraction. |
+| `--parallel` | CPU count | Realizations in flight. Each is its own OS process, because SUMO's libsumo has process-global state. |
+| `--realization-weather` | off | Draw a fresh historical peak fire-weather day per realization. Off by default; see the note below. |
+| `--weather-archive`, `--climatology-from/-to`, `--conditioning-days`, `--windninja`, `--wn-mesh` | – | The weather chain's settings, used only with `--realization-weather`. |
+| `--resume` / `--resume-only` | off | Reuse what is on disk / never run, aggregate only. |
+| `--out`, `--diagnostics`, `--preact`, `--start`, `--pad`, `--toa/--ros/--sd/--fi` | as `probabilistic-trigger` | |
+| `--progress-json` | off | Machine-readable progress, for the Unity window. |
+
+**Outputs.** Beside `trigger_probability.asc` and the convergence CSV, it writes per-cell fire statistics
+aggregated from the realizations' own arrival rasters:
+
+| Raster | Meaning |
+|---|---|
+| `ensemble_burn_probability.asc` | Fraction of realizations in which the cell burned. |
+| `ensemble_arrival_earliest.asc` | Earliest arrival seen anywhere in the ensemble, seconds. |
+| `ensemble_arrival_mean.asc` | Mean arrival, **conditional on burning**, seconds. |
+| `ensemble_arrival_p10/p50/p90.asc` | Percentiles, also conditional on burning, to the nearest hour. |
+
+The arrival statistics are conditional on the cell burning, so read them together with the burn probability —
+a cell with a 5 % burn probability and an early p10 is threatened rarely but fast. The **low** percentiles are
+the conservative ones: p10 is when the fire arrives in the fastest tenth of the cases it arrives at all.
+
+**Why `--tstop` is three days.** A realization only contributes if its fire reaches the community, ignitions
+are drawn from across the whole domain, and the ones started furthest away are exactly the ones that decide how
+far out the boundary must sit. A run cut short does not merely lose those realizations — it counts them as fires
+that did not threaten the town, and the boundary comes out **too tight**.
+
+**Why weather is fixed by default.** Where a fire starts is the dominant uncertainty for a trigger boundary, and
+the sampled day is already an annual peak fire-weather day, so holding it fixed is the conservative choice.
+`--realization-weather` also costs a WindNinja solve per weather band per realization — roughly six minutes for
+a 72-band three-day run, so about twenty hours across a 200-realization campaign.

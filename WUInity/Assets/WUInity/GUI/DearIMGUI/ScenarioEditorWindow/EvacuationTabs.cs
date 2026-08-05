@@ -23,7 +23,28 @@ namespace Assets.WUInity.GUI.DearIMGUI
             TrafficModulesStrings = Enum.GetNames(typeof(TrafficModuleInput.TrafficModules));
         }
 
+        /// <summary>
+        /// The evacuation sub-tabs, bar included.
+        /// </summary>
+        /// <remarks>
+        /// The bar is opened here rather than by the caller so that every top-level tab has the same shape:
+        /// the parent creates the tab item and the child owns whatever is inside it. Two of the three used to
+        /// have their bar opened by <see cref="ScenarioEditorWindow"/> and one by itself, which is the kind of
+        /// difference that makes adding a tab a guess.
+        /// </remarks>
         public static void Draw(PREACTInput input, EvacuationInput eInput, PedestrianModuleInput pInput, TrafficModuleInput tInput)
+        {
+            if (!ImGui.BeginTabBar("EvacuationBar"))
+            {
+                return;
+            }
+
+            DrawTabs(input, eInput, pInput, tInput);
+
+            ImGui.EndTabBar();
+        }
+
+        private static void DrawTabs(PREACTInput input, EvacuationInput eInput, PedestrianModuleInput pInput, TrafficModuleInput tInput)
         {
             if (ImGui.BeginTabItem("General"))
             {

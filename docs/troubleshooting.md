@@ -2,7 +2,7 @@
 
 ## Windows only
 
-The `dev` branch links native x64 libraries (GDAL, Behave, FOFEM, NFDRS4) and
+The `dev` branch links native x64 libraries (GDAL, FOFEM, NFDRS4) and
 SUMO, so it currently runs on Windows only. There is no supported Linux/macOS
 build yet.
 

@@ -15,6 +15,9 @@ namespace PREACT.Utility
     /// Minimal ESRI ASCII grid (.asc) reader/writer. Data is returned/expected in
     /// [x, y] order with a lower-left origin (y = 0 is the bottom row), matching the
     /// convention used by AscFireImport.GetMaxROS() and the k-PERIL rasters.
+    ///
+    /// That claim about GetMaxROS() was for a long time untrue — it flipped the y axis while saying so in its
+    /// own summary, so this line described an agreement that did not exist. It does now.
     /// </summary>
     public static class AscRaster
     {
@@ -187,6 +190,36 @@ namespace PREACT.Utility
         public static float[,] ReadGeoTiff(string filePath, out Header header, out bool success)
         {
             return ReadGeoTiff(filePath, 1, out header, out success, out int _);
+        }
+
+        /// <summary>
+        /// How many bands a GeoTIFF has, or 0 if it cannot be opened.
+        /// </summary>
+        /// <remarks>
+        /// Opens the dataset without reading any pixels, because the callers that want this - the namelist
+        /// builder asking how many hours of weather the case holds - want the count and nothing else, and
+        /// the weather rasters are large enough that reading a band to find out would be silly. Quiet on
+        /// failure: a missing raster is the caller's business to report, in its own terms.
+        /// </remarks>
+        public static int GetBandCount(string filePath)
+        {
+            if (!File.Exists(filePath))
+            {
+                return 0;
+            }
+
+            try
+            {
+                OSGeo.GDAL.Gdal.AllRegister();
+                using (OSGeo.GDAL.Dataset ds = OSGeo.GDAL.Gdal.Open(filePath, OSGeo.GDAL.Access.GA_ReadOnly))
+                {
+                    return ds == null ? 0 : ds.RasterCount;
+                }
+            }
+            catch (Exception)
+            {
+                return 0;
+            }
         }
 
         /// <summary>

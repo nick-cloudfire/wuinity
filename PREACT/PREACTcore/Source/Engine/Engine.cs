@@ -91,9 +91,8 @@ namespace PREACT
         private void SetupNativeLibraries()
         {
             string root = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "Runtimes", "Native");
-            //No Behave entry: the native BEHAVE library it pointed at was called from nothing. The only
-            //BEHAVE in use is the managed port under SpreadModels/BehaveCSharp, which k-PERIL uses to
-            //derive its own rate of spread and which needs no native library.
+            //No Behave entry: BEHAVE has been removed entirely - both the native library, which was called
+            //from nothing, and the managed port k-PERIL once used to derive its own rate of spread.
             string fofem = Path.Combine(root, "FOFEM", "x64");
             string gdal = Path.Combine(root, "GDAL", "x64");
             string nfdrs4 = Path.Combine(root, "NFDRS4", "x64");
@@ -573,7 +572,15 @@ namespace PREACT
             {
                 if(simulation.State == Simulation.SimulationState.Running)
                 {
-                    message = "[Simulation# " + simulation.SimulationIndex + ", " + simulation.Time.CurrentDateTime.ToString() + "s] " + message;
+                    //The simulation's own clock, not the wall clock - and stated unambiguously, because it
+                    //reads as one. It used to be CurrentDateTime.ToString() with an "s" stuck on the end, so
+                    //a simulated date came out as "06/29/2026 12:35:53s": a trailing unit that made a date
+                    //look like a duration, in a culture-dependent format sitting next to the console's own
+                    //wall-clock stamp. Anyone reading it took it for the time of day the message was logged.
+                    message = $"[Simulation# {simulation.SimulationIndex}, sim time "
+                              + simulation.Time.CurrentDateTime.ToString("yyyy-MM-dd HH:mm:ss",
+                                  System.Globalization.CultureInfo.InvariantCulture)
+                              + $" ({simulation.Time.SimulationTime:F0} s in)] " + message;
                 }
                 else
                 {

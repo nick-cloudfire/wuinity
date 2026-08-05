@@ -61,7 +61,15 @@ namespace Assets.WUInity.GUI.DearIMGUI
             {
                 return;
             }
-            ImGui.Begin("Download tool", ref _isOpen, PreactGUI.NoDockingNoCollapse);
+            ImGui.Begin("Download data (no scenario)", ref _isOpen, PreactGUI.NoDockingNoCollapse);
+
+            //Said plainly, because the overlap is the confusing part: this window and Scenario > Prepare data
+            //fetch the same things from the same sources. The difference is only that this one takes an area
+            //drawn by hand and a folder of your choosing, and wires nothing into a scenario.
+            ImGui.TextWrapped("The same downloads Scenario > Prepare data runs, for a hand-drawn area into a "
+                + "folder of your choosing. Nothing here is wired into a scenario - use Prepare data for that, "
+                + "which also names the files after the scenario and sets the paths on it.");
+            ImGui.Separator();
 
             if (ImGui.Button("Set download folder")) { OpenSetDownloadFolder(); }
             if (!_folderSet)

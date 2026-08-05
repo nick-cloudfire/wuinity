@@ -27,26 +27,11 @@ namespace PREACT.Input
         /// </summary>
         public enum WuiAreaSources { Raster, EvacuationGroupsCombined, EvacuationGroupsSeparate }
 
-        public bool CalculateROSFromBehave = true;
-        public string InitialFuelMoistureFile = string.Empty;
-        /// <summary>
-        /// The BEHAVE fuel model table, when the rate of spread is computed here rather than taken from the
-        /// fire module. A <c>.fuel</c> file - see <c>Examples/Development/fireCell/default.fuel</c>.
-        /// </summary>
-        public string FuelModelsFile = string.Empty;
-
-        /// <summary>
-        /// Which band of the wind rasters to use, 1-based.
-        /// </summary>
-        /// <remarks>
-        /// The wind rasters an ELMFIRE case carries hold one band per hour of the run, and k-PERIL takes a
-        /// single wind field: its solver has no time axis, and the wind enters it once, as the
-        /// length-to-breadth ratio of the Huygens ellipse at each cell. So one hour has to be chosen, and it
-        /// was being chosen silently - band 1, the first hour, whatever the fire went on to do.
-        ///
-        /// Hour of the run, not hour of the day: band 1 is the first meteorology band the case starts from.
-        /// </remarks>
-        public int WindBand = 1;
+        //No WindBand. The wind rasters hold one band per hour, and k-PERIL's solver has no time axis - the
+        //wind enters it once, as the length-to-breadth ratio of the Huygens ellipse at each cell. Rather than
+        //choose one hour for the whole domain, each cell now takes the band covering the hour the fire
+        //actually reached it, which is a property of the fire rather than a preference. See
+        //EvacuationManager.ComposeWindAtArrivalTime.
 
         /// <summary>What the trigger boundary's output files are named after. Only a label.</summary>
         public string OutputName = DefaultOutputName;
@@ -127,73 +112,8 @@ namespace PREACT.Input
                 }
             }
 
-            //not critical
-            nameOfInput = nameof(CalculateROSFromBehave);
-            if (inputToParse.TryGetValue(nameOfInput, out userInput))
-            {
-                issues += bool.TryParse(userInput, out newInput.CalculateROSFromBehave) ? 0 : 1;
-                if (issues > 0)
-                {
-                    PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
-                }
-            }
-            else
-            {
-                Engine.Message(null, Engine.LogType.Warning, nameOfInput + " was not found, defaulting to " + newInput.CalculateROSFromBehave.ToString() + ".");
-            }
-
-
-            //critical only when the rate of spread is computed with Behave. When ROS is supplied
-            //externally (CalculateROSFromBehave=false, which is how the ELMFIRE-driven
-            //probabilistic trigger pipeline runs) the moisture raster is never read, so a missing
-            //entry must not fail the load. The guard below always said as much, but the
-            //missing-key branch set success=false unconditionally and the next critical check
-            //returned on it, so an irrelevant key still aborted the whole .wui.
-            nameOfInput = nameof(InitialFuelMoistureFile);
-            if (inputToParse.TryGetValue(nameOfInput, out userInput))
-            {
-                newInput.InitialFuelMoistureFile = userInput;
-                PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.InitialFuelMoistureFile, rootFolder, out bool moistureFileExists);
-                if (!moistureFileExists && newInput.CalculateROSFromBehave)
-                {
-                    success = false;
-                    return newInput;
-                }
-            }
-            else if (newInput.CalculateROSFromBehave)
-            {
-                success = false;
-                PREACTInput.InputNotFoundMessage(nameOfInput, true);
-                return newInput;
-            }
-
-            //Critical on the same terms, and for the same reason: with BEHAVE deriving the rate of spread it
-            //needs a fuel model table, and it used to take the fire module's - so a trigger boundary computed
-            //this way depended on a fire module that has nothing to do with it.
-            nameOfInput = nameof(FuelModelsFile);
-            if (inputToParse.TryGetValue(nameOfInput, out userInput))
-            {
-                newInput.FuelModelsFile = userInput;
-                PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.FuelModelsFile, rootFolder, out bool fuelModelsExist);
-                if (!fuelModelsExist && newInput.CalculateROSFromBehave)
-                {
-                    success = false;
-                    return newInput;
-                }
-            }
-            else if (newInput.CalculateROSFromBehave)
-            {
-                success = false;
-                PREACTInput.InputNotFoundMessage(nameOfInput, true);
-                return newInput;
-            }
-
-            nameOfInput = nameof(WindBand);
-            if (inputToParse.TryGetValue(nameOfInput, out userInput)
-                && int.TryParse(userInput, out int parsedBand) && parsedBand >= 1)
-            {
-                newInput.WindBand = parsedBand;
-            }
+            //A WindBand key from an older scenario is simply ignored - the band is now per cell, from the
+            //fire's arrival times.
 
             //Optional. It names the output files and nothing reads it back, so its absence cannot make a
             //run wrong - yet a missing key used to abort the whole section, which presented as "this

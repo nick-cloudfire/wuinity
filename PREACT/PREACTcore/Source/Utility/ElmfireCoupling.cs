@@ -6,6 +6,7 @@
 //You should have received a copy of the GNU General Public License along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using PREACT.Input;
 using PREACT.Math;
@@ -35,6 +36,22 @@ namespace PREACT.Utility
             /// <summary>The four rasters, relative to the scenario root, as AscImport wants them.</summary>
             public string TimeOfArrivalFile, RateOfSpreadFile, SpreadDirectionFile, FirelineIntensityFile;
 
+            /// <summary>The case's fuel raster, for display. Empty if the case carries neither stem.</summary>
+            public string FuelModelFile = string.Empty;
+
+            /// <summary>
+            /// The historical moment the case's weather was written from, and the ERA5 record it came out of, so
+            /// the simulation can report the same weather the fire was computed against.
+            /// </summary>
+            /// <remarks>
+            /// Both default when the case's weather was not drawn from a record — a case built with
+            /// climatology disabled, or one whose weather predates this. The simulation then keeps reading
+            /// weather at its own dates, as it always did.
+            /// </remarks>
+            public DateTime WeatherAnchor;
+
+            public string WeatherArchiveFile = string.Empty;
+
             /// <summary>
             /// The case's own wind rasters, relative to the scenario root, or empty when it has none.
             ///
@@ -61,6 +78,57 @@ namespace PREACT.Utility
             "ThirdParty/elmfire/build/windows/bin/elmfire.exe",
         };
 
+        /// <summary>
+        /// Builds the scenario's ELMFIRE case and stops there, without running the model.
+        /// </summary>
+        /// <remarks>
+        /// The same build <see cref="Prepare"/> performs, exposed so it can be done once from Prepare data
+        /// rather than only as a side effect of starting a run. Building takes minutes and produces files that
+        /// are then reused, so it belongs beside the other prepare-once steps — the SUMO network, the
+        /// population, the DEM — instead of being something a run does on its way past.
+        ///
+        /// Ignores <see cref="ElmfireInput.BuildCase"/>: pressing the button *is* the instruction, and that
+        /// flag governs whether a run builds on its own.
+        /// </remarks>
+        public static bool BuildCaseOnly(PREACTInput input, Action<string> log, out string problem)
+        {
+            problem = null;
+
+            ElmfireInput settings = input?.WildfireModule?.ElmfireInput;
+            if (settings == null)
+            {
+                problem = "The scenario has no ELMFIRE settings to build a case from.";
+                return false;
+            }
+
+            string caseDir = Path.Combine(input.RootFolder, settings.CaseDirectory);
+
+            if (!TryBuildCase(input, settings, caseDir, log, out problem, out DateTime anchor))
+            {
+                return false;
+            }
+
+            //Written onto the scenario, like every other prepare step writes the path it produced. This is the
+            //step where it matters most: building from Prepare data happens long before any run, so without
+            //recording the day here the connection between the fire's weather and the reported weather would
+            //have to be rediscovered - or lost.
+            if (anchor != default && input.Weather != null)
+            {
+                input.Weather.WeatherAnchorDateTime = anchor;
+
+                string archive = Path.Combine(caseDir, "climatology", input.Simulation.Name + "_era5_hourly.csv");
+                if (File.Exists(archive))
+                {
+                    input.Weather.WeatherFile = Relative(input.RootFolder, archive);
+                }
+
+                log?.Invoke($"  weather: the scenario now reads its weather from {anchor:yyyy-MM-dd HH:mm}, the "
+                    + "day the fire was computed against. Save the scenario to keep that.");
+            }
+
+            return true;
+        }
+
         public static Result Prepare(PREACTInput input, ElmfireInput settings, Action<string> log)
         {
             var result = new Result();
@@ -70,11 +138,28 @@ namespace PREACT.Utility
 
             if (settings.BuildCase)
             {
-                if (!TryBuildCase(input, settings, caseDir, Log, out string buildProblem))
+                if (!TryBuildCase(input, settings, caseDir, Log, out string buildProblem, out DateTime builtAnchor))
                 {
                     result.Message = buildProblem;
                     return result;
                 }
+
+                result.WeatherAnchor = builtAnchor;
+            }
+            else if (input.Weather != null && input.Weather.HasWeatherAnchor)
+            {
+                //Not built this run, so the anchor comes from what the last build saved into the scenario.
+                //Without this a prepared case - the normal way to run one - would lose the connection between
+                //the fire's weather and the weather being reported, which is the whole point of the anchor.
+                result.WeatherAnchor = input.Weather.WeatherAnchorDateTime;
+            }
+
+            //The record the case's weather was drawn from. Named by the same convention the builder uses, and
+            //only reported when it is actually there: a case built with climatology disabled has no archive.
+            string archive = Path.Combine(caseDir, "climatology", input.Simulation.Name + "_era5_hourly.csv");
+            if (File.Exists(archive))
+            {
+                result.WeatherArchiveFile = Relative(input.RootFolder, archive);
             }
 
             if (!Directory.Exists(caseDir))
@@ -84,7 +169,7 @@ namespace PREACT.Utility
                 return result;
             }
 
-            string namelist = ResolveNamelist(caseDir, settings, out string namelistProblem);
+            string namelist = ResolveNamelist(caseDir, input.RootFolder, settings, Log, out string namelistProblem);
             if (namelist == null)
             {
                 result.Message = namelistProblem;
@@ -119,7 +204,7 @@ namespace PREACT.Utility
             ElmfireRunner.Result run;
             try
             {
-                run = ElmfireRunner.Run(exe, caseDir, "scenario", PatchNamelist(namelist, settings, Log),
+                run = ElmfireRunner.Run(exe, caseDir, "scenario", PatchNamelist(namelist, settings, gdalBin, Log),
                     settings.ReuseExistingOutput, writer, gdalBin);
             }
             catch (Exception e)
@@ -169,6 +254,18 @@ namespace PREACT.Utility
                 result.WindDirectionFile = Relative(input.RootFolder, windDirection);
             }
 
+            //The fuel the fire was actually computed against, for the output window's fuel model display mode -
+            //which had no source at all and so drew nothing. fbfm40 first, matching the case builder's own
+            //preference when it resolves the stem.
+            foreach (string stem in new[] { "fbfm40", "fbfm13" })
+            {
+                string fuel = Path.Combine(caseDir, "inputs", stem + ".tif");
+                if (!File.Exists(fuel)) continue;
+
+                result.FuelModelFile = Relative(input.RootFolder, fuel);
+                break;
+            }
+
             result.Ok = true;
             return result;
         }
@@ -176,30 +273,37 @@ namespace PREACT.Utility
         /// <summary>
         /// The namelist with the few keys the scenario owns written into it, leaving the physics alone.
         ///
-        /// <c>PATH_TO_GDAL</c> only when the scenario names a directory. Left alone otherwise, because
-        /// ELMFIRE's own default for it is <c>'auto'</c> - it runs <c>where gdal_translate</c> and reports
-        /// what it found - and writing the key would override that. What makes the auto-detection work is
-        /// GDAL being on the PATH the process inherits, which the caller arranges.
+        /// <c>PATH_TO_GDAL</c> whenever GDAL's tools were located, whether the scenario named the directory
+        /// or <see cref="GdalTools"/> found it. This used to be written only for an explicit setting, on the
+        /// grounds that ELMFIRE's own <c>'auto'</c> - it runs <c>where gdal_translate</c> - should be left to
+        /// succeed, which it does when the tools are on the PATH the child inherits. That is one mechanism
+        /// too few: getting a variable into a child's environment on Windows is runtime-dependent (see
+        /// <c>ElmfireRunner.SetEnvironmentVariable</c>), and when it silently did not work ELMFIRE reported
+        /// a problem with the DEM. Writing the key costs nothing and does not disagree with ELMFIRE's choice,
+        /// since the search starts with PATH and so finds what <c>where</c> would have found.
         ///
         /// The stop time is written for a different reason: it is a property of what is being simulated, and
         /// the scenario is where that is set.
         /// </summary>
-        private static string[] PatchNamelist(string namelistPath, ElmfireInput settings, Action<string> log)
+        private static string[] PatchNamelist(string namelistPath, ElmfireInput settings, string gdalBin,
+            Action<string> log)
         {
             string[] lines = File.ReadAllLines(namelistPath);
 
-            if (!string.IsNullOrEmpty(settings.PathToGdal))
+            if (!string.IsNullOrEmpty(gdalBin))
             {
-                //Trailing separator, since ELMFIRE concatenates the tool name straight onto it.
-                string gdal = settings.PathToGdal.Replace('\\', '/').TrimEnd('/') + "/";
+                //No trailing separator: ELMFIRE appends PATH_SEPARATOR itself once it has a directory
+                //(elmfire_namelists.f90), so supplying one gives it "bin/\gdalinfo". Left in the platform's
+                //own spelling, which is what its auto-detection would have produced.
+                string gdal = gdalBin.TrimEnd('/', '\\');
                 lines = ElmfireNamelist.SetKeyInGroup(lines, "MISCELLANEOUS", "PATH_TO_GDAL", gdal, true);
                 log("Namelist PATH_TO_GDAL set to " + gdal);
             }
 
-            if (settings.SimulationTstopSeconds > 0.0)
+            if (settings.SimulationTstopHours > 0.0)
             {
                 lines = ElmfireNamelist.SetKeyInGroup(lines, "TIME_CONTROL", "SIMULATION_TSTOP",
-                    settings.SimulationTstopSeconds.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture));
+                    settings.TstopSeconds().ToString("0.0", System.Globalization.CultureInfo.InvariantCulture));
             }
 
             //The dumps the reader needs, which are not the user's choice to make: without them ELMFIRE runs
@@ -229,9 +333,10 @@ namespace PREACT.Utility
         /// ignition points across so the fire starts where the scenario says.
         /// </summary>
         private static bool TryBuildCase(PREACTInput input, ElmfireInput settings, string caseDir,
-            Action<string> log, out string problem)
+            Action<string> log, out string problem, out DateTime weatherAnchor)
         {
             problem = null;
+            weatherAnchor = default;
 
             var options = new ElmfireCaseBuilder.Options
             {
@@ -240,10 +345,11 @@ namespace PREACT.Utility
                 DomainSizeMetres = input.Simulation.DomainSize,
                 CellSizeMetres = settings.CellSizeMetres,
                 PaddingMetres = settings.PaddingMetres,
-                SimulationTstopSeconds = settings.SimulationTstopSeconds,
+                SimulationTstopSeconds = settings.TstopSeconds(),
                 StartDateTime = input.Simulation.StartDateTime,
                 OutputDirectory = caseDir,
                 PathToGdal = NullIfEmpty(settings.PathToGdal),
+                Namelist = settings.Namelist,
 
                 //Force is permission to write into a folder that is not empty, which a case folder never is.
                 //It is not permission to replace what is in it - that is OverwriteExistingLayers, left off so
@@ -258,7 +364,36 @@ namespace PREACT.Utility
                 OpenTopographyApiKey = OpenTopographyKey.Resolve(),
 
                 Log = log,
+
+                //Absolute, because the builder hands these straight to gdalwarp and a scenario-relative path
+                //would be resolved against whatever the working directory happens to be.
+                CanopyDatasetFolder = ResolveFolder(input.RootFolder, settings.CanopyDatasetFolder),
             };
+
+            //An override only. Left empty the builder probes for WindNinja itself, which is the case on
+            //any normal install; naming it here is for one that lives somewhere unusual.
+            options.Weather.WindNinjaExe = NullIfEmpty(settings.WindNinjaExe);
+
+            //Fuel, canopy and buildings, which have no global source and so have to be named. Resolved against
+            //the scenario folder here rather than stored absolute, so the .wui stays portable. These were
+            //previously reachable only as PREACTcli arguments, so a case built from the GUI had no canopy and
+            //no building spread model however the layers were prepared.
+            foreach (KeyValuePair<string, string> layer in settings.GetSourceRasters())
+            {
+                string path = Path.IsPathRooted(layer.Value)
+                    ? layer.Value
+                    : Path.Combine(input.RootFolder, layer.Value);
+
+                //A path that does not resolve is dropped here rather than handed on: the builder would log it
+                //per layer as "source not found", and the scenario parse has already said so once with the key
+                //name, which is the more useful of the two messages.
+                if (!File.Exists(path))
+                {
+                    continue;
+                }
+
+                options.UserRasters[layer.Key] = path;
+            }
 
             //The same points the ignition editor placed, in WGS84. The builder measures them in the case's
             //own CRS once its grid exists, which is the one thing that cannot be done here.
@@ -287,7 +422,26 @@ namespace PREACT.Utility
             {
                 //Waited on rather than awaited: module creation is synchronous, and a fire that has not been
                 //computed cannot be evacuated from, so there is nothing useful to do meanwhile.
-                ElmfireCaseBuilder.Build(options).GetAwaiter().GetResult();
+                ElmfireCaseBuilder.Result built = ElmfireCaseBuilder.Build(options).GetAwaiter().GetResult();
+
+                //Only when this build drew the weather. A build that kept the case's existing weather did not
+                //draw a day, so it has no anchor to report and the scenario's saved one stays in force.
+                if (built.Weather != null)
+                {
+                    weatherAnchor = built.Weather.BandAnchor;
+                }
+
+                //Refused here rather than in the builder: a case with a misregistered layer is still worth
+                //having on disk to inspect, but running it is not - ELMFIRE reads rasters cell-for-cell
+                //without comparing their geotransforms, so it would produce a complete, plausible fire built
+                //from layers describing different ground, and nothing afterwards could tell.
+                if (built.Validation != null && !built.Validation.Ok)
+                {
+                    problem = "The ELMFIRE case is not internally consistent, so it was not run: "
+                              + ElmfireCaseValidator.Summarize(built.Validation);
+                    return false;
+                }
+
                 return true;
             }
             catch (Exception e)
@@ -300,22 +454,46 @@ namespace PREACT.Utility
         /// <summary>
         /// The namelist to run: the scenario's template when it names one, otherwise whatever the case holds.
         /// </summary>
-        private static string ResolveNamelist(string caseDir, ElmfireInput settings, out string problem)
+        /// <remarks>
+        /// A relative <c>NamelistTemplate</c> is tried against the case directory and then the scenario
+        /// folder, because both are reasonable readings and the GUI produces the second. Every path field in
+        /// the scenario editor is scenario-relative - that is what the file picker writes - so picking
+        /// <c>elmfire/mati.data</c> and having it resolved against the case directory gave
+        /// <c>elmfire/elmfire/mati.data</c>, and the error named the path the user had typed, which existed.
+        /// The case directory stays first so a scenario written to the documented rule keeps its meaning.
+        /// </remarks>
+        private static string ResolveNamelist(string caseDir, string rootFolder, ElmfireInput settings,
+            Action<string> log, out string problem)
         {
             problem = null;
 
             if (!string.IsNullOrEmpty(settings.NamelistTemplate))
             {
-                string named = Path.IsPathRooted(settings.NamelistTemplate)
-                    ? settings.NamelistTemplate
-                    : Path.Combine(caseDir, settings.NamelistTemplate);
-
-                if (File.Exists(named))
+                if (Path.IsPathRooted(settings.NamelistTemplate))
                 {
-                    return named;
+                    if (File.Exists(settings.NamelistTemplate)) return settings.NamelistTemplate;
+
+                    problem = "The namelist template named by the scenario is not there: "
+                              + settings.NamelistTemplate;
+                    return null;
                 }
 
-                problem = "The namelist template named by the scenario is not there: " + settings.NamelistTemplate;
+                string inCase = Path.Combine(caseDir, settings.NamelistTemplate);
+                if (File.Exists(inCase)) return inCase;
+
+                string inRoot = Path.Combine(rootFolder, settings.NamelistTemplate);
+                if (File.Exists(inRoot))
+                {
+                    //Said rather than resolved silently: the two readings pick different files whenever both
+                    //exist, and which one ran is the first thing worth knowing about a surprising fire.
+                    log?.Invoke($"Namelist template {settings.NamelistTemplate} resolved against the scenario "
+                                + $"folder: {inRoot}");
+                    return inRoot;
+                }
+
+                problem = $"The namelist template named by the scenario is not there: "
+                          + $"{settings.NamelistTemplate}. Looked in the case directory ({inCase}) and beside "
+                          + $"the scenario ({inRoot}).";
                 return null;
             }
 
@@ -342,7 +520,14 @@ namespace PREACT.Utility
         /// The executable the scenario names, or the vendored build. Returns null when neither is there,
         /// which is only fatal if ELMFIRE actually has to run.
         /// </summary>
-        private static string ResolveExecutable(string rootFolder, string named)
+        /// <remarks>
+        /// Public because the trigger campaign needs the same answer. A run resolves the vendored build by
+        /// itself, so <c>[ELMFIRE] ElmfireExe</c> is almost never set — and the campaign window, which seeded
+        /// its field from that key alone, was therefore left empty on a machine where ELMFIRE works perfectly
+        /// well, and <c>converge-trigger</c> refused to start for want of a path nobody had needed to give it.
+        /// One resolver, so "where is elmfire.exe" has one answer.
+        /// </remarks>
+        public static string ResolveExecutable(string rootFolder, string named)
         {
             if (!string.IsNullOrEmpty(named))
             {
@@ -407,6 +592,29 @@ namespace PREACT.Utility
             }
 
             return full.Substring(root.Length).Replace('\\', '/');
+        }
+
+        /// <summary>
+        /// A scenario-relative folder made absolute, or null when unset.
+        /// </summary>
+        /// <remarks>
+        /// Absolute because the builder hands it to gdalwarp, which resolves against its own working directory
+        /// rather than the scenario's. Returned even when the folder does not exist, so the build can report
+        /// what was named and what it expected to find there.
+        /// </remarks>
+        private static string ResolveFolder(string root, string folder)
+        {
+            if (string.IsNullOrWhiteSpace(folder)) return null;
+
+            try
+            {
+                string full = Path.IsPathRooted(folder) ? folder : Path.Combine(root, folder);
+                return Path.GetFullPath(full);
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private static string NullIfEmpty(string value)

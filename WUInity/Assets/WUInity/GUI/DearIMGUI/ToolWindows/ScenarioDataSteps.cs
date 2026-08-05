@@ -769,5 +769,47 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 Input.Weather.WeatherFile = WeatherFile;
             });
         }
+
+        /// <summary>The ELMFIRE case's namelist, which is what marks the case as built.</summary>
+        /// <remarks>
+        /// The namelist rather than a raster, because it is written last and only once every layer is in place
+        /// — so its presence means the whole build finished, where any single raster could be left behind by
+        /// one that failed halfway.
+        /// </remarks>
+        public static string ElmfireNamelistFile
+        {
+            get
+            {
+                string caseDirectory = Input?.WildfireModule?.ElmfireInput?.CaseDirectory;
+                if (string.IsNullOrEmpty(caseDirectory)) { caseDirectory = "elmfire"; }
+                return caseDirectory + "/elmfire.data";
+            }
+        }
+
+        /// <summary>
+        /// Builds the ELMFIRE case: the rasters, the weather series and the namelist.
+        /// </summary>
+        /// <remarks>
+        /// Here rather than only at the start of a run, which is where it used to happen exclusively. The build
+        /// downloads a DEM, runs WindNinja once per weather band and marches Nelson over a conditioning window,
+        /// so it takes minutes and produces files that are then reused — the same shape as every other step in
+        /// this window, and not something to discover while waiting for a simulation to start.
+        /// </remarks>
+        public static void BuildElmfireCase()
+        {
+            RunStep("Building the ELMFIRE case", () =>
+            {
+                bool ok = PREACT.Utility.ElmfireCoupling.BuildCaseOnly(Input, LogStep, out string problem);
+
+                if (!ok)
+                {
+                    //Thrown rather than returned: RunStep reports a faulted step, and a build that failed must
+                    //not read as one that succeeded just because it was the last thing to run.
+                    throw new System.Exception(problem ?? "the case could not be built");
+                }
+
+                return System.Threading.Tasks.Task.CompletedTask;
+            });
+        }
     }
 }

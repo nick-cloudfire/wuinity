@@ -24,17 +24,18 @@ namespace PREACT
             _isDone = true;
         }
 
-        public async Task Execute(string[] args)
+        /// <summary>Whether a run actually took place. False means nothing was simulated.</summary>
+        public async Task<bool> Execute(string[] args)
         {
             if (args.Length == 0)
             {
                 Console.WriteLine("Incorrect input parameters.");
-                return;
+                return false;
             }
             else if(!File.Exists(args[0]))
             {
                 Console.WriteLine("Specified file does not exist: " + args[0]);
-                return;
+                return false;
             }
 
             bool success;
@@ -77,12 +78,15 @@ namespace PREACT
                     //belt and braces: SimulationsFinished() normally sets this, but it only fires
                     //when an external manager is registered, and the process must exit regardless.
                     _isDone = true;
-                }                               
+                    return true;
+                }
+
+                //Arguments given but describing no runnable task; the usage line above was printed.
+                return false;
             }
-            else
-            {
-                Console.WriteLine("Failed to read loaded file");
-            }
+
+            Console.WriteLine("Failed to read loaded file");
+            return false;
         }
 
         public void NewLogMessage(string message)

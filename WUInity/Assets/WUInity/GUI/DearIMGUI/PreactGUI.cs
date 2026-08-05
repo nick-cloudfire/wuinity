@@ -145,14 +145,17 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
         //Static like _engine and _wuinityManager above, so the menu bar - which is static - can
         //clear it. Without this the Console/Clear item had nothing to act on and did nothing.
-        static LinkedList<string> _messages = new LinkedList<string>();
+        //
+        //Oldest first, and the whole session: the console draws only the tail of it, but copying and
+        //saving want everything. This used to be a 100-entry ring buffer, which meant the earliest
+        //messages - where the first error in a failed run usually is - were gone before they could be
+        //read. The engine keeps its own log the same way, unbounded, for the same reason.
+        static List<string> _messages = new List<string>();
+        public static IReadOnlyList<string> Messages { get => _messages; }
+
         public void NewMessage(string message)
         {
-            _messages.AddFirst(message);
-            if (_messages.Count > 100)
-            {
-                _messages.RemoveLast();
-            }
+            _messages.Add(message);
         }
 
         public static void ClearMessages()

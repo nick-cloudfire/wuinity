@@ -1,0 +1,180 @@
+! Generic ELMFIRE namelist template.
+!
+! The starting point for a WUInity-built case, derived from the hand-corrected Mati case that first ran
+! end to end. The template owns the physics; WUInity patches only the keys that describe a particular
+! case - paths, time base, ignitions, and whichever layers the case turns out to have. Keys it patches
+! are marked [WUInity] below. Everything else is here to be edited by hand, and editing it is the point.
+!
+! It is deliberately conservative: as written it runs on any case carrying the required layers, with no
+! buildings and no explicit ignition. The optional blocks are commented out rather than removed, so
+! switching one on is a matter of deleting '! ' rather than remembering what the key was called.
+!
+! THE INPUT CONTRACT, which no namelist can rescue a case from breaking:
+!
+!   - One grid. Every raster in ./inputs shares the DEM's cell size, CRS, origin and dimensions, with
+!     square cells and AREA_OR_POINT=Area. ELMFIRE takes the domain, CRS and cell size from
+!     DEM_FILENAME, so that file is the grid of record and nothing else may disagree with it.
+!   - Aspect is never resampled bilinearly. Interpolating across the 359->0 wrap gives 180 - a
+!     south-facing slope where the ground faces north. Recompute slope and aspect from the final DEM.
+!   - No non-finite values anywhere. ELMFIRE compiles with FP traps, so a single NaN aborts the run with
+!     'forrtl: error (65): floating invalid' and a traceback pointing at unrelated code. Canopy products
+!     are the usual source; 0 is correct for a canopy void.
+!   - Ignition coordinates are in the case's own CRS, not the scenario's and not a neighbouring UTM zone.
+!
+! Filenames are stems - no directory, no extension. ELMFIRE appends its own.
+!
+! See docs/elmfire-case-automation.md for how a case is built and why each of the above is a rule.
+
+&INPUTS
+FUELS_AND_TOPOGRAPHY_DIRECTORY = './inputs'
+DEM_FILENAME                   = 'dem'
+SLP_FILENAME                   = 'slp'
+ASP_FILENAME                   = 'asp'
+
+! [WUInity] Set to whichever fuel model raster the case carries - 'fbfm40' or 'fbfm13'. Both the 91-99
+! block and FBFM13's code 14 are treated as non-burnable when the ignition mask is restricted.
+FBFM_FILENAME                  = 'fbfm40'
+
+! Canopy. Required keys, but a case outside the US often has no real data for them and the builder
+! fills them with zeroes, which models surface fire only.
+CC_FILENAME                    = 'cc'
+CBH_FILENAME                   = 'cbh'
+CBD_FILENAME                   = 'cbd'
+CH_FILENAME                    = 'ch'
+! These say the rasters are in real units (cc %, ch m, cbh m, cbd kg/m3) rather than the scaled integer
+! forms LANDFIRE ships. Wrong values here are not an error, just a differently behaved crown fire.
+CBD_TIMES_100                  = .FALSE.
+CBH_TIMES_10                   = .FALSE.
+CH_TIMES_10                    = .FALSE.
+
+ADJ_FILENAME                   = 'adj'
+PHI_FILENAME                   = 'phi'
+
+! Weather. One band per DT_METEOROLOGY, in the same file; see NUM_METEOROLOGY_TIMES in &MONTE_CARLO.
+DT_METEOROLOGY                 = 3600.0
+WEATHER_DIRECTORY              = './inputs'
+WS_FILENAME                    = 'ws'
+WD_FILENAME                    = 'wd'
+M1_FILENAME                    = 'm1'
+M10_FILENAME                   = 'm10'
+M100_FILENAME                  = 'm100'
+USE_CONSTANT_LH                = .TRUE.
+USE_CONSTANT_LW                = .TRUE.
+LH_MOISTURE_CONTENT            = 60.0
+LW_MOISTURE_CONTENT            = 90.0
+! ws is in mph whatever the height; WS_AT_10M says only which height that is. Setting it wrong is
+! silent - ELMFIRE reads 10 m wind as 20 ft wind and the fire simply spreads at the wrong rate.
+WS_AT_10M                      = .TRUE.
+WS_IN_KPH                      = .FALSE.
+
+IGNITION_MASK_FILENAME         = 'ignition_mask'
+
+! [WUInity] Building layers, written only when the case has the complete set of five - a partial set
+! makes ELMFIRE read a raster nobody produced. Stems vary by the pipeline that made them; the builder
+! resolves each against the case. Enable together with the &WUI block below.
+! BLDG_AREA_FILENAME             = 'baa'
+! BLDG_SEPARATION_DIST_FILENAME  = 'ssd'
+! BLDG_NONBURNABLE_FRAC_FILENAME = 'nbf_h'
+! BLDG_FOOTPRINT_FRAC_FILENAME   = 'ff_h'
+! BLDG_FUEL_MODEL_FILENAME       = 'bfm_h'
+/
+
+&OUTPUTS
+OUTPUTS_DIRECTORY     = './outputs'
+DTDUMP                = 3600.0
+! [WUInity] The first four are not optional for a WUInity run: AscImport reads all of them back, and
+! SPREAD_RATE_IN_M decides whether the rate is m/min or ELMFIRE's default ft/min - which is not an error
+! anywhere, just a fire spreading 3.28 times too fast. WUInity sets them whatever the template says.
+DUMP_TIME_OF_ARRIVAL  = .TRUE.
+DUMP_SPREAD_RATE      = .TRUE.
+DUMP_SPREAD_DIRECTION = .TRUE.
+SPREAD_RATE_IN_M      = .TRUE.
+DUMP_FLIN             = .TRUE.
+DUMP_CROWN_FIRE       = .TRUE.
+CONVERT_TO_GEOTIFF    = .TRUE.
+! Ember output, worth having wherever spotting is on.
+DUMP_SPOTTING_OUTPUTS = .TRUE.
+ACCUMULATE_EMBER_FLUX = .TRUE.
+DUMP_EMBER_FLUX       = .TRUE.
+DUMP_EMBER_IGNITION   = .TRUE.
+/
+
+&TIME_CONTROL
+! [WUInity] Year and start hour come from the scenario's StartDateTime, and must agree with what the
+! weather rasters actually hold - band one is BAND_ONE_HOUR_OF_YEAR. A case whose namelist said 2018
+! against 2026 rasters ran perfectly well and simulated the wrong weather.
+CURRENT_YEAR                  = 2026
+BAND_ONE_HOUR_OF_YEAR         = 4284
+! [WUInity] From the scenario. 28800 s is eight hours, enough for a single case; an ensemble member
+! wants far longer, since the realizations that decide a trigger boundary are the ones starting furthest
+! away. See P6 in docs/elmfire-case-automation.md.
+SIMULATION_TSTOP              = 28800.0
+SIMULATION_DT                 = 5.0
+SIMULATION_DTMAX              = 300
+TARGET_CFL                    = 0.4
+USE_DIURNAL_ADJUSTMENT_FACTOR = .FALSE.
+/
+
+&MONTE_CARLO
+! [WUInity] One deterministic run over a single weather band. Raise the stop and the count together to
+! the number of bands the weather rasters hold - they are read in order, one per DT_METEOROLOGY - or
+! ELMFIRE will reuse band one for the whole simulation.
+METEOROLOGY_BAND_START         = 1
+METEOROLOGY_BAND_STOP          = 1
+METEOROLOGY_BAND_SKIP_INTERVAL = 1
+NUM_METEOROLOGY_TIMES          = 1
+NUM_ENSEMBLE_MEMBERS           = 1
+! Cells of margin ELMFIRE keeps between the fire and the domain edge.
+EDGEBUFFER                     = 60
+! [WUInity] Placed ignition points switch both of these off and write X_IGN/Y_IGN into &SIMULATOR
+! instead. Left on here so the template runs on a case that has only a painted mask: the fire starts
+! somewhere ignitable rather than nowhere.
+RANDOM_IGNITIONS               = .TRUE.
+USE_IGNITION_MASK              = .TRUE.
+
+! Ensemble weather perturbation goes here as RASTER_TO_PERTURB blocks, when the campaign is to vary
+! weather as well as ignition location. Deliberately absent by default - see P6.
+/
+
+&SIMULATOR
+MODE           = 1
+FEEDBACK_LEVEL = 3
+UNTAG_TYPE_2   = .TRUE.
+UNTAG_TYPE_3   = .TRUE.
+! [WUInity] Written from the scenario's [IgnitionPoint] sections, transformed into the case's CRS once
+! the grid exists. A point outside the domain is dropped and said so, never clamped - a clamped ignition
+! starts a fire nobody asked for and the run looks successful.
+! NUM_IGNITIONS  = 1
+! X_IGN(1)       = 0.0
+! Y_IGN(1)       = 0.0
+! T_IGN(1)       = 0.0
+/
+
+&SPOTTING
+ENABLE_SPOTTING          = .TRUE.
+USE_SUPERSEDED_SPOTTING  = .FALSE.
+GENERATION_MODEL         = 'PER-MW'
+SPOTTING_DISTANCE_MODEL  = 'EMPIRICAL'
+ACCUMULATION_MODEL       = 'EULERIAN'
+IGNITION_MODEL           = 'PHYSICAL'
+/
+
+! Urban spread, the ELMFIRE-WUINITY fork's addition. Enable together with the five BLDG_* layers in
+! &INPUTS and BUILDING_FUEL_MODEL_FILE in &MISCELLANEOUS - it is a complete set or nothing.
+! &WUI
+! USE_BLDG_SPREAD_MODEL                 = .TRUE.
+! USE_CONSTANT_BLDG_SPREAD_MODEL_PARAMS = .FALSE.
+! BLDG_SPREAD_MODEL_TYPE                = 3
+! INTERFACE_MODEL_TYPE                  = 2
+! /
+
+&MISCELLANEOUS
+SCRATCH                  = './scratch'
+! [WUInity] Left out so ELMFIRE's own default of 'auto' applies - it runs 'where gdal_translate' and
+! reports what it found. WUInity writes the directory it located, because the alternative is relying on
+! the child process inheriting a PATH, which is not dependable on Windows. Note there is no trailing
+! separator: ELMFIRE appends one itself. With no GDAL reachable at all, the error blames the DEM.
+! PATH_TO_GDAL             = 'C:\Program Files\QGIS\bin'
+! Needed by the building spread model above, and only by it.
+! BUILDING_FUEL_MODEL_FILE = 'building_fuel_models.csv'
+/

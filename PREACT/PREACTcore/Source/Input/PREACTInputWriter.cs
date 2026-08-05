@@ -74,6 +74,15 @@ namespace PREACT.Input
             Section(lines, nameof(PREACTInput.WildfireModule), input.WildfireModule);
             ModuleSubSection(lines, input.WildfireModule, "Module", WildfireSubInput(input));
 
+            //The ELMFIRE namelist settings, which Section cannot reach: they hang off ElmfireInput as a
+            //nested object and IsWritable refuses those, deliberately - the format has no nesting. Written
+            //only for a scenario whose fire is ELMFIRE, since for any other module they configure nothing.
+            if (input.WildfireModule?.Module == WildfireModuleInput.WildfireModules.ELMFIRE
+                && input.WildfireModule.ElmfireInput?.Namelist != null)
+            {
+                Section(lines, ElmfireInput.NamelistSection, input.WildfireModule.ElmfireInput.Namelist);
+            }
+
             //Ignition points live on WildfireData, which Section skips along with every other "Data"
             //member, so they are written here explicitly - one repeated section each, the same shape
             //destinations and evacuation groups use.

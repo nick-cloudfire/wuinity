@@ -22,24 +22,101 @@ namespace PREACT.Utility
         /// <summary>Anything at or below this is the -9999 NoData fill, not a wind component.</summary>
         private const double NoDataThreshold = -9000.0;
 
+        /// <summary>
+        /// Finds the Windows installer's <c>WindNinja_cli.exe</c> so the terrain-wind stage works
+        /// without being pointed at it.
+        ///
+        /// This lives here, in core, rather than in the CLI that first needed it. It was a private
+        /// helper in <c>PREACTcli</c>, which meant the CLI resolved the executable and the GUI could
+        /// not: a case built from the scenario editor reported "no WindNinja executable configured"
+        /// on a machine with WindNinja installed, and wrote a uniform wind field instead. Terrain
+        /// wind then silently differed depending on which front end prepared the case.
+        ///
+        /// Probed in order of how specifically each names an install: an explicit environment
+        /// variable, then <c>PATH</c>, then the standard install roots.
+        /// </summary>
+        public static string FindExecutable()
+        {
+            try
+            {
+                string fromEnv = Environment.GetEnvironmentVariable("WINDNINJA_CLI");
+                if (!string.IsNullOrEmpty(fromEnv) && File.Exists(fromEnv)) return fromEnv;
+
+                string path = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+                foreach (string dir in path.Split(Path.PathSeparator))
+                {
+                    if (dir.Length == 0) continue;
+                    string candidate;
+                    try { candidate = Path.Combine(dir.Trim('"'), "WindNinja_cli.exe"); }
+                    catch { continue; } //an unparseable PATH entry is not worth failing detection over
+                    if (File.Exists(candidate)) return candidate;
+                }
+
+                foreach (string root in InstallRoots())
+                {
+                    if (!Directory.Exists(root)) continue;
+                    //Installs are versioned (WindNinja-3.12.1\bin\...), so take the newest by name.
+                    string[] hits = Directory.GetFiles(root, "WindNinja_cli.exe", SearchOption.AllDirectories);
+                    if (hits.Length == 0) continue;
+                    Array.Sort(hits, StringComparer.OrdinalIgnoreCase);
+                    return hits[hits.Length - 1];
+                }
+            }
+            catch { }
+
+            return null;
+        }
+
+        private static System.Collections.Generic.IEnumerable<string> InstallRoots()
+        {
+            yield return @"C:\WindNinja";
+
+            //Read from the environment rather than hardcoded: on a 64-bit machine the installer lands
+            //under "Program Files (x86)" often enough that probing only "Program Files" misses it.
+            foreach (string variable in new[] { "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432" })
+            {
+                string programFiles = Environment.GetEnvironmentVariable(variable);
+                if (!string.IsNullOrEmpty(programFiles))
+                {
+                    yield return Path.Combine(programFiles, "WindNinja");
+                }
+            }
+        }
+
         public class Result
         {
             public bool Ok;
             public string Message;
             /// <summary>Domain-mean of the terrain-resolved speed, mph — for reporting against the input.</summary>
             public double MeanSpeedMph;
+
+            /// <summary>Terrain-resolved speed on the master grid, mph, lower-left origin. Null unless Ok.</summary>
+            public float[,] SpeedMph;
+
+            /// <summary>Terrain-resolved direction on the master grid, degrees. Null unless Ok.</summary>
+            public float[,] DirectionDeg;
+
+            /// <summary>Cells outside WindNinja's mesh that took the domain average instead.</summary>
+            public int FilledCells;
         }
 
         /// <summary>
-        /// Produces <c>ws.tif</c> (mph) and <c>wd.tif</c> (degrees) on <paramref name="grid"/> from
-        /// a domain-average wind, writing them into <paramref name="outputDirectory"/>.
+        /// Turns a domain-average wind into terrain-resolved speed (mph) and direction (degrees) on
+        /// <paramref name="grid"/>, returned in <see cref="Result"/> rather than written.
         ///
         /// <paramref name="speedMps"/> is metres per second (this pipeline's convention, matching
-        /// Open-Meteo's <c>wind_speed_10m</c>); the rasters come out in <b>mph</b>, which is what
+        /// Open-Meteo's <c>wind_speed_10m</c>); the fields come out in <b>mph</b>, which is what
         /// ELMFIRE's <c>WS_FILENAME</c> always expects regardless of <c>WS_AT_10M</c>. WindNinja's
         /// own ascii output already defaults to mph, but it is requested explicitly here rather
         /// than inherited from a default that could change.
         /// </summary>
+        /// <remarks>
+        /// The fields are returned instead of written to <c>ws.tif</c>/<c>wd.tif</c> because the weather
+        /// series needs one run per band: writing here made a single band the only thing this could
+        /// produce, and stacking bands means the caller owns the file.
+        ///
+        /// <paramref name="outputDirectory"/> is still needed as scratch space for the warp.
+        /// </remarks>
         public static Result Run(
             string windNinjaExe, string demPath, MasterGrid grid, string outputDirectory,
             double speedMps, double directionDeg,
@@ -86,9 +163,11 @@ namespace PREACT.Utility
 
                 const double mpsToMph = 2.2369362920544;
                 result.MeanSpeedMph = Resample(vel, ang, grid, outputDirectory,
-                                               speedMps * mpsToMph, directionDeg, out int filled);
+                                               speedMps * mpsToMph, directionDeg,
+                                               out result.SpeedMph, out result.DirectionDeg, out int filled);
+                result.FilledCells = filled;
                 result.Ok = true;
-                log?.Invoke($"    WindNinja: {Path.GetFileName(vel)} -> ws/wd on the master grid " +
+                log?.Invoke($"    WindNinja: {Path.GetFileName(vel)} -> speed/direction on the master grid " +
                             $"(mean {result.MeanSpeedMph:F1} mph" +
                             (filled > 0 ? $", {filled} edge cells outside WindNinja's mesh filled with the domain average" : "") + ").");
                 return result;
@@ -171,7 +250,8 @@ namespace PREACT.Utility
         /// </summary>
         private static double Resample(
             string velPath, string angPath, MasterGrid grid, string outputDirectory,
-            double fallbackSpeedMph, double fallbackDirectionDeg, out int filled)
+            double fallbackSpeedMph, double fallbackDirectionDeg,
+            out float[,] speedOut, out float[,] directionOut, out int filled)
         {
             float[,] speed = AscRaster.ReadAsc(velPath, out AscRaster.Header header, out bool speedOk);
             float[,] angle = AscRaster.ReadAsc(angPath, out AscRaster.Header _, out bool angleOk);
@@ -258,9 +338,8 @@ namespace PREACT.Utility
                     }
                 }
 
-                GeoTiffRasterWriter.WriteBand(grid, ws, Path.Combine(outputDirectory, "ws.tif"));
-                GeoTiffRasterWriter.WriteBand(grid, wd, Path.Combine(outputDirectory, "wd.tif"));
-
+                speedOut = ws;
+                directionOut = wd;
                 return total / (gx * gy);
             }
             finally

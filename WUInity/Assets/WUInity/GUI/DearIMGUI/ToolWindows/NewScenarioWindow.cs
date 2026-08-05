@@ -38,22 +38,10 @@ namespace Assets.WUInity.GUI.DearIMGUI
         private static readonly string[] WildfireModulesStrings = System.Enum.GetNames(typeof(WildfireModuleInput.WildfireModules));
         private static int _wildfireModuleIndex = (int)WildfireModuleInput.WildfireModules.AscImport;
 
-        //Trigger buffer. The rate of spread deliberately defaults to coming from the fire module
-        //rather than from Behave, because that is what the ELMFIRE-driven trigger campaign does,
-        //and because computing it with Behave makes an initial fuel moisture file mandatory - the
-        //field default of true would otherwise produce a scenario that cannot be loaded back.
         private static bool _wantTriggerBuffer;
-        private static bool _calculateRosFromBehave;
 
-        //Wind fields for k-PERIL, as written by the weather pipeline's WindNinja step. Both are
-        //required, and both come from the same place, so one button sets the pair from a folder
-        //rather than making the user find two files with fixed names.
-        private const string WindSpeedRaster = "ws.tif";
-        private const string WindDirectionRaster = "wd.tif";
-
-        //Amber, for inputs that are required but not yet given. Matches how StepButton colours its
-        //own marker rather than introducing a theme dependency.
-        private static Vector4 WarningColor => new Vector4(0.9f, 0.7f, 0.2f, 1f);
+        //Amber, for inputs that are required but not yet given.
+        private static Vector4 WarningColor => Fields.Warning;
 
         public static void Open(bool resetInput)
         {
@@ -290,60 +278,16 @@ namespace Assets.WUInity.GUI.DearIMGUI
             ImGui.Checkbox("Trigger boundary (k-PERIL)?", ref _wantTriggerBuffer);
             if (_wantTriggerBuffer)
             {
-                //The property is read-only but hands back the instance, so its fields are set here
-                //and the section is written out once Module is set to kPERIL in GenerateScenario.
-                kPERILInput peril = _input.TriggerBufferModule.kPERILInput;
-
-                //Picked individually rather than derived from one folder: a case can easily hold
-                //several candidates for each (a raw WindNinja output and a warped copy beside it),
-                //so guessing by filename picks the wrong one silently.
-                if (ImGui.Button($"Select wind speed raster ({WindSpeedRaster})"))
-                {
-                    FileBrowser.OpenSetFilePath(path => peril.WindSpeedFile = path, "Select wind speed raster", true, FileBrowser.geoTiffFilter);
-                }
-                ImGui.Text($"{nameof(peril.WindSpeedFile)}: {peril.WindSpeedFile}");
-
-                if (ImGui.Button($"Select wind direction raster ({WindDirectionRaster})"))
-                {
-                    FileBrowser.OpenSetFilePath(path => peril.WindDirectionFile = path, "Select wind direction raster", true, FileBrowser.geoTiffFilter);
-                }
-                ImGui.Text($"{nameof(peril.WindDirectionFile)}: {peril.WindDirectionFile}");
-
-                ImGui.TextWrapped($"Wind speed in MILES PER HOUR and direction in degrees, on the fire grid - what the weather pipeline's WindNinja step writes as {WindSpeedRaster} / {WindDirectionRaster}. The unit matters: k-PERIL reads the speed into Anderson's length-to-breadth correlation, which is defined for mi/h.");
-                if (string.IsNullOrEmpty(peril.WindSpeedFile) || string.IsNullOrEmpty(peril.WindDirectionFile))
-                {
-                    ImGui.TextColored(WarningColor, "Required: k-PERIL needs a wind field to derive how elongated fire spread is.");
-                }
-
-                ImGui.Checkbox("Compute rate of spread with Behave", ref _calculateRosFromBehave);
-                if (_calculateRosFromBehave)
-                {
-                    if (ImGui.Button("Select initial fuel moisture file"))
-                    {
-                        FileBrowser.OpenSetFilePath(path => peril.InitialFuelMoistureFile = path, "Select initial fuel moisture file", true);
-                    }
-                    ImGui.Text($"{nameof(peril.InitialFuelMoistureFile)}: {peril.InitialFuelMoistureFile}");
-                    //Required in this mode, and a missing one fails the load rather than degrading.
-                    if (string.IsNullOrEmpty(peril.InitialFuelMoistureFile))
-                    {
-                        ImGui.TextColored(WarningColor, "Required when the rate of spread is computed with Behave.");
-                    }
-                }
-                else
-                {
-                    ImGui.TextWrapped("Rate of spread comes from the fire module's own output, which is what the ELMFIRE-driven trigger campaign uses.");
-                }
-
-                if (ImGui.Button("Select WUI area mask"))
-                {
-                    FileBrowser.OpenSetFilePath(path => peril.WuiAreaFile = path, "Select WUI area mask", true);
-                }
-                ImGui.Text($"{nameof(peril.WuiAreaFile)}: {peril.WuiAreaFile}");
-                ImGui.TextWrapped("The area being protected, one per cell inside it. This is what the painted WUI selection exports.");
-                if (string.IsNullOrEmpty(peril.WuiAreaFile))
-                {
-                    ImGui.TextColored(WarningColor, "Required: without it there is no area to compute a trigger boundary around.");
-                }
+                //Only the choice, not the inputs. This used to pick the wind rasters and the WUI mask here and
+                //mark all three "Required", which was wrong in both directions: for an ELMFIRE scenario those
+                //rasters do not exist yet - they are written by the case build, which happens after the
+                //scenario does - and k-PERIL now takes the case's own ws/wd and the painted WUI area when they
+                //are left empty. So the creator was demanding files that could not exist, for settings that
+                //did not need them, in the third place in the app offering the same three fields.
+                ImGui.TextWrapped("Nothing more to set here. The wind field comes from the ELMFIRE case's own "
+                    + "ws/wd - the same wind the fire was computed with - and the protected area from the "
+                    + "painted WUI selection. Override either under Hazards > Trigger boundary once the "
+                    + "scenario exists.");
 
                 if (!_wantWildfire)
                 {
@@ -456,7 +400,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
             if (_wantTriggerBuffer)
             {
                 kPERILInput peril = _input.TriggerBufferModule.kPERILInput;
-                peril.CalculateROSFromBehave = _calculateRosFromBehave;
 
                 //A required key, and an empty value is omitted rather than written, so the scenario
                 //would fail to load without a name here. The campaign overwrites it per realization.

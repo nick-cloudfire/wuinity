@@ -225,7 +225,13 @@ namespace kPERIL
                         {
                             for (int yb = 0; yb < perilData.totalY; yb++)
                             {
-                                if (singleCellTriggerBoundary[xb,yb] >= 0) triggerBoundary[xb,yb] = 1;
+                                //Within the required egress time, not merely reached. The search records a
+                                //neighbour's travel time before deciding whether to expand it, so cells one
+                                //step beyond rset carry a finite cost too - accepting anything >= 0 therefore
+                                //added a ring of cells the fire cannot cross in time, making every boundary
+                                //one cell too large in every direction. NaN marks unreached and fails this
+                                //test, as it did the old one.
+                                if (singleCellTriggerBoundary[xb,yb] <= rset) triggerBoundary[xb,yb] = 1;
                             }
                         }
                     }
@@ -252,6 +258,12 @@ namespace kPERIL
             {
                 for (int y = 1; y < perilData.totalY - 1; y++)
                 {
+                    //The cell itself first. Without this a hole inside the WUI area - a cell that is not WUI
+                    //but whose four neighbours are - was marked "interior", so it was excluded from the
+                    //perimeter search and then written out as 3 by the caller, a value the raster has no
+                    //meaning for.
+                    if (perilData.wuiAreaRaster[x,y] == 0) continue;
+
                     if (perilData.wuiAreaRaster[x + 1,y] == 0) continue;
                     if (perilData.wuiAreaRaster[x - 1,y] == 0) continue;
                     if (perilData.wuiAreaRaster[x,y + 1] == 0) continue;

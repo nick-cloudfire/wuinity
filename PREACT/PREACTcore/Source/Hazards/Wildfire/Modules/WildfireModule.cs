@@ -59,7 +59,33 @@ namespace PREACT.Wildfire
         /// </remarks>
         public abstract bool CellHasBurned(int x, int y);
 
+        /// <summary>
+        /// When the fire reached this cell, in seconds from the start of the simulation, or
+        /// <see cref="float.MaxValue"/> if it never did or the cell is outside the grid.
+        /// </summary>
+        /// <remarks>
+        /// Exposed for k-PERIL, which has no time axis and so has to collapse a time-varying wind field to
+        /// one value per cell: the wind at the hour the fire actually arrived there. <see cref="CellHasBurned"/>
+        /// answered whether, but not when, and "when" is what selects the band.
+        /// </remarks>
+        public abstract float GetTimeOfArrival(int x, int y);
+
         public abstract void GetOffsetAndSize(out Vector2d offset, out Vector2d size);
+
+        /// <summary>
+        /// The fire grid's south-west corner in the case's own projected coordinates, or (0,0) when the module
+        /// does not know one.
+        /// </summary>
+        /// <remarks>
+        /// Needed so a raster derived from this grid — a trigger boundary above all — can be written where the
+        /// ground it describes actually is. k-PERIL's output used to be written with a hardcoded origin of
+        /// (0, 0), which made every boundary, and the campaign's aggregated probability raster with it,
+        /// impossible to overlay on the domain without repositioning it by hand.
+        /// </remarks>
+        public virtual Vector2d GetGridOriginUtm()
+        {
+            return Vector2d.zero;
+        }
 
         /// <summary>
         /// Returns state of cell on mesh based on simulation position. Returns dead if outside of mesh.

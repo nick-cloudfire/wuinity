@@ -64,9 +64,45 @@ namespace Assets.WUInity.GUI.DearIMGUI
             if (_getRelativePath)
             {
                 filePath = Path.GetRelativePath(PreactGUI.Engine.WorkingFolder, paths[0]);
-            }            
+            }
             _onFileSet?.Invoke(filePath);
             //_onFileSet = null;
+        }
+
+        /// <summary>
+        /// Picks a directory. Returned relative to the scenario folder when it is inside it, absolute
+        /// otherwise.
+        /// </summary>
+        /// <remarks>
+        /// Conditional rather than always relative, unlike <see cref="OpenSetFilePath"/>: the folders asked for
+        /// here are as often outside the scenario as in it — a GDAL bin directory, an ELMFIRE install — and
+        /// <c>Path.GetRelativePath</c> answers those with a chain of <c>..</c> that is correct, unreadable, and
+        /// breaks as soon as the scenario is moved.
+        /// </remarks>
+        public static void OpenSetFolderPath(Action<string> onFolderSet, string dialogHeader)
+        {
+            _onFileSet = onFolderSet;
+            SimpleFileBrowser.FileBrowser.SetFilters(true);
+            string initialPath = PreactGUI.Engine.WorkingFolder;
+            SimpleFileBrowser.FileBrowser.ShowLoadDialog(SetFolderPath, Cancel,
+                SimpleFileBrowser.FileBrowser.PickMode.Folders, false, initialPath, null, dialogHeader, "Set");
+        }
+
+        private static void SetFolderPath(string[] paths)
+        {
+            string folder = paths[0];
+            string root = PreactGUI.Engine.WorkingFolder;
+
+            if (!string.IsNullOrEmpty(root))
+            {
+                string relative = Path.GetRelativePath(root, folder);
+                if (!relative.StartsWith("..") && !Path.IsPathRooted(relative))
+                {
+                    folder = relative;
+                }
+            }
+
+            _onFileSet?.Invoke(folder);
         }
 
         /*public static void OpenCreateBaseData()

@@ -9,6 +9,31 @@ namespace PREACT.Input
         public string WeatherFile = string.Empty;
         public Vector2d DesiredLatLon = Vector2d.zero;
 
+        /// <summary>
+        /// The moment in the weather record that the simulation's own start time reads from. Unset means the
+        /// simulation's clock is looked up directly, which is the behaviour every scenario had before this key.
+        /// </summary>
+        /// <remarks>
+        /// This exists because a scenario's calendar date and its weather are two different things once the
+        /// fire comes from ELMFIRE. The case builder draws a historical peak fire-weather day out of the ERA5
+        /// record — 2001-08-09, say — and computes the fire against that day's hours, while the scenario is
+        /// dated whenever the evacuation is being modelled. So the fire had one weather and everything the
+        /// platform reported about the weather had another: the temperature and humidity on screen were from a
+        /// date the fire knew nothing about.
+        ///
+        /// Set by the case build to the same anchor the weather rasters were written from, so one number ties
+        /// the two together. Saved in the <c>.wui</c> rather than recomputed, which also makes it the record of
+        /// which day a case was built for.
+        ///
+        /// An <b>offset</b> rather than moving the simulation's own dates: response curves with absolute times,
+        /// evacuation orders and timed ignitions are all stated on the scenario's calendar, and shifting that
+        /// to the sampled day would move all of them.
+        /// </remarks>
+        public DateTime WeatherAnchorDateTime = default;
+
+        /// <summary>Whether an anchor was given at all.</summary>
+        public bool HasWeatherAnchor => WeatherAnchorDateTime != default;
+
         //Starting values for the fire weather indices the weather manager carries forward: the Canadian
         //FFMC/DMC/DC, its hourly FFMC, and the Keetch-Byram drought index. They live here because they are
         //weather, computed from the weather series whatever fire module is running - and because they used
@@ -79,6 +104,18 @@ namespace PREACT.Input
             ReadDouble(inputToParse, nameof(StartHourlyFFMC), ref StartHourlyFFMC);
             ReadDouble(inputToParse, nameof(StartKBDI), ref StartKBDI);
             ReadDouble(inputToParse, nameof(MeanAnnualPrcp), ref MeanAnnualPrcp);
+
+            //Optional, and unset means "no offset" - which is what every scenario written before this key did.
+            nameOfInput = nameof(WeatherAnchorDateTime);
+            if (inputToParse.TryGetValue(nameOfInput, out userInput) && userInput.Length > 0)
+            {
+                if (!DateTime.TryParse(userInput, System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.None, out WeatherAnchorDateTime))
+                {
+                    WeatherAnchorDateTime = default;
+                    PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
+                }
+            }
 
             success = true;
         }

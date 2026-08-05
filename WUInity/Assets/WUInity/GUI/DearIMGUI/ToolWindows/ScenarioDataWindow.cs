@@ -68,6 +68,54 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 ImGuiInputTextFlags.Password);
         }
 
+        /// <summary>
+        /// Building the ELMFIRE case, beside the other prepare-once steps.
+        /// </summary>
+        /// <remarks>
+        /// The build used to happen only as a side effect of starting a run, controlled by a checkbox three
+        /// tabs away in the scenario editor. It downloads a DEM, runs WindNinja once per weather band and
+        /// marches Nelson over a twenty-day conditioning window, so it takes minutes and writes files that are
+        /// then reused — exactly the shape of every other step in this window. Discovering that while waiting
+        /// for a simulation to start is the wrong place to find out.
+        /// </remarks>
+        private static void DrawFireSection(PREACTInput input)
+        {
+            bool isElmfire = input.WildfireModule != null
+                             && input.WildfireModule.Module == WildfireModuleInput.WildfireModules.ELMFIRE;
+
+            if (!isElmfire)
+            {
+                return;
+            }
+
+            ImGui.SeparatorText("Fire (ELMFIRE case)");
+
+            if (ScenarioDataSteps.StepButton("Build ELMFIRE case", ScenarioDataSteps.ElmfireNamelistFile))
+            {
+                ScenarioDataSteps.BuildElmfireCase();
+            }
+
+            ImGui.TextDisabled("Warps the source layers onto the case grid, writes the weather series with "
+                + "WindNinja and Nelson, and generates the namelist. Only produces what the case is missing.");
+
+            ElmfireInput elmfire = input.WildfireModule.ElmfireInput;
+
+            //The two settings that decide what this button actually does, echoed here rather than only living
+            //in the editor - pressing a build button and having it keep everything is otherwise puzzling.
+            if (elmfire.RebuildExistingLayers)
+            {
+                ImGui.TextColored(new Vector4(0.9f, 0.45f, 0.3f, 1f),
+                    "RebuildExistingLayers is on: this replaces the case's rasters, weather and namelist.");
+            }
+            else
+            {
+                ImGui.TextDisabled("Layers the case already has are kept. Turn on RebuildExistingLayers under "
+                    + "Hazards > Fire > Building the case to replace them.");
+            }
+
+            ImGui.TextDisabled("Source layers (fuel, canopy, buildings) are named under Hazards > Fire.");
+        }
+
         public static void Draw()
         {
             if (!_isOpen)
@@ -150,6 +198,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
             if (ImGui.Button("Download LANDFIRE landscape")) { ScenarioDataSteps.DownloadLandfire(); }
             ImGui.TextDisabled("LANDFIRE covers the United States only, and carries fuels as well as terrain. "
                 + "Elsewhere, the DEM above plus a fuel model raster of your own.");
+
+            DrawFireSection(input);
 
             ImGui.EndDisabled();
 

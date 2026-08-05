@@ -89,6 +89,13 @@ namespace PREACT
         {
             _isRunning = true;
             _state = SimulationState.Initializing;
+
+            //Before anything draws. This gives the thread this simulation is about to run on its own random
+            //stream, keyed to the scenario's seed and this run's index - which is both what makes a run
+            //repeatable and what stops a parallel batch sharing one System.Random across threads, a type that
+            //corrupts under concurrent use.
+            Math.Random.SeedForSimulation(Input.Simulation.RandomSeed, _simulationIndex);
+
             PreRun();
 
             //A failed setup ends the run here. PreRun sets the Error state and returns, and this used to

@@ -55,6 +55,67 @@ namespace PREACT.Utility
         }
 
         /// <summary>
+        /// Writes a multi-band GeoTIFF from one <c>[ncols, nrows]</c> array per band — a real
+        /// time-varying weather series, one band per <c>DT_METEOROLOGY</c> step, in the same
+        /// lower-left-origin convention as <see cref="WriteBand"/>.
+        /// </summary>
+        /// <remarks>
+        /// Bands are written one at a time and never all held as a single buffer: a weather series
+        /// long enough to matter is the largest thing this pipeline produces (72 bands of a 566x541
+        /// domain is 88 MB), and the per-band cost is what keeps that off the heap.
+        /// </remarks>
+        public static void WriteBands(MasterGrid grid, System.Collections.Generic.IList<float[,]> bands, string outputPath)
+        {
+            if (bands == null || bands.Count == 0)
+            {
+                throw new System.ArgumentException("A time series needs at least one band.", nameof(bands));
+            }
+
+            int ncols = grid.Header.Ncols;
+            int nrows = grid.Header.Nrows;
+
+            for (int b = 0; b < bands.Count; ++b)
+            {
+                if (bands[b] == null)
+                {
+                    throw new System.ArgumentException($"Band {b + 1} of {bands.Count} is missing.", nameof(bands));
+                }
+
+                //Checked per band rather than once: a series assembled band by band is exactly where one
+                //raster of the wrong size can slip in, and GDAL would accept the write and misplace the data.
+                if (bands[b].GetLength(0) != ncols || bands[b].GetLength(1) != nrows)
+                {
+                    throw new System.ArgumentException(
+                        $"Band {b + 1} is {bands[b].GetLength(0)}x{bands[b].GetLength(1)} but the master grid is {ncols}x{nrows}.",
+                        nameof(bands));
+                }
+            }
+
+            Dataset ds = CreateOnGrid(grid, ncols, nrows, bands.Count, outputPath);
+            float[] buffer = new float[ncols * nrows];
+
+            for (int b = 0; b < bands.Count; ++b)
+            {
+                float[,] data = bands[b];
+                for (int row = 0; row < nrows; ++row)
+                {
+                    int yIndex = nrows - 1 - row; //flip: GDAL row 0 is north, y index 0 is south
+                    for (int x = 0; x < ncols; ++x)
+                    {
+                        buffer[row * ncols + x] = data[x, yIndex];
+                    }
+                }
+
+                Band band = ds.GetRasterBand(b + 1);
+                band.SetNoDataValue(grid.Header.NoDataValue);
+                band.WriteRaster(0, 0, ncols, nrows, buffer, ncols, nrows, 0, 0);
+            }
+
+            ds.FlushCache();
+            ds.Dispose();
+        }
+
+        /// <summary>
         /// Writes a multi-band GeoTIFF with every band set to the same constant value — the
         /// "constant transient rasters" fallback docs/probabilistic-trigger-convergence.md
         /// allows for per-realization wind/moisture until a real time-varying series (WindNinja

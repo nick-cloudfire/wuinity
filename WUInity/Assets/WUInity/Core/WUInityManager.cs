@@ -578,14 +578,41 @@ namespace WUInity
             }          
         }          
 
+        /// <summary>
+        /// Whether the brush is live. The single source of truth for it.
+        /// </summary>
+        /// <remarks>
+        /// The two paint windows each kept their own <c>_painting</c> bool as well, so the app had three
+        /// answers to "is painting on?" and nothing reconciled them: painting in both windows and closing one
+        /// left the other still offering "Stop painting" for a brush that was already down, and pressing it
+        /// stopped a brush that was not running. Both windows now read this instead of remembering.
+        /// </remarks>
         public bool IsPainterActive()
         {
-            if(!Painter.gameObject.activeSelf)
-            {
-                return false;
-            }
+            return _painter != null && _painter.gameObject.activeSelf;
+        }
 
-            return true;
+        /// <summary>True when the brush is live and writing the mask this mode names.</summary>
+        public bool IsPaintingMode(Painter.PaintMode mode)
+        {
+            return IsPainterActive() && _painter.GetPaintMode() == mode;
+        }
+
+        /// <summary>
+        /// True when the brush is live in any of the fire-grid area modes — what the fire paint window owns,
+        /// as against the evacuation-group window.
+        /// </summary>
+        public bool IsPaintingFireArea
+        {
+            get
+            {
+                if (!IsPainterActive()) return false;
+
+                Painter.PaintMode mode = _painter.GetPaintMode();
+                return mode == Painter.PaintMode.WUIArea
+                       || mode == Painter.PaintMode.RandomIgnitionArea
+                       || mode == Painter.PaintMode.InitialIgnition;
+            }
         }
 
         public void StartPainter(Painter.PaintMode paintMode)

@@ -22,7 +22,7 @@ namespace PREACTcli
         /// <summary>ELMFIRE input stems a user raster can be supplied for, each as <c>--&lt;stem&gt; &lt;path&gt;</c>.</summary>
         private static readonly string[] UserRasterStems =
         {
-            "fbfm13", "cc", "ch", "cbh", "cbd",
+            "fbfm40", "fbfm13", "cc", "ch", "cbh", "cbd",
             "bldg_area_avg", "bldg_separation_distance", "bldg_nonburnable_frac",
             "bldg_footprint_frac", "bldg_fuel_model",
             "ignition_mask", "barriers",
@@ -65,6 +65,7 @@ namespace PREACTcli
                     case "--m10":       o.Weather.FallbackM10Percent = Dbl(Next(args, ref i)); break;
                     case "--m100":      o.Weather.FallbackM100Percent = Dbl(Next(args, ref i)); break;
                     case "--copy":      o.CopyFiles.Add(Next(args, ref i)); break;
+                    case "--canopy-dataset": o.CanopyDatasetFolder = Next(args, ref i); break;
                     case "--painted":      o.PaintedMasksPath = Next(args, ref i); break;
                     case "--painted-grid": o.PaintedMasksGridPath = Next(args, ref i); break;
                     case "--force":     o.Force = true; break;
@@ -115,6 +116,12 @@ namespace PREACTcli
 
             o.Weather.WindNinjaExe ??= FindWindNinja();
 
+            //Source layers named by the scenario itself, so a case is reproducible from the .wui rather than
+            //from whoever remembered the right --cc argument. Read after the flags and only into stems the
+            //flags did not set, so an explicit argument still wins - which is what makes it usable for trying
+            //one layer against a scenario without editing it.
+            ReadSourceLayersFromWui(wui, o);
+
             //Located rather than required. ELMFIRE resolves GDAL itself from the PATH when PATH_TO_GDAL is
             //left at 'auto', so the namelist is better off without the key than with a guessed one - but a
             //machine where the tools are installed somewhere off the PATH, which is the normal Windows case,
@@ -159,9 +166,14 @@ namespace PREACTcli
                     }
                 }
                 foreach (string f in r.Fallbacks) Console.WriteLine($"  !         {f}");
-                if (!r.Written.Contains("fbfm13"))
+                if (r.FuelStem == null)
                 {
-                    Console.WriteLine("  WARNING   no fuel model raster (--fbfm13); ELMFIRE will refuse to start on this case.");
+                    Console.WriteLine("  WARNING   no fuel model raster (--fbfm40 or --fbfm13); ELMFIRE will refuse "
+                                      + "to start on this case.");
+                }
+                else
+                {
+                    Console.WriteLine($"  fuel      {r.FuelStem}");
                 }
                 Console.WriteLine($"  namelist  {r.NamelistPath}");
 
@@ -180,6 +192,21 @@ namespace PREACTcli
                     //looks identical on disk to one that used the real chain.
                     foreach (string f in r.Weather.Fallbacks) Console.WriteLine($"            ! {f}");
                 }
+
+                //A non-zero exit for a case that cannot legitimately be run, so a script that builds a case
+                //and then runs it stops here rather than producing a fire from layers describing different
+                //ground. The rasters are left on disk to inspect either way.
+                if (r.Validation != null && !r.Validation.Ok)
+                {
+                    Console.Error.WriteLine();
+                    Console.Error.WriteLine("The case is not internally consistent and should not be run:");
+                    foreach (ElmfireCaseValidator.Problem p in r.Validation.Fatal)
+                    {
+                        Console.Error.WriteLine("  " + p);
+                    }
+                    return 1;
+                }
+
                 Console.WriteLine();
                 Console.WriteLine("Run a campaign against it with:");
                 Console.WriteLine($"  PREACTcli converge-trigger --wui {wui} --max 200 --resume \\");
@@ -253,12 +280,37 @@ namespace PREACTcli
             }
 
             ReadIgnitionPoints(lines, o, quiet);
+            ReadNamelistSettings(lines, o, quiet);
 
             if (!quiet)
             {
                 Console.WriteLine($"Case '{o.Name}': lower-left {lat},{lon}, domain {east}x{north} m, start {o.StartDateTime:u}");
             }
             return true;
+        }
+
+        /// <summary>
+        /// Reads the scenario's <c>[ElmfireNamelist]</c> section, so a case built from the command line gets
+        /// the same physics as one built from the GUI. Absent, the builder's defaults apply - which is what
+        /// every scenario written before the section existed is.
+        /// </summary>
+        private static void ReadNamelistSettings(string[] lines, ElmfireCaseBuilder.Options o, bool quiet)
+        {
+            for (int i = 0; i < lines.Length; ++i)
+            {
+                if (!lines[i].Trim().Equals("[" + PREACT.Input.ElmfireInput.NamelistSection + "]",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                o.Namelist = PREACT.Input.ElmfireNamelistInput.Parse(lines, i);
+                if (!quiet)
+                {
+                    Console.WriteLine($"Namelist settings from the scenario's [{PREACT.Input.ElmfireInput.NamelistSection}] section.");
+                }
+                return;
+            }
         }
 
         /// <summary>
@@ -328,6 +380,78 @@ namespace PREACTcli
             }
         }
 
+        /// <summary>
+        /// Adds the <c>[ELMFIRE]</c> section's source layers to the build, resolved against the scenario folder.
+        /// </summary>
+        /// <remarks>
+        /// A local parse in the same style as <see cref="TryReadDomain"/>, and for the same reason: a full
+        /// <c>PREACTInput</c> load validates the whole scenario — population, SUMO, fire rasters — none of
+        /// which need exist yet when the case is being built.
+        ///
+        /// Layers a flag already set are left alone, so <c>--cc</c> overrides the scenario rather than being
+        /// overridden by it.
+        /// </remarks>
+        private static void ReadSourceLayersFromWui(string wuiPath, ElmfireCaseBuilder.Options o)
+        {
+            string[] lines;
+            try { lines = File.ReadAllLines(wuiPath); }
+            catch { return; }
+
+            string root = Path.GetDirectoryName(Path.GetFullPath(wuiPath)) ?? ".";
+
+            //The stem each key maps to, mirroring ElmfireInput.GetSourceRasters. The fuel stem depends on
+            //FuelModelStandard, so it is resolved first.
+            //The canopy dataset, unless a flag already named one. Resolved against the scenario folder like the
+            //individual layers, so a .wui can carry a relative path to a shared dataset.
+            if (string.IsNullOrEmpty(o.CanopyDatasetFolder))
+            {
+                string dataset = Get(lines, "ELMFIRE", "CanopyDatasetFolder");
+                if (!string.IsNullOrWhiteSpace(dataset))
+                {
+                    o.CanopyDatasetFolder = Path.IsPathRooted(dataset) ? dataset : Path.Combine(root, dataset);
+                    Console.WriteLine($"  canopy dataset: from the scenario ({dataset})");
+                }
+            }
+
+            string fuelStandard = Get(lines, "ELMFIRE", "FuelModelStandard");
+            string fuelStem = string.Equals(fuelStandard, "FBFM13", StringComparison.OrdinalIgnoreCase)
+                ? "fbfm13" : "fbfm40";
+
+            var mapping = new (string Key, string Stem)[]
+            {
+                ("FuelModelFile", fuelStem),
+                ("CanopyCoverFile", "cc"),
+                ("CanopyHeightFile", "ch"),
+                ("CanopyBaseHeightFile", "cbh"),
+                ("CanopyBulkDensityFile", "cbd"),
+                ("BuildingAreaFile", "bldg_area_avg"),
+                ("BuildingSeparationFile", "bldg_separation_distance"),
+                ("BuildingNonBurnableFractionFile", "bldg_nonburnable_frac"),
+                ("BuildingFootprintFractionFile", "bldg_footprint_frac"),
+                ("BuildingFuelModelFile", "bldg_fuel_model"),
+                ("IgnitionMaskFile", "ignition_mask"),
+                ("BarriersFile", "barriers"),
+            };
+
+            foreach ((string key, string stem) in mapping)
+            {
+                if (o.UserRasters.ContainsKey(stem)) continue; //a flag set it
+
+                string value = Get(lines, "ELMFIRE", key);
+                if (string.IsNullOrWhiteSpace(value)) continue;
+
+                string path = Path.IsPathRooted(value) ? value : Path.Combine(root, value);
+                if (!File.Exists(path))
+                {
+                    Console.Error.WriteLine($"  [ELMFIRE] {key} names {value}, which is not there - skipping that layer.");
+                    continue;
+                }
+
+                o.UserRasters[stem] = path;
+                Console.WriteLine($"  {stem}: from the scenario ({value})");
+            }
+        }
+
         private static string Get(string[] lines, string section, string key)
         {
             bool inSection = false;
@@ -364,29 +488,15 @@ namespace PREACTcli
 
 
         /// <summary>
-        /// Looks for the Windows installer's <c>WindNinja_cli.exe</c> so the terrain-wind stage
-        /// works without being pointed at it. Only the standard install root is probed — anywhere
-        /// else, pass <c>--windninja</c>.
+        /// Looks for the Windows installer's <c>WindNinja_cli.exe</c> so the terrain-wind stage works
+        /// without being pointed at it. Anywhere non-standard, pass <c>--windninja</c>.
         /// </summary>
-        public static string FindWindNinja()
-        {
-            try
-            {
-                foreach (string root in new[] { @"C:\WindNinja", @"C:\Program Files\WindNinja" })
-                {
-                    if (!Directory.Exists(root)) continue;
-                    //Installs are versioned (WindNinja-3.12.1\bin\...), so take the newest.
-                    string[] hits = Directory.GetFiles(root, "WindNinja_cli.exe", SearchOption.AllDirectories);
-                    if (hits.Length > 0)
-                    {
-                        Array.Sort(hits, StringComparer.OrdinalIgnoreCase);
-                        return hits[hits.Length - 1];
-                    }
-                }
-            }
-            catch { }
-            return null;
-        }
+        /// <remarks>
+        /// The probing itself lives in <see cref="WindNinjaRunner.FindExecutable"/>. It used to live here,
+        /// which meant only the CLI could find WindNinja and a case built from the GUI silently got a
+        /// uniform wind field on the same machine.
+        /// </remarks>
+        public static string FindWindNinja() => WindNinjaRunner.FindExecutable();
 
         private static string Next(string[] args, ref int i)
         {
@@ -419,14 +529,20 @@ namespace PREACTcli
             Console.WriteLine("      --conditioning-days <n>        Nelson spin-up window (default 20)");
             Console.WriteLine("      --burning-from/-to <0-23>      burning period the moisture minimum is taken over (default 10-18)");
             Console.WriteLine("      --windninja <exe>              WindNinja_cli (auto-detected under C:\\WindNinja)");
-            Console.WriteLine("      --wn-mesh <choice>             coarse (default) | medium | fine");
+            Console.WriteLine("      --wn-mesh <choice>             coarse | medium | fine (default)");
             Console.WriteLine("      --wn-vegetation <type>         grass (default) | brush | trees");
             Console.WriteLine("      --no-climatology               skip the chain, write uniform rasters");
             Console.WriteLine("      fallbacks, used only where a stage above cannot run:");
             Console.WriteLine("      --wind <m/s> --wind-dir <deg> --m1/--m10/--m100 <%>");
             Console.WriteLine("      --force            build into a non-empty output directory");
+            Console.WriteLine("      --canopy-dataset <dir>         FIRE-RES pan-European canopy rasters; supplies");
+            Console.WriteLine("                                     cc/ch/cbh/cbd for any not named individually,");
+            Console.WriteLine("                                     clipped to this case. Real units, so the");
+            Console.WriteLine("                                     LANDFIRE scaling flags are forced off.");
             Console.WriteLine("      user-supplied rasters, warped onto the master grid:");
             Console.WriteLine("        " + string.Join(", ", Array.ConvertAll(UserRasterStems, s => "--" + s + " <tif>")));
+            Console.WriteLine("      the scenario's own [ELMFIRE] FuelModelFile / CanopyCoverFile / Building*File");
+            Console.WriteLine("      keys are read for the same layers; a flag above overrides one of them.");
         }
     }
 }

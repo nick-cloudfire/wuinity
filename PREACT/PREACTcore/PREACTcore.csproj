@@ -50,6 +50,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Copied beside the assembly so both PREACTcli and Unity can find it at runtime, the same way
+         the native runtimes below are reached. -->
+    <None Update="Templates\elmfire\template.data">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
     <None Update="Runtimes\Native\FOFEM\x64\FOFEM.dll">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
