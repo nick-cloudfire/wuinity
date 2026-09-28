@@ -54,6 +54,7 @@ namespace PREACT.Tests
             IntegrationTests.Register(runner);
             TriggerTests.Register(runner);
             PipelineTests.Register(runner);
+            GuiContractTests.Register(runner);
 
             if (examples)
             {

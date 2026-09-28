@@ -1208,7 +1208,7 @@ namespace PREACT.Wildfire
 				return;
 			}			
 
-			using (BinaryReader reader = new BinaryReader(File.Open(filePath, FileMode.Open)))
+			using (BinaryReader reader = new BinaryReader(File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read)))
 			{
 				Header.CrownFuels = reader.ReadInt32();
 				Header.GroundFuels = reader.ReadInt32();
@@ -1404,7 +1404,7 @@ namespace PREACT.Wildfire
 				{
 					double NumAlloc;
 
-					using (BinaryReader reader = new BinaryReader(File.Open(filePath, FileMode.Open)))
+					using (BinaryReader reader = new BinaryReader(File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read)))
 					{
 						//fseek(landfile, headsize, SEEK_SET);
 						//if((landscape=(short *) calloc(Header.numnorth*Header.numeast, NumVals*sizeof(short)))!=NULL)

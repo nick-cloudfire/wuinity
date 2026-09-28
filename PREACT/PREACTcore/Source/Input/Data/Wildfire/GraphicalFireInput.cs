@@ -161,7 +161,9 @@ namespace PREACT
                 return;
             }
 
-            using (FileStream fs = new FileStream(file, FileMode.Open))
+            //Read-only, and letting others read too: a painting shared read-only, or one open elsewhere for reading,
+            //failed to load because it was opened for writing as well.
+            using (FileStream fs = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read))
             {
                 using (BinaryReader br = new BinaryReader(fs))
                 {
