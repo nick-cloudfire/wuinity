@@ -115,6 +115,14 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                 _inputs.Remove(_oldKey);
                 CopyInto(_input, _original);
                 _inputs[_original.Name] = _original;
+
+                //Before anyone hears of the edit: the paint window re-reads the group order on it, and the painter carries
+                //cells across by name, so the renamed group's painted (and maybe unsaved) cells have to be known by the
+                //new name first.
+                if (_original.Name != _oldKey)
+                {
+                    PreactGUI.WUInity?.Painter?.RenameEvacGroup(_oldKey, _original.Name);
+                }
             }
             else
             {

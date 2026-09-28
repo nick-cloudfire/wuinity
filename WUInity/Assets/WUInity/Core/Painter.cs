@@ -504,6 +504,28 @@ namespace WUInity
             _evacGroupColors = colors ?? new Color[0];
         }
 
+        /// <summary>
+        /// A group was renamed: its cells stay its own. Ownership is carried across <see cref="SetEvacGroups"/> by name,
+        /// so a rename used to read as the group removed and another added - its painted, unsaved cells became
+        /// nobody's. Nothing happens when the painter does not know the old name, or already knows the new one.
+        /// </summary>
+        public void RenameEvacGroup(string oldName, string newName)
+        {
+            if (string.IsNullOrEmpty(oldName) || string.IsNullOrEmpty(newName) || oldName == newName)
+            {
+                return;
+            }
+
+            int index = System.Array.IndexOf(_evacGroupNames, oldName);
+            if (index < 0 || System.Array.IndexOf(_evacGroupNames, newName) >= 0)
+            {
+                return;
+            }
+
+            _evacGroupNames = (string[])_evacGroupNames.Clone();
+            _evacGroupNames[index] = newName;
+        }
+
         private static bool SameNames(string[] a, string[] b)
         {
             if (a.Length != b.Length) return false;
