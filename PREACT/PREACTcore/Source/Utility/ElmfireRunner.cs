@@ -142,7 +142,7 @@ namespace PREACT.Utility
             File.WriteAllLines(result.NamelistPath, namelistLines);
 
             log?.WriteLine($"[{runId}] running ELMFIRE...");
-            int exit = RunProcess(elmfireExe, runDir, "outputs/" + RunNamelistName, gdalBinDir, out string stderrTail);
+            int exit = RunProcess(elmfireExe, runDir, "outputs/" + RunNamelistName, gdalBinDir, generation, out string stderrTail);
             result.Elapsed = clock.Elapsed;
 
             if (ElmfireProcesses.CancelledSince(generation))
@@ -490,7 +490,8 @@ namespace PREACT.Utility
         /// timestep, which at --parallel width would flood and interleave on the console - and a tail of stderr
         /// is kept for the failure message. Registered with <see cref="ElmfireProcesses"/> so a cancel reaches it.
         /// </summary>
-        private static int RunProcess(string exe, string runDir, string dataFileName, string gdalBinDir, out string stderrTail)
+        private static int RunProcess(string exe, string runDir, string dataFileName, string gdalBinDir, long generation,
+                                      out string stderrTail)
         {
             var psi = new ProcessStartInfo
             {
@@ -531,15 +532,16 @@ namespace PREACT.Utility
                 };
 
                 p.Start();
-                ElmfireProcesses.Register(p);
+                //Killed at once if the run was cancelled while it was still being set up.
+                ElmfireProcesses.Register(p, generation);
                 try
                 {
                     p.BeginOutputReadLine();
                     p.BeginErrorReadLine();
 
                     // ELMFIRE prompts "Hit Enter to continue" on a fatal input error and would otherwise block
-                    // forever waiting on a console that is not there.
-                    p.StandardInput.Close();
+                    // forever waiting on a console that is not there. (It may already have been killed.)
+                    try { p.StandardInput.Close(); } catch (IOException) { }
 
                     p.WaitForExit();
                 }

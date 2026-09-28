@@ -38,6 +38,28 @@ namespace PREACT.Utility
             lock (Sync) Running.Add(process);
         }
 
+        /// <summary>
+        /// Registers a process started for work that began at <paramref name="generation"/>, and kills it at once
+        /// when a cancel came in since - after the work started but before its process existed, so
+        /// <see cref="KillAll"/> could not have seen it. Returns false when it was killed.
+        /// </summary>
+        /// <remarks>
+        /// Without this a stop pressed while a run was still preparing (writing the namelist, hashing inputs) was
+        /// missed: the process started a moment later and ran to the end.
+        /// </remarks>
+        public static bool Register(Process process, long generation)
+        {
+            if (process == null) return false;
+            lock (Sync) Running.Add(process);
+            //Added before looking: a KillAll after this line sees the process, one before it changed the generation.
+            if (CancelledSince(generation))
+            {
+                KillTree(process);
+                return false;
+            }
+            return true;
+        }
+
         public static void Unregister(Process process)
         {
             if (process == null) return;

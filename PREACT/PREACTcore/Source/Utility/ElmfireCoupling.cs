@@ -168,10 +168,19 @@ namespace PREACT.Utility
             return true;
         }
 
+        /// <summary>
+        /// Builds the case when the scenario asks for it, then runs ELMFIRE on it (or reuses the output of an
+        /// identical earlier run), for one simulation. Nothing is written into <paramref name="input"/>.
+        /// </summary>
+        /// <remarks>
+        /// A <see cref="ElmfireRunner.CancelAll"/> at any point - while the case is still being built or the
+        /// namelist written, not only while ELMFIRE runs - makes this return with <see cref="Result.Cancelled"/>.
+        /// </remarks>
         public static Result Prepare(PREACTInput input, ElmfireInput settings, Action<string> log)
         {
             var result = new Result();
             void Log(string m) => log?.Invoke(m);
+            long generation = ElmfireProcesses.Generation;
 
             string caseDir = Path.Combine(input.RootFolder, settings.CaseDirectory);
 
@@ -191,6 +200,7 @@ namespace PREACT.Utility
             {
                 if (!TryBuildCase(input, settings, caseDir, Log, out string buildProblem, out ElmfireCaseBuilder.Result built))
                 {
+                    result.Cancelled = ElmfireProcesses.CancelledSince(generation);
                     result.Message = buildProblem;
                     return result;
                 }
@@ -241,6 +251,7 @@ namespace PREACT.Utility
                     + "WindNinja solve per hour of fire.");
                 if (!TryBuildCase(input, settings, caseDir, Log, out string extendProblem, out ElmfireCaseBuilder.Result extended))
                 {
+                    result.Cancelled = ElmfireProcesses.CancelledSince(generation);
                     result.Message = "Could not extend the case's weather: " + extendProblem;
                     return result;
                 }
@@ -267,6 +278,14 @@ namespace PREACT.Utility
             {
                 result.Message = "elmfire.exe was not found. Set [ELMFIRE] ElmfireExe, or put the build under "
                                  + "ThirdParty/elmfire/build/windows/bin.";
+                return result;
+            }
+
+            //A stop while the case was built or the inputs hashed: ELMFIRE has not started, so nothing was killed.
+            if (ElmfireProcesses.CancelledSince(generation))
+            {
+                result.Cancelled = true;
+                result.Message = "stopped before ELMFIRE started.";
                 return result;
             }
 

@@ -641,9 +641,19 @@ namespace PREACT
             }
         }
 
+        /// <summary>
+        /// Stops the run: no further simulation is started, the current one stops at its next step, and every
+        /// ELMFIRE (and WindNinja) process tree this process started is killed.
+        /// </summary>
+        /// <remarks>
+        /// A simulation spends its set-up inside ELMFIRE, which is a separate process that can take hours; the
+        /// stop flag alone is only looked at between steps, so a stop during the fire waited for ELMFIRE to
+        /// finish, and quitting left it running in the background. Killing it makes the run return at once
+        /// with "ELMFIRE was stopped" (contract C3). Safe to call when nothing is running.
+        /// </remarks>
         public void CloseSimulations(bool stoppedDueToError)
         {
-            _stopSimulations = true;           
+            _stopSimulations = true;
             Simulation[] simulations = _simulations;
             if(simulations != null)
             {
@@ -661,8 +671,11 @@ namespace PREACT
                         }
                     }
                 }
-            }            
-        } 
+            }
+
+            //After the stop flags, so the run that loses its fire already knows it was asked to stop.
+            Utility.ElmfireRunner.CancelAll();
+        }
     }
 }
 

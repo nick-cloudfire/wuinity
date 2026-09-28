@@ -32,6 +32,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
         private static string _preRunPath;
         private static DateTime _startedAt;
         private static string _lastResult = string.Empty;
+        private static bool _stopRequested;
 
         public static void Open()
         {
@@ -245,7 +246,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
             if (ImGui.IsItemHovered())
             {
-                ImGui.SetTooltip("Stops the run. While ELMFIRE is computing, it stops once ELMFIRE's current step returns.");
+                ImGui.SetTooltip("Stops the run. While ELMFIRE is computing the fire, ELMFIRE is stopped too.");
             }
 
             ImGui.SameLine();
@@ -283,12 +284,19 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
         }
 
+        /// <summary>
+        /// Stops the run. The engine's close also kills a running ELMFIRE process tree, so a stop while the fire is
+        /// being computed takes effect at once instead of after ELMFIRE finishes.
+        /// </summary>
         public static void Stop()
         {
-            // V1-INTEGRATION: C3 - the lead wires Engine.CloseSimulations to ElmfireRunner.CancelAll, which also kills a
-            // running ELMFIRE process tree; until then a stop requested during the ELMFIRE computation waits for it.
-            PreactGUI.WUInity.StopSimulations();
+            if (!ScenarioSession.SimulationActive)
+            {
+                return;
+            }
+            _stopRequested = true;
             PREACT.Engine.Message(null, PREACT.Engine.LogType.Log, "Stop requested from the GUI.");
+            PreactGUI.WUInity.StopSimulations();
         }
 
         private static void Start()
@@ -313,6 +321,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             _preRunPath = ScenarioSession.FilePath;
             _startedAt = DateTime.Now;
             _lastResult = string.Empty;
+            _stopRequested = false;
 
             var task = new EngineTask(EngineTask.ExecutionMode.Serial, _numberOfRuns, 0, 1, true,
                 _stopAfterConverging, _convergenceMinSequence, _convergenceMaxDifference);
@@ -329,9 +338,20 @@ namespace Assets.WUInity.GUI.DearIMGUI
             TimeSpan took = DateTime.Now - _startedAt;
             Simulation sim = PreactGUI.Engine.Simulation;
             bool failed = PreactGUI.WUInity.LastRunFailed == true;
-            _lastResult = failed
-                ? $"Ended in an error after {took.TotalMinutes:0.#} min - the console has what led up to it."
-                : $"Finished in {took.TotalMinutes:0.#} min" + (sim != null ? $" ({sim.State})." : ".");
+            if (_stopRequested)
+            {
+                //A stop during the fire ends the run as "did not start" in the engine's terms; to the person who
+                //pressed Stop it is simply stopped.
+                _lastResult = $"Stopped after {took.TotalMinutes:0.#} min"
+                    + (sim != null && sim.HaveResults ? "; what had been simulated is saved." : ", before the simulation started.");
+            }
+            else
+            {
+                _lastResult = failed
+                    ? $"Ended in an error after {took.TotalMinutes:0.#} min - the console has what led up to it."
+                    : $"Finished in {took.TotalMinutes:0.#} min" + (sim != null ? $" ({sim.State})." : ".");
+            }
+            _stopRequested = false;
 
             RestoreScenarioAfterRun();
             ResultsWindow.Rescan();
