@@ -69,13 +69,31 @@ namespace Assets.WUInity.GUI.DearIMGUI
             string boundaryName = (input.TriggerBufferModule?.kPERILInput?.OutputName ?? kPERILInput.DefaultOutputName).ToLowerInvariant();
             string name = input.Simulation.Name.ToLowerInvariant();
 
+            //A campaign keeps its results in its own folder; only a campaign from before that wrote them into
+            //_output itself, and those are listed only when there is no newer campaign folder.
+            string campaign = ScenarioWorkflow.CampaignFolderOf(input, ScenarioSession.FilePath);
+            bool legacyCampaign = campaign == null || SameFolder(campaign, output);
+
             try
             {
                 if (Directory.Exists(output))
                 {
                     foreach (string f in Directory.GetFiles(output))
                     {
-                        Kind? kind = Classify(Path.GetFileName(f).ToLowerInvariant(), name, boundaryName);
+                        string lower = Path.GetFileName(f).ToLowerInvariant();
+                        if (!legacyCampaign && ScenarioWorkflow.IsCampaignResult(lower)) continue;
+                        Kind? kind = Classify(lower, name, boundaryName);
+                        if (kind.HasValue) Add(f, kind.Value);
+                    }
+                }
+
+                if (!legacyCampaign && Directory.Exists(campaign))
+                {
+                    foreach (string f in Directory.GetFiles(campaign))
+                    {
+                        string lower = Path.GetFileName(f).ToLowerInvariant();
+                        if (!ScenarioWorkflow.IsCampaignResult(lower)) continue;
+                        Kind? kind = Classify(lower, name, boundaryName);
                         if (kind.HasValue) Add(f, kind.Value);
                     }
                 }
@@ -103,6 +121,19 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
 
             _entries.Sort((a, b) => b.Written.CompareTo(a.Written));
+        }
+
+        private static bool SameFolder(string a, string b)
+        {
+            try
+            {
+                return string.Equals(Path.GetFullPath(a).TrimEnd('\\', '/'), Path.GetFullPath(b).TrimEnd('\\', '/'),
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static Kind? Classify(string lower, string name, string boundaryName)

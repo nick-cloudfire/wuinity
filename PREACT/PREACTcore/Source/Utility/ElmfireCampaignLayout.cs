@@ -76,6 +76,87 @@ namespace PREACT.Utility
         public const string CampaignFolderPrefix = "campaign_";
 
         /// <summary>
+        /// The name a campaign's folder is made from: the scenario's <c>[Simulation] Name</c>, or the .wui's file
+        /// name when it has none.
+        /// </summary>
+        public static string CampaignScenarioName(string simulationName, string wuiPath)
+        {
+            if (!string.IsNullOrWhiteSpace(simulationName)) return simulationName.Trim();
+            return string.IsNullOrEmpty(wuiPath) ? "scenario" : Path.GetFileNameWithoutExtension(wuiPath);
+        }
+
+        /// <summary>
+        /// The scenario's most recently written campaign folder under <c>&lt;scenarioFolder&gt;/_output</c>, or
+        /// null when it has none. A folder moved aside by a fresh start (<c>..._replaced_&lt;time&gt;</c>) is no
+        /// longer a campaign and is skipped.
+        /// </summary>
+        /// <remarks>
+        /// For readers of a campaign's results (the GUI's workflow and Results window). A campaign keeps its
+        /// probability raster, convergence CSV and ensemble statistics in its own folder; they used to be written
+        /// into <c>_output</c> itself, where every campaign overwrote the last one's.
+        /// </remarks>
+        public static string LatestCampaignFolder(string scenarioFolder, string scenarioName)
+        {
+            if (string.IsNullOrEmpty(scenarioFolder)) return null;
+            string output = Path.Combine(scenarioFolder, OutputFolder);
+            if (!Directory.Exists(output)) return null;
+
+            string prefix = CampaignFolderName(scenarioName, string.Empty);
+            string best = null;
+            DateTime bestAt = DateTime.MinValue;
+            try
+            {
+                foreach (string folder in Directory.GetDirectories(output, prefix + "*"))
+                {
+                    if (!IsSettingsHash(Path.GetFileName(folder).Substring(prefix.Length))) continue;
+
+                    DateTime at = LastWritten(folder);
+                    if (best == null || at > bestAt)
+                    {
+                        best = folder;
+                        bestAt = at;
+                    }
+                }
+            }
+            catch (IOException)
+            {
+                return best;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return best;
+            }
+            return best;
+        }
+
+        private static bool IsSettingsHash(string text)
+        {
+            if (text.Length != 8) return false;
+            foreach (char c in text)
+            {
+                if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+            }
+            return true;
+        }
+
+        //A folder's own time changes only when an entry is added or removed; the files a running campaign
+        //rewrites say when it last did anything.
+        private static DateTime LastWritten(string folder)
+        {
+            DateTime at = Directory.GetLastWriteTimeUtc(folder);
+            foreach (string name in new[] { ManifestFile, ConvergenceCsv, LiveProbabilityRaster, ProbabilityRaster })
+            {
+                string path = Path.Combine(folder, name);
+                if (File.Exists(path))
+                {
+                    DateTime written = File.GetLastWriteTimeUtc(path);
+                    if (written > at) at = written;
+                }
+            }
+            return at;
+        }
+
+        /// <summary>
         /// <c>_output/campaign_&lt;scenario&gt;_&lt;settings hash&gt;</c>. The hash is of every setting that decides the
         /// realizations, so a campaign with other settings is another folder, and resuming one reuses only
         /// realizations computed with the same settings.

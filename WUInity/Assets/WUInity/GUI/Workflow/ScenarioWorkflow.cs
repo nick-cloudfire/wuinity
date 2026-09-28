@@ -72,6 +72,7 @@ namespace WUInity.Workflow
         private string _root;
         private string _name;
         private string _case;
+        private string _campaignFolder;
         private RasterInfo _caseGrid;
         private PaintedAreasInfo _painted;
         private string _paintedPath;
@@ -111,6 +112,7 @@ namespace WUInity.Workflow
             _root = _in.RootFolder;
             _name = _in.Simulation?.Name ?? string.Empty;
             _case = ScenarioFiles.CaseDirectory(_in);
+            _campaignFolder = CampaignFolderOf(_in, _ctx.ScenarioPath);
 
             FireOn = _in.WildfireModule.Enabled;
             IsElmfire = FireOn && _in.WildfireModule.Module == WildfireModuleInput.WildfireModules.ELMFIRE;
@@ -1253,6 +1255,18 @@ namespace WUInity.Workflow
 
         private string OutputFolder => Path.Combine(_root, "_output");
 
+        /// <summary>
+        /// Where the scenario's campaign results are: its newest <c>_output/campaign_&lt;name&gt;_&lt;hash&gt;</c>
+        /// folder, or <c>_output</c> itself for a campaign run before campaigns had folders of their own.
+        /// </summary>
+        public static string CampaignFolderOf(PREACTInput input, string scenarioPath)
+        {
+            if (input == null) return null;
+            string name = PREACT.Utility.CampaignLayout.CampaignScenarioName(input.Simulation?.Name, scenarioPath);
+            return PREACT.Utility.CampaignLayout.LatestCampaignFolder(input.RootFolder, name)
+                   ?? Path.Combine(input.RootFolder, PREACT.Utility.CampaignLayout.OutputFolder);
+        }
+
         private WorkflowStep RunSimulation()
         {
             WorkflowStep s = New(WorkflowStepId.RunSimulation);
@@ -1322,22 +1336,44 @@ namespace WUInity.Workflow
         private string _outputListedFor;
         private List<string> _outputListing = new List<string>();
 
+        /// <summary>
+        /// The run's results in <c>_output</c> and the campaign's in its own folder (when that is not
+        /// <c>_output</c> itself), newest first.
+        /// </summary>
         private List<string> ListOutput()
         {
             string folder = OutputFolder;
             if (!_files.DirectoryExists(folder)) return new List<string>();
 
+            string campaign = _campaignFolder != null && !SameFolder(_campaignFolder, folder) ? _campaignFolder : null;
             DateTime written;
-            try { written = Directory.GetLastWriteTimeUtc(folder); } catch { return new List<string>(); }
+            try
+            {
+                written = Directory.GetLastWriteTimeUtc(folder);
+                if (campaign != null)
+                {
+                    DateTime campaignWritten = Directory.GetLastWriteTimeUtc(campaign);
+                    if (campaignWritten > written) written = campaignWritten;
+                }
+            }
+            catch { return new List<string>(); }
 
-            if (_outputListedFor == folder && written == _outputListedAt) return _outputListing;
+            string key = folder + "|" + campaign;
+            if (_outputListedFor == key && written == _outputListedAt) return _outputListing;
 
             var found = new List<string>();
             try
             {
                 foreach (string f in Directory.GetFiles(folder))
                 {
-                    if (IsResult(Path.GetFileName(f))) found.Add(f);
+                    if (IsResult(Path.GetFileName(f), campaign == null)) found.Add(f);
+                }
+                if (campaign != null)
+                {
+                    foreach (string f in Directory.GetFiles(campaign))
+                    {
+                        if (IsCampaignResult(Path.GetFileName(f).ToLowerInvariant())) found.Add(f);
+                    }
                 }
             }
             catch { }
@@ -1345,21 +1381,44 @@ namespace WUInity.Workflow
             found.Sort((a, b) => File.GetLastWriteTimeUtc(b).CompareTo(File.GetLastWriteTimeUtc(a)));
             _outputListing = found;
             _outputListedAt = written;
-            _outputListedFor = folder;
+            _outputListedFor = key;
             return found;
         }
 
-        private bool IsResult(string file)
+        /// <summary>
+        /// A run result in <c>_output</c>; with <paramref name="legacyCampaign"/> also the campaign files an
+        /// older campaign wrote there, before campaigns had folders of their own.
+        /// </summary>
+        private bool IsResult(string file, bool legacyCampaign)
         {
             string lower = file.ToLowerInvariant();
             string name = _name.ToLowerInvariant();
             string output = (_in.TriggerBufferModule?.kPERILInput?.OutputName ?? "trigger_boundary").ToLowerInvariant();
             return lower == name + ".log"
                    || (lower.StartsWith(name + "_") && lower.EndsWith("_arrivaldata.csv") && !lower.Contains("_prob_"))
-                   || lower.StartsWith("trigger_probability")
-                   || lower.StartsWith("ensemble_")
-                   || lower == "trigger_convergence.csv"
+                   || (legacyCampaign && IsCampaignResult(lower))
                    || lower.Contains("_" + output);
+        }
+
+        /// <summary>A file a campaign writes that is worth showing: its rasters and its convergence CSV.</summary>
+        public static bool IsCampaignResult(string lower)
+        {
+            return lower.StartsWith("trigger_probability")
+                   || lower.StartsWith(PREACT.Utility.CampaignLayout.EnsemblePrefix + "_")
+                   || lower == PREACT.Utility.CampaignLayout.ConvergenceCsv;
+        }
+
+        private static bool SameFolder(string a, string b)
+        {
+            try
+            {
+                return string.Equals(Path.GetFullPath(a).TrimEnd('\\', '/'), Path.GetFullPath(b).TrimEnd('\\', '/'),
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private WorkflowStep Results()
@@ -1409,9 +1468,13 @@ namespace WUInity.Workflow
         {
             var c = new Convergence();
             string last = null;
+            int streakColumn = -1;
             using (var reader = new StreamReader(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)))
             {
-                reader.ReadLine();
+                //By name: the campaign CLI's columns are "boundaries,realization_id,streak,...", an older one's
+                //"run,realization_id,nSuccess,streak,...".
+                string header = reader.ReadLine();
+                if (header != null) streakColumn = Array.IndexOf(header.Split(','), "streak");
                 string line;
                 while ((line = reader.ReadLine()) != null)
                 {
@@ -1420,10 +1483,10 @@ namespace WUInity.Workflow
                     last = line;
                 }
             }
-            if (last != null)
+            if (last != null && streakColumn >= 0)
             {
                 string[] parts = last.Split(',');
-                if (parts.Length > 3) int.TryParse(parts[3], out c.Streak);
+                if (parts.Length > streakColumn) int.TryParse(parts[streakColumn], out c.Streak);
             }
             return c;
         }
@@ -1440,9 +1503,10 @@ namespace WUInity.Workflow
                 return s;
             }
 
-            string final = Path.Combine(OutputFolder, "trigger_probability.asc");
-            string live = Path.Combine(OutputFolder, "trigger_probability_live.asc");
-            string csv = Path.Combine(OutputFolder, "trigger_convergence.csv");
+            string folder = _campaignFolder ?? OutputFolder;
+            string final = Path.Combine(folder, PREACT.Utility.CampaignLayout.ProbabilityRaster);
+            string live = Path.Combine(folder, PREACT.Utility.CampaignLayout.LiveProbabilityRaster);
+            string csv = Path.Combine(folder, PREACT.Utility.CampaignLayout.ConvergenceCsv);
             Convergence conv = _files.Read(csv, "convergence", ReadConvergence, null);
 
             WorkflowStep fireCase = this[WorkflowStepId.FireCase];
@@ -1455,13 +1519,15 @@ namespace WUInity.Workflow
             {
                 BlockBy(s, WorkflowStepId.FireAreas, "the painted areas are not applied to the case (or not on its grid).");
             }
-            else if (_ctx.IsDirty)
-            {
-                BlockBy(s, WorkflowStepId.None, "Save first: the campaign reads the scenario from its .wui on disk.");
-            }
             else if (_ctx.SimulationActive)
             {
                 BlockBy(s, WorkflowStepId.None, "A simulation started from the GUI is using the case.");
+            }
+
+            if (_ctx.IsDirty && !_ctx.CampaignActive)
+            {
+                //Not a blocker: the campaign window asks to save when Run is pressed.
+                s.Info("Unsaved changes: the campaign reads the scenario from its .wui, so Run asks to save them first.");
             }
 
             bool done = _files.Exists(final);
@@ -1472,8 +1538,9 @@ namespace WUInity.Workflow
             }
 
             s.Status = done ? StepStatus.Done : StepStatus.ToDo;
+            string where = SameFolder(folder, OutputFolder) ? "trigger_convergence.csv" : Path.GetFileName(folder);
             s.Summary = conv != null && conv.Rows > 0
-                ? $"{Plural(conv.Rows, "realization")} in trigger_convergence.csv, streak {conv.Streak}" + (done ? "" : "; no final raster")
+                ? $"{Plural(conv.Rows, "boundary", "boundaries")} in {where}, streak {conv.Streak}" + (done ? "" : "; no final raster")
                 : "Not run";
 
             //Whatever blocks a new campaign, its results can still be read.

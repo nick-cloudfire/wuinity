@@ -42,7 +42,7 @@ namespace PREACTcli.Campaigns
                             + (why != null ? " (" + why + ")" : "") + ".");
             }
 
-            c.ScenarioName = string.IsNullOrWhiteSpace(input.Simulation.Name) ? c.BaseFileName : input.Simulation.Name.Trim();
+            c.ScenarioName = CampaignLayout.CampaignScenarioName(input.Simulation.Name, c.BaseWuiPath);
             c.StartDateTime = input.Simulation.StartDateTime;
             c.CentreLatLon = CentreOf(input.Simulation.LowerLeftLatLon, input.Simulation.DomainSize);
 
