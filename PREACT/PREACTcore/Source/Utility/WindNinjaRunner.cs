@@ -121,7 +121,7 @@ namespace PREACT.Utility
             string windNinjaExe, string demPath, MasterGrid grid, string outputDirectory,
             double speedMps, double directionDeg,
             string vegetation = "grass", string meshChoice = "coarse", int threads = 4,
-            Action<string> log = null)
+            Action<string> log = null, Func<bool> cancelled = null)
         {
             var result = new Result();
 
@@ -146,7 +146,13 @@ namespace PREACT.Utility
 
             try
             {
-                int exit = Invoke(windNinjaExe, work, localDem, speedMps, directionDeg, vegetation, meshChoice, threads, out string tail);
+                int exit = Invoke(windNinjaExe, work, localDem, speedMps, directionDeg, vegetation, meshChoice, threads,
+                    cancelled, out string tail);
+                if (cancelled != null && cancelled())
+                {
+                    result.Message = "WindNinja_cli was stopped";
+                    return result;
+                }
                 if (exit != 0)
                 {
                     result.Message = $"WindNinja_cli exited {exit}: {tail}";
@@ -180,7 +186,7 @@ namespace PREACT.Utility
 
         private static int Invoke(
             string exe, string workDir, string demPath, double speedMps, double directionDeg,
-            string vegetation, string meshChoice, int threads, out string tail)
+            string vegetation, string meshChoice, int threads, Func<bool> cancelled, out string tail)
         {
             var psi = new ProcessStartInfo
             {
@@ -230,8 +236,14 @@ namespace PREACT.Utility
                 p.OutputDataReceived += (_, e) => Take(e.Data);
                 p.ErrorDataReceived += (_, e) => Take(e.Data);
                 p.Start();
-                //So a cancelled build or campaign stops the solve too, rather than leaving it running.
+                //So a cancelled build or campaign stops the solve too, rather than leaving it running. Registered
+                //before asking: a stop after this line finds the process, and one before it is answered here -
+                //a solve started a moment after a stop would otherwise run to the end.
                 ElmfireProcesses.Register(p);
+                if (cancelled != null && cancelled())
+                {
+                    ElmfireProcesses.KillTree(p);
+                }
                 try
                 {
                     p.BeginOutputReadLine();

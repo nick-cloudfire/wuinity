@@ -194,6 +194,9 @@ namespace PREACTcli.Campaigns
             per.Seed = unchecked(o.Seed + index);
             per.ForceWindDirectionDeg = windFrom;
             per.Log = null; //at --parallel width the per-stage chatter interleaves into noise; one line below instead
+            //A stop (convergence, cancel) starts no further WindNinja band for this realization, instead of one band
+            //after another for the rest of its series until the stage ended.
+            per.Cancelled = stopping;
 
             WeatherRasterPipeline.Result weather = WeatherRasterPipeline.Run(per).GetAwaiter().GetResult();
             if (stopping()) { outcome.Cancelled = true; return false; }

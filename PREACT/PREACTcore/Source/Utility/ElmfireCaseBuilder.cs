@@ -202,6 +202,29 @@ namespace PREACT.Utility
 
             /// <summary>Reports progress; may be null.</summary>
             public Action<string> Log;
+
+            /// <summary>
+            /// Asked at the points where the build can stop and leave the case consistent; once it answers true
+            /// <see cref="Build"/> throws <see cref="OperationCanceledException"/>. Null never stops. Handed to the
+            /// weather stage when that has no predicate of its own.
+            /// </summary>
+            /// <remarks>
+            /// Those points: before the grid is decided (nothing changed yet), after a new case's first DEM, before
+            /// the weather, and before every WindNinja solve. Not between a re-cut grid and the layers carried onto
+            /// it - a stop there would leave them behind in inputs/_previous_grid, where the next build (which then
+            /// finds the case on its grid) no longer looks - and not once the wind is written, since the moisture
+            /// and the namelist that counts its bands have to follow it.
+            /// </remarks>
+            public Func<bool> Cancelled;
+        }
+
+        /// <summary>Throws the stop <see cref="Options.Cancelled"/> asked for, saying where the build stopped.</summary>
+        private static void StopIfCancelled(Options o, string where)
+        {
+            if (o.Cancelled != null && o.Cancelled())
+            {
+                throw new OperationCanceledException("The case build was stopped " + where);
+            }
         }
 
         public class Result
@@ -316,6 +339,8 @@ namespace PREACT.Utility
             string[] existingNamelist = ReadTemplate(Path.Combine(o.OutputDirectory, "elmfire.data"));
             List<ElmfireStems.NamelistRaster> namelistRasters = NamelistRastersInForce(o, inputs, existingNamelist);
 
+            StopIfCancelled(o, "before it changed anything in the case.");
+
             if (!o.OverwriteExistingLayers && File.Exists(demPath))
             {
                 MasterGrid existing = MasterGrid.FromRasterFile(demPath);
@@ -349,6 +374,14 @@ namespace PREACT.Utility
                 Log($"Master grid: {grid.Header.Ncols}x{grid.Header.Nrows} @ {grid.Header.CellSize:F1} m, {grid.Epsg}");
                 result.Written.Add(ElmfireStems.Dem);
                 ReportDemCoverage(rawDem, southWest, northEast, result, Log);
+
+                //A DEM download cannot be interrupted, so a stop during one is honoured once it is on the grid - for a
+                //new case only: a re-cut goes on until the old grid's layers are carried onto the new one.
+                if (previousGridDirectory == null)
+                {
+                    StopIfCancelled(o, "after its grid (inputs/dem.tif) was made and before its other layers; the next "
+                                       + "build carries on from that grid.");
+                }
             }
 
             result.Grid = grid;
@@ -489,6 +522,9 @@ namespace PREACT.Utility
                 RestrictIgnitionMask(o, result, inputs, grid, Log);
             }
 
+            StopIfCancelled(o, "after its layers were made and before its weather; elmfire.data was not written again, "
+                               + "and the next build makes the weather.");
+
             //---------------------------------------------------------------- 7. Baseline weather
             //Runs after the user rasters so Nelson can shade its sticks with the canopy cover
             //layer if one was supplied.
@@ -519,6 +555,7 @@ namespace PREACT.Utility
                 WeatherRasterPipeline.Options w = o.Weather ?? new WeatherRasterPipeline.Options();
                 w.Grid = grid;
                 w.InputsDirectory = inputs;
+                if (w.Cancelled == null) w.Cancelled = o.Cancelled;
 
                 //The weather series has to span the fire and be read at the interval it was written at.
                 //DT_METEOROLOGY comes from the namelist settings so the two cannot disagree - a series
@@ -543,6 +580,12 @@ namespace PREACT.Utility
                 }
 
                 result.Weather = await WeatherRasterPipeline.Run(w);
+                if (result.Weather.Cancelled)
+                {
+                    throw new OperationCanceledException("The case build was stopped while its weather was being made: "
+                        + "no wind was written (and no uniform field in its place), elmfire.data was not written again, "
+                        + "and the next build makes the weather.");
+                }
                 result.Written.AddRange(ElmfireStems.Weather);
             }
 
