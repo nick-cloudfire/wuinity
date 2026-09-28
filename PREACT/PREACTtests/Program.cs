@@ -51,6 +51,7 @@ namespace PREACT.Tests
             FormatTests.Register(runner);
             EngineTests.Register(runner);
             CliTests.Register(runner);
+            IntegrationTests.Register(runner);
 
             if (examples)
             {

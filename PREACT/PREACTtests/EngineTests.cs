@@ -30,7 +30,7 @@ namespace PREACT.Tests
 
         private static Engine TheEngine => Program.Engine;
 
-        private static PREACTInput Load(FormatTests.Scenario scenario, IEnumerable<string> lines)
+        internal static PREACTInput Load(FormatTests.Scenario scenario, IEnumerable<string> lines)
         {
             PREACTInput input = scenario.Load(lines, out bool runnable);
             Assert.True(runnable, "scenario runnable; critical: " + string.Join("; ", PREACTInput.Requirements.Where(r => r.Critical)));
@@ -89,7 +89,7 @@ namespace PREACT.Tests
         /// A fire spreading from (1500, 1500) m at 0.5 m/s, the homes about 1.2 km from it and ordered to leave only
         /// after an hour: the front is within 500 m of them after roughly 40 minutes.
         /// </summary>
-        private static List<string> FireLines(FormatTests.Scenario s, PREACTInput probe, bool react)
+        internal static List<string> FireLines(FormatTests.Scenario s, PREACTInput probe, bool react)
         {
             Math.Vector2d origin = probe.Simulation.Data.UTMOrigin;
             int n = 20;
