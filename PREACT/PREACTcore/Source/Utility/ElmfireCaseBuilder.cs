@@ -309,6 +309,13 @@ namespace PREACT.Utility
             MasterGrid grid = null;
             string previousGridDirectory = null;
 
+            //The namelists in force - the case's own elmfire.data, hand-edited or not, and the scenario's template -
+            //read before anything moves: every raster they name has to end up on the grid this build settles on, or
+            //the one who runs them gets an ELMFIRE segfault (Mati's FBFM_FILENAME='fbfm40_roads101' was left on the
+            //old 566x541 grid when the case was re-cut to 704x680).
+            string[] existingNamelist = ReadTemplate(Path.Combine(o.OutputDirectory, "elmfire.data"));
+            List<ElmfireStems.NamelistRaster> namelistRasters = NamelistRastersInForce(o, inputs, existingNamelist);
+
             if (!o.OverwriteExistingLayers && File.Exists(demPath))
             {
                 MasterGrid existing = MasterGrid.FromRasterFile(demPath);
@@ -423,6 +430,12 @@ namespace PREACT.Utility
             {
                 CarryPreviousGridLayers(o, result, grid, inputs, previousGridDirectory, Log);
             }
+
+            //---------------------------------------------------------------- 5a'. Rasters the namelists name
+            //Whatever raster a namelist in force names and the build does not make itself - a hand-made fuel
+            //variant, a building layer under its own name - is re-cut onto the grid when it is not on it, the same
+            //way as a layer carried from the old grid.
+            CarryNamelistRasters(o, result, grid, inputs, namelistRasters, Log);
 
             //---------------------------------------------------------------- 5b. Canopy defaults
             //ELMFIRE treats CC/CH/CBH/CBD as required inputs and refuses to start without them
@@ -563,7 +576,7 @@ namespace PREACT.Utility
             else
             {
                 string[] namelist = BuildNamelist(o, result);
-                SetAsideHandEditedNamelist(o, result, Log);
+                SetAsideHandEditedNamelist(o, result, existingNamelist, namelist, Log);
                 File.WriteAllLines(result.NamelistPath, namelist);
                 result.NamelistSha256 = ElmfireFingerprint.HashFile(result.NamelistPath);
                 Log($"Wrote {result.NamelistPath}");
@@ -922,7 +935,14 @@ namespace PREACT.Utility
         /// Moves the case's elmfire.data aside when it is not the namelist the last build wrote - an edit by hand,
         /// or a case built before the builder recorded what it wrote - so regenerating it destroys nothing.
         /// </summary>
-        private static void SetAsideHandEditedNamelist(Options o, Result result, Action<string> log)
+        /// <remarks>
+        /// The keys it and the regenerated namelist disagree on are logged one by one, so what running it as
+        /// <c>NamelistTemplate</c> would change is visible, and its rasters are checked against the case grid - they
+        /// were re-cut with the case's own layers (<see cref="CarryNamelistRasters"/>) - so the log says whether it
+        /// would still run.
+        /// </remarks>
+        private static void SetAsideHandEditedNamelist(Options o, Result result, string[] keptLines, string[] generated,
+            Action<string> log)
         {
             string path = result.NamelistPath;
             if (!File.Exists(path)) return;
@@ -941,7 +961,164 @@ namespace PREACT.Utility
             log($"  namelist: {Path.GetFileName(path)} is regenerated from the scenario on every build; the existing "
                 + $"one was kept as {Path.GetFileName(aside)} because {why}. To run a hand-tuned namelist, set "
                 + "[ELMFIRE] NamelistTemplate to it.");
-            result.Fallbacks.Add($"namelist: previous {Path.GetFileName(path)} kept as {Path.GetFileName(aside)}");
+
+            string[] kept = keptLines ?? ReadTemplate(aside);
+            List<string> differences = ElmfireNamelist.DescribeDifferences(kept, generated);
+            int changed = differences.Count(d => d.IndexOf("(unset)", StringComparison.Ordinal) < 0);
+            if (differences.Count == 0)
+            {
+                log("  namelist: the kept one and the regenerated one set the same keys to the same values.");
+            }
+            else
+            {
+                log($"  namelist: {differences.Count} key(s) differ, kept -> regenerated ({changed} set to another value, "
+                    + $"{differences.Count - changed} set by only one of them):");
+                foreach (string d in differences) log("    " + d);
+            }
+
+            ElmfireCaseValidator.Report rasters = ElmfireCaseValidator.ValidateNamelistRasters(kept, o.OutputDirectory,
+                includeWeather: true);
+            if (rasters.Ok)
+            {
+                log($"  namelist: every raster {Path.GetFileName(aside)} names is on the case grid, so it runs as "
+                    + "[ELMFIRE] NamelistTemplate.");
+            }
+            else
+            {
+                log($"  namelist: {Path.GetFileName(aside)} would not run on this case as it stands:");
+                foreach (ElmfireCaseValidator.Problem p in rasters.Fatal) log("    " + p);
+            }
+
+            string keys = string.Join(", ", differences.Take(6).Select(d => d.Substring(0, d.IndexOf(':'))));
+            result.Fallbacks.Add($"namelist: previous {Path.GetFileName(path)} kept as {Path.GetFileName(aside)}"
+                                 + (differences.Count > 0 ? $"; it differs from the regenerated one in {differences.Count} "
+                                    + $"key(s) ({keys}{(differences.Count > 6 ? ", ..." : "")})" : ""));
+        }
+
+        /// <summary>
+        /// The non-weather rasters the namelists in force name, that sit in the case's inputs folder and are not the
+        /// terrain the builder derives itself: from the case's current <c>elmfire.data</c>, the scenario's template,
+        /// and every namelist an earlier build set aside (<c>elmfire.data.kept-*</c>), since those exist to be run
+        /// as a template.
+        /// </summary>
+        private static List<ElmfireStems.NamelistRaster> NamelistRastersInForce(Options o, string inputs, string[] existing)
+        {
+            var sources = new List<(string[] Lines, string RunDirectory)>
+            {
+                (existing, o.OutputDirectory),
+                (ReadTemplate(o.TemplateNamelistPath),
+                 string.IsNullOrEmpty(o.TemplateNamelistPath) ? o.OutputDirectory : Path.GetDirectoryName(Path.GetFullPath(o.TemplateNamelistPath))),
+            };
+            try
+            {
+                foreach (string kept in Directory.GetFiles(o.OutputDirectory, "elmfire.data.kept-*"))
+                {
+                    sources.Add((ReadTemplate(kept), o.OutputDirectory));
+                }
+            }
+            catch
+            {
+                //A case folder that cannot be listed has nothing kept to carry.
+            }
+
+            var derived = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ElmfireStems.Dem, ElmfireStems.Slope, ElmfireStems.Aspect, ElmfireStems.Adj, ElmfireStems.Phi,
+            };
+            string inputsFull = Path.GetFullPath(inputs).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+            var byStem = new Dictionary<string, ElmfireStems.NamelistRaster>(StringComparer.OrdinalIgnoreCase);
+            foreach ((string[] lines, string runDirectory) in sources)
+            {
+                foreach (ElmfireStems.NamelistRaster r in ElmfireStems.ReferencedRasters(lines, runDirectory))
+                {
+                    if (r.Weather || derived.Contains(r.Stem)) continue;
+
+                    string folder = Path.GetDirectoryName(Path.GetFullPath(r.Path))
+                        .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    if (!string.Equals(folder, inputsFull, StringComparison.OrdinalIgnoreCase)) continue;
+
+                    if (byStem.TryGetValue(r.Stem, out ElmfireStems.NamelistRaster seen))
+                    {
+                        seen.Categorical |= r.Categorical;
+                        continue;
+                    }
+                    byStem[r.Stem] = r;
+                }
+            }
+
+            return byStem.Values.ToList();
+        }
+
+        /// <summary>
+        /// Re-cuts onto <paramref name="grid"/> every raster a namelist in force names that is not on it, keeping
+        /// the original in <see cref="PreviousGridFolder"/>. Class layers (the fuel model, masks) nearest-neighbour.
+        /// </summary>
+        /// <remarks>
+        /// A raster the scenario itself points at - its landscape DEM, the painting's reference grid, a source layer
+        /// - is left alone and reported instead: re-cutting it in place would change what the scenario reads.
+        /// </remarks>
+        private static void CarryNamelistRasters(Options o, Result result, MasterGrid grid, string inputs,
+            List<ElmfireStems.NamelistRaster> rasters, Action<string> log)
+        {
+            if (rasters == null || rasters.Count == 0) return;
+
+            var scenarioFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string f in o.CandidateDemPaths.Concat(o.UserRasters.Values)
+                         .Concat(new[] { o.PaintedMasksGridPath, o.LocalDemPath }))
+            {
+                if (!string.IsNullOrEmpty(f)) scenarioFiles.Add(Path.GetFullPath(f));
+            }
+
+            foreach (ElmfireStems.NamelistRaster r in rasters)
+            {
+                string path = ElmfireStems.Tif(inputs, r.Stem);
+                if (!File.Exists(path) || IsOnGrid(path, grid)) continue;
+
+                if (scenarioFiles.Contains(Path.GetFullPath(path)))
+                {
+                    string why = $"{r.Key} = '{r.Stem}' is not on the case grid, but the scenario also reads {path}, so it "
+                                 + "was not re-cut; point the namelist at a copy";
+                    result.Fallbacks.Add(why);
+                    log("  WARNING " + why + ".");
+                    continue;
+                }
+
+                string previous = Path.Combine(inputs, PreviousGridFolder);
+                Directory.CreateDirectory(previous);
+                string aside = ElmfireStems.Tif(previous, r.Stem);
+                if (File.Exists(aside))
+                {
+                    aside = Path.Combine(previous, r.Stem + ".off-grid-"
+                                                   + DateTime.Now.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture) + ".tif");
+                }
+                File.Move(path, aside);
+                string aux = path + ".aux.xml";
+                if (File.Exists(aux)) { try { File.Delete(aux); } catch { } }
+
+                if (r.Categorical) o.CategoricalStems.Add(r.Stem);
+                log($"  {r.Stem}: named by the namelist ({r.Key}) and not on the case grid; re-cut onto it, the original "
+                    + $"kept as inputs/{PreviousGridFolder}/{Path.GetFileName(aside)}.");
+                WarpLayer(o, result, grid, r.Stem, aside, path, log);
+                if (!result.Carried.Contains(r.Stem)) result.Carried.Add(r.Stem);
+            }
+        }
+
+        /// <summary>Whether a raster has the grid's size, origin and cell size (to a tenth of a cell).</summary>
+        private static bool IsOnGrid(string path, MasterGrid grid)
+        {
+            try
+            {
+                MasterGrid g = MasterGrid.FromRasterFile(path);
+                double tolerance = 0.1 * grid.Header.CellSize;
+                return g.Header.Ncols == grid.Header.Ncols && g.Header.Nrows == grid.Header.Nrows
+                       && System.Math.Abs(g.Header.CellSize - grid.Header.CellSize) <= 0.001 * grid.Header.CellSize
+                       && System.Math.Abs(g.XMin - grid.XMin) <= tolerance && System.Math.Abs(g.YMax - grid.YMax) <= tolerance;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         /// <summary>The manifest key the builder records its own namelist's hash under.</summary>

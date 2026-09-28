@@ -128,6 +128,22 @@ namespace PREACTcli.Campaigns
                             + " (FBFM_FILENAME), so ELMFIRE could not start.");
             }
 
+            //Every raster the template names, on the case grid - checked here, once, rather than by ELMFIRE in every
+            //realization: a fuel raster left on an old grid failed each one with "Fuel Model raster dimensions
+            //mismatch (680 vs 541)", only after its weather had been drawn, up to --max times. The weather is left
+            //out: every realization writes its own onto the case grid.
+            ElmfireCaseValidator.Report rasters = ElmfireCaseValidator.ValidateNamelistRasters(c.TemplateLines, runRoot,
+                includeWeather: false, inputsDirectory: c.InputsDir);
+            if (!rasters.Ok)
+            {
+                return Fail("the template " + Path.GetFileName(c.TemplatePath) + " names rasters that are not on the case "
+                            + "grid, so ELMFIRE could not run a single realization:\n         "
+                            + string.Join("\n         ", rasters.Fatal)
+                            + "\n       Build the case again (Prepare data, or PREACTcli build-case): it re-cuts onto the grid "
+                            + "every raster named by the case's elmfire.data, its kept namelists (elmfire.data.kept-*) and "
+                            + "the scenario's [ELMFIRE] NamelistTemplate. Or point the template at rasters on the grid.");
+            }
+
             string maskStem = ElmfireNamelist.GetKeyInGroup(c.TemplateLines, ElmfireNamelistKeys.InputsGroup,
                                   ElmfireNamelistKeys.IgnitionMaskFilename);
             if (!string.IsNullOrWhiteSpace(maskStem)) c.IgnitionMaskStem = maskStem;

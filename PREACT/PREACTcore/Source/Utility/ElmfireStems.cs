@@ -65,6 +65,87 @@ namespace PREACT.Utility
         /// <summary>ft/min per mi/h. k-PERIL's length-to-breadth correlation takes midflame wind in mi/h.</summary>
         public const double FeetPerMinutePerMph = 88.0;
 
+        /// <summary>
+        /// The <c>&amp;INPUTS</c> keys that name a raster ELMFIRE reads from <c>FUELS_AND_TOPOGRAPHY_DIRECTORY</c>
+        /// (elmfire_io.f90), whether ELMFIRE cannot run without it, and whether it holds classes (fuel codes, a mask)
+        /// that must be resampled nearest-neighbour.
+        /// </summary>
+        public static readonly (string Key, bool Required, bool Categorical)[] FuelsDirectoryRasterKeys =
+        {
+            ("DEM_FILENAME", true, false), ("SLP_FILENAME", true, false), ("ASP_FILENAME", true, false),
+            ("ADJ_FILENAME", true, false), ("PHI_FILENAME", true, false), ("FBFM_FILENAME", true, true),
+            ("CC_FILENAME", true, false), ("CH_FILENAME", true, false), ("CBH_FILENAME", true, false),
+            ("CBD_FILENAME", true, false),
+            ("IGNITION_MASK_FILENAME", false, true), ("BARRIER_FILENAME", false, true), ("SDI_FILENAME", false, false),
+            ("LAND_VALUE_FILENAME", false, false), ("POPULATION_DENSITY_FILENAME", false, false),
+            ("REAL_ESTATE_VALUE_FILENAME", false, false), ("PYROMES_FILENAME", false, true),
+            ("ALREADY_BURNED_FILENAME", false, true),
+            ("BLDG_AREA_FILENAME", false, false), ("BLDG_SEPARATION_DIST_FILENAME", false, false),
+            ("BLDG_NONBURNABLE_FRAC_FILENAME", false, false), ("BLDG_FOOTPRINT_FRAC_FILENAME", false, false),
+            ("BLDG_FUEL_MODEL_FILENAME", false, true),
+        };
+
+        /// <summary>The <c>&amp;INPUTS</c> keys of rasters read from <c>WEATHER_DIRECTORY</c>, and whether they are required.</summary>
+        public static readonly (string Key, bool Required)[] WeatherDirectoryRasterKeys =
+        {
+            ("WS_FILENAME", true), ("WD_FILENAME", true), ("M1_FILENAME", true), ("M10_FILENAME", true),
+            ("M100_FILENAME", true), ("ERC_FILENAME", false), ("MLH_FILENAME", false), ("MLW_FILENAME", false),
+            ("FMC_FILENAME", false),
+        };
+
+        /// <summary>One raster a namelist names, resolved to the file ELMFIRE will open.</summary>
+        public sealed class NamelistRaster
+        {
+            public string Key;
+            public string Stem;
+            public string Path;
+            public bool Required;
+            public bool Categorical;
+            public bool Weather;
+        }
+
+        /// <summary>
+        /// Every raster <paramref name="namelistLines"/> names in <c>&amp;INPUTS</c>, resolved the way ELMFIRE resolves
+        /// it for a run in <paramref name="runDirectory"/>: the stem plus <c>.tif</c> under
+        /// <c>FUELS_AND_TOPOGRAPHY_DIRECTORY</c> or <c>WEATHER_DIRECTORY</c>. <paramref name="inputsDirectory"/> and
+        /// <paramref name="weatherDirectory"/>, when given, replace the namelist's own directories (a campaign points
+        /// every realization at the case's inputs). Keys set to nothing or to <c>'null'</c> are not listed.
+        /// </summary>
+        public static List<NamelistRaster> ReferencedRasters(string[] namelistLines, string runDirectory,
+            string inputsDirectory = null, string weatherDirectory = null)
+        {
+            var result = new List<NamelistRaster>();
+            if (namelistLines == null) return result;
+
+            string inputs = inputsDirectory
+                            ?? ResolveDirectory(namelistLines, ElmfireNamelistKeys.InputsGroup,
+                                ElmfireNamelistKeys.FuelsAndTopographyDirectory, runDirectory)
+                            ?? runDirectory;
+            string weather = weatherDirectory
+                             ?? ResolveDirectory(namelistLines, ElmfireNamelistKeys.InputsGroup,
+                                 ElmfireNamelistKeys.WeatherDirectory, runDirectory)
+                             ?? inputs;
+
+            void Add(string key, bool required, bool categorical, bool isWeather)
+            {
+                string stem = ElmfireNamelist.GetKeyInGroup(namelistLines, ElmfireNamelistKeys.InputsGroup, key);
+                if (string.IsNullOrWhiteSpace(stem) || stem.Equals("null", StringComparison.OrdinalIgnoreCase)) return;
+                result.Add(new NamelistRaster
+                {
+                    Key = key,
+                    Stem = stem,
+                    Path = Tif(isWeather ? weather : inputs, stem),
+                    Required = required,
+                    Categorical = categorical,
+                    Weather = isWeather,
+                });
+            }
+
+            foreach ((string key, bool required, bool categorical) in FuelsDirectoryRasterKeys) Add(key, required, categorical, false);
+            foreach ((string key, bool required) in WeatherDirectoryRasterKeys) Add(key, required, false, true);
+            return result;
+        }
+
         /// <summary>A stem's GeoTIFF inside <paramref name="directory"/>.</summary>
         public static string Tif(string directory, string stem) => Path.Combine(directory, stem + ".tif");
 
