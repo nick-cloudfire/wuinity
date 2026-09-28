@@ -19,6 +19,16 @@ namespace PREACT.Tests
             runner.Add("k-PERIL: the wrapper matches kPERILcore reading the same GeoTIFFs itself", WrapperMatchesCoreLayout);
             runner.Add("k-PERIL: a real Mati realization matches kPERILcore's own layout (data permitting)", RealRealizationMatchesCore);
             runner.Add("k-PERIL: the saved boundary is north-up at the grid's corner, with a .prj, as GDAL reads it", SavedBoundaryGeoreferenced);
+            runner.Add("k-PERIL: a boundary's file name always has an extension", BoundaryFileNames);
+        }
+
+        private static void BoundaryFileNames()
+        {
+            Assert.Equal("trigger_boundary.asc", Evacuation.EvacuationManager.BoundaryFileName("trigger_boundary"), "Mati's OutputName gets .asc");
+            Assert.Equal("trigger_buffer.asc", Evacuation.EvacuationManager.BoundaryFileName("trigger_buffer.asc"), "an .asc name is kept");
+            Assert.Equal("b_west.asc", Evacuation.EvacuationManager.BoundaryFileName("b", "west"), "a group's name goes before the extension");
+            Assert.Equal("b_west.asc", Evacuation.EvacuationManager.BoundaryFileName("b.asc", "west"), "also when it had one");
+            Assert.Equal(Input.kPERILInput.DefaultOutputName + ".asc", Evacuation.EvacuationManager.BoundaryFileName(" "), "an empty name is the default");
         }
 
         private const int N = 201;

@@ -1091,13 +1091,8 @@ namespace PREACT.Evacuation
 
                             _triggerBufferModule.Run();
 
-                            //Per-group outputs are named after the group, so several boundaries from
-                            //one simulation do not overwrite each other.
-                            string outputName = _input.TriggerBufferModule.kPERILInput.OutputName;
-                            if (runs.Count > 1)
-                            {
-                                outputName = Path.GetFileNameWithoutExtension(outputName) + "_" + runs[i].Label + Path.GetExtension(outputName);
-                            }
+                            string outputName = BoundaryFileName(_input.TriggerBufferModule.kPERILInput.OutputName,
+                                runs.Count > 1 ? runs[i].Label : null);
                             string outputFilePath = Path.Combine(simulation.Engine.OutputFolder, simulation.SimulationIndex + "_" + outputName);
                             kPERIL.SaveToFile(_triggerBufferModule.TriggerBufferOutput,
                                 simulation.Hazards.Wildfire.GetCellSizeX(), outputFilePath,
@@ -1115,6 +1110,27 @@ namespace PREACT.Evacuation
             {
                 Engine.Message(simulation, Engine.LogType.Log, "No trigger buffer module was enabled.");
             }
+        }
+
+        /// <summary>
+        /// The file a trigger boundary is written to, before the simulation index: <c>[kPERIL] OutputName</c> with
+        /// <c>.asc</c> added when it has no extension, and a per-group boundary's group name before the extension, so
+        /// several boundaries from one simulation do not overwrite each other.
+        /// </summary>
+        /// <remarks>
+        /// Mati's <c>OutputName=trigger_boundary</c> was written as <c>_output/0_trigger_boundary</c>, a file nothing
+        /// opens as a raster by its name, while a campaign's are <c>*.asc</c> (e2e F7).
+        /// </remarks>
+        public static string BoundaryFileName(string outputName, string groupLabel = null)
+        {
+            string name = string.IsNullOrWhiteSpace(outputName) ? kPERILInput.DefaultOutputName : outputName.Trim();
+            string extension = Path.GetExtension(name);
+            if (string.IsNullOrEmpty(extension))
+            {
+                extension = ".asc";
+            }
+            string stem = Path.GetFileNameWithoutExtension(name);
+            return stem + (string.IsNullOrEmpty(groupLabel) ? string.Empty : "_" + groupLabel) + extension;
         }
 
         public void InsertNewCar(Vector2d startLatLon, EvacuationDestination evacuationGoal, uint numberOfPeopleInCar)
