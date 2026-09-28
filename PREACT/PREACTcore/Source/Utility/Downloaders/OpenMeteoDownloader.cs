@@ -16,6 +16,11 @@ namespace PREACT.Tools
         /// <summary>How far the ERA5 reanalysis archive trails real time; requests past this return nothing.</summary>
         private const int ArchiveLagDays = 6;
 
+        private static string F(float? v)
+        {
+            return v.HasValue ? v.Value.ToString("R", System.Globalization.CultureInfo.InvariantCulture) : string.Empty;
+        }
+
         private static string Iso(DateTime d)
         {
             return d.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
@@ -89,45 +94,63 @@ namespace PREACT.Tools
             {
                 Engine.Message(null, Engine.LogType.Log, "Downloaded weather data, saving to disk.");
 
-                using (StreamWriter file = new StreamWriter(newFilePath))
+                //Written to a temporary file and moved into place, so a reader never sees a half-written archive -
+                //which is what concurrent campaign realizations used to race on.
+                string temp = newFilePath + ".download.tmp";
+                using (StreamWriter file = new StreamWriter(temp))
                 {
-                    file.WriteLine($"Latitide,{weatherStream.Latitude}");
-                    file.WriteLine($"Longitude,{weatherStream.Longitude}");
-                    file.WriteLine($"Elevation,{weatherStream.Elevation}");
+                    file.WriteLine($"Latitide,{weatherStream.Latitude.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+                    file.WriteLine($"Longitude,{weatherStream.Longitude.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+                    file.WriteLine($"Elevation,{weatherStream.Elevation.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
 
                     if (weatherStream.Hourly != null)
                     {
                         OpenMeteo.Hourly hourly = weatherStream.Hourly;
                         if (hourly.Time != null)
                         {
-                            //header
+                            //header, ending in the format marker ClimatologySampler checks before trusting the
+                            //fire weather columns
                             file.WriteLine($"{nameof(hourly.Time)},{nameof(hourly.Temperature_2m)} [{weatherStream.HourlyUnits.Temperature_2m}],{nameof(hourly.Relativehumidity_2m)} [{weatherStream.HourlyUnits.Relativehumidity_2m}],{nameof(hourly.Precipitation)} [{weatherStream.HourlyUnits.Precipitation}]," +
                                 $"{nameof(hourly.Windspeed_10m)} [{weatherStream.HourlyUnits.Windspeed_10m}],{nameof(hourly.Winddirection_10m)} [{weatherStream.HourlyUnits.Winddirection_10m}],{nameof(hourly.Cloudcover)} [{weatherStream.HourlyUnits.Cloudcover}]," +
-                                $"{nameof(hourly.Direct_radiation)} [{weatherStream.HourlyUnits.Direct_radiation}],{nameof(hourly.Boundary_layer_height)} [{weatherStream.HourlyUnits.Boundary_layer_height}],FFMC hourly [-],FFMC [-],DMC [-],DC [-],ISI [-],BUI [-],FWI [-]");
+                                $"{nameof(hourly.Direct_radiation)} [{weatherStream.HourlyUnits.Direct_radiation}],{nameof(hourly.Boundary_layer_height)} [{weatherStream.HourlyUnits.Boundary_layer_height}],FFMC hourly [-],FFMC [-],DMC [-],DC [-],ISI [-],BUI [-],FWI [-]"
+                                + Utility.ClimatologySampler.FormatHeaderSuffix(weatherStream.Longitude));
 
-                            DateTime startDateTime, endDateTime;
-                            DateTime.TryParse(hourly.Time[0], out startDateTime);
-                            DateTime.TryParse(hourly.Time[hourly.Time.Length - 1], out endDateTime);
-
-                            Wildfire.FireWeatherIndex fwi = new Wildfire.FireWeatherIndex();
-                            Wildfire.HourlyFFMC ffmcHourly = new Wildfire.HourlyFFMC();
-
-                            //loop through all data
+                            //The fire weather codes from km/h wind and the 24 h rain at 12:00 local standard time,
+                            //by the derivation the re-derivation of old archives uses too. They were computed from
+                            //m/s wind and one hour of rain at 12:00 UTC, which kept the Drought Code accumulating
+                            //through every winter and ranked the campaign's candidate days by drought, not wind.
+                            var raw = new System.Collections.Generic.List<Utility.ClimatologySampler.RawHour>(hourly.Time.Length);
                             for (int i = 0; i < hourly.Time.Length; i++)
                             {
-                                DateTime.TryParse(hourly.Time[i], out DateTime dateTime);
-                                if (dateTime != null && dateTime.Hour == 12)
+                                DateTime.TryParse(hourly.Time[i], System.Globalization.CultureInfo.InvariantCulture,
+                                    System.Globalization.DateTimeStyles.None, out DateTime dateTime);
+                                raw.Add(new Utility.ClimatologySampler.RawHour
                                 {
-                                    fwi.CalculateDay(dateTime, hourly.Temperature_2m[i] ?? 0, hourly.Relativehumidity_2m[i] ?? 0, hourly.Windspeed_10m[i] ?? 0, hourly.Precipitation[i] ?? 0);
-                                }
-                                ffmcHourly.Calculate(hourly.Temperature_2m[i] ?? 0, hourly.Relativehumidity_2m[i] ?? 0, hourly.Windspeed_10m[i] ?? 0, hourly.Precipitation[i] ?? 0);
+                                    Time = dateTime,
+                                    Temperature = hourly.Temperature_2m[i] ?? 0,
+                                    RelativeHumidity = hourly.Relativehumidity_2m[i] ?? 0,
+                                    Precipitation = hourly.Precipitation[i] ?? 0,
+                                    WindSpeedMps = hourly.Windspeed_10m[i] ?? 0,
+                                });
+                            }
 
-                                file.WriteLine($"{hourly.Time[i]},{hourly.Temperature_2m[i]},{hourly.Relativehumidity_2m[i]},{hourly.Precipitation[i]},{hourly.Windspeed_10m[i]},{hourly.Winddirection_10m[i]},{hourly.Cloudcover[i]},{hourly.Direct_radiation[i]},{hourly.Boundary_layer_height[i]},{ffmcHourly.Value},{fwi.FFMC},{fwi.DMC},{fwi.DC},{fwi.ISI},{fwi.BUI},{fwi.FWI}");
+                            Utility.ClimatologySampler.DerivedCodes[] codes =
+                                Utility.ClimatologySampler.DeriveFireWeatherCodes(raw, weatherStream.Longitude);
+
+                            for (int i = 0; i < hourly.Time.Length; i++)
+                            {
+                                file.WriteLine(string.Join(",",
+                                    hourly.Time[i], F(hourly.Temperature_2m[i]), F(hourly.Relativehumidity_2m[i]),
+                                    F(hourly.Precipitation[i]), F(hourly.Windspeed_10m[i]), F(hourly.Winddirection_10m[i]),
+                                    F(hourly.Cloudcover[i]), F(hourly.Direct_radiation[i]), F(hourly.Boundary_layer_height[i]))
+                                    + "," + Utility.ClimatologySampler.FormatCodes(codes[i]));
                             }
                         }
                     }
                 }
 
+                File.Copy(temp, newFilePath, overwrite: true);
+                File.Delete(temp);
                 Engine.Message(null, Engine.LogType.Log, $"Saved weather data to {newFilePath}.");
             }
             else

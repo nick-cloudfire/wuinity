@@ -21,6 +21,12 @@ namespace PREACT.Utility
         public double BoundaryLayerHeight;
         public double FfmcHourly;
         public double Ffmc, Dmc, Dc, Isi, Bui, Fwi;
+
+        /// <summary>
+        /// Whether this row is the hour the daily fire weather codes are computed at - 12:00 local standard time,
+        /// from the archive's longitude. The daily codes of the other hours repeat the last noon's.
+        /// </summary>
+        public bool IsFwiNoon;
     }
 
     /// <summary>
@@ -38,20 +44,6 @@ namespace PREACT.Utility
         public double WindDirection;
         public double Solar;
         public double Fwi;
-    }
-
-    /// <summary>Descriptive mean/std of an annual-maxima sample, for reporting alongside the empirical draws.</summary>
-    public struct ClimatologyStats
-    {
-        public int Count;
-        public double MeanTemperature, StdTemperature;
-        public double MeanRelativeHumidity, StdRelativeHumidity;
-        public double MeanPrecipitation, StdPrecipitation;
-        public double MeanWindSpeed, StdWindSpeed;
-        public double MeanSolar, StdSolar;
-        public double MeanFwi, StdFwi;
-        //wind direction is circular; a linear mean/std would be meaningless, so it is reported
-        //only through the empirical per-day sample, never averaged here
     }
 
     /// <summary>
@@ -76,6 +68,7 @@ namespace PREACT.Utility
         {
             var rows = new List<HourlyWeatherRow>();
             string[] lines = File.ReadAllLines(path);
+            int noonHour = lines.Length > 1 ? FwiNoonUtcHour(ReadHeaderNumber(lines[1])) : 12;
 
             //lines 0-2 are "Latitide,..","Longitude,..","Elevation,.."; line 3 is the column header
             for (int i = 4; i < lines.Length; ++i)
@@ -105,9 +98,208 @@ namespace PREACT.Utility
                     Isi = ParseD(c[13]),
                     Bui = ParseD(c[14]),
                     Fwi = ParseD(c[15]),
+                    IsFwiNoon = time.Hour == noonHour && time.Minute == 0,
                 });
             }
             return rows;
+        }
+
+        // ------------------------------------------------------------------ archive format
+
+        /// <summary>
+        /// The archive format this code writes and reads. Version 2 derives the fire weather index from km/h wind
+        /// and the 24 h rain sum at 12:00 local standard time; version 1 (unmarked) passed m/s wind and one hour
+        /// of rain at 12:00 UTC, which kept the Drought Code from ever resetting and ranked the candidate days by
+        /// drought accumulation instead of by wind.
+        /// </summary>
+        public const int ArchiveFormatVersion = 2;
+
+        /// <summary>The token in the column header line that marks the format.</summary>
+        public const string ArchiveFormatToken = "archive_format=";
+
+        /// <summary>
+        /// The UTC hour that is 12:00 local standard time at <paramref name="longitude"/> - the hour the Canadian
+        /// FWI system's daily codes are defined at. Standard time from the longitude (15 degrees an hour), not the
+        /// civil time zone, which is what the FWI system specifies.
+        /// </summary>
+        public static int FwiNoonUtcHour(double longitude)
+        {
+            int offset = (int)System.Math.Round(longitude / 15.0);
+            return ((12 - offset) % 24 + 24) % 24;
+        }
+
+        /// <summary>The header line's marker for the current format.</summary>
+        public static string FormatHeaderSuffix(double longitude)
+        {
+            return "," + ArchiveFormatToken + ArchiveFormatVersion.ToString(CultureInfo.InvariantCulture)
+                   + $" (FWI at 12:00 local standard time = {FwiNoonUtcHour(longitude):00}:00 UTC; wind km/h; rain 24 h)";
+        }
+
+        /// <summary>The format version a header line declares; 1 when it declares none.</summary>
+        public static int ReadFormatVersion(string headerLine)
+        {
+            if (string.IsNullOrEmpty(headerLine)) return 1;
+            int at = headerLine.IndexOf(ArchiveFormatToken, StringComparison.Ordinal);
+            if (at < 0) return 1;
+
+            int start = at + ArchiveFormatToken.Length;
+            int end = start;
+            while (end < headerLine.Length && char.IsDigit(headerLine[end])) ++end;
+            return int.TryParse(headerLine.Substring(start, end - start), NumberStyles.Integer,
+                CultureInfo.InvariantCulture, out int v) ? v : 1;
+        }
+
+        /// <summary>
+        /// The raw hourly values of an archive row, and the seven fire weather code columns derived from them.
+        /// </summary>
+        public struct RawHour
+        {
+            public DateTime Time;
+            public double Temperature, RelativeHumidity, Precipitation, WindSpeedMps;
+        }
+
+        public struct DerivedCodes
+        {
+            public double FfmcHourly, Ffmc, Dmc, Dc, Isi, Bui, Fwi;
+        }
+
+        /// <summary>
+        /// Derives the fire weather codes for an hourly series, the one derivation the downloader and the
+        /// re-derivation of old archives share.
+        /// </summary>
+        /// <remarks>
+        /// Van Wagner's equations take wind in km/h (the archive stores m/s) and, for the daily codes, the rain of
+        /// the 24 hours ending at noon; the daily codes advance once a day at 12:00 local standard time and the
+        /// other hours carry the last value, as before. The hourly FFMC takes each hour's own rain.
+        /// </remarks>
+        public static DerivedCodes[] DeriveFireWeatherCodes(IList<RawHour> hours, double longitude)
+        {
+            var result = new DerivedCodes[hours.Count];
+            var daily = new PREACT.Wildfire.FireWeatherIndex();
+            var hourly = new PREACT.Wildfire.HourlyFFMC();
+            int noon = FwiNoonUtcHour(longitude);
+
+            var window = new Queue<RawHour>();
+            double windowRain = 0.0;
+
+            for (int i = 0; i < hours.Count; ++i)
+            {
+                RawHour h = hours[i];
+                double windKmh = h.WindSpeedMps * 3.6;
+
+                //The rain of the 24 hours ending at this one, by time rather than by row count so a gap in the
+                //record does not stretch the window.
+                window.Enqueue(h);
+                windowRain += h.Precipitation;
+                while (window.Count > 0 && (h.Time - window.Peek().Time).TotalHours >= 24.0)
+                {
+                    windowRain -= window.Dequeue().Precipitation;
+                }
+
+                if (h.Time.Hour == noon && h.Time.Minute == 0)
+                {
+                    daily.CalculateDay(h.Time, h.Temperature, h.RelativeHumidity, windKmh, System.Math.Max(0.0, windowRain));
+                }
+                hourly.Calculate(h.Temperature, h.RelativeHumidity, windKmh, h.Precipitation);
+
+                result[i] = new DerivedCodes
+                {
+                    FfmcHourly = hourly.Value,
+                    Ffmc = daily.FFMC,
+                    Dmc = daily.DMC,
+                    Dc = daily.DC,
+                    Isi = daily.ISI,
+                    Bui = daily.BUI,
+                    Fwi = daily.FWI,
+                };
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Brings a cached archive to the current format, re-deriving its fire weather columns from its own raw
+        /// hourly values when it was written by an older version. No download: the raw columns are unchanged.
+        /// Returns true when the file is current afterwards.
+        /// </summary>
+        /// <remarks>
+        /// Written to a temporary file and moved into place, so a campaign starting beside it never reads a
+        /// half-written archive.
+        /// </remarks>
+        public static bool EnsureArchiveFormat(string path, Action<string> log)
+        {
+            if (!File.Exists(path)) return false;
+
+            string[] lines = File.ReadAllLines(path);
+            if (lines.Length < 5) return false;
+            if (ReadFormatVersion(lines[3]) >= ArchiveFormatVersion) return true;
+
+            double longitude = ReadHeaderNumber(lines[1]);
+
+            var raw = new List<RawHour>(lines.Length - 4);
+            var rawLines = new List<string[]>(lines.Length - 4);
+            for (int i = 4; i < lines.Length; ++i)
+            {
+                if (string.IsNullOrWhiteSpace(lines[i])) continue;
+                string[] c = lines[i].Split(',');
+                if (c.Length < 9) continue;
+                if (!DateTime.TryParse(c[0], CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime time)) continue;
+
+                raw.Add(new RawHour
+                {
+                    Time = time,
+                    Temperature = ParseD(c[1]),
+                    RelativeHumidity = ParseD(c[2]),
+                    Precipitation = ParseD(c[3]),
+                    WindSpeedMps = ParseD(c[4]),
+                });
+                rawLines.Add(c);
+            }
+
+            DerivedCodes[] codes = DeriveFireWeatherCodes(raw, longitude);
+
+            string header = lines[3];
+            int oldMarker = header.IndexOf("," + ArchiveFormatToken, StringComparison.Ordinal);
+            if (oldMarker >= 0) header = header.Substring(0, oldMarker);
+
+            var output = new List<string>(raw.Count + 4) { lines[0], lines[1], lines[2], header + FormatHeaderSuffix(longitude) };
+            for (int i = 0; i < raw.Count; ++i)
+            {
+                string[] c = rawLines[i];
+                output.Add(string.Join(",", c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8])
+                           + "," + FormatCodes(codes[i]));
+            }
+
+            string temp = path + ".rederive.tmp";
+            File.WriteAllLines(temp, output);
+            File.Copy(temp, path, overwrite: true);
+            File.Delete(temp);
+
+            log?.Invoke($"  climatology: re-derived the fire weather index of {Path.GetFileName(path)} ({raw.Count} hours) "
+                        + $"for format {ArchiveFormatVersion}: km/h wind, 24 h rain, 12:00 local standard time "
+                        + $"({FwiNoonUtcHour(longitude):00}:00 UTC). The candidate days are ranked by the corrected index.");
+            return true;
+        }
+
+        /// <summary>The seven code columns, as the archive writes them.</summary>
+        public static string FormatCodes(DerivedCodes d)
+        {
+            return string.Join(",",
+                d.FfmcHourly.ToString("R", CultureInfo.InvariantCulture),
+                d.Ffmc.ToString("R", CultureInfo.InvariantCulture),
+                d.Dmc.ToString("R", CultureInfo.InvariantCulture),
+                d.Dc.ToString("R", CultureInfo.InvariantCulture),
+                d.Isi.ToString("R", CultureInfo.InvariantCulture),
+                d.Bui.ToString("R", CultureInfo.InvariantCulture),
+                d.Fwi.ToString("R", CultureInfo.InvariantCulture));
+        }
+
+        /// <summary>The number after the comma of a "Label,value" header line, or 0.</summary>
+        private static double ReadHeaderNumber(string line)
+        {
+            if (string.IsNullOrEmpty(line)) return 0.0;
+            string[] parts = line.Split(',');
+            return parts.Length > 1 ? ParseD(parts[1].Trim()) : 0.0;
         }
 
         private static double ParseD(string s)
@@ -116,15 +308,14 @@ namespace PREACT.Utility
         }
 
         /// <summary>
-        /// For each calendar year present, picks the day with the highest FWI (using the noon
-        /// row, since <see cref="PREACT.Wildfire.FireWeatherIndex"/> only advances at hour 12 —
-        /// other hours in the source CSV repeat that day's value). Years where every day's FWI
-        /// is zero (no valid peak, e.g. entirely outside the FWI engine's coded fire season) are
-        /// skipped rather than contributing a meaningless zero-FWI "peak".
+        /// For each calendar year present, picks the day with the highest FWI, read at the day's noon row (12:00
+        /// local standard time, <see cref="HourlyWeatherRow.IsFwiNoon"/>) - the other hours repeat that day's
+        /// value. Years where every day's FWI is zero (no valid peak, e.g. entirely outside the FWI engine's coded
+        /// fire season) are skipped rather than contributing a meaningless zero-FWI "peak".
         /// </summary>
         public static List<AnnualMaximaDay> BuildAnnualMaxima(IEnumerable<HourlyWeatherRow> rows)
         {
-            var byYear = rows.Where(r => r.Time.Hour == 12).GroupBy(r => r.Time.Year);
+            var byYear = rows.Where(r => r.IsFwiNoon).GroupBy(r => r.Time.Year);
 
             var maxima = new List<AnnualMaximaDay>();
             foreach (var year in byYear)
@@ -152,29 +343,6 @@ namespace PREACT.Utility
                 });
             }
             return maxima;
-        }
-
-        public static ClimatologyStats ComputeStats(IReadOnlyList<AnnualMaximaDay> maxima)
-        {
-            var stats = new ClimatologyStats { Count = maxima.Count };
-            if (maxima.Count == 0) return stats;
-
-            (stats.MeanTemperature, stats.StdTemperature) = MeanStd(maxima, d => d.Temperature);
-            (stats.MeanRelativeHumidity, stats.StdRelativeHumidity) = MeanStd(maxima, d => d.RelativeHumidity);
-            (stats.MeanPrecipitation, stats.StdPrecipitation) = MeanStd(maxima, d => d.Precipitation);
-            (stats.MeanWindSpeed, stats.StdWindSpeed) = MeanStd(maxima, d => d.WindSpeed);
-            (stats.MeanSolar, stats.StdSolar) = MeanStd(maxima, d => d.Solar);
-            (stats.MeanFwi, stats.StdFwi) = MeanStd(maxima, d => d.Fwi);
-            return stats;
-        }
-
-        private static (double mean, double std) MeanStd(IReadOnlyList<AnnualMaximaDay> maxima, Func<AnnualMaximaDay, double> select)
-        {
-            double mean = maxima.Average(select);
-            double variance = maxima.Count > 1
-                ? maxima.Sum(d => (select(d) - mean) * (select(d) - mean)) / (maxima.Count - 1)
-                : 0.0;
-            return (mean, System.Math.Sqrt(variance));
         }
 
         /// <summary>
@@ -217,10 +385,10 @@ namespace PREACT.Utility
         {
             if (daysPerYear < 1) daysPerYear = 1;
 
-            //Hour 12 for the same reason BuildAnnualMaxima uses it: FireWeatherIndex only advances the
-            //daily codes at noon, and the other hours of the source CSV repeat that day's value - so
-            //taking every hour would return the same day 24 times.
-            var byYear = rows.Where(r => r.Time.Hour == 12).GroupBy(r => r.Time.Year);
+            //The noon row for the same reason BuildAnnualMaxima uses it: FireWeatherIndex only advances the
+            //daily codes at noon (local standard time), and the other hours of the source CSV repeat that
+            //day's value - so taking every hour would return the same day 24 times.
+            var byYear = rows.Where(r => r.IsFwiNoon).GroupBy(r => r.Time.Year);
 
             var pool = new List<AnnualMaximaDay>();
             foreach (var year in byYear)
@@ -411,6 +579,15 @@ namespace PREACT.Utility
                 SampleMin = sample.Min(),
                 SampleMax = sample.Max(),
             };
+        }
+
+        private static (double mean, double std) MeanStd(IReadOnlyList<AnnualMaximaDay> maxima, Func<AnnualMaximaDay, double> select)
+        {
+            double mean = maxima.Average(select);
+            double variance = maxima.Count > 1
+                ? maxima.Sum(d => (select(d) - mean) * (select(d) - mean)) / (maxima.Count - 1)
+                : 0.0;
+            return (mean, System.Math.Sqrt(variance));
         }
 
         private static NormalFit FitOne(IReadOnlyList<AnnualMaximaDay> pool, Func<AnnualMaximaDay, double> select)
