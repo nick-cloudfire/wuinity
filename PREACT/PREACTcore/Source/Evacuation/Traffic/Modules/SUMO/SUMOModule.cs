@@ -190,7 +190,7 @@ namespace PREACT.Traffic
             {
                 Engine.Message(_simulation, Engine.LogType.Warning, $"The SUMO network is projected in EPSG:{networkZone} but the simulation "
                     + $"measures in EPSG:{simulationZone}. Fire road closures, vehicle redirection and the traffic maps will be misplaced "
-                    + "(car injection is not affected). Rebuild the network from the scenario (Prepare data > roads), which now "
+                    + "(car injection is not affected). Rebuild the network from the scenario (Data > Roads: OpenStreetMap to SUMO network), which "
                     + "projects it into the simulation's zone.");
             }
         }

@@ -153,6 +153,14 @@ California.
 - A run stops on its first error, with the modules closed, instead of carrying on and logging every step.
 - A run whose cars mostly cannot be put into SUMO stops with an error instead of evacuating nobody.
 - A case build is refused while a campaign of the same scenario runs.
+- WindNinja is found on Linux and macOS as `WindNinja_cli` (on `PATH`, `/opt/WindNinja`, `/usr/local/WindNinja` or
+  `~/WindNinja`); the search looked for `WindNinja_cli.exe` only, so there only `WINDNINJA_CLI` or `--windninja`
+  found it. The "not found" message names where it looked on the platform it runs on.
+- Messages name the menus the GUI has: *Data > Build fire case (ELMFIRE)* and *Data > Roads* instead of *Prepare
+  data*, *Fire > Fire areas* and *Fire > Fire behaviour* instead of the *Hazards tab*. The header of a generated
+  `elmfire.data` says so too, so the first run after a case is rebuilt computes its fire again instead of reusing
+  the earlier output (the namelist's text is part of what a reuse compares). The destination editor's *Max arrival
+  flow* tooltip says what happens to a car over the limit: it is put back into traffic to the same destination.
 - Paths are stored with `/` and resolve on every platform; a file that has moved is found by name nearby.
 - On Windows the engine prepends its folders to `PATH` instead of replacing it, so SUMO, the GDAL tools and ELMFIRE
   are found as installed. SUMO is found through `SUMO_HOME` or `PATH`.
@@ -182,11 +190,8 @@ end to end on Linux.
   wind barely shapes the boundary above about 3 mi/h), and subtracts an upslope wind from the slope term rather
   than adding it. These are for k-PERIL's author; see [Modules](docs/modules.md#trigger-boundary).
 - **Linux**: the committed SUMO C# bindings match the Windows SUMO build only
-  ([regenerate them](docs/building.md#regenerating-the-sumo-c-glue-on-linux)); WindNinja is found only through
-  `WINDNINJA_CLI` or `--windninja`; on the test bench the NFDRS4 library did not load, so dead and live fuel
-  moisture fell back to uniform values.
+  ([regenerate them](docs/building.md#regenerating-the-sumo-c-glue-on-linux)); on the test bench the NFDRS4
+  library did not load, so dead and live fuel moisture fell back to uniform values.
 - **FOFEM**: the committed `FOFEM.dll` is a Debug build that needs Visual Studio's debug runtime. Nothing calls
   it yet.
 - **Evacuation group masks** are placed on the fire grid by cell and carry no georeference.
-- Some messages still name menus that were renamed: *Prepare data* means the Data menu and workflow steps 2–5,
-  and *Hazards tab* means Fire > Fire model settings.

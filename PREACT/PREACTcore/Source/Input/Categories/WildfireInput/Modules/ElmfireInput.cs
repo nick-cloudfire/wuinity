@@ -113,8 +113,8 @@ namespace PREACT.Input
         public string PathToGdal = string.Empty;
 
         /// <summary>
-        /// <c>WindNinja_cli.exe</c>, when it is somewhere the standard probe does not look. Empty means
-        /// found automatically, which covers the Windows installer's own locations and anything on PATH.
+        /// <c>WindNinja_cli.exe</c> (<c>WindNinja_cli</c> on Linux), when it is somewhere the standard probe does not
+        /// look. Empty means found automatically, which covers the installer's own locations and anything on PATH.
         /// </summary>
         /// <remarks>
         /// Only used while building a case. Without WindNinja the weather stage writes one wind value across

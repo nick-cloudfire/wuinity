@@ -1,8 +1,8 @@
 namespace PREACT.Utility
 {
     /// <summary>
-    /// Derives slope/aspect from a DEM via Horn's method (docs/probabilistic-trigger-convergence.md,
-    /// "Topography / DEM downloader" — "already used in AscRaster/k-PERIL"). k-PERIL's own copy
+    /// Derives slope/aspect from a DEM via Horn's method, the one k-PERIL uses (docs/elmfire-cases.md,
+    /// "Building a case, step by step"). k-PERIL's own copy
     /// (<c>kPERILcore/source/perilData.cs</c>, <c>interpolateSlope()</c>) is private and tightly
     /// coupled to that vendored engine's instance state, so this is a standalone reimplementation
     /// of the same formula for use by the DEM downloader (and anything else that needs slope/

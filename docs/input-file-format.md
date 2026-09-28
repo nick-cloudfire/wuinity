@@ -311,7 +311,7 @@ and keeps its default.
 | `BuildCase` | bool | `false` | Build the case before each run. The GUI's Build fire case does it on demand instead. |
 | `RebuildExistingLayers` | bool | `false` | Replace every layer the case already has (re-warp sources, redraw the weather). Canopy with no source named is refilled with zeros. |
 | `PathToGdal` | folder | found | GDAL tools for ELMFIRE (`gdal_translate`, `gdalinfo`, `gdalsrsinfo`). Found on `PATH`, in QGIS, OSGeo4W or `SUMO_HOME`. |
-| `WindNinjaExe` | path | found | `WINDNINJA_CLI`, `PATH`, `C:\WindNinja`, Program Files. |
+| `WindNinjaExe` | path | found | `WINDNINJA_CLI`, `PATH`, `C:\WindNinja`, Program Files (on Linux `WindNinja_cli` on `PATH`, `/opt/WindNinja`, `/usr/local/WindNinja`, `~/WindNinja`). |
 | `CanopyDatasetFolder` | folder | – | The FIRE-RES pan-European canopy rasters (`panEu_canopyCover.tif`, `panEu_canopyHeight.tif`, `panEu_cbh.tif`, `panEu_cbd.tif`), for any canopy layer not named below. Real units: the LANDFIRE scaling flags are forced off. |
 
 **Source layers.** Fuel, canopy and buildings have no global download, so they are named here. Any CRS and

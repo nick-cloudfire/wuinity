@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Builds everything the Unity project and the command line need from PREACT, in Release:
 #
-#   PREACTcore  -> WUInity/Assets/PREACT/Release/netstandard2.1/   engine DLLs, native wrappers and
-#                                                                  templates that the Unity project uses
+#   PREACTcore  -> WUInity/Assets/PREACT/Release/netstandard2.1/   engine DLLs and native wrappers that the
+#                                                                  Unity project uses
 #   PREACT      -> PREACT/PREACTexecute/bin/Release/net8.0/         head-less scenario runner
 #   PREACTcli   -> PREACT/PREACTcli/bin/Release/net8.0/             build-case, converge-trigger, ...
 #

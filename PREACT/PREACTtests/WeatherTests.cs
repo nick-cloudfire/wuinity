@@ -16,8 +16,46 @@ namespace PREACT.Tests
             runner.Add("time: a scenario's zone, its daylight saving and its gaps, from the domain's coordinates", ScenarioZone);
             runner.Add("weather: a case's bands start at the scenario's local hour, read at the archive's UTC hour", BandsStartAtLocalHour);
             runner.Add("weather: the sun Nelson's terrain factor uses peaks at local solar noon, at Mati and in California", SunAtLocalNoon);
+            runner.Add("weather: WindNinja_cli is found on PATH and in an install root under this platform's name", WindNinjaFound);
             runner.Add("fwi: derived all year; northern codes unchanged, southern day lengths, a southern year peaks in its summer", FwiAllYear);
             runner.Add("fwi: Mati's real archive keeps every annual peak and pool day without the old season cut (data permitting)", FwiMatiUnchanged);
+        }
+
+        /// <summary>
+        /// docs.md 3.12: the probe looked for WindNinja_cli.exe alone, so on Linux only WINDNINJA_CLI or an explicit
+        /// path found WindNinja, and the build wrote a uniform wind field.
+        /// </summary>
+        private static void WindNinjaFound()
+        {
+            string[] names = WindNinjaRunner.ExecutableNames;
+            Assert.Equal(OperatingSystem.IsWindows() ? "WindNinja_cli.exe" : "WindNinja_cli", names[0], "the solver's name on this platform");
+
+            string folder = Directory.CreateTempSubdirectory("preact-windninja-").FullName;
+            try
+            {
+                string bin = Path.Combine(folder, "bin");
+                Directory.CreateDirectory(bin);
+                string onPath = Path.Combine(bin, names[0]);
+                File.WriteAllText(onPath, "");
+                string path = string.Join(Path.PathSeparator.ToString(), "/nonexistent", bin);
+                Assert.Equal(onPath, WindNinjaRunner.FindExecutable(null, path, new string[0], names), "found on PATH");
+
+                string root = Path.Combine(folder, "WindNinja");
+                foreach (string version in new[] { "WindNinja-3.11.0", "WindNinja-3.12.1" })
+                {
+                    Directory.CreateDirectory(Path.Combine(root, version, "bin"));
+                    File.WriteAllText(Path.Combine(root, version, "bin", names[0]), "");
+                }
+                Assert.Equal(Path.Combine(root, "WindNinja-3.12.1", "bin", names[0]),
+                    WindNinjaRunner.FindExecutable(null, "", new[] { root }, names), "the newest install under a root");
+                Assert.Equal(onPath, WindNinjaRunner.FindExecutable(onPath, "", new string[0], names), "WINDNINJA_CLI first");
+                Assert.True(WindNinjaRunner.FindExecutable(null, "", new string[0], names) == null, "nothing when there is nothing");
+                Assert.True(WindNinjaRunner.SearchDescription.StartsWith("WINDNINJA_CLI, PATH"), "the message says where it looked");
+            }
+            finally
+            {
+                try { Directory.Delete(folder, true); } catch { }
+            }
         }
 
         /// <summary>One year of synthetic hourly weather, hottest and driest around <paramref name="peakDay"/>, wet in the opposite season.</summary>

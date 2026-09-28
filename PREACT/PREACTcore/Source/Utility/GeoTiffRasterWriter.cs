@@ -116,10 +116,10 @@ namespace PREACT.Utility
         }
 
         /// <summary>
-        /// Writes a multi-band GeoTIFF with every band set to the same constant value — the
-        /// "constant transient rasters" fallback docs/probabilistic-trigger-convergence.md
-        /// allows for per-realization wind/moisture until a real time-varying series (WindNinja
-        /// terrain wind, Nelson per-cell moisture) is available. <paramref name="bandCount"/>
+        /// Writes a multi-band GeoTIFF with every band set to the same constant value — the uniform
+        /// weather a stage falls back to when it cannot run (no archive, no WindNinja, no terrain), in
+        /// place of the time-varying series (WindNinja terrain wind, Nelson per-cell moisture); see
+        /// docs/elmfire-cases.md, "Weather". <paramref name="bandCount"/>
         /// should match the realization's <c>NUM_METEOROLOGY_TIMES</c>.
         /// </summary>
         public static void WriteConstantTimeSeries(MasterGrid grid, float value, int bandCount, string outputPath)

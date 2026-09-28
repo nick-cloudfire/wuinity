@@ -78,7 +78,7 @@ namespace PREACTcli.Campaigns
             else
             {
                 c.TemplatePath = ElmfireCoupling.ResolveNamelist(caseDir, c.ScenarioDir, elmfire, null, out string problem);
-                if (c.TemplatePath == null) return Fail(problem + " Build the case first (Prepare data, or PREACTcli build-case).");
+                if (c.TemplatePath == null) return Fail(problem + " Build the case first (Data > Build fire case (ELMFIRE) in the GUI, or PREACTcli build-case).");
                 c.TemplatePath = Path.GetFullPath(c.TemplatePath);
             }
 
@@ -144,7 +144,7 @@ namespace PREACTcli.Campaigns
                 return Fail("the template " + Path.GetFileName(c.TemplatePath) + " names rasters that are not on the case "
                             + "grid, so ELMFIRE could not run a single realization:\n         "
                             + string.Join("\n         ", rasters.Fatal)
-                            + "\n       Build the case again (Prepare data, or PREACTcli build-case): it re-cuts onto the grid "
+                            + "\n       Build the case again (Data > Build fire case (ELMFIRE) in the GUI, or PREACTcli build-case): it re-cuts onto the grid "
                             + "every raster named by the case's elmfire.data, its kept namelists (elmfire.data.kept-*) and "
                             + "the scenario's [ELMFIRE] NamelistTemplate. Or point the template at rasters on the grid.");
             }

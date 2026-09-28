@@ -93,7 +93,7 @@ PREACTcli build-case --wui <scenario.wui> [--out <case dir>] [options]
 | `--weather-seed <n>` | `0` | Seeds which annual peak day is drawn. |
 | `--conditioning-days <n>` | `20` | Days of antecedent weather Nelson is marched over, 1 to 365. |
 | `--burning-from`, `--burning-to <hour>` | `10`, `18` | Local hours (0 to 23) of the drawn day over which the logged dead-moisture minimum is taken. Only that log line depends on them. |
-| `--windninja <exe>` | `[ELMFIRE] WindNinjaExe`, then `WINDNINJA_CLI`, `PATH`, `C:\WindNinja`, Program Files | WindNinja. |
+| `--windninja <exe>` | `[ELMFIRE] WindNinjaExe`, then `WINDNINJA_CLI`, `PATH`, `C:\WindNinja`, Program Files (Linux: `/opt/WindNinja`, `/usr/local/WindNinja`, `~/WindNinja`) | WindNinja. |
 | `--wn-mesh <m>` | `fine` | `coarse`, `medium` or `fine`. |
 | `--wn-vegetation <v>` | `grass` | `grass`, `brush` or `trees`. |
 | `--no-climatology` | off | No archive: write uniform weather from the fallbacks below. |

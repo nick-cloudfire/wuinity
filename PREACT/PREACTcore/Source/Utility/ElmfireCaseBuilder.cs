@@ -11,9 +11,9 @@ using PREACT.Tools;
 namespace PREACT.Utility
 {
     /// <summary>
-    /// Builds a complete ELMFIRE case folder for a domain from scratch — the orchestration step
-    /// docs/probabilistic-trigger-convergence.md lists as missing ("the pieces exist, wiring them
-    /// into one 'build this case's topography' call doesn't yet").
+    /// Builds a complete ELMFIRE case folder for a domain from scratch: the one call that wires the terrain,
+    /// source-layer, weather and namelist pieces together (docs/elmfire-cases.md, "Building a case, step by
+    /// step").
     ///
     /// Given only a lower-left lat/lon and a domain size in metres, it downloads the DEM, chooses
     /// the local UTM zone, establishes the <see cref="MasterGrid"/> every other raster is snapped
@@ -617,8 +617,8 @@ namespace PREACT.Utility
 
             //---------------------------------------------------------------- 9. Namelist
             //Regenerated on every build, so the scenario's [ElmfireNamelist] settings, its stop time and the case's
-            //layers are what the namelist says: a namelist kept from the first build made later edits in the
-            //Hazards tab do nothing at all. A namelist edited by hand is not destroyed - it is set aside with a
+            //layers are what the namelist says: a namelist kept from the first build made later edits on the
+            //Fire behaviour page do nothing at all. A namelist edited by hand is not destroyed - it is set aside with a
             //timestamp - and the way to run a hand-tuned namelist is [ELMFIRE] NamelistTemplate, which is used
             //verbatim.
             result.NamelistPath = Path.Combine(o.OutputDirectory, "elmfire.data");
@@ -1859,8 +1859,8 @@ namespace PREACT.Utility
         /// </summary>
         /// <remarks>
         /// Resolved against the case rather than hardcoded because the stem is not the builder's to
-        /// choose: fuel and building layers are external products (see P3 in
-        /// <c>docs/elmfire-case-automation.md</c>) and arrive under whichever name the pipeline that made
+        /// choose: fuel and building layers are external products (docs/elmfire-cases.md, "Where the layers
+        /// come from") and arrive under whichever name the pipeline that made
         /// them uses. Hardcoding <c>fbfm13</c> here meant a case whose fuel raster is <c>fbfm40.tif</c> —
         /// which is every case built so far — got <c>FBFM_FILENAME</c> emitted as a comment, and ELMFIRE
         /// stopped at its own "is this key set?" check before MPI came up.

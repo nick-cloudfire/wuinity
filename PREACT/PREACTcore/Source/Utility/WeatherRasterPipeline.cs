@@ -11,8 +11,8 @@ using PREACT.Wildfire;
 namespace PREACT.Utility
 {
     /// <summary>
-    /// The history-based weather chain from docs/probabilistic-trigger-convergence.md's "Reference
-    /// pipeline (WindNinja + Nelson), per realization": ERA5 climatology → a sampled historical
+    /// The history-based weather chain (docs/elmfire-cases.md, "Weather"; per realization,
+    /// docs/trigger-campaigns.md, "Weather per realization"): ERA5 climatology → a sampled historical
     /// peak fire-weather day → WindNinja terrain wind + Nelson dead fuel moisture → the five
     /// weather rasters (<c>ws</c>/<c>wd</c>/<c>m1</c>/<c>m10</c>/<c>m100</c>) ELMFIRE reads.
     ///
@@ -993,8 +993,8 @@ namespace PREACT.Utility
                 //Naming the probe matters: the fix for "not found" is to install it or set WindNinjaExe, and
                 //neither is guessable from a message that only says the stage was skipped.
                 result.Fallbacks.Add("WindNinja: not found");
-                log("  wind: no WindNinja_cli.exe found (looked at WINDNINJA_CLI, PATH, C:\\WindNinja and "
-                    + "Program Files); writing a uniform field, so the trigger boundary will be circular.");
+                log($"  wind: no {WindNinjaRunner.ExecutableNames[0]} found (looked at {WindNinjaRunner.SearchDescription}); "
+                    + "writing a uniform field, so the trigger boundary will be circular.");
             }
 
             //Still the full band count, even though every band holds the same value: the five rasters are

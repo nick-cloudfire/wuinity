@@ -247,7 +247,7 @@ namespace PREACT.Input
                 //all, both of which look like deliberate choices in the output.
                 PREACTInput.OptionalInputMissing(nameOfInput,
                     "Nothing has been painted for this scenario - no WUI area, no ignition area, no initial "
-                    + "ignition. Paint them under Run/edit > Hazards > Paint fire areas and save.");
+                    + "ignition. Paint them with Fire > Fire areas (workflow step 6) and save.");
                 return;
             }
 

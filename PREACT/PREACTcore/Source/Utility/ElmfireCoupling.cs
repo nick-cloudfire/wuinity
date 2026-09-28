@@ -97,8 +97,8 @@ namespace PREACT.Utility
         /// </summary>
         /// <remarks>
         /// <para>
-        /// The same build <see cref="Prepare"/> performs, exposed so it can be done once from Prepare data rather
-        /// than only as a side effect of starting a run. Ignores <see cref="ElmfireInput.BuildCase"/>: pressing the
+        /// The same build <see cref="Prepare"/> performs, exposed so it can be done once from the GUI's Build fire
+        /// case rather than only as a side effect of starting a run. Ignores <see cref="ElmfireInput.BuildCase"/>: pressing the
         /// button is the instruction, and that flag governs whether a run builds on its own.
         /// </para>
         /// <para>
@@ -157,8 +157,8 @@ namespace PREACT.Utility
                 log?.Invoke("  trigger boundary: [kPERIL] WuiAreaFile is now " + input.TriggerBufferModule.kPERILInput.WuiAreaFile + ".");
             }
 
-            //Written onto the scenario, like every other prepare step writes the path it produced. Building from
-            //Prepare data happens long before any run, so without recording the day here the connection between
+            //Written onto the scenario, like every other data step writes the path it produced. Building from
+            //the data steps happens long before any run, so without recording the day here the connection between
             //the fire's weather and the reported weather would have to be rediscovered - or lost.
             DateTime anchor = built.Weather != null ? built.Weather.BandAnchor : default;
             if (anchor != default && input.Weather != null)
@@ -233,7 +233,7 @@ namespace PREACT.Utility
             if (!Directory.Exists(caseDir))
             {
                 result.Message = $"There is no ELMFIRE case at {settings.CaseDirectory}. Turn BuildCase on, or "
-                                 + "build one with Prepare data or PREACTcli build-case.";
+                                 + "build one with Data > Build fire case (ELMFIRE) in the GUI, or PREACTcli build-case.";
                 return result;
             }
 
@@ -483,7 +483,7 @@ namespace PREACT.Utility
 
         /// <summary>
         /// The case builder's options for this scenario: its domain, grid, stop time, source layers, ignition
-        /// points and painted areas, as the GUI's Prepare data and <c>PREACTcli build-case</c> both build them.
+        /// points and painted areas, as the GUI's Build fire case and <c>PREACTcli build-case</c> both build them.
         /// </summary>
         /// <remarks>
         /// One place, so the two front ends cannot build different cases from the same <c>.wui</c> - the CLI used to
