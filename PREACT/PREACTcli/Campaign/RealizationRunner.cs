@@ -84,6 +84,18 @@ namespace PREACTcli.Campaigns
             }
             Set("kPERIL", "OutputName", outputName);
 
+            //Contract C1: the case's dem/slp/asp are the grid of record, k-PERIL's topography included. A base
+            //scenario whose landscape is still the one it was drawn on - mati.wui's 616x590 DEM covers 64 % of the
+            //padded fire grid - otherwise gives k-PERIL flat ground over the rest of the fire.
+            foreach ((string key, string stem) in new[]
+                     {
+                         ("ElevationFile", ElmfireStems.Dem), ("SlopeFile", ElmfireStems.Slope), ("AspectFile", ElmfireStems.Aspect),
+                     })
+            {
+                string path = ElmfireStems.Tif(c.InputsDir, stem);
+                if (File.Exists(path)) Set("Landscape", key, CampaignLayout.RelativeForWui(c.ScenarioDir, path));
+            }
+
             string tempWui = Path.Combine(c.ScenarioDir, "__" + name + ".wui");
             string preactDir = Path.Combine(dir, CampaignLayout.RealizationPreactFolder);
             string logPath = Path.Combine(dir, CampaignLayout.RealizationPreactLog);
