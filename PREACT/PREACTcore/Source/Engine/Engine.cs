@@ -490,6 +490,13 @@ namespace PREACT
         /// </summary>
         public void LoadInputFromFile(string filePath, out bool success, bool acceptIncomplete)
         {
+            //The log written beside a run's output (<Name>.log) covers this load and everything after it. It
+            //used to be cleared when the run started instead, which dropped the load messages - the checklist
+            //items and path corrections - from the one file that records the run.
+            lock (_consoleLog)
+            {
+                _consoleLog.Clear();
+            }
             PREACTInput input = PREACTInput.LoadFromDisk(filePath, out success);
 
             if (input == null)

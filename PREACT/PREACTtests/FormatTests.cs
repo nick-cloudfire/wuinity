@@ -26,6 +26,7 @@ namespace PREACT.Tests
             runner.Add("format: retired sections and keys are tolerated and not written", RetiredTolerated);
             runner.Add("format: Revalidate writes nothing into the scenario folder", RevalidateInMemory);
             runner.Add("format: CDF problems are reported", CdfValidation);
+            runner.Add("format: ASC headers in any order, with centres and without nodata", AscHeaders);
         }
 
         /// <summary>A folder with a minimal, complete scenario: pedestrians on, traffic off, no fire.</summary>
@@ -358,6 +359,23 @@ namespace PREACT.Tests
             input.Simulation.Name = string.Empty;
             Assert.True(!PREACTInput.Revalidate(input), "an emptied Name is caught");
             Assert.Equal(before.Length, Directory.GetFiles(s.Folder).Length, "files in the scenario folder");
+        }
+
+        private static void AscHeaders()
+        {
+            using var s = new Scenario();
+            string a = Path.Combine(s.Folder, "a.asc");
+            File.WriteAllLines(a, new[] { "NROWS 2", "ncols 3", "xllcenter 105", "yllcenter 205", "cellsize 10", "1 2 3", "4 5 6" });
+            float[,] data = Utility.AscRaster.Read(a, out Utility.AscRaster.Header header, out bool ok);
+            Assert.True(ok, "reads a header in another order, with centres and no NODATA_value");
+            Assert.Equal(3, header.Ncols, "ncols");
+            Assert.Near(100.0, header.XllCorner, 1e-9, "xllcenter becomes the corner");
+            Assert.Near(200.0, header.YllCorner, 1e-9, "yllcenter becomes the corner");
+            Assert.Near(-9999.0, header.NoDataValue, 1e-9, "default nodata");
+            Assert.Near(4.0, data[0, 0], 1e-9, "south-west cell (the last row)");
+            Assert.Near(3.0, data[2, 1], 1e-9, "north-east cell (the first row)");
+            Utility.AscRaster.Header h2 = Utility.AscRaster.ReadHeader(a, out bool ok2);
+            Assert.True(ok2 && h2.Nrows == 2 && h2.CellSizeY == 10.0, "ReadHeader agrees");
         }
 
         private static void CdfValidation()
