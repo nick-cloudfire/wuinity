@@ -21,6 +21,171 @@ namespace PREACT.Tests
             runner.Add("builder: the case grid covers the whole padded domain, in whole cells", GridCoversPaddedDomain);
             runner.Add("builder: a painting that records its grid is placed only on that grid, not on any of its size", PaintingPosition);
             runner.Add("builder: a case is not rebuilt under a running campaign, from the GUI or the CLI", NoBuildUnderCampaign);
+            runner.Add("builder: a stopped build kills WindNinja, starts no other and writes no wind (no uniform field)", StoppedBuildWritesNoWind);
+            runner.Add("coupling: BuildCaseOnly stopped during WindNinja reports it stopped and leaves the scenario alone", StoppedBuildCaseOnly);
+            runner.Add("builder: a grid set aside by a build that then failed is carried by the next build", FailedRecutIsResumed);
+        }
+
+        /// <summary>
+        /// A re-cut sets the old grid aside first; a build that fails after that (no DEM to cut the new grid from, as on
+        /// Mati without an OpenTopography key) used to strand its layers in inputs/_previous_grid for good.
+        /// </summary>
+        private static void FailedRecutIsResumed()
+        {
+            using (var c = new SyntheticCase())
+            {
+                string caseDir = Path.Combine(c.Folder, "case");
+                string inputs = Path.Combine(caseDir, "inputs");
+                string previous = Path.Combine(inputs, ElmfireCaseBuilder.PreviousGridFolder);
+                ElmfireCaseBuilder.Build(c.Options(caseDir, 150.0, new List<string>())).GetAwaiter().GetResult();
+                MasterGrid first = MasterGrid.FromRasterFile(ElmfireStems.Tif(inputs, ElmfireStems.Dem));
+
+                //A layer only the case has: made by hand, no source to warp it from again.
+                var wui = new float[first.Header.Ncols, first.Header.Nrows];
+                for (int x = 10; x < 20; ++x) for (int y = 10; y < 20; ++y) wui[x, y] = 1f;
+                GeoTiffRasterWriter.WriteBand(first, wui, ElmfireStems.Tif(inputs, ElmfireStems.WuiArea));
+
+                //More padding re-cuts the grid; with no DEM and no key the build fails after setting the old grid aside.
+                ElmfireCaseBuilder.Options failing = c.Options(caseDir, 600.0, new List<string>());
+                failing.LocalDemPath = null;
+                File.Delete(Path.Combine(inputs, "dem_source.tif"));
+                failing.OpenTopographyApiKey = null;
+                bool failed = false;
+                try { ElmfireCaseBuilder.Build(failing).GetAwaiter().GetResult(); }
+                catch (Exception) { failed = true; }
+                Assert.True(failed, "the build without a DEM fails");
+                Assert.True(!File.Exists(ElmfireStems.Tif(inputs, ElmfireStems.Dem)), "after setting the old grid aside (no dem.tif)");
+                Assert.True(File.Exists(ElmfireStems.Tif(previous, ElmfireStems.WuiArea))
+                            && File.Exists(Path.Combine(previous, ElmfireCaseBuilder.CarryPendingMarker)), "the WUI area waits there, marked");
+
+                var log = new List<string>();
+                ElmfireCaseBuilder.Result r = ElmfireCaseBuilder.Build(c.Options(caseDir, 600.0, log)).GetAwaiter().GetResult();
+                MasterGrid second = MasterGrid.FromRasterFile(ElmfireStems.Tif(inputs, ElmfireStems.Dem));
+                Assert.True(second.Header.Ncols > first.Header.Ncols, "the next build re-cuts the grid");
+                Assert.True(log.Any(l => l.Contains("did not finish carrying")), "saying it resumes the carry");
+                Assert.True(r.Carried.Contains(ElmfireStems.WuiArea), "and carries the WUI area: " + string.Join(",", r.Carried));
+                float[,] carried = AscRaster.ReadGeoTiff(ElmfireStems.Tif(inputs, ElmfireStems.WuiArea), out AscRaster.Header h, out bool ok);
+                int cells = 0;
+                for (int x = 0; x < h.Ncols; ++x) for (int y = 0; y < h.Nrows; ++y) if (carried[x, y] > 0.5f) ++cells;
+                Assert.True(ok && h.Ncols == second.Header.Ncols && cells == 100, $"onto the new grid, all 100 cells ({cells})");
+                Assert.True(!File.Exists(Path.Combine(previous, ElmfireCaseBuilder.CarryPendingMarker)), "and the set-aside is no longer pending");
+
+                //A build after that has nothing pending: it keeps the case as it is.
+                var again = new List<string>();
+                ElmfireCaseBuilder.Build(c.Options(caseDir, 600.0, again)).GetAwaiter().GetResult();
+                Assert.True(!again.Any(l => l.Contains("did not finish carrying")), "nothing is carried twice");
+            }
+        }
+
+        /// <summary>
+        /// A stand-in for WindNinja_cli: it notes each start in <paramref name="starts"/> and then sleeps, so a test
+        /// can stop a build while a solve is under way. Linux (the bench); a shell script is not an executable on Windows.
+        /// </summary>
+        [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
+        private static string FakeWindNinja(string folder, string starts)
+        {
+            string path = Path.Combine(folder, "fake_windninja.sh");
+            File.WriteAllText(path, "#!/bin/sh\necho started >> '" + starts + "'\nsleep 60\n");
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            return path;
+        }
+
+        /// <summary>Calls <see cref="ElmfireRunner.CancelAll"/> once the fake WindNinja has started (or after 60 s).</summary>
+        private static Task StopWhenWindNinjaStarts(string starts)
+        {
+            return Task.Run(() =>
+            {
+                var wait = Stopwatch.StartNew();
+                while (!File.Exists(starts) && wait.Elapsed.TotalSeconds < 60) Thread.Sleep(50);
+                Thread.Sleep(200);
+                ElmfireRunner.CancelAll();
+            });
+        }
+
+        private static int Starts(string starts) => File.Exists(starts) ? File.ReadAllLines(starts).Length : 0;
+
+        private static void StoppedBuildWritesNoWind()
+        {
+            if (OperatingSystem.IsWindows()) return;
+
+            using (var c = new SyntheticCase())
+            {
+                string caseDir = Path.Combine(c.Folder, "case");
+                string starts = Path.Combine(c.Folder, "windninja_starts.txt");
+                var log = new List<string>();
+                ElmfireCaseBuilder.Options o = c.Options(caseDir, 150.0, log);
+                o.SimulationTstopSeconds = 3 * 3600.0;
+                o.Weather.WindNinjaExe = FakeWindNinja(c.Folder, starts);
+                long generation = ElmfireProcesses.Generation;
+                o.Cancelled = () => ElmfireProcesses.CancelledSince(generation);
+
+                Task stopper = StopWhenWindNinjaStarts(starts);
+                var clock = Stopwatch.StartNew();
+                Exception thrown = null;
+                try
+                {
+                    ElmfireCaseBuilder.Build(o).GetAwaiter().GetResult();
+                }
+                catch (Exception e)
+                {
+                    thrown = e;
+                }
+                stopper.Wait();
+                string inputs = Path.Combine(caseDir, "inputs");
+
+                Assert.True(thrown is OperationCanceledException && thrown.Message.Contains("stopped while its weather"),
+                    "the build throws the stop, saying where: " + thrown?.GetType().Name + " " + thrown?.Message);
+                Assert.True(clock.Elapsed.TotalSeconds < 30, $"at once, not after the 60 s solve ({clock.Elapsed.TotalSeconds:F1} s)");
+                Assert.Equal(1, Starts(starts), "no WindNinja started after the stop (the series has 3+ bands)");
+                Assert.Equal(0, ElmfireProcesses.Count, "and none is left running");
+                Assert.True(!File.Exists(ElmfireStems.Tif(inputs, ElmfireStems.WindSpeed)), "no ws.tif: no uniform field was written");
+                Assert.True(!log.Any(l => l.Contains("uniform field")), "nor said to be: " + string.Join(" | ", log.Where(l => l.Contains("wind"))));
+                Assert.True(!File.Exists(Path.Combine(caseDir, "elmfire.data")), "and no namelist");
+                Assert.True(File.Exists(ElmfireStems.Tif(inputs, ElmfireStems.Dem)), "the layers made before the stop are kept");
+
+                //The next build carries on: the wind is made, and without the fake WindNinja it is the uniform
+                //fallback, said as such - which is the only honest thing for a machine without WindNinja.
+                ElmfireCaseBuilder.Options again = c.Options(caseDir, 150.0, new List<string>());
+                again.SimulationTstopSeconds = 3 * 3600.0;
+                ElmfireCaseBuilder.Result r = ElmfireCaseBuilder.Build(again).GetAwaiter().GetResult();
+                Assert.True(File.Exists(ElmfireStems.Tif(inputs, ElmfireStems.WindSpeed)) && r.Weather != null && !r.Weather.Cancelled,
+                    "a build that is not stopped writes the weather");
+            }
+        }
+
+        private static void StoppedBuildCaseOnly()
+        {
+            if (OperatingSystem.IsWindows()) return;
+
+            using (var c = new SyntheticCase())
+            {
+                string starts = Path.Combine(c.Folder, "windninja_starts.txt");
+                string wui = c.WriteScenario("case", 150.0,
+                    "WindNinjaExe=" + FakeWindNinja(c.Folder, starts), "", "[Landscape]", "ElevationFile=source_dem.tif");
+
+                //Offline, whatever the network: a file where the ERA5 archive's folder would go makes the climatology
+                //fall back at once instead of downloading 26 years of it.
+                Directory.CreateDirectory(Path.Combine(c.Folder, "case"));
+                File.WriteAllText(Path.Combine(c.Folder, "case", "climatology"), "not a folder");
+
+                Input.PREACTInput input = Input.PREACTInput.LoadFromDisk(wui, out bool _);
+                input.WildfireModule.ElmfireInput.PathToGdal = GdalTools.FindBinDirectory() ?? string.Empty;
+                string elevationBefore = input.Landscape.ElevationFile;
+
+                var log = new List<string>();
+                Task stopper = StopWhenWindNinjaStarts(starts);
+                var clock = Stopwatch.StartNew();
+                bool built = ElmfireCoupling.BuildCaseOnly(input, m => { lock (log) log.Add(m); }, out string problem);
+                stopper.Wait();
+
+                Assert.True(!built, "a stopped build is not a built case");
+                Assert.True(problem != null && problem.Contains("stopped") && problem.Contains("no wind was written"),
+                    "the problem says it was stopped: " + problem);
+                Assert.True(clock.Elapsed.TotalSeconds < 30, $"at once ({clock.Elapsed.TotalSeconds:F1} s)");
+                Assert.Equal(1, Starts(starts), "one WindNinja, the one the stop killed");
+                Assert.Equal(elevationBefore, input.Landscape.ElevationFile, "the scenario is not pointed at a half-built case");
+                Assert.True(!File.Exists(Path.Combine(c.Folder, "case", "inputs", "ws.tif")), "no wind in the case");
+            }
         }
 
         private static void NoBuildUnderCampaign()
@@ -94,7 +259,8 @@ namespace PREACT.Tests
                 Assert.True(PaintedAreasReadable(gfi, g), "a file with the trailer still reads as every older reader reads it");
 
                 var wrong = BuildWith(moved);
-                Assert.True(!wrong.Ok && wrong.Error.Contains("-300 m east"), "same size, 10 cells away: refused, saying so: " + wrong.Error);
+                Assert.True(!wrong.Ok && wrong.Error.Contains("starts 300 m west of the grid the painting was made on"),
+                    "same size, 10 cells away: refused, saying so: " + wrong.Error);
 
                 var legacy = BuildWith(null);
                 Assert.True(legacy.Ok && legacy.Log.Contains("matched by its size alone"), "an older file is matched by size, and it is said");
@@ -314,8 +480,11 @@ namespace PREACT.Tests
                 return o;
             }
 
-            /// <summary>A scenario for the domain whose [ELMFIRE] section builds into <paramref name="caseDirectory"/>.</summary>
-            public string WriteScenario(string caseDirectory, double padding)
+            /// <summary>
+            /// A scenario for the domain whose [ELMFIRE] section builds into <paramref name="caseDirectory"/>;
+            /// <paramref name="extra"/> lines are appended, so they land in [ELMFIRE] until one opens another section.
+            /// </summary>
+            public string WriteScenario(string caseDirectory, double padding, params string[] extra)
             {
                 string path = Path.Combine(Folder, "synthetic.wui");
                 File.WriteAllLines(path, new[]
@@ -339,7 +508,7 @@ namespace PREACT.Tests
                     "PaddingMetres=" + padding.ToString(CultureInfo.InvariantCulture),
                     "BuildCase=true",
                     "FuelModelFile=source_fbfm40.tif",
-                });
+                }.Concat(extra));
                 return path;
             }
 

@@ -202,6 +202,29 @@ namespace PREACT.Utility
 
             /// <summary>Reports progress; may be null.</summary>
             public Action<string> Log;
+
+            /// <summary>
+            /// Asked at the points where the build can stop and leave the case consistent; once it answers true
+            /// <see cref="Build"/> throws <see cref="OperationCanceledException"/>. Null never stops. Handed to the
+            /// weather stage when that has no predicate of its own.
+            /// </summary>
+            /// <remarks>
+            /// Those points: before the grid is decided (nothing changed yet), after a new case's first DEM, before
+            /// the weather, and before every WindNinja solve. Not between a re-cut grid and the layers carried onto
+            /// it, which would leave the case on a new grid without them until the next build carried them (see
+            /// <see cref="CarryPendingMarker"/>), and not once the wind is written, since the moisture and the namelist
+            /// that counts its bands have to follow it.
+            /// </remarks>
+            public Func<bool> Cancelled;
+        }
+
+        /// <summary>Throws the stop <see cref="Options.Cancelled"/> asked for, saying where the build stopped.</summary>
+        private static void StopIfCancelled(Options o, string where)
+        {
+            if (o.Cancelled != null && o.Cancelled())
+            {
+                throw new OperationCanceledException("The case build was stopped " + where);
+            }
         }
 
         public class Result
@@ -316,6 +339,8 @@ namespace PREACT.Utility
             string[] existingNamelist = ReadTemplate(Path.Combine(o.OutputDirectory, "elmfire.data"));
             List<ElmfireStems.NamelistRaster> namelistRasters = NamelistRastersInForce(o, inputs, existingNamelist);
 
+            StopIfCancelled(o, "before it changed anything in the case.");
+
             if (!o.OverwriteExistingLayers && File.Exists(demPath))
             {
                 MasterGrid existing = MasterGrid.FromRasterFile(demPath);
@@ -337,6 +362,18 @@ namespace PREACT.Utility
                 }
             }
 
+            //A grid an earlier build set aside and never carried onto its new one - it failed or was killed after the
+            //set-aside (no DEM to cut the new grid from, a source layer that would not warp): carried now. Without this
+            //the next build found no dem.tif (or a new one that fits) and never looked in inputs/_previous_grid again,
+            //so the building layers, the WUI area and every hand-made layer stayed there, and a painting on the old grid
+            //was refused as painted on no known grid.
+            if (previousGridDirectory == null && !o.OverwriteExistingLayers && IsCarryPending(inputs))
+            {
+                previousGridDirectory = Path.Combine(inputs, PreviousGridFolder);
+                Log($"  inputs/{PreviousGridFolder} holds the grid an earlier build set aside and did not finish carrying "
+                    + "onto the new one; carrying its layers now.");
+            }
+
             if (grid == null)
             {
                 string rawDem = await ResolveSourceDem(o, inputs, southWest, northEast, previousGridDirectory, Log);
@@ -349,6 +386,14 @@ namespace PREACT.Utility
                 Log($"Master grid: {grid.Header.Ncols}x{grid.Header.Nrows} @ {grid.Header.CellSize:F1} m, {grid.Epsg}");
                 result.Written.Add(ElmfireStems.Dem);
                 ReportDemCoverage(rawDem, southWest, northEast, result, Log);
+
+                //A DEM download cannot be interrupted, so a stop during one is honoured once it is on the grid - for a
+                //new case only: a re-cut goes on until the old grid's layers are carried onto the new one.
+                if (previousGridDirectory == null)
+                {
+                    StopIfCancelled(o, "after its grid (inputs/dem.tif) was made and before its other layers; the next "
+                                       + "build carries on from that grid.");
+                }
             }
 
             result.Grid = grid;
@@ -489,6 +534,9 @@ namespace PREACT.Utility
                 RestrictIgnitionMask(o, result, inputs, grid, Log);
             }
 
+            StopIfCancelled(o, "after its layers were made and before its weather; elmfire.data was not written again, "
+                               + "and the next build makes the weather.");
+
             //---------------------------------------------------------------- 7. Baseline weather
             //Runs after the user rasters so Nelson can shade its sticks with the canopy cover
             //layer if one was supplied.
@@ -519,6 +567,7 @@ namespace PREACT.Utility
                 WeatherRasterPipeline.Options w = o.Weather ?? new WeatherRasterPipeline.Options();
                 w.Grid = grid;
                 w.InputsDirectory = inputs;
+                if (w.Cancelled == null) w.Cancelled = o.Cancelled;
 
                 //The weather series has to span the fire and be read at the interval it was written at.
                 //DT_METEOROLOGY comes from the namelist settings so the two cannot disagree - a series
@@ -543,6 +592,12 @@ namespace PREACT.Utility
                 }
 
                 result.Weather = await WeatherRasterPipeline.Run(w);
+                if (result.Weather.Cancelled)
+                {
+                    throw new OperationCanceledException("The case build was stopped while its weather was being made: "
+                        + "no wind was written (and no uniform field in its place), elmfire.data was not written again, "
+                        + "and the next build makes the weather.");
+                }
                 result.Written.AddRange(ElmfireStems.Weather);
             }
 
@@ -597,7 +652,25 @@ namespace PREACT.Utility
             //still worth having on disk to look at, and the run is where refusing belongs.
             result.Validation = ElmfireCaseValidator.Validate(inputs, grid, result.FuelStem, OptionalStems(), Log);
 
+            //Everything that reads the set-aside grid has run; it is kept for reference, no longer pending.
+            if (previousGridDirectory != null)
+            {
+                try { File.Delete(Path.Combine(previousGridDirectory, CarryPendingMarker)); } catch (IOException) { }
+            }
+
             return result;
+        }
+
+        /// <summary>
+        /// Left in <see cref="PreviousGridFolder"/> by the build that sets a grid aside, until a build has carried its
+        /// layers onto the new grid and finished: while it is there, the set-aside grid is the case's real one.
+        /// </summary>
+        public const string CarryPendingMarker = "carry_pending.txt";
+
+        private static bool IsCarryPending(string inputs)
+        {
+            string previous = Path.Combine(inputs, PreviousGridFolder);
+            return File.Exists(Path.Combine(previous, CarryPendingMarker)) && File.Exists(ElmfireStems.Tif(previous, ElmfireStems.Dem));
         }
 
         /// <summary>Where a case keeps its ERA5 archive: <c>climatology/&lt;scenario name&gt;_era5_hourly.csv</c>.</summary>
@@ -659,11 +732,18 @@ namespace PREACT.Utility
         private static string SetAsidePreviousGrid(string inputs, Action<string> log)
         {
             string previous = Path.Combine(inputs, PreviousGridFolder);
-            if (Directory.Exists(previous))
+            string into = previous;
+            if (IsCarryPending(inputs))
+            {
+                //The grid set aside by an earlier build that did not finish is the one to carry from, so it stays; what
+                //that build left on its own new grid goes beside it, kept rather than deleted.
+                into = Path.Combine(previous, "superseded_" + DateTime.Now.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture));
+            }
+            else if (Directory.Exists(previous))
             {
                 try { Directory.Delete(previous, recursive: true); } catch { }
             }
-            Directory.CreateDirectory(previous);
+            Directory.CreateDirectory(into);
 
             var moved = new List<string>();
             foreach (string stem in KnownStems().Concat(new[] { ElmfireStems.WuiArea }).Distinct())
@@ -671,13 +751,18 @@ namespace PREACT.Utility
                 string path = ElmfireStems.Tif(inputs, stem);
                 if (!File.Exists(path)) continue;
 
-                File.Move(path, ElmfireStems.Tif(previous, stem));
+                File.Move(path, ElmfireStems.Tif(into, stem));
                 string aux = path + ".aux.xml";
                 if (File.Exists(aux)) { try { File.Delete(aux); } catch { } }
                 moved.Add(stem);
             }
 
-            log($"  moved {moved.Count} raster(s) of the old grid to inputs/{PreviousGridFolder}: {string.Join(", ", moved)}");
+            File.WriteAllText(Path.Combine(previous, CarryPendingMarker),
+                "The build that set this grid aside has not finished carrying its layers onto the case's new grid; the next "
+                + "build carries them. Removed once a build has.\n");
+            log($"  moved {moved.Count} raster(s) of the old grid to inputs/{PreviousGridFolder}"
+                + (into == previous ? string.Empty : "/" + Path.GetFileName(into) + " (an earlier set-aside grid is still to be carried)")
+                + $": {string.Join(", ", moved)}");
             return previous;
         }
 
@@ -1443,8 +1528,9 @@ namespace PREACT.Utility
                     $"The painted areas in {Path.GetFileName(o.PaintedMasksPath)} are {masks.Ncols}x{masks.Nrows} cells, "
                     + $"but the fire-case grid is {grid.Header.Ncols}x{grid.Header.Nrows} and {landscape}"
                     + (misplaced.Count > 0 ? " (" + string.Join("; ", misplaced) + ")" : "")
-                    + ", so there is no telling which ground they were painted on. Repaint the ignition and WUI areas "
-                    + "on the fire-case grid (load the case's dem.tif as the landscape), then build again.");
+                    + ", so there is no telling which ground they were painted on. Move the painting onto the fire-case "
+                    + "grid (the GUI's workflow step 6 offers it when it knows the grid it was painted on) or repaint the "
+                    + "ignition and WUI areas on it, then build again.");
             }
 
             log($"  painted: {masks.Ncols}x{masks.Nrows} painting placed via {paintedOn}"
@@ -1509,8 +1595,8 @@ namespace PREACT.Utility
                 string previousDem = ElmfireStems.Tif(previousGridDirectory, ElmfireStems.Dem);
                 if (File.Exists(previousDem))
                 {
-                    MasterGrid previous = MasterGrid.FromRasterFile(previousDem);
-                    if (Fits(previous, "the case grid this build replaced"))
+                    MasterGrid previous = TryReadGrid(previousDem, "the case grid this build replaced", misplaced);
+                    if (previous != null && Fits(previous, "the case grid this build replaced"))
                     {
                         paintedOn = "the case grid this build replaced";
                         return previous;
@@ -1520,8 +1606,8 @@ namespace PREACT.Utility
 
             if (!string.IsNullOrEmpty(landscapePath) && File.Exists(landscapePath))
             {
-                MasterGrid landscape = MasterGrid.FromRasterFile(landscapePath);
-                if (Fits(landscape, "the landscape raster " + Path.GetFileName(landscapePath)))
+                MasterGrid landscape = TryReadGrid(landscapePath, "the landscape raster " + Path.GetFileName(landscapePath), misplaced);
+                if (landscape != null && Fits(landscape, "the landscape raster " + Path.GetFileName(landscapePath)))
                 {
                     paintedOn = "the landscape raster " + Path.GetFileName(landscapePath) + " (painted before the case grid existed)";
                     return landscape;
@@ -1532,32 +1618,32 @@ namespace PREACT.Utility
         }
 
         /// <summary>
+        /// A candidate grid for a painting, or null with the reason added to <paramref name="unusable"/>: Mati's own
+        /// 27.59 x 27.62 m DEM is refused as a grid (non-square cells), which used to end the build with that message
+        /// instead of the one about the painting.
+        /// </summary>
+        private static MasterGrid TryReadGrid(string path, string what, List<string> unusable)
+        {
+            try
+            {
+                return MasterGrid.FromRasterFile(path);
+            }
+            catch (InvalidOperationException e)
+            {
+                unusable?.Add(what + " cannot hold a painting the build can place (" + e.Message + ")");
+                return null;
+            }
+        }
+
+        /// <summary>
         /// Why a painting recorded at <paramref name="recorded"/> was not painted on <paramref name="grid"/>, or null
         /// when it was - or cannot be told, because the file records no position.
         /// </summary>
         public static string DescribePaintedGridMismatch(GraphicalFireInput.PaintedGrid recorded, MasterGrid grid)
         {
-            if (recorded == null) return null;
-
-            double cs = grid.Header.CellSize;
-            if (System.Math.Abs(recorded.CellSize - cs) > 0.001 * cs)
-            {
-                return $"has {cs:F1} m cells and the painting {recorded.CellSize:F1} m";
-            }
-
-            if (recorded.EpsgCode > 0 && !string.IsNullOrEmpty(grid.Epsg)
-                && !string.Equals(grid.Epsg, "EPSG:" + recorded.EpsgCode.ToString(CultureInfo.InvariantCulture), StringComparison.OrdinalIgnoreCase))
-            {
-                return $"is in {grid.Epsg} and the painting in EPSG:{recorded.EpsgCode}";
-            }
-
-            double dx = grid.XMin - recorded.XllCorner, dy = grid.YMin - recorded.YllCorner;
-            if (System.Math.Abs(dx) > 0.5 * cs || System.Math.Abs(dy) > 0.5 * cs)
-            {
-                return $"starts {dx:F0} m east and {dy:F0} m north of the grid the painting was made on";
-            }
-
-            return null;
+            //The rule itself is GraphicalFireInput's, so the resampler and the GUI apply the same one.
+            return recorded?.DescribeMismatch(grid.XMin, grid.YMin, grid.Header.CellSize,
+                GraphicalFireInput.PaintedGrid.EpsgNumber(grid.Epsg));
         }
 
         private static string DescribeDimensions(string rasterPath)

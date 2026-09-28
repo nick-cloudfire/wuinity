@@ -3,9 +3,12 @@
 # Simulation output, wherever a scenario is run from
 _output/
 *_output/
-# Probabilistic campaigns: per-realization ELMFIRE folders and generated scenario variants
+# Probabilistic campaigns: per-realization ELMFIRE folders and generated scenario variants. A realization's
+# scenario is written beside the base one as __<scenario>_<settings hash>_<7-digit index>.wui while it runs and
+# removed after; a killed campaign leaves it behind. __prob_*.wui is the older campaigns' name.
 _elmfire/
 __prob_*.wui
+__*_[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]_[0-9][0-9][0-9][0-9][0-9][0-9][0-9].wui
 # ELMFIRE products when a case is run in place (namelist OUTPUTS_DIRECTORY / SCRATCH, log).
 # Superproject rules do not reach into submodules, so this cannot hide anything in the elmfire one.
 **/elmfire/outputs/
@@ -19,6 +22,19 @@ elmfire.log
 .claude/settings.local.json
 elmfire_keys.json
 *.env
+
+# Per-user files the Unity player/editor and the GUI write while they run - never commit. Dear ImGui (UImGui)
+# keeps each user's window layout in imgui.ini in the working directory, which is the Unity project folder in
+# the editor, and writes ImGui's log to imgui_log.txt; Mono leaves mono_crash.* reports there after a crash.
+# (WUInity/.gitignore ignores [Ii]mgui.ini as well.)
+WUInity/imgui.ini
+WUInity/imgui_log.txt
+WUInity/mono_crash.*
+
+# Half-written files the engine renames into place (downloads, archive rewrites, moved paintings); left behind
+# only by a process that was killed while writing.
+*.tmp
+*.partial
 
 # OS cruft
 .DS_Store

@@ -378,6 +378,11 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 Tooltip("The lanes of the scenario's SUMO network - the roads traffic is actually routed on. Needs the "
                     + "SUMO network to have been built (step 2).");
 
+                bool fireGrid = PreactGUI.WUInity.IsFireGridOutlineVisible;
+                if (ImGui.MenuItem("Fire grid outline", string.Empty, fireGrid)) { PreactGUI.WUInity.ShowFireGridOutline(!fireGrid); }
+                Tooltip("The edge of the grid the fire, the painted areas and k-PERIL share (orange) - for an ELMFIRE scenario the "
+                    + "case's dem.tif, which reaches past the domain (white) by the case's padding.");
+
                 bool markers = visualizer == null || visualizer.MarkersVisible;
                 if (ImGui.MenuItem("Markers", string.Empty, markers, visualizer != null)) { visualizer.SetMarkersVisible(!markers); }
                 Tooltip("The destinations (in their colours) and the ignition points (white).");

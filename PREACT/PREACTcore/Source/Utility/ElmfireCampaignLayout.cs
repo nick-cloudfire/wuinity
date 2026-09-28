@@ -172,6 +172,59 @@ namespace PREACT.Utility
         public const string LockFile = "campaign.lock";
 
         /// <summary>
+        /// The manifest setting that says how each realization's evacuation is seeded (FIX-A's MA-5). A campaign whose
+        /// manifest lacks it was made before that - and before the k-PERIL wrapper read its grids the right way round
+        /// (BL-1), which came with it - so its boundaries are not comparable with a new campaign's, and since the
+        /// setting is part of the hash, it cannot be resumed.
+        /// </summary>
+        public const string EvacuationSeedSetting = "evacuation.seed";
+
+        /// <summary>
+        /// Whether the campaign in <paramref name="campaignFolder"/> - a campaign folder, or <c>_output</c> for a campaign
+        /// from before campaigns had folders - was made by a version before <see cref="EvacuationSeedSetting"/>: its
+        /// manifest does not have it, or it has results and no manifest at all. False when it cannot tell (no results yet,
+        /// or nothing readable), so a campaign that is just starting is never called old.
+        /// </summary>
+        public static bool PredatesEvacuationSeeds(string campaignFolder)
+        {
+            if (string.IsNullOrEmpty(campaignFolder) || !Directory.Exists(campaignFolder)) return false;
+
+            try
+            {
+                string manifest = Path.Combine(campaignFolder, ManifestFile);
+                if (File.Exists(manifest))
+                {
+                    return File.ReadAllText(manifest).IndexOf("\"" + EvacuationSeedSetting + "\"", StringComparison.Ordinal) < 0;
+                }
+
+                return File.Exists(Path.Combine(campaignFolder, ConvergenceCsv))
+                       || File.Exists(Path.Combine(campaignFolder, ProbabilityRaster))
+                       || File.Exists(Path.Combine(campaignFolder, LiveProbabilityRaster));
+            }
+            catch (IOException)
+            {
+                return false;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>What to tell someone looking at a campaign that <see cref="PredatesEvacuationSeeds"/>.</summary>
+        public static string DescribeEarlierCampaign(string campaignFolder)
+        {
+            string name = Path.GetFileName((campaignFolder ?? string.Empty).TrimEnd('/', '\\'));
+            string what = string.Equals(name, OutputFolder, StringComparison.OrdinalIgnoreCase)
+                ? "The campaign whose results are in " + OutputFolder
+                : name;
+            return $"{what} was made by an earlier version of the campaign: its trigger boundaries were "
+                   + "computed before k-PERIL read the fire's grids the right way round, so its probability raster is not "
+                   + "comparable with a new one, and it cannot be resumed (each realization's evacuation now has its own seed, "
+                   + "which changes the settings). Run the campaign again: it starts in a folder of its own, and the old one is kept.";
+        }
+
+        /// <summary>
         /// Whether a campaign process holds <paramref name="campaignFolder"/>'s <see cref="LockFile"/> now: it keeps
         /// the file open with no sharing for as long as it runs, so the operating system releases it however the
         /// process ends, and a file left behind is not a lock.
@@ -243,6 +296,29 @@ namespace PREACT.Utility
         public const string WeatherDistributionsCsv = "weather_distributions.csv";
         public const string WeatherRealizationsCsv = "weather_realizations.csv";
         public const string EnsemblePrefix = "ensemble";
+
+        /// <summary>
+        /// A file written beside a raster that is not a raster: the <c>.prj</c> the engine writes beside every
+        /// boundary and campaign raster (its CRS), and what GDAL or QGIS add on opening one - <c>.aux.xml</c>
+        /// statistics, <c>.ovr</c> overviews, <c>.tfw</c>/<c>.wld</c> world files. A results listing that matches by
+        /// name (<c>ensemble_burn_probability.*</c>) counted each of them as another result.
+        /// </summary>
+        public static bool IsRasterSidecar(string fileName)
+        {
+            string lower = Path.GetFileName(fileName ?? string.Empty).ToLowerInvariant();
+            foreach (string suffix in new[] { ".prj", ".aux.xml", ".ovr", ".tfw", ".wld", ".aux" })
+            {
+                if (lower.EndsWith(suffix, StringComparison.Ordinal)) return true;
+            }
+            return false;
+        }
+
+        /// <summary>A raster a result can be shown from, by its extension: <c>.asc</c>, <c>.tif</c> or <c>.tiff</c>.</summary>
+        public static bool IsRasterFile(string fileName)
+        {
+            string extension = Path.GetExtension(fileName ?? string.Empty).ToLowerInvariant();
+            return extension == ".asc" || extension == ".tif" || extension == ".tiff";
+        }
 
         /// <summary>Realization indices are always this wide, so names sort and never collide across paddings.</summary>
         public const int IndexWidth = 7;

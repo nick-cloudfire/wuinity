@@ -5,6 +5,7 @@
 //MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
 //You should have received a copy of the GNU General Public License along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+using System.Globalization;
 using System.IO;
 
 namespace PREACT
@@ -42,6 +43,56 @@ namespace PREACT
         {
             public double XllCorner, YllCorner, CellSize;
             public int EpsgCode;
+
+            /// <summary>
+            /// Why a grid whose south-west corner is at <paramref name="xMin"/>, <paramref name="yMin"/> (in its CRS,
+            /// <paramref name="epsgCode"/>; 0 when unknown) with cells <paramref name="cellSize"/> wide is not the grid
+            /// this painting was made on, or null when it is. The one rule for the case builder, the resampler and the
+            /// GUI: the same cell size to a thousandth, the same CRS when both are known, the corner within half a cell.
+            /// </summary>
+            /// <remarks>
+            /// The cell count is not compared here; whoever asks has already matched the painting's own size.
+            /// </remarks>
+            public string DescribeMismatch(double xMin, double yMin, double cellSize, int epsgCode)
+            {
+                if (System.Math.Abs(CellSize - cellSize) > 0.001 * cellSize)
+                {
+                    return string.Format(CultureInfo.InvariantCulture, "has {0:F1} m cells and the painting {1:F1} m", cellSize, CellSize);
+                }
+
+                if (EpsgCode > 0 && epsgCode > 0 && EpsgCode != epsgCode)
+                {
+                    return string.Format(CultureInfo.InvariantCulture, "is in EPSG:{0} and the painting in EPSG:{1}", epsgCode, EpsgCode);
+                }
+
+                double dx = xMin - XllCorner, dy = yMin - YllCorner;
+                var offsets = new System.Collections.Generic.List<string>();
+                if (System.Math.Abs(dx) > 0.5 * cellSize)
+                {
+                    offsets.Add(string.Format(CultureInfo.InvariantCulture, "{0:F0} m {1}", System.Math.Abs(dx), dx > 0 ? "east" : "west"));
+                }
+                if (System.Math.Abs(dy) > 0.5 * cellSize)
+                {
+                    offsets.Add(string.Format(CultureInfo.InvariantCulture, "{0:F0} m {1}", System.Math.Abs(dy), dy > 0 ? "north" : "south"));
+                }
+
+                return offsets.Count == 0 ? null : "starts " + string.Join(" and ", offsets) + " of the grid the painting was made on";
+            }
+
+            /// <summary>The EPSG code in a "EPSG:32634" style CRS name, or 0.</summary>
+            public static int EpsgNumber(string epsg)
+            {
+                if (string.IsNullOrEmpty(epsg)) return 0;
+                int colon = epsg.LastIndexOf(':');
+                return int.TryParse(colon >= 0 ? epsg.Substring(colon + 1) : epsg, NumberStyles.Integer, CultureInfo.InvariantCulture,
+                    out int code) ? code : 0;
+            }
+
+            public string Describe()
+            {
+                return string.Format(CultureInfo.InvariantCulture, "{0:F1} m cells from {1:F1}, {2:F1}{3}", CellSize, XllCorner, YllCorner,
+                    EpsgCode > 0 ? " in EPSG:" + EpsgCode.ToString(CultureInfo.InvariantCulture) : string.Empty);
+            }
         }
 
         /// <summary>Marks the optional trailer after the four masks that says where their grid lies.</summary>
@@ -139,6 +190,53 @@ namespace PREACT
         }
 
         /// <summary>
+        /// The size a painting declares and where its grid lies (null when the file does not record it), without
+        /// reading its masks. Null grid and zero size when the file cannot be read as a painting.
+        /// </summary>
+        public static PaintedGrid ReadGrid(string file, out int ncols, out int nrows)
+        {
+            ncols = nrows = 0;
+            try
+            {
+                using (FileStream fs = OpenForReading(file))
+                using (BinaryReader br = new BinaryReader(fs))
+                {
+                    ncols = br.ReadInt32();
+                    nrows = br.ReadInt32();
+                    if (ncols <= 0 || nrows <= 0)
+                    {
+                        ncols = nrows = 0;
+                        return null;
+                    }
+
+                    long afterMasks = 8L + 4L * ncols * nrows;
+                    if (fs.Length < afterMasks) return null;
+                    fs.Seek(afterMasks, SeekOrigin.Begin);
+                    return ReadPaintedGrid(br);
+                }
+            }
+            catch (IOException)
+            {
+                ncols = nrows = 0;
+                return null;
+            }
+            catch (System.UnauthorizedAccessException)
+            {
+                ncols = nrows = 0;
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Read-only, and letting others read too: a painting shared read-only, or one open elsewhere for reading,
+        /// used to fail to load because it was opened for writing as well.
+        /// </summary>
+        private static FileStream OpenForReading(string file)
+        {
+            return new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read);
+        }
+
+        /// <summary>
         /// Reads the masks and the grid they were painted on, taking the grid from the file itself.
         ///
         /// Nothing is checked against a landscape here, because the caller generally has nothing to check
@@ -151,8 +249,21 @@ namespace PREACT
             out bool[] wuiArea, out bool[] randomIgnitionArea, out bool[] initialIgnitionIndices,
             out bool[] triggerBufferIndices, out bool success)
         {
+            LoadGraphicalFireInput(file, out ncols, out nrows, out wuiArea, out randomIgnitionArea, out initialIgnitionIndices,
+                out triggerBufferIndices, out PaintedGrid _, out success);
+        }
+
+        /// <summary>
+        /// As the overload without <paramref name="grid"/>, and also where the painting's grid lies when the file
+        /// records it (null for a file written before the record existed).
+        /// </summary>
+        public static void LoadGraphicalFireInput(string file, out int ncols, out int nrows,
+            out bool[] wuiArea, out bool[] randomIgnitionArea, out bool[] initialIgnitionIndices,
+            out bool[] triggerBufferIndices, out PaintedGrid grid, out bool success)
+        {
             success = false;
             ncols = nrows = 0;
+            grid = null;
             wuiArea = randomIgnitionArea = initialIgnitionIndices = triggerBufferIndices = null;
 
             if (!File.Exists(file))
@@ -161,7 +272,7 @@ namespace PREACT
                 return;
             }
 
-            using (FileStream fs = new FileStream(file, FileMode.Open))
+            using (FileStream fs = OpenForReading(file))
             {
                 using (BinaryReader br = new BinaryReader(fs))
                 {
@@ -191,6 +302,10 @@ namespace PREACT
                     randomIgnitionArea = ReadMask(br, dataSize);
                     initialIgnitionIndices = ReadMask(br, dataSize);
                     triggerBufferIndices = ReadMask(br, dataSize);
+                    if (fs.Position == 8L + 4L * dataSize)
+                    {
+                        grid = ReadPaintedGrid(br);
+                    }
 
                     success = true;
                 }

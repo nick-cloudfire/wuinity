@@ -108,10 +108,18 @@ namespace PREACT.Utility
         /// build wrote one. Paths relative to the scenario folder, with forward slashes. The weather anchor and
         /// archive are recorded too. The caller saves the scenario (and reloads the landscape it displays).
         /// </para>
+        /// <para>
+        /// A <see cref="ElmfireRunner.CancelAll"/> while it builds kills the WindNinja solve under way, starts no
+        /// other, and makes this return false with a <paramref name="problem"/> that says the build was stopped and
+        /// where; the scenario is left as it was. A stop that comes after the weather was written is too late to
+        /// take: the rest of the build is quick and in-process, and leaving the namelist behind the rasters it counts
+        /// would be worse, so the build finishes and says so.
+        /// </para>
         /// </remarks>
         public static bool BuildCaseOnly(PREACTInput input, Action<string> log, out string problem)
         {
             problem = null;
+            long generation = ElmfireProcesses.Generation;
 
             ElmfireInput settings = input?.WildfireModule?.ElmfireInput;
             if (settings == null)
@@ -122,9 +130,15 @@ namespace PREACT.Utility
 
             string caseDir = CaseDirectoryPath(input.RootFolder, settings);
 
-            if (!TryBuildCase(input, settings, caseDir, log, out problem, out ElmfireCaseBuilder.Result built))
+            if (!TryBuildCase(input, settings, caseDir, generation, log, out problem, out ElmfireCaseBuilder.Result built))
             {
                 return false;
+            }
+
+            if (ElmfireProcesses.CancelledSince(generation))
+            {
+                log?.Invoke("  The stop came after the weather was written, so the build was finished: stopping then "
+                            + "would have left elmfire.data behind the rasters it describes.");
             }
 
             string inputs = built.InputsDirectory;
@@ -195,7 +209,7 @@ namespace PREACT.Utility
 
             if (settings.BuildCase)
             {
-                if (!TryBuildCase(input, settings, caseDir, Log, out string buildProblem, out ElmfireCaseBuilder.Result built))
+                if (!TryBuildCase(input, settings, caseDir, generation, Log, out string buildProblem, out ElmfireCaseBuilder.Result built))
                 {
                     result.Cancelled = ElmfireProcesses.CancelledSince(generation);
                     result.Message = buildProblem;
@@ -246,7 +260,7 @@ namespace PREACT.Utility
 
                 Log("The case's weather is too short for this fire (" + weatherProblem + "); extending it - one "
                     + "WindNinja solve per hour of fire.");
-                if (!TryBuildCase(input, settings, caseDir, Log, out string extendProblem, out ElmfireCaseBuilder.Result extended))
+                if (!TryBuildCase(input, settings, caseDir, generation, Log, out string extendProblem, out ElmfireCaseBuilder.Result extended))
                 {
                     result.Cancelled = ElmfireProcesses.CancelledSince(generation);
                     result.Message = "Could not extend the case's weather: " + extendProblem;
@@ -562,9 +576,10 @@ namespace PREACT.Utility
         }
 
         /// <summary>
-        /// Builds the case's rasters and namelist for the scenario's own domain.
+        /// Builds the case's rasters and namelist for the scenario's own domain. A <see cref="ElmfireRunner.CancelAll"/>
+        /// after <paramref name="generation"/> stops it at the builder's next safe point.
         /// </summary>
-        private static bool TryBuildCase(PREACTInput input, ElmfireInput settings, string caseDir,
+        private static bool TryBuildCase(PREACTInput input, ElmfireInput settings, string caseDir, long generation,
             Action<string> log, out string problem, out ElmfireCaseBuilder.Result built)
         {
             problem = null;
@@ -587,6 +602,7 @@ namespace PREACT.Utility
             try
             {
                 ElmfireCaseBuilder.Options options = CreateBuildOptions(input, settings, caseDir, log);
+                options.Cancelled = () => ElmfireProcesses.CancelledSince(generation);
 
                 //Waited on rather than awaited: module creation is synchronous, and a fire that has not been
                 //computed cannot be evacuated from, so there is nothing useful to do meanwhile.
@@ -604,9 +620,18 @@ namespace PREACT.Utility
 
                 return true;
             }
+            catch (OperationCanceledException e)
+            {
+                //The builder's own words: where it stopped, and what the next build does about it.
+                problem = e.Message;
+                log?.Invoke(problem);
+                return false;
+            }
             catch (Exception e)
             {
-                problem = "Could not build the ELMFIRE case: " + e.Message;
+                problem = ElmfireProcesses.CancelledSince(generation)
+                    ? "The case build was stopped, and ended with: " + e.Message
+                    : "Could not build the ELMFIRE case: " + e.Message;
                 return false;
             }
         }

@@ -304,6 +304,17 @@ namespace PREACT.Utility
             public Action<string> Log;
 
             /// <summary>
+            /// Asked before every WindNinja solve and between the stages; once it answers true the run stops and
+            /// returns with <see cref="Result.Cancelled"/>, having written no wind. Null never stops.
+            /// </summary>
+            /// <remarks>
+            /// A stop used to kill the WindNinja solve under way and nothing else: that band failed, the next band
+            /// started another WindNinja, and a stop during the first band made the stage write its uniform
+            /// fallback - so a stopped case build finished on uniform wind.
+            /// </remarks>
+            public Func<bool> Cancelled;
+
+            /// <summary>
             /// The archive already parsed by the caller, used instead of reading <see cref="ArchiveCsvPath"/>. The
             /// campaign parses the archive once at startup; every realization re-parsing its quarter of a million
             /// rows was the most expensive thing a fitted-weather realization did before ELMFIRE started.
@@ -356,7 +367,15 @@ namespace PREACT.Utility
 
             /// <summary>Why a stage fell back, when one did — surfaced so a silently-degraded case is visible.</summary>
             public List<string> Fallbacks = new List<string>();
+
+            /// <summary>
+            /// True when <see cref="Options.Cancelled"/> stopped the run. No wind or moisture raster was written
+            /// then, and nothing else in this result describes weather that exists.
+            /// </summary>
+            public bool Cancelled;
         }
+
+        private static bool IsCancelled(Options o) => o.Cancelled != null && o.Cancelled();
 
         public static async Task<Result> Run(Options o)
         {
@@ -427,6 +446,14 @@ namespace PREACT.Utility
                 return result;
             }
 
+            //The archive download cannot be interrupted; a stop that came during it is honoured here.
+            if (IsCancelled(o))
+            {
+                result.Cancelled = true;
+                Log("  weather: stopped before the wind was solved; no weather raster written.");
+                return result;
+            }
+
             //---------------------------------------------------------------- the band schedule
             //Built once and handed to both stages, because the five rasters have to come out with the same
             //number of bands: ELMFIRE reads all of them against one NUM_METEOROLOGY_TIMES, and the case
@@ -445,6 +472,13 @@ namespace PREACT.Utility
             //read: its one band is solved from the drawn speed, and nothing is "missing" from the archive.
             RunWind(o, result, bandTimes, rows, windMps, windDir,
                     useArchivePerBand: !drawn.HasValue, log: Log);
+
+            //Not asked again after this: once the wind is written the moisture follows it, in-process and without
+            //a child to stop, so the five rasters are never left from two different runs.
+            if (result.Cancelled)
+            {
+                return result;
+            }
 
             //---------------------------------------------------------------- dead fuel moisture
             if (drawn.HasValue)
@@ -830,6 +864,15 @@ namespace PREACT.Utility
 
                 for (int b = 0; b < bandTimes.Count; ++b)
                 {
+                    //Before each solve: a stopped run starts no further WindNinja, and a band whose solve the stop
+                    //killed is not taken for a failed one to be filled from the band before it.
+                    if (IsCancelled(o))
+                    {
+                        result.Cancelled = true;
+                        log($"  wind: stopped after {solved} of {bandTimes.Count} WindNinja band(s); no wind written.");
+                        return;
+                    }
+
                     HourlyWeatherRow? row = RowAt(byHour, bandTimes[b]);
 
                     //Only a gap when the record was supposed to answer. A drawn realization never consults
@@ -849,7 +892,7 @@ namespace PREACT.Utility
                         bandMps, bandDir, o.WindNinjaVegetation, o.WindNinjaMesh,
                         //Per-band logging would bury the build under one line per hour; the summary below
                         //reports the series instead.
-                        log: null);
+                        log: null, cancelled: o.Cancelled);
 
                     if (wn.Ok)
                     {
@@ -876,6 +919,14 @@ namespace PREACT.Utility
                     //The very first band failing means WindNinja cannot run here at all, so there is nothing
                     //to carry forward and the uniform fallback below is the honest outcome.
                     break;
+                }
+
+                //A first band killed by a stop is not "WindNinja cannot run here": no uniform field for it.
+                if (IsCancelled(o))
+                {
+                    result.Cancelled = true;
+                    log($"  wind: stopped after {solved} of {bandTimes.Count} WindNinja band(s); no wind written.");
+                    return;
                 }
 
                 if (speeds.Count == bandTimes.Count)

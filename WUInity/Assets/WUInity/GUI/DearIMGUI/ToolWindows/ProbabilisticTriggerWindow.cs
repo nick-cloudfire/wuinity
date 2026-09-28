@@ -250,7 +250,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             try
             {
-                string caseDir = Resolve(input.RootFolder, elmfire.CaseDirectory);
+                //The engine's rule, as the campaign CLI's: an empty CaseDirectory is "elmfire", not "no case".
+                string caseDir = ElmfireCoupling.CaseDirectoryPath(input.RootFolder, elmfire);
                 if (!string.IsNullOrEmpty(caseDir))
                 {
                     _scenarioTemplate = ElmfireCoupling.ResolveNamelist(caseDir, input.RootFolder, elmfire, null, out _) ?? string.Empty;
@@ -319,6 +320,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
             if (_tolerancePercent < 0.01f) _tolerancePercent = 0.01f;
             Fields.Hint("Stops once every decile of the probability raster has changed by less than the tolerance for",
                         "that many realizations in a row. The maximum is a ceiling, not a target.");
+            Fields.Hint("Every realization can be run again exactly: its ignition, weather, ELMFIRE SEED and evacuation",
+                        "([Simulation] RandomSeed, recorded in its realization.txt) are seeded from the campaign's seed and",
+                        "its index. The scenario's own RandomSeed is used by single runs only.");
 
             ImGui.SeparatorText("Fire");
             DrawHours();
@@ -995,9 +999,26 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 }
                 else
                 {
+                    NoteEarlierCampaign();
                     StartRun(false);
                 }
             });
+        }
+
+        /// <summary>
+        /// Before a new campaign starts where no campaign with these settings exists: when the scenario's latest campaign
+        /// was made by an earlier version, it is said why that one is not offered for reuse.
+        /// </summary>
+        private static void NoteEarlierCampaign()
+        {
+            PREACT.Input.PREACTInput input = ScenarioSession.Input;
+            if (input == null || !SamePath(_baseWui, ScenarioSession.FilePath)) return;
+
+            string latest = global::WUInity.Workflow.ScenarioWorkflow.CampaignFolderOf(input, ScenarioSession.FilePath);
+            if (CampaignLayout.PredatesEvacuationSeeds(latest))
+            {
+                AppendLog(CampaignLayout.DescribeEarlierCampaign(latest));
+            }
         }
 
         /// <summary>Run, second half: the campaign itself.</summary>

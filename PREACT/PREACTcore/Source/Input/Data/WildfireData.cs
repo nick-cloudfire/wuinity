@@ -32,6 +32,13 @@ namespace PREACT.Input
         /// </summary>
         public Vector2int PaintedCellCount;
 
+        /// <summary>
+        /// Where the grid the masks are on lies, when that is known: the record in the painting's file, or the grid
+        /// the GUI's painter painted them on. Null for a file written before paintings recorded it. With it a mask
+        /// of the fire grid's size is still refused when it was painted somewhere else (review MI-3).
+        /// </summary>
+        public GraphicalFireInput.PaintedGrid PaintedGrid;
+
 
         public LandscapeData LandscapeData { get => _lcpData; }
         public List<IgnitionPointInput> IgnitionPoints { get => _ignitionPoints; }
@@ -245,6 +252,7 @@ namespace PREACT.Input
         public void LoadGraphicalFireInput(WildfireModuleInput fireInput, string filePath, LandscapeData lcpData, bool updateInput, out bool success)
         {
             GraphicalFireInput.LoadGraphicalFireInput(filePath, lcpData, out WuiArea, out RandomIgnition, out InitialIgnition, out ManualTriggerBuffer, out success);
+            PaintedGrid = null;
             if (success)
             {
                 PaintedCellCount = new Vector2int(lcpData.GetCellCountX(), lcpData.GetCellCountY());
@@ -258,7 +266,9 @@ namespace PREACT.Input
         public void LoadGraphicalFireInput(WildfireModuleInput fireInput, string filePath, bool updateInput, out bool success)
         {
             GraphicalFireInput.LoadGraphicalFireInput(filePath, out int ncols, out int nrows,
-                out WuiArea, out RandomIgnition, out InitialIgnition, out ManualTriggerBuffer, out success);
+                out WuiArea, out RandomIgnition, out InitialIgnition, out ManualTriggerBuffer,
+                out GraphicalFireInput.PaintedGrid grid, out success);
+            PaintedGrid = success ? grid : null;
 
             if (!success)
             {

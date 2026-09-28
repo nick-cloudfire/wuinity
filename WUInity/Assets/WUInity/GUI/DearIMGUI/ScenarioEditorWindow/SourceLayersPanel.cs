@@ -69,7 +69,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
         /// <summary>Restores the source layer paths the case was last built from.</summary>
         public static void ReadSourcesFromCase(PREACTInput input)
         {
-            string caseDir = System.IO.Path.Combine(input.RootFolder, ScenarioFiles.CaseDirectory(input));
+            string caseDir = PREACT.Utility.ElmfireCoupling.CaseDirectoryPath(input.RootFolder, input.WildfireModule.ElmfireInput);
             if (input.WildfireModule.ElmfireInput.LoadSourcesFromCase(caseDir, out int applied, out string problem))
             {
                 _readStatus = $"Restored {applied} source layer path(s) from {PREACT.Utility.ElmfireCaseBuilder.SourceManifestName}.";

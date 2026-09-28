@@ -235,7 +235,24 @@ namespace WUInity.Workflow
         public int IgnitionAreaCells;
         public int InitialIgnitionCells;
 
+        /// <summary>Where the painting's grid lies, when the file records it (paintings saved since the record existed).</summary>
+        public PREACT.GraphicalFireInput.PaintedGrid Grid;
+
         public bool SameSize(RasterInfo grid) => grid != null && grid.Width == Width && grid.Height == Height;
+
+        /// <summary>
+        /// Why the painting's record says <paramref name="grid"/> is not the grid it was painted on, or null when it is
+        /// or cannot tell (no record, or a raster without georeferencing). The case builder's rule, without the CRS,
+        /// which this header reader does not know.
+        /// </summary>
+        public string DescribeMismatch(RasterInfo grid)
+        {
+            if (Grid == null || grid == null || !grid.HasGeoTransform) return null;
+            return Grid.DescribeMismatch(grid.XllCorner, grid.YllCorner, grid.CellSize, 0);
+        }
+
+        /// <summary>The painting's size, and - when it records one - its place: what the case build accepts.</summary>
+        public bool OnGrid(RasterInfo grid) => SameSize(grid) && DescribeMismatch(grid) == null;
 
         /// <summary>
         /// Two little-endian int32 (columns, rows), then one byte per cell for each of four masks: WUI area,
@@ -256,6 +273,11 @@ namespace WUInity.Workflow
                 info.WuiCells = CountSet(br, cells);
                 info.IgnitionAreaCells = CountSet(br, cells);
                 info.InitialIgnitionCells = CountSet(br, cells);
+                if (fs.Length >= 8L + 4L * cells)
+                {
+                    fs.Seek(8L + 4L * cells, SeekOrigin.Begin);
+                    info.Grid = PREACT.GraphicalFireInput.ReadPaintedGrid(br);
+                }
                 return info;
             }
         }

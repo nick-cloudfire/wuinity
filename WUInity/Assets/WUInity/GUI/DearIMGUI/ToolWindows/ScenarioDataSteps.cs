@@ -56,7 +56,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
         /// <summary>
         /// Stops the running step or chain: no further link starts, and an ELMFIRE or WindNinja process it started is
         /// killed now. A download or a GDAL warp under way finishes first - they cannot be interrupted - so
-        /// <see cref="Busy"/> stays true until it has.
+        /// <see cref="Busy"/> stays true until it has. A case build then stops at its next safe point (before the
+        /// grid, before the weather, or before the next WindNinja solve) and reports that it was stopped; it never
+        /// goes on with a uniform wind in place of the solve that was killed.
         /// </summary>
         public static void RequestStop()
         {
@@ -67,7 +69,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             _stopRequested = true;
             _status = "Stopping " + _progressTitle + "...";
-            LogStep("Stop requested: nothing further starts; ELMFIRE and WindNinja are stopped at once, a download under way finishes first.");
+            LogStep("Stop requested: nothing further starts; ELMFIRE and WindNinja are stopped at once, a download under way "
+                + "finishes first, and a case build stops at its next safe point without writing any wind.");
             PREACT.Utility.ElmfireRunner.CancelAll();
         }
 
@@ -402,8 +405,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
                         break;
                     }
 
-                    //A link that finished although it was asked to stop - a case build whose WindNinja was killed can
-                    //carry on with uniform wind - is not a result to trust.
+                    //A link that finished although it was asked to stop is not a result to trust: a download or a warp
+                    //that could not be interrupted, or a case build the stop reached only after its weather was written.
                     if (_stopRequested)
                     {
                         ok = false;
@@ -591,7 +594,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
                 {
                     ImGui.SetTooltip("Nothing further starts; ELMFIRE and WindNinja are stopped at once. A download or a raster "
-                        + "warp under way finishes first.");
+                        + "warp under way finishes first. A case build keeps what it finished and writes no wind; the next "
+                        + "build carries on from there.");
                 }
                 ImGui.SameLine();
             }
@@ -1040,7 +1044,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
             bool previous = settings.RebuildExistingLayers;
             settings.RebuildExistingLayers = rebuildExisting || previous;
 
-            ctx.ChangedInPlace = true;
             bool ok;
             string problem;
             DateTime started = DateTime.Now;
@@ -1059,9 +1062,11 @@ namespace Assets.WUInity.GUI.DearIMGUI
             if (!ok)
             {
                 //Thrown rather than returned: RunChain reports a faulted step, and a build that failed must not
-                //read as one that succeeded just because it was the last thing to run.
+                //read as one that succeeded just because it was the last thing to run. A stopped build says so in
+                //the problem, and leaves the scenario as it was (nothing changed in place).
                 throw new Exception(problem ?? "the case could not be built");
             }
+            ctx.ChangedInPlace = true;
 
             //The terrain the build pointed [Landscape] at is read, and the painter goes onto the case grid; on the
             //main thread, after Finish has applied the step.
@@ -1069,7 +1074,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             //Every build writes the namelist again from the scenario. One edited by hand is set aside first, which the
             //builder only says in its log; said where it is seen as well.
-            string setAside = NamelistSetAsideSince(GuiFiles.Resolve(ctx.Root, ScenarioFiles.CaseDirectory(ctx.Input)), started);
+            string setAside = NamelistSetAsideSince(PREACT.Utility.ElmfireCoupling.CaseDirectoryPath(ctx.Root, settings), started);
             if (setAside != null)
             {
                 string message = "A hand-edited namelist was set aside as " + setAside + ": the build wrote elmfire.data again from "
@@ -1115,7 +1120,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
             try
             {
                 var to = PREACT.Utility.PaintedMaskResampler.Grid.FromRaster(GuiFiles.Resolve(input.RootFolder, currentGrid));
-                if (to.Ncols == strokeGrid.x && to.Nrows == strokeGrid.y) return;
+                //Nothing to carry when the strokes are on this grid: its size, and - when they record one - its place.
+                if (to.Ncols == strokeGrid.x && to.Nrows == strokeGrid.y && to.DescribeMismatch(data.PaintedGrid) == null) return;
 
                 string previousPath = GuiFiles.Resolve(input.RootFolder, previousGrid);
                 if (previousPath == null || !File.Exists(previousPath))
@@ -1123,7 +1129,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                     return;
                 }
                 var from = PREACT.Utility.PaintedMaskResampler.Grid.FromRaster(previousPath);
-                if (from.Ncols != strokeGrid.x || from.Nrows != strokeGrid.y) return;
+                if (from.Ncols != strokeGrid.x || from.Nrows != strokeGrid.y || from.DescribeMismatch(data.PaintedGrid) != null) return;
 
                 var masks = new PREACT.Utility.PaintedMaskResampler.Masks
                 {
@@ -1136,6 +1142,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 data.InitialIgnition = moved.InitialIgnition;
                 data.ManualTriggerBuffer = moved.ManualTriggerBuffer;
                 data.PaintedCellCount = new Vector2int(to.Ncols, to.Nrows);
+                data.PaintedGrid = to.ToPaintedGrid();
                 Engine.Message(null, Engine.LogType.Log, $"The fire areas painted and not saved were carried from the old "
                     + $"{from.Ncols} x {from.Nrows} case grid onto the new {to.Ncols} x {to.Nrows} one; they are still unsaved.");
             }
