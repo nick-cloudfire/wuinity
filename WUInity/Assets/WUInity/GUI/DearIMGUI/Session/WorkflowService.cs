@@ -109,6 +109,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 CampaignActive = ScenarioSession.CampaignActive,
                 Tools = ToolsService.Current,
                 LastRunFailed = PreactGUI.WUInity?.LastRunFailed,
+                LastRunRefusedBecause = PreactGUI.WUInity != null && PreactGUI.WUInity.LastRunRefused
+                                        && PreactGUI.WUInity.LastRunRefusalReasons.Count > 0
+                    ? PreactGUI.WUInity.LastRunRefusalReasons[0] : null,
                 Requirements = _requirements,
                 RequirementsFresh = RequirementsFresh,
                 DistanceToLane = DistanceToLane,

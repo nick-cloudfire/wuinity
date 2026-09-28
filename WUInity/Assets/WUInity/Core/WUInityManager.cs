@@ -374,6 +374,20 @@ namespace WUInity
         /// <summary>Whether the last GUI run ended in an error, or null when there has been none.</summary>
         public bool? LastRunFailed { get; private set; }
 
+        /// <summary>
+        /// The last GUI run never started: the engine refused the scenario (its checklist had a critical item, or
+        /// there was no input). Also counted in <see cref="LastRunFailed"/>.
+        /// </summary>
+        public bool LastRunRefused { get; private set; }
+
+        /// <summary>What the engine was still missing when it refused the last run, as the parser words it.</summary>
+        public System.Collections.Generic.IReadOnlyList<string> LastRunRefusalReasons { get => _refusalReasons; }
+        private readonly List<string> _refusalReasons = new List<string>();
+
+        //The simulation the engine held before the run, to tell a run that never made one; and a stop asked for.
+        private Simulation _simulationBeforeRun;
+        private bool _stopRequestedThisRun;
+
         /// <summary>Raised on the main thread when a GUI-started run has finished, however it finished.</summary>
         public event System.Action RunFinished;
 
@@ -388,7 +402,34 @@ namespace WUInity
             _visualsExist = false;
             _runTaskReported = false;
             LastRunFailed = null;
+            LastRunRefused = false;
+            _refusalReasons.Clear();
+            _stopRequestedThisRun = false;
+            _simulationBeforeRun = _engine.Simulation;
             _runTask = _engine.RunSimulations(engineTask);
+
+            //The engine refuses before its first await, so a refused run is already complete here - and the
+            //checklist it judged is still the one published.
+            if (_runTask.IsCompleted && !_engine.LastRunSucceeded && ReferenceEquals(_engine.Simulation, _simulationBeforeRun))
+            {
+                CaptureRefusalReasons();
+            }
+        }
+
+        private void CaptureRefusalReasons()
+        {
+            _refusalReasons.Clear();
+            foreach (PREACTInput.InputRequirement requirement in PREACTInput.Requirements)
+            {
+                if (requirement.Critical)
+                {
+                    _refusalReasons.Add(requirement.ToString() + (string.IsNullOrEmpty(requirement.Message) ? "" : " - " + requirement.Message));
+                }
+            }
+            if (_refusalReasons.Count == 0)
+            {
+                _refusalReasons.Add(_input == null ? "No scenario was handed to the engine." : "The console says why.");
+            }
         }
 
         /// <summary>
@@ -416,12 +457,28 @@ namespace WUInity
                     Debug.LogException(e);
                 }
             }
+            else if (!_engine.LastRunSucceeded && ReferenceEquals(_engine.Simulation, _simulationBeforeRun))
+            {
+                //No simulation was made: the engine refused the scenario before starting, and returned normally.
+                //Reported as what it is, not as a run that "finished in 0.0 min".
+                failed = true;
+                LastRunRefused = true;
+                if (_refusalReasons.Count == 0) CaptureRefusalReasons();
+                Engine.Message(null, Engine.LogType.Warning, "The run did not start: the engine refused the scenario ("
+                    + string.Join("; ", _refusalReasons) + ").");
+            }
             else if (_engine.Simulation != null
                      && (_engine.Simulation.State == Simulation.SimulationState.Error || _engine.Simulation.StoppedDueToError))
             {
                 failed = true;
             }
+            else if (!_engine.LastRunSucceeded && !_stopRequestedThisRun)
+            {
+                //Ran, but reported errors (LastRunErrorCount) without a simulation in the Error state.
+                failed = true;
+            }
 
+            _simulationBeforeRun = null;
             LastRunFailed = failed;
             RunFinished?.Invoke();
         }
@@ -448,6 +505,7 @@ namespace WUInity
 
         public void StopSimulations()
         {
+            _stopRequestedThisRun = IsSimulationActive;
             HideAllRuntimeVisuals();
             _engine.CloseSimulations(false);
         }

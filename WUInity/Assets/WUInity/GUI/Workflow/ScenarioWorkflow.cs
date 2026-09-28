@@ -1497,7 +1497,12 @@ namespace WUInity.Workflow
             DateTime? logWritten = _files.LastWriteUtc(log);
             bool ranSinceSaved = logWritten.HasValue && (!scenarioWritten.HasValue || logWritten.Value >= scenarioWritten.Value);
 
-            if (_ctx.LastRunFailed == true)
+            if (!string.IsNullOrEmpty(_ctx.LastRunRefusedBecause))
+            {
+                s.Warn("The last run did not start: the engine refused the scenario - " + _ctx.LastRunRefusedBecause,
+                    WorkflowAction.CheckScenario, "Check scenario");
+            }
+            else if (_ctx.LastRunFailed == true)
             {
                 s.Warn("The last run ended in an error; the console says why.", WorkflowAction.OpenRun, "Run again");
             }

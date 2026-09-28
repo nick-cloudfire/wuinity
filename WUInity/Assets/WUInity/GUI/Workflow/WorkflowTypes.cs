@@ -216,6 +216,9 @@ namespace WUInity.Workflow
         /// <summary>Whether the last GUI run failed; null when there has been none this session.</summary>
         public bool? LastRunFailed;
 
+        /// <summary>The last GUI run never started: the engine refused the scenario. Its first reason, or null.</summary>
+        public string LastRunRefusedBecause;
+
         /// <summary>The scenario check's findings (PREACTInput.Requirements), copied when it last ran.</summary>
         public IList<PREACT.Input.PREACTInput.InputRequirement> Requirements;
 
