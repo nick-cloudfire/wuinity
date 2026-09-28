@@ -68,8 +68,12 @@ namespace PREACT
 
         public Engine(IExternalManager externalManager, bool mainEngine = true)
         {
-            //needed for proper reading of input files on all systems
+            //Needed for proper reading of input files on all systems. The calling thread is set explicitly, and
+            //the default is set for every thread created after this - the simulation's Task.Run, any worker, a
+            //GUI background load - so a comma-decimal locale (el-GR, de-DE) cannot read "38.05" as 3805 on
+            //some thread that happened not to be this one. The parsers also pass InvariantCulture themselves.
             System.Threading.Thread.CurrentThread.CurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
+            System.Globalization.CultureInfo.DefaultThreadCurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
             _engineOutput = new EngineOutput(this);
             _dataStatus = new DataStatus();
             _workingData = new WorkingData();
@@ -85,79 +89,177 @@ namespace PREACT
         string _projLibPath, _projDataPath, _sumoPath;
         public string ProjLibPath { get => _projLibPath; }
         public string ProjDataPath { get => _projDataPath; }
+        /// <summary>SUMO's bin folder, or null when SUMO was not found. Read from SUMO_HOME first, then PATH.</summary>
         public string SumoPath { get => _sumoPath; }
 
-
+        /// <summary>
+        /// Makes the native runtimes under Runtimes/Native findable, locates SUMO and PROJ, and registers GDAL.
+        /// </summary>
+        /// <remarks>
+        /// Windows: the runtime folders are <b>prepended to the process PATH</b>, keeping whatever PATH the
+        /// process was started with. This used to replace it with the Machine PATH, which dropped the user's
+        /// PATH and anything the launcher had set - for this process and for every child it starts (SUMO,
+        /// netconvert, the GDAL tools, mpiexec, ELMFIRE).
+        ///
+        /// Linux/macOS: the loader reads LD_LIBRARY_PATH/DYLD_LIBRARY_PATH once at start-up, so setting it here
+        /// cannot help this process; the folders are given to a DllImport resolver instead (on .NET; Unity's
+        /// Mono keeps its own probing). The variable is still extended so child processes see the same set.
+        /// Reading the Machine-scope variable is Windows-only - it is null everywhere else, and the old
+        /// <c>.Split</c> on it is what stopped PREACT.exe from starting on Linux at all.
+        /// </remarks>
         private void SetupNativeLibraries()
         {
             string root = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "Runtimes", "Native");
             //No Behave entry: BEHAVE has been removed entirely - both the native library, which was called
             //from nothing, and the managed port k-PERIL once used to derive its own rate of spread.
+            //FOFEM is kept on purpose (v1 decision) although nothing calls it yet; see its folder.
             string fofem = Path.Combine(root, "FOFEM", "x64");
             string gdal = Path.Combine(root, "GDAL", "x64");
             string nfdrs4 = Path.Combine(root, "NFDRS4", "x64");
+            string[] runtimeFolders = { fofem, gdal, nfdrs4 };
 
             bool isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
-            string NEXT = isWindows ? ";" : ":";
-            string runtimes = fofem + NEXT + gdal + NEXT + nfdrs4;
+            bool isOsx = RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
+            string libraryVariable = isWindows ? "PATH" : isOsx ? "DYLD_LIBRARY_PATH" : "LD_LIBRARY_PATH";
 
-            string machineEnvirtonmentVariables;
-            if (isWindows)
-            {
-                machineEnvirtonmentVariables = Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine);
-                Environment.SetEnvironmentVariable("PATH", runtimes + ";" + machineEnvirtonmentVariables);
-            }
-            else if(RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-            {
-                machineEnvirtonmentVariables = Environment.GetEnvironmentVariable("LD_LIBRARY_PATH", EnvironmentVariableTarget.Machine);
-                Environment.SetEnvironmentVariable("LD_LIBRARY_PATH", runtimes + ":" + machineEnvirtonmentVariables);
-            }
-            else if(RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-            {
-                machineEnvirtonmentVariables = Environment.GetEnvironmentVariable("DYLD_LIBRARY_PATH", EnvironmentVariableTarget.Machine) ?? "";
-                Environment.SetEnvironmentVariable("DYLD_LIBRARY_PATH", runtimes + (string.IsNullOrEmpty(machineEnvirtonmentVariables) ? "" : ":" + machineEnvirtonmentVariables));
-            }
-            else
-            {
-                throw new PlatformNotSupportedException();
-            }
+            _sumoPath = FindSumoBinFolder();
 
-            string[] variables = machineEnvirtonmentVariables.Split(NEXT);
-            for(int i = 0; i < variables.Length; ++i)
+            //Runtimes first, so the committed wrappers win over any other copy; SUMO last (Windows), so that
+            //adding it can never change which gdal.dll the wraps pick up - that is decided by the order the user's
+            //PATH already has, which is the configuration known to work.
+            var prepend = new List<string>(runtimeFolders);
+            var append = new List<string>();
+            if (isWindows && !string.IsNullOrEmpty(_sumoPath))
             {
-                if (variables[i].Contains("Sumo") && variables[i].Contains("bin"))
+                append.Add(_sumoPath);
+            }
+            Environment.SetEnvironmentVariable(libraryVariable, ExtendSearchPath(Environment.GetEnvironmentVariable(libraryVariable), prepend, append));
+
+            if (!isWindows)
+            {
+                var resolverFolders = new List<string>(runtimeFolders);
+                if (!string.IsNullOrEmpty(_sumoPath))
                 {
-                    _sumoPath = variables[i];
-                    break;
+                    resolverFolders.Add(_sumoPath);
+                    //libsumocs.so sits in SUMO's bin in a SUMO build tree and in lib/ in some packages.
+                    resolverFolders.Add(Path.Combine(Path.GetDirectoryName(_sumoPath) ?? _sumoPath, "lib"));
+                }
+                NativeLibraries.Register(resolverFolders,
+                    typeof(Engine).Assembly, typeof(OSGeo.GDAL.Gdal).Assembly, typeof(OSGeo.OGR.Ogr).Assembly, typeof(OSGeo.OSR.Osr).Assembly);
+            }
+
+            //now some GDAL/PROJ stuff. The process environment, which on Windows already holds the Machine and
+            //User values it was started with; the Machine-only lookup this used to do returned null elsewhere and
+            //then handed those nulls to PROJ.
+            _projLibPath = Environment.GetEnvironmentVariable("PROJ_LIB");
+            _projDataPath = Environment.GetEnvironmentVariable("PROJ_DATA");
+            var projPaths = new List<string>();
+            foreach (string candidate in new[] { _projDataPath, _projLibPath })
+            {
+                if (!string.IsNullOrEmpty(candidate) && Directory.Exists(candidate) && !projPaths.Contains(candidate))
+                {
+                    projPaths.Add(candidate);
+                }
+            }
+            if (projPaths.Count == 0 && !isWindows && Directory.Exists("/usr/share/proj"))
+            {
+                projPaths.Add("/usr/share/proj");
+            }
+            //Only when something was found: an empty list would replace PROJ's own compiled-in search path.
+            if (projPaths.Count > 0)
+            {
+                OSGeo.OSR.Osr.SetPROJSearchPaths(projPaths.ToArray());
+            }
+
+            OSGeo.GDAL.Gdal.AllRegister();
+            OSGeo.OGR.Ogr.RegisterAll();
+        }
+
+        /// <summary>
+        /// SUMO's bin folder: SUMO_HOME/bin when that exists, else the first PATH entry holding the sumo
+        /// executable, else the first PATH entry that looks like a SUMO bin folder. Null when there is none.
+        /// </summary>
+        /// <remarks>
+        /// This used to accept only a Machine-PATH entry containing both "Sumo" and "bin", case-sensitively - so a
+        /// user-PATH install, "sumo" in lower case, or any Linux install was never found.
+        /// </remarks>
+        private static string FindSumoBinFolder()
+        {
+            bool isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+            string executable = isWindows ? "sumo.exe" : "sumo";
+
+            string sumoHome = Environment.GetEnvironmentVariable("SUMO_HOME");
+            if (!string.IsNullOrWhiteSpace(sumoHome))
+            {
+                string bin = Path.Combine(sumoHome.Trim(), "bin");
+                if (Directory.Exists(bin))
+                {
+                    return bin;
                 }
             }
 
-            //now some GDAL/PROJ stuff
-            _projLibPath = Environment.GetEnvironmentVariable("PROJ_LIB", EnvironmentVariableTarget.Machine);
-            _projDataPath = Environment.GetEnvironmentVariable("PROJ_DATA", EnvironmentVariableTarget.Machine);
-            //Engine.Message(null, LogType.Debug, $"PROJ_LIB variable is: {projLib}");
-            //Engine.Message(null, LogType.Debug, $"PROJ_DATA variable is: {projData}");
-            //OSGeo.GDAL.Gdal.SetConfigOption("PROJ_LIB", projLib); //should not be needed
-            //OSGeo.GDAL.Gdal.SetConfigOption("PROJ_DATA", projData);
-            OSGeo.OSR.Osr.SetPROJSearchPaths(new string[] { _projLibPath, _projDataPath });
-
-            try
+            string[] entries = (Environment.GetEnvironmentVariable("PATH") ?? string.Empty).Split(Path.PathSeparator);
+            foreach (string entry in entries)
             {
-                OSGeo.GDAL.Gdal.AllRegister();
-            }
-            catch (Exception)
-            {
-                throw;
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(entry) && File.Exists(Path.Combine(entry.Trim(), executable)))
+                    {
+                        return entry.Trim();
+                    }
+                }
+                catch (ArgumentException)
+                {
+                    //an unusable PATH entry is not worth failing start-up over
+                }
             }
 
-            try
+            foreach (string entry in entries)
             {
-                OSGeo.OGR.Ogr.RegisterAll();
+                string lower = entry.ToLowerInvariant();
+                if (lower.Contains("sumo") && lower.Contains("bin") && Directory.Exists(entry.Trim()))
+                {
+                    return entry.Trim();
+                }
             }
-            catch (Exception)
+
+            return null;
+        }
+
+        /// <summary>
+        /// <paramref name="current"/> with <paramref name="prepend"/> in front and <paramref name="append"/> at the
+        /// end, skipping folders already present so repeated engines do not grow it.
+        /// </summary>
+        private static string ExtendSearchPath(string current, List<string> prepend, List<string> append)
+        {
+            char separator = Path.PathSeparator;
+            var existing = new List<string>();
+            foreach (string entry in (current ?? string.Empty).Split(separator))
             {
-                throw;
+                if (!string.IsNullOrWhiteSpace(entry))
+                {
+                    existing.Add(entry);
+                }
             }
+
+            var result = new List<string>();
+            foreach (string folder in prepend)
+            {
+                if (!existing.Contains(folder) && !result.Contains(folder))
+                {
+                    result.Add(folder);
+                }
+            }
+            result.AddRange(existing);
+            foreach (string folder in append)
+            {
+                if (!result.Contains(folder))
+                {
+                    result.Add(folder);
+                }
+            }
+
+            return string.Join(separator.ToString(), result);
         }
 
         // Returns a Task rather than being 'async void' so callers can actually wait for the run
