@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using ImGuiNET;
 using PREACT;
 using UnityEngine;
@@ -74,6 +75,12 @@ namespace Assets.WUInity.GUI.DearIMGUI
             why = null;
             if (!ScenarioSession.HasInput) { why = "No scenario is open."; return false; }
             if (ScenarioSession.IsBusy) { why = ScenarioSession.BusyTooltip; return false; }
+            //Not overridable by "Run anyway": the engine itself refuses to start while one is outstanding.
+            if (WorkflowService.RequirementsFresh && CriticalRequirements().Count > 0)
+            {
+                why = "The scenario check says something required is missing: " + CriticalRequirements()[0];
+                return false;
+            }
             if (WorkflowService.Model.RunBlockers.Count > 0 && !_runAnyway)
             {
                 why = "Blocked: " + WorkflowService.Model.RunBlockers[0];
@@ -141,6 +148,22 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 //Each step's row has the button that deals with it.
                 string first = model.RunBlockers.Count > 0 ? model.RunBlockers[0] : model.RunWarnings[0];
                 ScenarioWorkflowWindow.Focus(StepNamedIn(first));
+            }
+
+            //What the engine's own gate will refuse (PREACTInput.Requirements, from the last check): listed as the
+            //parser words it, since that is what the console will say if it is not dealt with.
+            if (WorkflowService.RequirementsFresh)
+            {
+                List<string> critical = CriticalRequirements();
+                if (critical.Count > 0)
+                {
+                    Fields.Caution("The engine will not start while the scenario check lists these as required:");
+                    for (int i = 0; i < critical.Count && i < 8; ++i)
+                    {
+                        ImGui.BulletText(critical[i]);
+                    }
+                    if (critical.Count > 8) ImGui.TextDisabled($"... and {critical.Count - 8} more (Scenario > Check scenario).");
+                }
             }
 
             if (ScenarioCheckWindow.Checking)
@@ -313,6 +336,27 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 }
             }
 
+            //The engine refuses a scenario whose checklist has a critical item, and it judges by the last parse -
+            //which is the load, before any edit made since. So the scenario is checked as it is now first, and a
+            //refusal is shown here, with its reasons, instead of as a line in the console.
+            if (!WorkflowService.RequirementsFresh)
+            {
+                _lastResult = string.Empty;
+                ScenarioCheckWindow.Check(ok =>
+                {
+                    if (ok)
+                    {
+                        Start();
+                    }
+                    else
+                    {
+                        PREACT.Engine.Message(null, PREACT.Engine.LogType.Warning, "Not started: the scenario check lists "
+                            + "required items (Run simulation shows them).");
+                    }
+                });
+                return;
+            }
+
             _startedAt = DateTime.Now;
             _lastResult = string.Empty;
             _stopRequested = false;
@@ -324,6 +368,19 @@ namespace Assets.WUInity.GUI.DearIMGUI
             LiveOutputWindow.Open();
             PreactGUI.WUInity.RunSimulation(task);
             WorkflowService.Invalidate();
+        }
+
+        /// <summary>The scenario check's critical findings, as the parser words them.</summary>
+        private static List<string> CriticalRequirements()
+        {
+            var critical = new List<string>();
+            IReadOnlyList<PREACT.Input.PREACTInput.InputRequirement> all = WorkflowService.Requirements;
+            if (all == null) return critical;
+            foreach (PREACT.Input.PREACTInput.InputRequirement r in all)
+            {
+                if (r.Critical) critical.Add(r.ToString() + (string.IsNullOrEmpty(r.Message) ? "" : " - " + r.Message));
+            }
+            return critical;
         }
 
         /// <summary>On the main thread, once the run's task has finished however it finished.</summary>

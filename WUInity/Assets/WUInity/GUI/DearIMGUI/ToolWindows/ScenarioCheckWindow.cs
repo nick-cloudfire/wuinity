@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Threading.Tasks;
 using ImGuiNET;
 using PREACT.Input;
@@ -17,8 +16,10 @@ namespace Assets.WUInity.GUI.DearIMGUI
     /// The checklist this replaces opened itself after every load with anything outstanding, listed items that
     /// could not be clicked, and offered one "Open scenario editor" button for all of them. Its Re-check wrote a
     /// temporary .wui and parsed it - population, rasters and all - on the main thread. The parse now runs on a
-    /// worker, on a copy of the scenario serialised beforehand, and the findings feed the workflow panel, which
-    /// is where they are normally read; this window is the full list.
+    /// worker, in memory (as <see cref="PREACTInput.Revalidate"/> does), on a copy of the scenario serialised
+    /// beforehand, and the findings feed the workflow panel, which is where they are normally read; this window
+    /// is the full list. The parse also publishes the checklist the engine's run gate reads, so a check just
+    /// before a run is what makes that gate judge the scenario as it is now.
     /// </remarks>
     public static class ScenarioCheckWindow
     {
@@ -55,19 +56,23 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
         /// <summary>
         /// Parses the scenario as it stands, unsaved edits included, and hands the findings to the workflow.
+        /// <paramref name="done"/>, when given, is called on the main thread afterwards with whether nothing
+        /// required is outstanding (false also when the check could not run, or was already running).
         /// </summary>
-        public static void Check()
+        public static void Check(Action<bool> done = null)
         {
             PREACTInput input = ScenarioSession.Input;
             if (input == null || _checking)
             {
+                done?.Invoke(false);
                 return;
             }
 
-            //Serialised here, on the main thread, so the worker never reads the live scenario. Checked in its
-            //own folder, because half the checks resolve paths relative to it.
+            //Serialised here, on the main thread, so the worker never reads the live scenario. Checked against
+            //its own folder, because half the checks resolve paths relative to it - in memory, so nothing is
+            //written there.
             string[] lines = PREACTInputWriter.Write(input);
-            string probe = Path.Combine(input.RootFolder, ".scenario-check.wui.tmp");
+            string root = input.RootFolder;
             int generation = ScenarioSession.EditGeneration;
             _checking = true;
             _note = "Checking...";
@@ -78,17 +83,12 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 string failure = null;
                 try
                 {
-                    File.WriteAllLines(probe, lines);
-                    PREACTInput.LoadFromDisk(probe, out bool _);
+                    PREACTInput.LoadFromLines(lines, root, out bool _);
                     found = new List<PREACTInput.InputRequirement>(PREACTInput.Requirements);
                 }
                 catch (Exception e)
                 {
                     failure = e.Message;
-                }
-                finally
-                {
-                    try { if (File.Exists(probe)) File.Delete(probe); } catch { }
                 }
 
                 PreactGUI.Post(() =>
@@ -97,6 +97,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                     if (failure != null)
                     {
                         _note = "Could not check the scenario: " + failure;
+                        done?.Invoke(false);
                         return;
                     }
 
@@ -104,6 +105,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                     int required = found.FindAll(r => r.Critical).Count;
                     _note = $"Checked at {DateTime.Now:HH:mm:ss}: " + (required == 0 ? "nothing required is outstanding." : $"{required} required item(s).");
                     PREACT.Engine.Message(null, PREACT.Engine.LogType.Log, "Scenario check: " + _note);
+                    done?.Invoke(required == 0);
                 });
             });
         }

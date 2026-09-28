@@ -298,7 +298,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
         }
 
         /// <summary>
-        /// Inlined rather than hidden behind a "Module settings" button. There are three values, so
+        /// Inlined rather than hidden behind a "Module settings" button. There are a handful of values, so
         /// a separate window would be more clicks for less information - and the button it replaces
         /// had an empty body, which is why module settings appeared to do nothing.
         /// </summary>
@@ -318,7 +318,32 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
             ImGui.InputFloat(nameof(input.WalkingSpeedModifier), ref input.WalkingSpeedModifier);
             ImGui.InputFloat(nameof(input.WalkingDistanceModifier), ref input.WalkingDistanceModifier);
+
+            ImGui.SeparatorText("Reacting to the fire");
+            ImGui.Checkbox("Leave early when the fire comes close###" + nameof(input.ReactToFire), ref input.ReactToFire);
+            ImGui.BeginDisabled(!input.ReactToFire);
+            ImGui.SetNextItemWidth(140f);
+            ImGui.InputFloat("Distance to the fire front (m)###" + nameof(input.FireReactionDistance), ref input.FireReactionDistance, 50f, 250f, "%.0f");
+            if (input.FireReactionDistance < 0f) input.FireReactionDistance = 0f;
+            ImGui.SetNextItemWidth(140f);
+            ImGui.InputFloat("Look at the front every (s)###" + nameof(input.FireReactionUpdateInterval), ref input.FireReactionUpdateInterval, 60f, 300f, "%.0f");
+            if (input.FireReactionUpdateInterval < 1f) input.FireReactionUpdateInterval = 1f;
+            ImGui.EndDisabled();
+            Fields.Hint("A household that has not left yet leaves as soon as the burning front is this close to its home,",
+                        "instead of waiting for its response time; one whose response is \"never\" still stays. Needs a",
+                        "fire module. The distance to the front is recomputed at the interval (it costs one pass over",
+                        $"the fire grid). Defaults: {(MacroHouseholdDefaults.ReactToFire ? "on" : "off")}, "
+                        + $"{MacroHouseholdDefaults.FireReactionDistance:0} m, every {MacroHouseholdDefaults.FireReactionUpdateInterval:0} s.");
+            if (ImGui.SmallButton("Reset to the defaults###FireReactionDefaults"))
+            {
+                input.ReactToFire = MacroHouseholdDefaults.ReactToFire;
+                input.FireReactionDistance = MacroHouseholdDefaults.FireReactionDistance;
+                input.FireReactionUpdateInterval = MacroHouseholdDefaults.FireReactionUpdateInterval;
+            }
         }
+
+        //The engine's own defaults, so the hint and the reset cannot drift from what a .wui without the keys gets.
+        private static readonly MacroHouseholdSimInput MacroHouseholdDefaults = new MacroHouseholdSimInput();
 
         //The last on-request search for a .sumocfg, and the folder it searched.
         private static string _sumoSearchRoot, _sumoFound;

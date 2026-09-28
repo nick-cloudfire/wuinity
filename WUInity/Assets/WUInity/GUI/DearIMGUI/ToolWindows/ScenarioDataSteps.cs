@@ -740,8 +740,12 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
 
             //The engine already locates SUMO's bin folder from the machine PATH, so the builder is
-            //given that before it starts looking for netconvert itself.
-            string configurationPath = PREACT.Utility.SumoNetworkBuilder.Build(osmPath, ctx.InRoot(ScenarioFiles.SumoFolder), sumoBin, LogStep);
+            //given that before it starts looking for netconvert itself. The network is projected into the
+            //simulation's own UTM zone (netconvert --proj): left to itself netconvert picks the zone of the
+            //OSM data's centre, which for a domain pinned to a neighbouring zone, or straddling a boundary, is
+            //another frame than the one the simulation measures in (SumoParser warns about the mismatch).
+            string configurationPath = PREACT.Utility.SumoNetworkBuilder.Build(osmPath, ctx.InRoot(ScenarioFiles.SumoFolder), sumoBin, LogStep,
+                utmEpsgCode: ctx.UtmEpsg);
             if (configurationPath == null)
             {
                 throw new Exception("netconvert did not produce a network; see the messages above.");
