@@ -224,7 +224,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 case WorkflowAction.MovePaintingToCaseGrid:
                 case WorkflowAction.UseCaseWuiArea:
                 case WorkflowAction.ClearPinnedWind:
-                case WorkflowAction.OpenCampaign:
                     return true;
                 default:
                     return false;
@@ -403,8 +402,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 case WorkflowAction.OpenRun: RunSimulationWindow.Open(); break;
                 case WorkflowAction.OpenResults: ResultsWindow.Open(); break;
                 case WorkflowAction.OpenCampaign:
-                    //The window reseeds from the session and asks to save when Run is pressed: the campaign reads
-                    //the .wui on disk, so that is when unsaved edits matter.
+                    //Always opens - to set a campaign up, or to watch or cancel the one running. The window's Run is
+                    //what is gated (step 13's blocker, a GUI run, a data step), and it asks to save when pressed:
+                    //the campaign reads the .wui on disk, so that is when unsaved edits matter.
                     ProbabilisticTriggerWindow.Open();
                     break;
             }

@@ -312,14 +312,17 @@ namespace WUInity.Workflow
                 s.Primary.Disable(s.BlockedBy);
             }
 
-            //Nothing that starts work can be started while work is running.
-            if (_ctx.SimulationActive || _ctx.StepActive)
+            //Nothing that starts work can be started while work is running - a campaign included: its realizations
+            //read the case a data step would rewrite. (The data steps refuse to start then anyway; this says so.)
+            if (_ctx.SimulationActive || _ctx.StepActive || _ctx.CampaignActive)
             {
                 foreach (StepAction a in Actions(s))
                 {
                     if (a.Enabled && StartsWork(a.Id))
                     {
-                        a.Disable(_ctx.SimulationActive ? "Not while a simulation is running." : "Not while \"" + _ctx.StepTitle + "\" is running.");
+                        a.Disable(_ctx.SimulationActive ? "Not while a simulation is running."
+                            : _ctx.StepActive ? "Not while \"" + _ctx.StepTitle + "\" is running."
+                            : "Not while a trigger campaign is running: its realizations read the case.");
                     }
                 }
             }
@@ -346,6 +349,8 @@ namespace WUInity.Workflow
                 case WorkflowAction.OpenFireAreas:
                 //The run window is where the blockers are listed; it will not start while they stand.
                 case WorkflowAction.OpenRun:
+                //Likewise the campaign window, which is also where a running campaign is watched and cancelled.
+                case WorkflowAction.OpenCampaign:
                     return true;
                 default:
                     return false;
@@ -366,7 +371,6 @@ namespace WUInity.Workflow
                 case WorkflowAction.DownloadDemOnly:
                 case WorkflowAction.ApplyFireAreasToCase:
                 case WorkflowAction.MovePaintingToCaseGrid:
-                case WorkflowAction.OpenCampaign:
                     return true;
                 default:
                     return false;
@@ -1732,11 +1736,24 @@ namespace WUInity.Workflow
             {
                 BlockBy(s, WorkflowStepId.None, "A simulation started from the GUI is using the case.");
             }
+            else if (_ctx.StepActive)
+            {
+                BlockBy(s, WorkflowStepId.None, "\"" + _ctx.StepTitle + "\" is running, and may be rewriting the files every realization reads.");
+            }
 
             if (_ctx.IsDirty && !_ctx.CampaignActive)
             {
                 //Not a blocker: the campaign window asks to save when Run is pressed.
                 s.Info("Unsaved changes: the campaign reads the scenario from its .wui, so Run asks to save them first.");
+            }
+
+            //The campaign CLI stops before its first fire when WindNinja cannot run, unless told to go ahead on uniform
+            //wind - which the step-5 warning alone does not say.
+            if (_ctx.Tools.Probed && !_ctx.Tools.HaveWindNinja)
+            {
+                s.Warn("No WindNinja: a campaign stops before its first fire unless \"Allow uniform weather\" is ticked in its "
+                    + "window, and then every fire runs under one wind for the whole domain.", WorkflowAction.OpenExternalTools,
+                    "External tools");
             }
 
             bool done = _files.Exists(final);

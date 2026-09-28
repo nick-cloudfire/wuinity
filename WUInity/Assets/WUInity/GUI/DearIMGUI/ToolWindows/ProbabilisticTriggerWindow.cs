@@ -346,6 +346,11 @@ namespace Assets.WUInity.GUI.DearIMGUI
             {
                 Fields.Warn("No GDAL tools found. Without them ELMFIRE writes no rasters, so every realization fails.");
             }
+            if (ToolsService.Current.Probed && string.IsNullOrEmpty(ToolsService.Current.WindNinjaExe) && !_allowUniformWeather)
+            {
+                Fields.Warn("No WindNinja found: the campaign stops before its first fire unless \"Allow uniform weather\" is",
+                            "ticked above - and then every fire runs under one wind for the whole domain.");
+            }
 
             ImGui.EndDisabled();
 
@@ -822,7 +827,24 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
             if (ScenarioSession.StepActive)
             {
-                return "Not while " + ScenarioSession.BusyReason + ": it may be rewriting the files every realization reads.";
+                return "Not while " + (ScenarioSession.BusyReason ?? "a data step is running")
+                    + ": it may be rewriting the files every realization reads.";
+            }
+
+            //What step 13 of the workflow says stands in the way, for the scenario that is open - the window opens
+            //whatever the workflow says, so a running campaign can always be watched and cancelled; this is where
+            //the workflow's verdict applies. A base .wui picked by hand is another scenario, and the CLI checks it.
+            if (ScenarioSession.HasInput && SamePath(_baseWui, ScenarioSession.FilePath))
+            {
+                global::WUInity.Workflow.WorkflowStep step = WorkflowService.Step(global::WUInity.Workflow.WorkflowStepId.Campaign);
+                if (step != null && !step.Applicable)
+                {
+                    return step.Summary;
+                }
+                if (step != null && !string.IsNullOrEmpty(step.BlockedBy))
+                {
+                    return step.BlockedBy;
+                }
             }
             return null;
         }
