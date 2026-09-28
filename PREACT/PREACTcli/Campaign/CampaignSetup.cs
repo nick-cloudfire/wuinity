@@ -67,7 +67,7 @@ namespace PREACTcli.Campaigns
 
             // ------------------------------------------------------------ the case
             ElmfireInput elmfire = input.WildfireModule.ElmfireInput;
-            string caseDir = Path.GetFullPath(Path.Combine(c.ScenarioDir, elmfire.CaseDirectory));
+            string caseDir = ElmfireCoupling.CaseDirectoryPath(c.ScenarioDir, elmfire);
 
             if (!string.IsNullOrEmpty(o.ElmfireTemplate))
             {
@@ -533,7 +533,8 @@ namespace PREACTcli.Campaigns
 
         private static string Absolute(string root, string path)
         {
-            return Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(root, path));
+            string normalised = PREACTInput.NormalisePath(path);
+            return Path.GetFullPath(Path.IsPathRooted(normalised) ? normalised : Path.Combine(root, normalised));
         }
 
         private static Campaign Fail(string message)

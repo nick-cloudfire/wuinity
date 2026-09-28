@@ -15,6 +15,49 @@ namespace PREACT.Tests
             runner.Add("cli: build-case loads its GDAL wrappers itself (only libgdal on the loader path)", CliFindsGdalWrappers);
             runner.Add("builder: a re-cut grid carries the rasters a hand-edited namelist names (Mati's fbfm40_roads101)", RecutCarriesNamelistRasters);
             runner.Add("preflight: a raster the namelist names off the case grid is refused by key, for a run and a campaign", OffGridRasterRefused);
+            runner.Add("paths: Windows backslash [ELMFIRE] paths resolve for the case, its sources and its template", BackslashElmfirePaths);
+        }
+
+        /// <summary>
+        /// e2e F4: a scenario written on Windows names its case folder, source layers and template with backslashes.
+        /// Everything else in the .wui resolved off Windows; these were combined bare, so a case built on Linux had
+        /// no fuel and no canopy ("names sources\..., which is not there").
+        /// </summary>
+        private static void BackslashElmfirePaths()
+        {
+            using (var c = new SyntheticCase())
+            {
+                string sources = Path.Combine(c.Folder, "sources");
+                Directory.CreateDirectory(sources);
+                File.Copy(c.FuelPath, Path.Combine(sources, "mati_fbfm40.tif"));
+                File.Copy(c.DemPath, Path.Combine(sources, "mati_cc.tif"));
+                string caseDir = Path.Combine(c.Folder, "cases", "syn");
+                Directory.CreateDirectory(caseDir);
+                File.WriteAllLines(Path.Combine(caseDir, "hand.data"), new[] { "&INPUTS", "FBFM_FILENAME = 'fbfm40'", "/" });
+
+                string wui = c.WriteScenario("cases\\syn", 150.0);
+                File.WriteAllLines(wui, File.ReadAllLines(wui)
+                    .Select(l => l.StartsWith("FuelModelFile=", StringComparison.Ordinal)
+                        ? "FuelModelFile=sources\\mati_fbfm40.tif\nCanopyCoverFile=.\\sources\\mati_cc.tif\nNamelistTemplate=cases\\syn\\hand.data"
+                        : l)
+                    .SelectMany(l => l.Split('\n')));
+
+                Input.PREACTInput input = Input.PREACTInput.LoadFromDisk(wui, out bool _);
+                Input.ElmfireInput settings = input.WildfireModule.ElmfireInput;
+                Assert.True(!Input.PREACTInput.Requirements.Any(r => r.Key.Contains("FuelModelFile") || r.Key.Contains("CanopyCoverFile")),
+                    "no source layer is reported missing: " + string.Join("; ", Input.PREACTInput.Requirements.Select(r => r + ": " + r.Message)));
+
+                string resolvedCase = ElmfireCoupling.CaseDirectoryPath(input.RootFolder, settings);
+                Assert.Equal(Path.GetFullPath(caseDir), resolvedCase, "the case folder");
+
+                var log = new List<string>();
+                ElmfireCaseBuilder.Options o = ElmfireCoupling.CreateBuildOptions(input, settings, resolvedCase, m => log.Add(m));
+                Assert.True(o.UserRasters.TryGetValue("fbfm40", out string fuel) && File.Exists(fuel), "the fuel source layer: " + fuel);
+                Assert.True(o.UserRasters.TryGetValue("cc", out string cc) && File.Exists(cc), "the canopy cover source layer: " + cc);
+                Assert.True(o.TemplateNamelistPath != null && File.Exists(o.TemplateNamelistPath), "the namelist template: " + o.TemplateNamelistPath);
+                Assert.True(string.Join("\n", Input.PREACTInputWriter.Write(input)).Contains("FuelModelFile=sources/mati_fbfm40.tif"),
+                    "saved with forward slashes");
+            }
         }
 
         /// <summary>A folder with a synthetic DEM and fuel raster around a small domain in UTM zone 34N.</summary>

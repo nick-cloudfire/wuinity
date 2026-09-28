@@ -492,11 +492,12 @@ namespace PREACT.Input
         {
             if (!input.TryGetValue(key, out string userInput) || userInput.Length == 0) return;
 
-            field = userInput;
+            //Stored with forward slashes and resolved the way every other scenario path is (either slash, a file
+            //since moved within the scenario's folders): a Windows-written "sources\fbfm40.tif" was one file name
+            //with a backslash in it on Linux, so a case built there had no fuel and no canopy (e2e F4).
+            field = PREACTInput.NormalisePath(userInput);
 
-            string resolved = System.IO.Path.IsPathRooted(userInput) || string.IsNullOrEmpty(rootFolder)
-                ? userInput
-                : System.IO.Path.Combine(rootFolder, userInput);
+            string resolved = string.IsNullOrEmpty(rootFolder) ? field : PREACTInput.ResolvePath(rootFolder, field);
 
             if (!System.IO.File.Exists(resolved))
             {

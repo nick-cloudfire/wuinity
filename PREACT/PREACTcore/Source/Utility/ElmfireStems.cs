@@ -206,6 +206,8 @@ namespace PREACT.Utility
                 return null;
             }
 
+            //Either slash: ELMFIRE's own examples are written on Linux, Nick's namelists on Windows.
+            value = value.Replace('\\', '/');
             string path = Path.IsPathRooted(value) ? value : Path.Combine(runDirectory, value);
             try
             {

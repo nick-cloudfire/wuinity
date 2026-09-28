@@ -120,7 +120,7 @@ namespace PREACT.Utility
                 return false;
             }
 
-            string caseDir = Path.Combine(input.RootFolder, settings.CaseDirectory);
+            string caseDir = CaseDirectoryPath(input.RootFolder, settings);
 
             if (!TryBuildCase(input, settings, caseDir, log, out problem, out ElmfireCaseBuilder.Result built))
             {
@@ -179,7 +179,7 @@ namespace PREACT.Utility
             void Log(string m) => log?.Invoke(m);
             long generation = ElmfireProcesses.Generation;
 
-            string caseDir = Path.Combine(input.RootFolder, settings.CaseDirectory);
+            string caseDir = CaseDirectoryPath(input.RootFolder, settings);
 
             //Checked before anything is built or run: a duration outside these bounds is a unit mistake, not a
             //long fire - the real campaign's 7 200 000 s was 2000 h typed where seconds were meant.
@@ -518,8 +518,8 @@ namespace PREACT.Utility
             //parse has already said so once with the key name.
             foreach (KeyValuePair<string, string> layer in settings.GetSourceRasters())
             {
-                string path = Path.IsPathRooted(layer.Value) ? layer.Value : Path.Combine(input.RootFolder, layer.Value);
-                if (File.Exists(path)) options.UserRasters[layer.Key] = path;
+                string path = PREACTInput.ResolvePath(input.RootFolder, layer.Value);
+                if (File.Exists(path)) options.UserRasters[layer.Key] = Path.GetFullPath(path);
             }
 
             //The same points the ignition editor placed, in WGS84. The builder measures them in the case's own CRS
@@ -548,11 +548,11 @@ namespace PREACT.Utility
             //before the case existed (contract C2); the builder checks the case grid first.
             if (!string.IsNullOrEmpty(input.WildfireModule.GraphicalFireInputFile))
             {
-                options.PaintedMasksPath = Path.Combine(input.RootFolder, input.WildfireModule.GraphicalFireInputFile);
+                options.PaintedMasksPath = PREACTInput.ResolvePath(input.RootFolder, input.WildfireModule.GraphicalFireInputFile);
                 string grid = input.Landscape?.GetReferenceFile();
                 if (!string.IsNullOrEmpty(grid))
                 {
-                    options.PaintedMasksGridPath = Path.Combine(input.RootFolder, grid);
+                    options.PaintedMasksGridPath = PREACTInput.ResolvePath(input.RootFolder, grid);
                 }
             }
 
@@ -616,18 +616,21 @@ namespace PREACT.Utility
 
             if (!string.IsNullOrEmpty(settings.NamelistTemplate))
             {
-                if (Path.IsPathRooted(settings.NamelistTemplate))
+                //Either slash, like every other path in a scenario: a template named on Windows as
+                //"templates\mati.data" is one file name with a backslash in it anywhere else.
+                string template = PREACTInput.NormalisePath(settings.NamelistTemplate);
+                if (Path.IsPathRooted(template))
                 {
-                    if (File.Exists(settings.NamelistTemplate)) return settings.NamelistTemplate;
+                    if (File.Exists(template)) return template;
 
                     problem = "The namelist template named by the scenario is not there: " + settings.NamelistTemplate;
                     return null;
                 }
 
-                string inCase = Path.Combine(caseDir, settings.NamelistTemplate);
+                string inCase = Path.Combine(caseDir, template);
                 if (File.Exists(inCase)) return inCase;
 
-                string inRoot = Path.Combine(rootFolder, settings.NamelistTemplate);
+                string inRoot = PREACTInput.ResolvePath(rootFolder, template);
                 if (File.Exists(inRoot))
                 {
                     log?.Invoke($"Namelist template {settings.NamelistTemplate} resolved against the scenario "
@@ -670,7 +673,7 @@ namespace PREACT.Utility
         {
             if (!string.IsNullOrEmpty(named))
             {
-                string path = Path.IsPathRooted(named) || string.IsNullOrEmpty(rootFolder) ? named : Path.Combine(rootFolder, named);
+                string path = string.IsNullOrEmpty(rootFolder) ? PREACTInput.NormalisePath(named) : PREACTInput.ResolvePath(rootFolder, named);
                 return File.Exists(path) ? path : null;
             }
 
@@ -699,6 +702,17 @@ namespace PREACT.Utility
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// The scenario's <c>[ELMFIRE] CaseDirectory</c> as a full path: relative to the scenario folder, either
+        /// slash. One rule for the GUI's build, a run, build-case and a campaign - a Windows-written
+        /// <c>cases\mati</c> used to be one folder name with a backslash in it off Windows.
+        /// </summary>
+        public static string CaseDirectoryPath(string rootFolder, ElmfireInput settings)
+        {
+            string named = string.IsNullOrWhiteSpace(settings?.CaseDirectory) ? "elmfire" : settings.CaseDirectory;
+            return ResolveFolder(rootFolder, named);
         }
 
         private static string AssemblyDirectory()
@@ -764,7 +778,8 @@ namespace PREACT.Utility
 
             try
             {
-                string full = Path.IsPathRooted(folder) ? folder : Path.Combine(root, folder);
+                string normalised = PREACTInput.NormalisePath(folder);
+                string full = Path.IsPathRooted(normalised) || string.IsNullOrEmpty(root) ? normalised : Path.Combine(root, normalised);
                 return Path.GetFullPath(full);
             }
             catch

@@ -139,7 +139,7 @@ namespace PREACTcli
                 return 1;
             }
 
-            string caseDir = Path.GetFullPath(output ?? Path.Combine(input.RootFolder, settings.CaseDirectory));
+            string caseDir = output != null ? Path.GetFullPath(output) : ElmfireCoupling.CaseDirectoryPath(input.RootFolder, settings);
             ElmfireCaseBuilder.Options o = ElmfireCoupling.CreateBuildOptions(input, settings, caseDir, Console.WriteLine);
 
             o.PathToGdal ??= GdalTools.FindBinDirectory();
