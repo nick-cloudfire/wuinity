@@ -68,6 +68,12 @@ namespace PREACT.Utility
         /// <summary>The building fuel model table, read from MISCELLANEOUS_INPUTS_DIRECTORY.</summary>
         public const string BuildingFuelModelFile = "BUILDING_FUEL_MODEL_FILE";
 
+        // &WUI
+        public const string WuiGroup = "WUI";
+
+        /// <summary>Switches ELMFIRE's building spread model on - and with it the read of the building fuel model table.</summary>
+        public const string UseBuildingSpreadModel = "USE_BLDG_SPREAD_MODEL";
+
         /// <summary>Wall-clock seconds after which ELMFIRE stops propagating and dumps what it has.</summary>
         public const string MaxRuntime = "MAX_RUNTIME";
 
@@ -437,6 +443,13 @@ namespace PREACT.Utility
             if (demand <= availableBands) return null;
             return $"the namelist needs {demand} weather band(s) ({why}) and {rasterName} has {availableBands} "
                    + $"({availableBands * dt / 3600.0:0.##} h)";
+        }
+
+        /// <summary>Whether a Fortran logical as a namelist writes it (<c>.TRUE.</c>, <c>T</c>, <c>.t.</c>) is true; false for null.</summary>
+        public static bool IsTrue(string value)
+        {
+            string v = (value ?? string.Empty).Trim().TrimStart('.');
+            return v.StartsWith("T", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>A number the namelist sets in <paramref name="group"/>, when it is positive; otherwise <paramref name="fallback"/>.</summary>

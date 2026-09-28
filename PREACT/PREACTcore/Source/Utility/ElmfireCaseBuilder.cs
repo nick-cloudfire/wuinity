@@ -299,6 +299,11 @@ namespace PREACT.Utility
             string inputs = Path.Combine(o.OutputDirectory, InputsFolder);
             PrepareOutputDirectory(o, inputs);
 
+            //Refused before anything is made: a case without it passes its own validation and then stops ELMFIRE at
+            //start-up, on the first run (e2e N2).
+            string noBuildingTable = DescribeMissingBuildingTable(o, inputs);
+            if (noBuildingTable != null) throw new InvalidDataException(char.ToUpperInvariant(noBuildingTable[0]) + noBuildingTable.Substring(1) + ".");
+
             //---------------------------------------------------------------- 1. DEM
             //Padded so the fire can grow past the evacuation domain's edge; ELMFIRE reads the
             //domain/CRS straight off this file's georeferencing (no &COMPUTATIONAL_DOMAIN group).
@@ -614,6 +619,10 @@ namespace PREACT.Utility
             //ELMFIRE writes its built-in table into the inputs folder at startup and reads it back - so every run
             //rewrote a shared file (concurrently, in a campaign) and a hand-edited table was silently replaced.
             EnsureFuelModelTable(inputs, o.ElmfireExe, Log);
+            if (o.Namelist != null && o.Namelist.USE_BLDG_SPREAD_MODEL)
+            {
+                EnsureBuildingFuelModelTable(inputs, ElmfireStems.BuildingFuelModelTable, o.ElmfireExe, Log);
+            }
 
             //---------------------------------------------------------------- 9. Namelist
             //Regenerated on every build, so the scenario's [ElmfireNamelist] settings, its stop time and the case's
@@ -983,18 +992,78 @@ namespace PREACT.Utility
         /// <summary>ELMFIRE's shipped fuel model table for an executable in <c>build/&lt;os&gt;/bin</c>, or null.</summary>
         public static string DefaultFuelModelTable(string elmfireExe)
         {
+            return DefaultElmfireTable(elmfireExe, ElmfireStems.FuelModelTable);
+        }
+
+        /// <summary>ELMFIRE's shipped building fuel model table for an executable in <c>build/&lt;os&gt;/bin</c>, or null.</summary>
+        public static string DefaultBuildingFuelModelTable(string elmfireExe)
+        {
+            return DefaultElmfireTable(elmfireExe, ElmfireStems.BuildingFuelModelTable);
+        }
+
+        /// <summary><c>build/source/&lt;fileName&gt;</c> of the ELMFIRE tree an executable in <c>build/&lt;os&gt;/bin</c> belongs to, or null.</summary>
+        private static string DefaultElmfireTable(string elmfireExe, string fileName)
+        {
             if (string.IsNullOrEmpty(elmfireExe)) return null;
 
             try
             {
                 string bin = Path.GetDirectoryName(Path.GetFullPath(elmfireExe));
-                string candidate = Path.GetFullPath(Path.Combine(bin, "..", "..", "source", ElmfireStems.FuelModelTable));
+                string candidate = Path.GetFullPath(Path.Combine(bin, "..", "..", "source", fileName));
                 return File.Exists(candidate) ? candidate : null;
             }
             catch
             {
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Makes sure the building fuel model table <paramref name="tableName"/> exists in <paramref name="directory"/>,
+        /// copying ELMFIRE's own <c>building_fuel_models.csv</c> when it is that name and not there. Returns whether it
+        /// exists afterwards.
+        /// </summary>
+        /// <remarks>
+        /// ELMFIRE reads it whenever <c>USE_BLDG_SPREAD_MODEL</c> is on - <c>BUILDING_FUEL_MODEL_FILE</c>, default
+        /// <c>building_fuel_models.csv</c>, in <c>MISCELLANEOUS_INPUTS_DIRECTORY</c> - and stops at start-up without it
+        /// ("Problem opening building fuel model table file ./inputs/building_fuel_models.csv"). A table under another
+        /// name is the user's own and is not made up; one already there is never replaced (e2e N2).
+        /// </remarks>
+        public static bool EnsureBuildingFuelModelTable(string directory, string tableName, string elmfireExe, Action<string> log)
+        {
+            string name = string.IsNullOrWhiteSpace(tableName) ? ElmfireStems.BuildingFuelModelTable : tableName;
+            string table = Path.Combine(directory, name);
+            if (File.Exists(table)) return true;
+            if (!string.Equals(name, ElmfireStems.BuildingFuelModelTable, StringComparison.OrdinalIgnoreCase)) return false;
+
+            string source = DefaultBuildingFuelModelTable(elmfireExe ?? ElmfireCoupling.ResolveExecutable(null, null));
+            if (source == null) return false;
+
+            File.Copy(source, table);
+            log?.Invoke($"  building fuel table: {name} copied from ELMFIRE's default ({source}), for the building spread model.");
+            return true;
+        }
+
+        /// <summary>
+        /// Why a build that switches the building spread model on could not give the case its building fuel table, or
+        /// null when it can: the table is already in the inputs, is among the files to copy, or ELMFIRE's default is there.
+        /// </summary>
+        private static string DescribeMissingBuildingTable(Options o, string inputs)
+        {
+            if (o.Namelist == null || !o.Namelist.USE_BLDG_SPREAD_MODEL) return null;
+            if (File.Exists(Path.Combine(inputs, ElmfireStems.BuildingFuelModelTable))) return null;
+            foreach (string f in o.CopyFiles)
+            {
+                if (string.Equals(Path.GetFileName(f ?? string.Empty), ElmfireStems.BuildingFuelModelTable, StringComparison.OrdinalIgnoreCase)
+                    && File.Exists(f)) return null;
+            }
+            if (DefaultBuildingFuelModelTable(o.ElmfireExe ?? ElmfireCoupling.ResolveExecutable(null, null)) != null) return null;
+
+            return $"the building spread model is on ([ElmfireNamelist] USE_BLDG_SPREAD_MODEL) and ELMFIRE reads "
+                   + $"{ElmfireStems.BuildingFuelModelTable} from the case's inputs whenever it is, but the case has none and "
+                   + "ELMFIRE's default (build/source/building_fuel_models.csv beside the executable) was not found. Put the "
+                   + $"table into {inputs} (PREACTcli build-case --copy <file>), set [ELMFIRE] ElmfireExe to an ELMFIRE "
+                   + "build that has its source tree, or switch the building spread model off";
         }
 
         private static bool IsSameFile(string a, string b)

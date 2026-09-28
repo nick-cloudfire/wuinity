@@ -296,6 +296,13 @@ namespace PREACT.Utility
                 }
             }
 
+            string noBuildingTable = DescribeMissingBuildingTable(runLines, caseDir, exe, Log);
+            if (noBuildingTable != null)
+            {
+                result.Message = $"The namelist {Path.GetFileName(namelist)} cannot run: {noBuildingTable}.";
+                return result;
+            }
+
             //Every raster the namelist names, on the grid of the DEM it names, before ELMFIRE is asked: it compares
             //nothing itself, and a fuel raster left on an old grid ends in a segfault or "raster dimensions
             //mismatch" that names neither the file nor the grid.
@@ -393,6 +400,34 @@ namespace PREACT.Utility
 
             result.Ok = true;
             return result;
+        }
+
+        /// <summary>
+        /// Why ELMFIRE would stop at start-up for want of its building fuel table, or null. With &amp;WUI
+        /// USE_BLDG_SPREAD_MODEL on it reads BUILDING_FUEL_MODEL_FILE (default building_fuel_models.csv) from
+        /// MISCELLANEOUS_INPUTS_DIRECTORY (default the fuels directory) and stops with "Problem opening building fuel
+        /// model table file" when it is not there; ELMFIRE's own table is copied there when that is the name (e2e N2).
+        /// </summary>
+        private static string DescribeMissingBuildingTable(string[] runLines, string caseDir, string exe, Action<string> log)
+        {
+            string on = ElmfireNamelist.GetKeyInGroup(runLines, ElmfireNamelistKeys.WuiGroup, ElmfireNamelistKeys.UseBuildingSpreadModel);
+            if (!ElmfireNamelist.IsTrue(on)) return null;
+
+            string misc = ElmfireStems.ResolveDirectory(runLines, ElmfireNamelistKeys.MiscellaneousGroup,
+                              ElmfireNamelistKeys.MiscellaneousInputsDirectory, caseDir)
+                          ?? ElmfireStems.ResolveDirectory(runLines, ElmfireNamelistKeys.InputsGroup,
+                              ElmfireNamelistKeys.FuelsAndTopographyDirectory, caseDir)
+                          ?? caseDir;
+            string named = ElmfireNamelist.GetKeyInGroup(runLines, ElmfireNamelistKeys.MiscellaneousGroup,
+                               ElmfireNamelistKeys.BuildingFuelModelFile);
+            string name = string.IsNullOrWhiteSpace(named) ? ElmfireStems.BuildingFuelModelTable : named;
+            if (ElmfireCaseBuilder.EnsureBuildingFuelModelTable(misc, name, exe, log)) return null;
+
+            bool standard = string.Equals(name, ElmfireStems.BuildingFuelModelTable, StringComparison.OrdinalIgnoreCase);
+            return $"it switches the building spread model on (&WUI USE_BLDG_SPREAD_MODEL) and ELMFIRE would read "
+                   + $"{Path.Combine(misc, name)}, which is not there"
+                   + (standard ? " (and ELMFIRE's default, build/source/building_fuel_models.csv beside the executable, was not found)" : "")
+                   + ". Put the table there, or switch the building spread model off";
         }
 
         private static string StemOr(string[] lines, string key, string fallback)

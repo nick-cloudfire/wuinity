@@ -372,6 +372,28 @@ namespace PREACTcli.Campaigns
             if (!string.IsNullOrWhiteSpace(building)) c.BuildingTableName = building;
             string buildingPath = Path.Combine(misc, c.BuildingTableName);
             c.BuildingTableSource = File.Exists(buildingPath) ? buildingPath : null;
+
+            //Read by ELMFIRE whenever the building spread model is on, and every realization would stop at start-up
+            //without it ("Problem opening building fuel model table file", e2e N2): ELMFIRE's own table when it is the
+            //default name, otherwise refused here.
+            bool buildings = ElmfireNamelist.IsTrue(ElmfireNamelist.GetKeyInGroup(c.TemplateLines, ElmfireNamelistKeys.WuiGroup,
+                                 ElmfireNamelistKeys.UseBuildingSpreadModel));
+            if (buildings && c.BuildingTableSource == null)
+            {
+                if (string.Equals(c.BuildingTableName, ElmfireStems.BuildingFuelModelTable, StringComparison.OrdinalIgnoreCase))
+                {
+                    c.BuildingTableSource = ElmfireCaseBuilder.DefaultBuildingFuelModelTable(c.ElmfireExe);
+                }
+                if (c.BuildingTableSource == null)
+                {
+                    Fail($"the template switches the building spread model on (&WUI USE_BLDG_SPREAD_MODEL), and there is no "
+                         + $"{c.BuildingTableName} in {misc}"
+                         + (c.BuildingTableName == ElmfireStems.BuildingFuelModelTable
+                             ? " nor ELMFIRE's default beside the executable (build/source/building_fuel_models.csv)" : "")
+                         + ". Build the case again - it copies ELMFIRE's - or put one there, or switch the model off.");
+                    return false;
+                }
+            }
             return true;
         }
 

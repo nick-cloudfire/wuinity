@@ -25,6 +25,95 @@ namespace PREACT.Tests
             runner.Add("coupling: BuildCaseOnly stopped during WindNinja reports it stopped and leaves the scenario alone", StoppedBuildCaseOnly);
             runner.Add("builder: a grid set aside by a build that then failed is carried by the next build", FailedRecutIsResumed);
             runner.Add("coupling: a template's weather band keys are fitted to the case's ws.tif; a fire longer than it is refused naming both", TemplateBandsFitted);
+            runner.Add("builder: the building spread model gets ELMFIRE's building fuel table, or the build and the run are refused", BuildingFuelTable);
+        }
+
+        /// <summary>
+        /// A stand-in ELMFIRE tree, <c>build/linux/bin/&lt;exe&gt;</c> beside <c>build/source/</c>, whose executable fails at once;
+        /// with <paramref name="tables"/> the source folder holds ELMFIRE's two default tables.
+        /// </summary>
+        [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
+        private static string FakeElmfireTree(string folder, bool tables)
+        {
+            string bin = Path.Combine(folder, "build", "linux", "bin");
+            string source = Path.Combine(folder, "build", "source");
+            Directory.CreateDirectory(bin);
+            Directory.CreateDirectory(source);
+            if (tables)
+            {
+                File.WriteAllText(Path.Combine(source, ElmfireStems.FuelModelTable), "1,GR1,0.1,0,0,0.3,0,1,15,2000,1800,1800,0.4,8000,8000,0\n");
+                File.WriteAllText(Path.Combine(source, ElmfireStems.BuildingFuelModelTable), "1,ST01,300,400,10080,14400,360,25,10500,9,0.89,8,0.5,100,0.0,20\n");
+            }
+            return FailingElmfire(bin);
+        }
+
+        /// <summary>
+        /// e2e N2: with the building spread model on (Mati's setting), a case without building_fuel_models.csv passed its
+        /// build and its own validation, and ELMFIRE then stopped at start-up: "Problem opening building fuel model table
+        /// file ./inputs/building_fuel_models.csv". The builder copies ELMFIRE's shipped table like fuel_models.csv, or
+        /// refuses before it makes anything; a run of a namelist that needs it gets it or is refused before ELMFIRE.
+        /// </summary>
+        private static void BuildingFuelTable()
+        {
+            if (OperatingSystem.IsWindows()) return;
+
+            using (var c = new SyntheticCase())
+            {
+                string withTables = FakeElmfireTree(Path.Combine(c.Folder, "elmfire_full"), true);
+                string withoutTables = FakeElmfireTree(Path.Combine(c.Folder, "elmfire_bare"), false);
+                string caseDir = Path.Combine(c.Folder, "case");
+                string inputs = Path.Combine(caseDir, "inputs");
+                string table = Path.Combine(inputs, ElmfireStems.BuildingFuelModelTable);
+
+                ElmfireCaseBuilder.Options Buildings(string exe)
+                {
+                    ElmfireCaseBuilder.Options o = c.Options(caseDir, 150.0, new List<string>());
+                    o.ElmfireExe = exe;
+                    o.Namelist.USE_BLDG_SPREAD_MODEL = true;
+                    o.Namelist.USE_CONSTANT_BLDG_SPREAD_MODEL_PARAMS = true;
+                    return o;
+                }
+
+                // ---- no table anywhere: refused before anything is made
+                Exception refused = null;
+                try { ElmfireCaseBuilder.Build(Buildings(withoutTables)).GetAwaiter().GetResult(); }
+                catch (InvalidDataException e) { refused = e; }
+                Assert.True(refused != null && refused.Message.Contains("USE_BLDG_SPREAD_MODEL") && refused.Message.Contains("--copy"),
+                    "the build is refused, saying what to do: " + refused?.Message);
+                Assert.True(!File.Exists(ElmfireStems.Tif(inputs, ElmfireStems.Dem)), "before it made the grid");
+
+                // ---- ELMFIRE's table beside the executable: copied, and named in the namelist
+                ElmfireCaseBuilder.Build(Buildings(withTables)).GetAwaiter().GetResult();
+                Assert.True(File.Exists(table), "building_fuel_models.csv is in the case's inputs");
+                string[] namelist = File.ReadAllLines(Path.Combine(caseDir, "elmfire.data"));
+                Assert.True(ElmfireNamelist.IsTrue(ElmfireNamelist.GetKeyInGroup(namelist, ElmfireNamelistKeys.WuiGroup, ElmfireNamelistKeys.UseBuildingSpreadModel)),
+                    "the namelist runs the building spread model");
+                Assert.Equal(ElmfireStems.BuildingFuelModelTable, ElmfireNamelist.GetKeyInGroup(namelist, ElmfireNamelistKeys.MiscellaneousGroup,
+                    ElmfireNamelistKeys.BuildingFuelModelFile), "and names the table");
+
+                // ---- a run whose namelist needs it, after the table went missing
+                File.Delete(table);
+                string wui = c.WriteScenario("case", 150.0);
+                string[] scenario = File.ReadAllLines(wui);
+                Input.PREACTInput RunWith(string exe)
+                {
+                    File.WriteAllLines(wui, scenario
+                        .Select(l => l == "BuildCase=true" ? "BuildCase=false\nReuseExistingOutput=false\nElmfireExe=" + exe : l)
+                        .SelectMany(l => l.Split('\n')));
+                    return Input.PREACTInput.LoadFromDisk(wui, out bool _);
+                }
+
+                Input.PREACTInput bare = RunWith(withoutTables);
+                ElmfireCoupling.Result run = ElmfireCoupling.Prepare(bare, bare.WildfireModule.ElmfireInput, null);
+                Assert.True(!run.Ok && run.Message.Contains("building spread model") && run.Message.Contains(ElmfireStems.BuildingFuelModelTable),
+                    "without ELMFIRE's table the run is refused before ELMFIRE: " + run.Message);
+                Assert.True(!File.Exists(Path.Combine(caseDir, "outputs", ElmfireRunner.RunNamelistName)), "which was not started");
+
+                Input.PREACTInput full = RunWith(withTables);
+                run = ElmfireCoupling.Prepare(full, full.WildfireModule.ElmfireInput, null);
+                Assert.True(!run.Ok && run.Message.Contains("fake ELMFIRE"), "with it, the run reaches ELMFIRE: " + run.Message);
+                Assert.True(File.Exists(table), "having copied the table in again");
+            }
         }
 
         /// <summary>A stand-in for ELMFIRE that fails at once, so the namelist a run would hand it can be read in outputs/run.data.</summary>
