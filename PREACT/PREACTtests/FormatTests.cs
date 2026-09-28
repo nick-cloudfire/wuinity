@@ -27,6 +27,57 @@ namespace PREACT.Tests
             runner.Add("format: Revalidate writes nothing into the scenario folder", RevalidateInMemory);
             runner.Add("format: CDF problems are reported", CdfValidation);
             runner.Add("format: ASC headers in any order, with centres and without nodata", AscHeaders);
+            runner.Add("format: a missing landscape file keeps the ignition points, through load and save", MissingLandscapeKeepsIgnitions);
+        }
+
+        /// <summary>
+        /// e2e F3: a [Landscape] naming files that are not there (a case folder emptied or rebuilt, a scenario shared
+        /// without it) used to end the [WildfireModule] section with GDAL's "No such file or directory" before its
+        /// [IgnitionPoint]s were read, and the next save deleted them.
+        /// </summary>
+        private static void MissingLandscapeKeepsIgnitions()
+        {
+            using var s = new Scenario();
+            var lines = new List<string>(Scenario.Lines)
+            {
+                "",
+                "[Landscape]",
+                "ElevationFile=elmfire/inputs/mati_dem.tif",
+                "SlopeFile=elmfire/inputs/mati_slope.tif",
+                "AspectFile=elmfire/inputs/mati_aspect.tif",
+                "",
+                "[WildfireModule]",
+                "Enabled=true",
+                "Module=ELMFIRE",
+                "",
+                "[ELMFIRE]",
+                "CaseDirectory=elmfire",
+                "SimulationTstopHours=8",
+                "",
+                "[IgnitionPoint]",
+                "LatLon=38.0141,23.9012",
+                "IgnitionTime=0",
+                "",
+                "[IgnitionPoint]",
+                "LatLon=38.0150,23.9030",
+                "IgnitionTime=1800",
+            };
+
+            PREACTInput input = s.Load(lines, out bool _);
+            Assert.Equal(2, input.WildfireModule.Data.IgnitionPoints.Count, "both ignition points are read");
+            Assert.True(!PREACTInput.Requirements.Any(r => r.Critical && r.Message.Contains("No such file")),
+                "the missing file does not make the fire section unreadable: " + Critical());
+            Assert.True(PREACTInput.Requirements.Any(r => r.Key.Contains("ElevationFile")), "the missing DEM is on the checklist");
+            Assert.True(input.WildfireModule.ElmfireInput != null && input.WildfireModule.ElmfireInput.SimulationTstopHours == 8,
+                "the [ELMFIRE] section is read too");
+
+            string[] saved = PREACTInputWriter.Write(input);
+            Assert.Equal(2, saved.Count(l => l.Trim() == "[IgnitionPoint]"), "the save keeps both [IgnitionPoint] sections");
+            Assert.True(saved.Any(l => l.Trim() == "ElevationFile=elmfire/inputs/mati_dem.tif"), "and the landscape's path, to fix later");
+
+            PREACTInput again = PREACTInput.LoadFromLines(saved, s.Folder, out bool _);
+            Assert.Equal(2, again.WildfireModule.Data.IgnitionPoints.Count, "the saved scenario still has both points");
+            Assert.Near(1800.0, again.WildfireModule.Data.IgnitionPoints[1].IgnitionTime, 1e-6, "with their times");
         }
 
         /// <summary>A folder with a minimal, complete scenario: pedestrians on, traffic off, no fire.</summary>

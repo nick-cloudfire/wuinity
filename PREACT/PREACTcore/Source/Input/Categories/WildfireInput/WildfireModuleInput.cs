@@ -200,15 +200,26 @@ namespace PREACT.Input
             }
             bool moduleSectionRead = success;
 
-            _data.LoadAll(simulationInput, this, landscapeInput, rootFolder, out bool dataLoaded);
+            //Before the landscape and the painted masks, which read files: the ignition points are the scenario's
+            //own text, and nothing that goes wrong with a raster may cost them. They were read last, so a missing
+            //landscape file (whose exception ended this section) dropped them, and the next save deleted them.
+            LoadIgnitionPoints(inputLines, ignitionPointLineIndices, simulationInput);
+
+            bool dataLoaded;
+            try
+            {
+                _data.LoadAll(simulationInput, this, landscapeInput, rootFolder, out dataLoaded);
+            }
+            catch (System.Exception e)
+            {
+                PREACTInput.InputWarning(nameof(WildfireData), "the fire data could not be loaded (" + e.Message
+                    + "); the section's own settings and ignition points were still read.");
+                dataLoaded = false;
+            }
+
             //Both have to hold. LoadAll succeeding says the landscape and fuels are there; it says nothing
             //about the module's own section, which is what configures how the fire spreads through them.
             success = dataLoaded && moduleSectionRead;
-
-            //After LoadAll, which is where the legacy IgnitionPointsFile CSV is read: the scenario's own
-            //[IgnitionPoint] sections are the supported form and replace what that read, rather than
-            //being appended to it, so which of the two is in effect is never in question.
-            LoadIgnitionPoints(inputLines, ignitionPointLineIndices, simulationInput);
         }
 
         private void ParseGraphicalFireInputFile(Dictionary<string, string> inputToParse, string rootFolder)

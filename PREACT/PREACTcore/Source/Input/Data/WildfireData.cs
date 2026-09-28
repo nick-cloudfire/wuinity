@@ -126,25 +126,70 @@ namespace PREACT.Input
                 return;
             }
 
-            if (!string.IsNullOrEmpty(landscapeInput.LandscapeFile))
+            //A named file that is not there is left out rather than opened: GDAL throws on a missing file, and that
+            //exception used to abort the whole [WildfireModule] section before its [IgnitionPoint]s were read - so
+            //opening a scenario whose case folder had been emptied or rebuilt, and saving it, deleted its ignition
+            //points (e2e F3). [Landscape] has already put the missing file on the checklist, without making it
+            //critical: the bands are optional, and the scenario loses its terrain, not its fire.
+            try
             {
-                LoadLCPFile(wildfireInput, PREACTInput.ResolvePath(rootFolder, landscapeInput.LandscapeFile), simulationInput.Data.UTMOrigin, false, out bool _);
-                return;
-            }
-
-            string[] bands = landscapeInput.GetOrderedBandFiles();
-            for (int i = 0; i < bands.Length; ++i)
-            {
-                if (!string.IsNullOrEmpty(bands[i]))
+                if (!string.IsNullOrEmpty(landscapeInput.LandscapeFile))
                 {
-                    bands[i] = PREACTInput.ResolvePath(rootFolder, bands[i]);
+                    string lcp = PREACTInput.ResolvePath(rootFolder, landscapeInput.LandscapeFile);
+                    if (!File.Exists(lcp))
+                    {
+                        Engine.Message(null, Engine.LogType.Warning,
+                            "The landscape file " + landscapeInput.LandscapeFile + " is not there, so the scenario has no "
+                            + "terrain until it is.");
+                        return;
+                    }
+                    LoadLCPFile(wildfireInput, lcp, simulationInput.Data.UTMOrigin, false, out bool _);
+                    return;
+                }
+
+                string[] bands = landscapeInput.GetOrderedBandFiles();
+                var missing = new List<string>();
+                for (int i = 0; i < bands.Length; ++i)
+                {
+                    if (string.IsNullOrEmpty(bands[i])) continue;
+
+                    string resolved = PREACTInput.ResolvePath(rootFolder, bands[i]);
+                    if (File.Exists(resolved))
+                    {
+                        bands[i] = resolved;
+                    }
+                    else
+                    {
+                        missing.Add(bands[i]);
+                        bands[i] = string.Empty;
+                    }
+                }
+
+                if (string.IsNullOrEmpty(bands[(int)LandscapeData.Band.Elevation]))
+                {
+                    Engine.Message(null, Engine.LogType.Warning,
+                        "The landscape's elevation raster is not there (" + string.Join(", ", missing) + "), so the scenario "
+                        + "has no terrain to paint on or to give k-PERIL its slope until it is. Everything else was read.");
+                    return;
+                }
+
+                if (missing.Count > 0)
+                {
+                    Engine.Message(null, Engine.LogType.Warning,
+                        "Landscape bands that are not there are left out (" + string.Join(", ", missing) + "); slope and "
+                        + "aspect are computed from the elevation instead.");
+                }
+
+                Wildfire.LandscapeData landscape = new Wildfire.LandscapeData(bands, simulationInput.Data.UTMOrigin);
+                if (!landscape.CantAllocLCP)
+                {
+                    _lcpData = landscape;
                 }
             }
-
-            Wildfire.LandscapeData landscape = new Wildfire.LandscapeData(bands, simulationInput.Data.UTMOrigin);
-            if (!landscape.CantAllocLCP)
+            catch (System.Exception e)
             {
-                _lcpData = landscape;
+                //A file that exists and cannot be read. The terrain is lost, not the rest of the section.
+                PREACTInput.InputWarning("Landscape", "could not be read (" + e.Message + "); the scenario has no terrain.");
             }
         }
 
