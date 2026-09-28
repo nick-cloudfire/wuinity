@@ -183,9 +183,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
         /// </summary>
         public static bool StepButton(string label, string producedFile)
         {
-            bool done = Input != null
-                        && !string.IsNullOrEmpty(Input.Simulation.Name)
-                        && File.Exists(FindInRoot(producedFile));
+            string path = Input != null && !string.IsNullOrEmpty(Input.Simulation.Name) ? CachedFindInRoot(producedFile) : null;
+            bool done = path != null && GuiFiles.Exists(path);
 
             bool pressed = ImGui.Button(done ? label + " (redo)" : label);
 
@@ -194,11 +193,13 @@ namespace Assets.WUInity.GUI.DearIMGUI
             {
                 //ImGui has no tick glyph in the default font, so this uses text that renders in any
                 //font rather than a symbol that might come out as a box.
-                ImGui.TextColored(new Vector4(0.35f, 0.8f, 0.35f, 1f), "[done] " + producedFile);
+                ImGui.TextColored(Fields.Good, "[done] " + producedFile);
                 if (ImGui.IsItemHovered())
                 {
-                    FileInfo info = new FileInfo(FindInRoot(producedFile));
-                    ImGui.SetTooltip($"{info.Length / (1024.0 * 1024.0):F2} MB, written {info.LastWriteTime:yyyy-MM-dd HH:mm}."
+                    long length = GuiFiles.Probe.Length(path);
+                    System.DateTime? written = GuiFiles.Probe.LastWriteUtc(path);
+                    ImGui.SetTooltip($"{length / (1024.0 * 1024.0):F2} MB, written "
+                        + $"{(written.HasValue ? written.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm") : "?")}."
                         + "\nRunning the step again overwrites it.");
                 }
             }
@@ -208,6 +209,25 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
 
             return pressed;
+        }
+
+        //Where each step's output was last found, for a second. FindInRoot searches the scenario's subfolders
+        //when a file is not where it is recorded, and step buttons are drawn every frame.
+        private static readonly System.Collections.Generic.Dictionary<string, (System.DateTime at, string path)> _found =
+            new System.Collections.Generic.Dictionary<string, (System.DateTime, string)>();
+
+        private static string CachedFindInRoot(string fileName)
+        {
+            string key = Input.RootFolder + "|" + fileName;
+            System.DateTime now = System.DateTime.UtcNow;
+            if (_found.TryGetValue(key, out var hit) && (now - hit.at).TotalSeconds < 1.0)
+            {
+                return hit.path;
+            }
+
+            string path = FindInRoot(fileName);
+            _found[key] = (now, path);
+            return path;
         }
 
         /// <summary>

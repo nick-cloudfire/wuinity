@@ -188,22 +188,35 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
         /// </remarks>
         private static void DrawResolvedTools(ElmfireInput elmfire)
         {
-            string root = ScenarioEditorWindow.Input?.RootFolder;
+            //Read from the cached probe, never probed from here: WindNinja's search is a recursive walk of its
+            //install roots, and this used to run it on every frame the tab was open.
+            global::WUInity.Workflow.ExternalToolsSnapshot tools = ToolsService.Current;
+            if (!tools.Probed)
+            {
+                ImGui.TextDisabled(ToolsService.Probing ? "Looking for ELMFIRE, GDAL and WindNinja..." : "Tools not probed yet.");
+                return;
+            }
 
-            Tool("ELMFIRE", PREACT.Utility.ElmfireCoupling.ResolveExecutable(root, elmfire.ElmfireExe),
-                elmfire.ElmfireExe,
+            Tool("ELMFIRE", tools.ElmfireExe, elmfire.ElmfireExe,
                 "the vendored build under ThirdParty/elmfire",
                 "No elmfire.exe found. The run cannot compute a fire.");
 
-            Tool("GDAL", PREACT.Utility.GdalTools.FindBinDirectory(), elmfire.PathToGdal,
+            Tool("GDAL", tools.GdalBin, elmfire.PathToGdal,
                 "PATH, then a QGIS or OSGeo4W install",
                 "No GDAL tools found. ELMFIRE shells out to gdal_translate and gdalinfo, and fails its own "
                 + "DEM check without them - reporting a problem with the DEM rather than with GDAL.");
 
-            Tool("WindNinja", PREACT.Utility.WindNinjaRunner.FindExecutable(), elmfire.WindNinjaExe,
+            Tool("WindNinja", tools.WindNinjaExe, elmfire.WindNinjaExe,
                 "WINDNINJA_CLI, PATH, then the installer's locations",
                 "No WindNinja found. The case gets one wind value for the whole domain, so the trigger "
                 + "boundary comes out circular instead of wind-driven.");
+
+            if (ImGui.SmallButton(ToolsService.Probing ? "Looking...###ToolsRefresh" : "Look again###ToolsRefresh"))
+            {
+                ToolsService.Refresh();
+            }
+            Fields.Hint("The tools are looked for when the application starts and when a scenario is opened.",
+                        "Look again after installing one. Help > External tools and keys lists them all.");
         }
 
         /// <summary>One resolved tool: what is in use, or what is missing and what that costs.</summary>
@@ -252,8 +265,8 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
                 : Resolve(root, elmfire.NamelistTemplate);
             string generated = Resolve(root, System.IO.Path.Combine(elmfire.CaseDirectory ?? "elmfire", "elmfire.data"));
 
-            string source = !string.IsNullOrEmpty(named) && System.IO.File.Exists(named) ? named
-                          : (System.IO.File.Exists(generated) ? generated : null);
+            string source = !string.IsNullOrEmpty(named) && GuiFiles.Exists(named) ? named
+                          : (GuiFiles.Exists(generated) ? generated : null);
 
             if (source == null)
             {

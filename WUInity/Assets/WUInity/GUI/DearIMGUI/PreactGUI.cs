@@ -137,7 +137,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
             _wuinityManager = wuinityManager;
             _engine = engine;
             StartWindow.Open();
-            //_workingData = workingData;
+            //Once at start-up, off the main thread; the answers are read from ToolsService.Current.
+            ToolsService.Refresh();
         }
 
 

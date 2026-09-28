@@ -1026,7 +1026,9 @@ namespace WUInity
             _roadNetworkBuilt = false;
             _roadNetworkVisualizer.SetVisibility(false);
             _godCamera.SetInput(_input);
-            _wuiGUI.SetInput(_input);            
+            _wuiGUI.SetInput(_input);
+            //A scenario can name its own ELMFIRE, GDAL and WindNinja, so the tools are looked for again.
+            ToolsService.Refresh();
             //this needs map and evac goals
             _simulationDomainVisualizer.SpawnEvacuationGoalMarkers(_input, _destinationMarkerPrefab);
             _simulationDomainVisualizer.SpawnWildfireIgnitionMarkers(_input, _wildfireIgnitionMarkerPrefab);

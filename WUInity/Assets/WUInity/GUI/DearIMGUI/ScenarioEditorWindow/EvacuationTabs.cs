@@ -263,6 +263,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
             ImGui.InputFloat(nameof(input.WalkingDistanceModifier), ref input.WalkingDistanceModifier);
         }
 
+        //The last on-request search for a .sumocfg, and the folder it searched.
+        private static string _sumoSearchRoot, _sumoFound;
+
         private static void DrawSumoSettings(SUMOInput input)
         {
             if (input == null)
@@ -280,31 +283,47 @@ namespace Assets.WUInity.GUI.DearIMGUI
             //that already hold the wrong file - which is how a run fails with "could not load configuration".
             string root = ScenarioEditorWindow.HasInput ? ScenarioEditorWindow.Input.RootFolder : string.Empty;
             bool usable = PREACT.Utility.SumoConfigurationLocator.IsConfiguration(input.ConfigurationFile)
-                          && System.IO.File.Exists(System.IO.Path.Combine(root, input.ConfigurationFile ?? string.Empty));
+                          && GuiFiles.Exists(GuiFiles.Resolve(root, input.ConfigurationFile));
 
             if (!usable)
             {
-                ImGui.TextColored(new Vector4(0.9f, 0.7f, 0.2f, 1f),
+                ImGui.TextColored(Fields.Warning,
                     "SUMO cannot start on this. It has to be the .sumocfg netconvert wrote,");
-                ImGui.TextColored(new Vector4(0.9f, 0.7f, 0.2f, 1f),
+                ImGui.TextColored(Fields.Warning,
                     "usually sumo/osm.sumocfg - not the OSM extract it was built from.");
 
-                string found = PREACT.Utility.SumoConfigurationLocator.FindInScenario(root, true);
-                if (found != null)
+                //Searched on request, not every frame: FindInScenario walks the whole scenario folder, and on
+                //a case with a campaign behind it that is hundreds of realization folders.
+                if (_sumoSearchRoot != root)
                 {
-                    string relative = found.StartsWith(root, System.StringComparison.OrdinalIgnoreCase)
-                        ? found.Substring(root.Length).TrimStart('\\', '/')
-                        : found;
+                    _sumoSearchRoot = null;
+                    _sumoFound = null;
+                }
+
+                if (_sumoSearchRoot == null)
+                {
+                    if (ImGui.Button("Look for a .sumocfg in the scenario folder"))
+                    {
+                        _sumoSearchRoot = root;
+                        _sumoFound = PREACT.Utility.SumoConfigurationLocator.FindInScenario(root, true);
+                    }
+                }
+                else if (_sumoFound != null)
+                {
+                    string relative = _sumoFound.StartsWith(root, System.StringComparison.OrdinalIgnoreCase)
+                        ? _sumoFound.Substring(root.Length).TrimStart('\\', '/').Replace('\\', '/')
+                        : _sumoFound.Replace('\\', '/');
 
                     if (ImGui.Button("Use " + relative))
                     {
                         //Relative, like everything else the scenario generates, so the folder stays portable.
                         input.ConfigurationFile = relative;
+                        _sumoSearchRoot = null;
                     }
                 }
                 else
                 {
-                    ImGui.TextDisabled("No .sumocfg in the scenario folder either - build the SUMO network first.");
+                    ImGui.TextDisabled("No .sumocfg in the scenario folder either - build the road network first.");
                 }
             }
 
