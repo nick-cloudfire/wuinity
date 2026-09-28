@@ -440,7 +440,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
                     if (ImGui.IsItemHovered())
                     {
                         ImGui.SetTooltip("No .prj beside it: written before the k-PERIL fix, when boundaries came out rotated by "
-                            + "90 degrees. Run the simulation again for one to use.");
+                            + "90 degrees. Run the simulation again for one to use. (A run that could not write the .prj says so "
+                            + "in its log; its boundary is not an earlier one.)");
                     }
                 }
                 if (e.IsRaster)

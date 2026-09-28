@@ -115,32 +115,83 @@ namespace PREACT.Utility
         /// <summary>
         /// Writes <c>&lt;raster&gt;.prj</c> for an ESRI ASCII grid in the CRS <paramref name="epsgCode"/>, as OGC WKT
         /// with its EPSG authority, which GDAL (and so QGIS) identifies as that code - the ESRI dialect loses the code
-        /// and comes back as an unnamed "UTM zone 34N". Quietly does nothing when the code is unknown or GDAL cannot
-        /// describe it: the grid is still correct, only without a CRS attached.
+        /// and comes back as an unnamed "UTM zone 34N". Returns null when it was written (or there is no code to write),
+        /// otherwise why not - the grid is still correct, only without a CRS attached, and the caller says so.
         /// </summary>
         /// <remarks>
         /// An .asc cannot hold its own CRS, and the platform's boundaries and probability rasters used to be written
         /// without one, so every one of them opened in QGIS as "unknown CRS" at the right numbers but the wrong place
         /// until the zone was set by hand. <see cref="Read"/> takes the CRS back from this file.
+        ///
+        /// GDAL describes the code through PROJ's database, which a process may not find (Unity's GDAL on Windows looks
+        /// only where PROJ_DATA/PROJ_LIB say). A WGS 84 / UTM zone - every case grid is one - is written from its
+        /// definition then, identical to what GDAL writes; for any other code the .prj is left out and the reason
+        /// returned (review R6: a boundary without its .prj is also what the GUI marks "earlier version").
         /// </remarks>
-        public static void WriteCompanionPrj(string rasterFilePath, int epsgCode)
+        public static string WriteCompanionPrj(string rasterFilePath, int epsgCode)
         {
-            if (epsgCode <= 0 || string.IsNullOrEmpty(rasterFilePath)) return;
+            if (epsgCode <= 0 || string.IsNullOrEmpty(rasterFilePath)) return null;
 
+            string wkt = null;
+            string why = null;
             try
             {
                 using (var srs = new OSGeo.OSR.SpatialReference(""))
                 {
-                    if (srs.ImportFromEPSG(epsgCode) != 0) return;
-                    srs.ExportToWkt(out string wkt, null);
-                    if (string.IsNullOrEmpty(wkt)) return;
-                    File.WriteAllText(Path.ChangeExtension(rasterFilePath, ".prj"), wkt);
+                    if (srs.ImportFromEPSG(epsgCode) == 0)
+                    {
+                        srs.ExportToWkt(out wkt, null);
+                    }
+                    else
+                    {
+                        why = $"GDAL could not describe EPSG:{epsgCode} (is PROJ's proj.db on PROJ_DATA or PROJ_LIB?)";
+                    }
                 }
             }
-            catch
+            catch (Exception e)
             {
-                //A missing CRS is a convenience lost, not a wrong raster; never fail the write over it.
+                why = $"GDAL could not describe EPSG:{epsgCode} ({e.Message})";
             }
+
+            if (string.IsNullOrEmpty(wkt)) wkt = UtmWkt(epsgCode);
+            if (string.IsNullOrEmpty(wkt))
+            {
+                return $"{Path.GetFileName(rasterFilePath)} was written without a .prj: {why ?? "no description of EPSG:" + epsgCode}. "
+                       + $"GIS will not know its CRS (EPSG:{epsgCode}) until it is set by hand";
+            }
+
+            try
+            {
+                File.WriteAllText(Path.ChangeExtension(rasterFilePath, ".prj"), wkt);
+                return null;
+            }
+            catch (Exception e)
+            {
+                return $"{Path.GetFileName(rasterFilePath)} was written without a .prj: {e.Message}. GIS will not know its CRS "
+                       + $"(EPSG:{epsgCode}) until it is set by hand";
+            }
+        }
+
+        /// <summary>
+        /// The OGC WKT GDAL writes for a WGS 84 / UTM zone (EPSG 32601-32660 north, 32701-32760 south), from the zone's
+        /// definition rather than PROJ's database; null for any other code.
+        /// </summary>
+        internal static string UtmWkt(int epsgCode)
+        {
+            bool north = epsgCode >= 32601 && epsgCode <= 32660;
+            bool south = epsgCode >= 32701 && epsgCode <= 32760;
+            if (!north && !south) return null;
+
+            int zone = epsgCode % 100;
+            string c(int v) => v.ToString(CultureInfo.InvariantCulture);
+            return $"PROJCS[\"WGS 84 / UTM zone {c(zone)}{(north ? "N" : "S")}\",GEOGCS[\"WGS 84\",DATUM[\"WGS_1984\","
+                   + "SPHEROID[\"WGS 84\",6378137,298.257223563,AUTHORITY[\"EPSG\",\"7030\"]],AUTHORITY[\"EPSG\",\"6326\"]],"
+                   + "PRIMEM[\"Greenwich\",0,AUTHORITY[\"EPSG\",\"8901\"]],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],"
+                   + "AUTHORITY[\"EPSG\",\"4326\"]],PROJECTION[\"Transverse_Mercator\"],PARAMETER[\"latitude_of_origin\",0],"
+                   + $"PARAMETER[\"central_meridian\",{c(6 * zone - 183)}],PARAMETER[\"scale_factor\",0.9996],"
+                   + $"PARAMETER[\"false_easting\",500000],PARAMETER[\"false_northing\",{(north ? "0" : "10000000")}],"
+                   + "UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH],"
+                   + $"AUTHORITY[\"EPSG\",\"{c(epsgCode)}\"]]";
         }
 
         private static string[] SplitLine(string line)
@@ -534,7 +585,8 @@ namespace PREACT.Utility
 
             //The CRS the header carries (read from a GeoTIFF, or from a .prj beside an .asc), so what is written
             //opens where it belongs.
-            WriteCompanionPrj(outputFilePath, header.EpsgCode);
+            string noPrj = WriteCompanionPrj(outputFilePath, header.EpsgCode);
+            if (noPrj != null) Engine.Message(null, Engine.LogType.Warning, noPrj + ".");
         }
     }
 }

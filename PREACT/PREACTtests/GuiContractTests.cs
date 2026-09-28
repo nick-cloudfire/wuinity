@@ -15,6 +15,7 @@ namespace PREACT.Tests
             runner.Add("results: a boundary or campaign raster is a result, the .prj/.aux.xml/.ovr beside it is not", ResultNames);
             runner.Add("campaign: one made before per-realization evacuation seeds is told apart, one made now is not", EarlierCampaign);
             runner.Add("gui: messages and the generated namelist name the menus the GUI has, not the retired ones", CurrentMenuNames);
+            runner.Add("results: a boundary's .prj is written for a UTM grid without PROJ's database, and its absence is said", CompanionPrj);
         }
 
         /// <summary>
@@ -163,6 +164,47 @@ namespace PREACT.Tests
             }
             Flush();
             return result;
+        }
+
+        /// <summary>
+        /// Review R6: the GUI marks a boundary with no .prj beside it "(earlier version)", and the .prj was left out without
+        /// a word whenever GDAL could not describe the code - on Windows when Unity's GDAL does not find proj.db, every new
+        /// boundary. A WGS 84 / UTM zone, which every case grid is, is now written from its definition, exactly as GDAL
+        /// writes it; for any other code the reason is returned for the caller to say.
+        /// </summary>
+        private static void CompanionPrj()
+        {
+            foreach (int epsg in new[] { 32601, 32634, 32660, 32701, 32755, 32760 })
+            {
+                using (var srs = new OSGeo.OSR.SpatialReference(""))
+                {
+                    Assert.Equal(0, srs.ImportFromEPSG(epsg), "GDAL knows EPSG:" + epsg);
+                    srs.ExportToWkt(out string gdal, null);
+                    Assert.Equal(gdal, AscRaster.UtmWkt(epsg), "EPSG:" + epsg + " as GDAL writes it");
+                }
+            }
+            Assert.True(AscRaster.UtmWkt(4326) == null && AscRaster.UtmWkt(2100) == null, "and nothing for a code that is not a UTM zone");
+
+            string dir = Directory.CreateTempSubdirectory("preact-prj-").FullName;
+            try
+            {
+                string asc = Path.Combine(dir, "0_trigger_boundary.asc");
+                File.WriteAllLines(asc, new[] { "ncols 1", "nrows 1", "xllcorner 748200", "yllcorner 4203990", "cellsize 30", "NODATA_value -9999", "1" });
+                Assert.True(AscRaster.WriteCompanionPrj(asc, 32634) == null, "written");
+                File.WriteAllText(Path.ChangeExtension(asc, ".prj"), AscRaster.UtmWkt(32634));
+                AscRaster.Read(asc, out AscRaster.Header header, out bool ok);
+                Assert.True(ok && header.EpsgCode == 32634, "the definition's .prj reads back as EPSG:32634: " + header.EpsgCode);
+
+                string other = Path.Combine(dir, "other.asc");
+                File.Copy(asc, other);
+                string why = AscRaster.WriteCompanionPrj(other, 1);
+                Assert.True(why != null && why.Contains("without a .prj") && why.Contains("EPSG:1"), "a code nobody can describe is said: " + why);
+                Assert.True(!File.Exists(Path.ChangeExtension(other, ".prj")), "and no .prj is made up for it");
+            }
+            finally
+            {
+                try { Directory.Delete(dir, true); } catch { }
+            }
         }
 
         private static void EarlierCampaign()
