@@ -351,13 +351,12 @@ namespace Assets.WUInity.GUI.DearIMGUI
                     PREACT.Engine.Message(null, PREACT.Engine.LogType.Log, "[ELMFIRE] NamelistTemplate now names the case's own "
                         + "elmfire.data, so builds keep it as it is and the Fire behaviour settings no longer reach it. Clear "
                         + "NamelistTemplate (Fire model settings) to have it written from the scenario again.");
-                    //What the builder carries onto a re-cut grid is the layers it builds; a raster made by hand that the
-                    //namelist names by its stem is left on the old grid.
-                    PREACT.Engine.Message(null, PREACT.Engine.LogType.Warning, "If a build has to re-cut the case grid (its "
-                        + "dem.tif no longer covers the padded domain), only the layers the case is built from are carried "
-                        + "onto the new grid. A raster made by hand that this namelist names - a fuel layer with roads burned "
-                        + "in, say - stays on the old grid, and ELMFIRE then reads two grids. Name such a raster as the source "
-                        + "layer instead (Fuels, canopy and buildings), and it is warped onto whatever grid the case has.");
+                    //A re-cut grid takes every raster a namelist in force names with it (ElmfireCaseBuilder's "rasters the
+                    //namelists name" stage), and a run refuses one left off the grid; said, since the namelist is not rewritten.
+                    PREACT.Engine.Message(null, PREACT.Engine.LogType.Log, "If a build has to re-cut the case grid (its dem.tif "
+                        + "no longer covers the padded domain), every raster this namelist names is re-cut onto the new grid "
+                        + "with the rest of the case - a fuel layer with roads burned in, say - and a run fills in the grid, "
+                        + "weather and ignition; the namelist's other settings are run as they are.");
                     ScenarioSession.NotifyEdited("namelist template");
                     break;
                 case WorkflowAction.UseSetAsideNamelist:
