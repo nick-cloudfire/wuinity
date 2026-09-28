@@ -19,11 +19,11 @@ namespace PREACTcli
             switch (args[0])
             {
                 case "global-gpw-to-pop":
-                    return RunGpwToPop(args[1..]);
+                    return Guarded(args[0], () => RunGpwToPop(args[1..]));
                 case "converge-trigger":
-                    return ConvergeTrigger.Run(args[1..]);
+                    return Guarded(args[0], () => ConvergeTrigger.Run(args[1..]));
                 case "build-case":
-                    return BuildCase.Run(args[1..]);
+                    return Guarded(args[0], () => BuildCase.Run(args[1..]));
                 case "probabilistic-trigger":
                     Console.Error.WriteLine("probabilistic-trigger is gone: converge-trigger generates the realizations "
                                             + "with ELMFIRE and runs until the probability raster is stable.");
@@ -32,6 +32,33 @@ namespace PREACTcli
                     Console.Error.WriteLine($"Unknown command: {args[0]}");
                     PrintUsage();
                     return 2;
+            }
+        }
+
+        /// <summary>
+        /// Runs a command so that an exception it did not handle ends the CLI with a message and exit code 1, after
+        /// killing every child it started - rather than .NET's unhandled-exception crash.
+        /// </summary>
+        /// <remarks>
+        /// Moving a same-settings campaign folder aside throws on Windows while any file in it is open (the GUI
+        /// showing the live raster, an Explorer preview), and hashing an input that is being written throws too; the
+        /// CLI then died with 0xE0434352, which the GUI reads as neither success nor failure, and the ProcessExit kill
+        /// of its children did not run (review MI-8).
+        /// </remarks>
+        internal static int Guarded(string command, Func<int> run)
+        {
+            try
+            {
+                return run();
+            }
+            catch (Exception e)
+            {
+                Console.Error.WriteLine($"ERROR: {command} stopped on an unexpected error: {Describe(e)}");
+                Console.Error.WriteLine("       (" + e.GetType().Name + (e.StackTrace != null
+                    ? " at " + e.StackTrace.Split('\n')[0].Trim() : "") + ")");
+                int killed = PREACT.Utility.ElmfireProcesses.KillAll();
+                if (killed > 0) Console.Error.WriteLine($"       stopped {killed} process tree(s) it had started.");
+                return 1;
             }
         }
 

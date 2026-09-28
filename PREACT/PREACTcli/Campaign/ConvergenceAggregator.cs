@@ -56,7 +56,7 @@ namespace PREACTcli.Campaigns
             EnsembleFireStatistics fireStatistics = null;
             var usedFires = new List<(string Id, RealizationRecord Record)>();
 
-            int nOk = 0, nNotThreatened = 0, nFailed = 0, nReused = 0;
+            int nOk = 0, nNotThreatened = 0, nFailed = 0, nReused = 0, nTruncated = 0;
             int streak = 0, launched = 0, completed = 0;
             bool converged = false;
             var previousArea = new double?[Deciles.Length];
@@ -115,6 +115,7 @@ namespace PREACTcli.Campaigns
 
                 if (status == CampaignLayout.StatusNotThreatened) ++nNotThreatened;
                 if (status == CampaignLayout.StatusFailed) ++nFailed;
+                if (result.Truncated) ++nTruncated;
 
                 Console.WriteLine($"{CampaignLayout.ProgressTag}{completed}/{o.MaxRealizations} realization {result.Id} {status}");
 
@@ -189,6 +190,9 @@ namespace PREACTcli.Campaigns
                 return 3;
             }
 
+            string truncated = DescribeTruncated(nTruncated, completed, o.MaxRuntimeSeconds);
+            if (truncated != null) Console.Error.WriteLine("WARNING: " + truncated);
+
             if (insideCount == null || nOk == 0)
             {
                 Console.Error.WriteLine($"ERROR: no realization produced a usable trigger boundary ({nNotThreatened} fire(s) "
@@ -218,11 +222,30 @@ namespace PREACTcli.Campaigns
             CampaignReports.WriteRealizedWeather(_c, usedFires);
 
             Console.WriteLine($"Done. {completed} realization(s): {nOk} boundaries, {nNotThreatened} not threatened, "
-                              + $"{nFailed} failed ({nReused} reused from an earlier run). Converged: {converged}.");
+                              + $"{nFailed} failed" + (nTruncated > 0 ? $" ({nTruncated} of them stopped by the wall-clock limit)" : "")
+                              + $" ({nReused} reused from an earlier run). Converged: {converged}.");
             Console.WriteLine("Probability raster: " + outPath);
             Console.WriteLine("Convergence diagnostics: " + diagnosticsPath);
             Console.WriteLine($"{CampaignLayout.ProgressTag}{o.MaxRealizations}/{o.MaxRealizations}");
             return 0;
+        }
+
+        /// <summary>
+        /// The warning for realizations ELMFIRE stopped at the wall-clock limit, or null when there were none.
+        /// </summary>
+        /// <remarks>
+        /// They are counted as failed - an incomplete fire says nothing about the ground it had not reached yet - but
+        /// they are not a random sample of the failures: the fires that run longest are the largest, so every one of
+        /// them left out moves the probability towards small fires (review MI-2). Said at the end of every campaign
+        /// that had any, with what to change.
+        /// </remarks>
+        internal static string DescribeTruncated(int truncated, int completed, double maxRuntimeSeconds)
+        {
+            if (truncated <= 0) return null;
+            return $"{truncated} of {completed} realization(s) were stopped by ELMFIRE's wall-clock limit "
+                   + $"({maxRuntimeSeconds / 60.0:0} min) and are counted as failed. They are the slowest fires, usually the "
+                   + "largest, so the probability raster under-represents large fires; raise --max-runtime-minutes and "
+                   + "--resume to compute them.";
         }
 
         private static void Fold(int[,] insideCount, float[,] boundary, AscRaster.Header header)

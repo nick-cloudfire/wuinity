@@ -18,6 +18,38 @@ namespace PREACT.Tests
             runner.Add("cli: every realization's evacuation runs on its own reproducible seed", EvacuationSeeds);
             runner.Add("cli: progress lines carry decile areas only for a realization with a boundary", ProgressAreas);
             runner.Add("cli: a realization's archived scenario opens where it is kept", ArchivedScenarioOpensInPlace);
+            runner.Add("cli: an unexpected exception ends a command with a message and exit 1", UnhandledExceptionExit);
+            runner.Add("cli: realizations stopped by the wall-clock limit are called out, not just counted", TruncatedCalledOut);
+        }
+
+        private static void TruncatedCalledOut()
+        {
+            Assert.True(ConvergenceAggregator.DescribeTruncated(0, 40, 8640) == null, "nothing to say when none were");
+            string said = ConvergenceAggregator.DescribeTruncated(3, 40, 8640);
+            Assert.True(said != null && said.Contains("3 of 40") && said.Contains("144 min") && said.Contains("--max-runtime-minutes"),
+                "how many, the limit, and what to do: " + said);
+        }
+
+        private static void UnhandledExceptionExit()
+        {
+            TextWriter was = Console.Error;
+            var w = new StringWriter();
+            int exit;
+            try
+            {
+                Console.SetError(w);
+                exit = PREACTcli.Program.Guarded("converge-trigger",
+                    () => throw new IOException("Access to the path 'campaign_mati_1234abcd' is denied.",
+                        new UnauthorizedAccessException("the live raster is open")));
+            }
+            finally
+            {
+                Console.SetError(was);
+            }
+            Assert.Equal(1, exit, "exit code");
+            Assert.True(w.ToString().Contains("converge-trigger stopped on an unexpected error")
+                        && w.ToString().Contains("the live raster is open"), "the message names the command and the causes: " + w);
+            Assert.Equal(7, PREACTcli.Program.Guarded("build-case", () => 7), "a command's own exit code passes through");
         }
 
         private static void ArchivedScenarioOpensInPlace()

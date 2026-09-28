@@ -19,6 +19,9 @@ namespace PREACTcli.Campaigns
         /// <summary>Reused from an earlier run of this campaign rather than computed now.</summary>
         public bool Reused;
 
+        /// <summary>Failed because ELMFIRE hit its wall-clock limit (MAX_RUNTIME) and stopped the fire early.</summary>
+        public bool Truncated;
+
         public float[,] Boundary;
         public AscRaster.Header Header;
 
@@ -240,6 +243,16 @@ namespace PREACTcli.Campaigns
                 outcome.ToaPath = RealizationRecord.Resolve(dir, record.Toa);
                 Console.WriteLine($"[{id}] {run.Message}.");
                 return false;
+            }
+
+            if (run.MaxRuntimeHit)
+            {
+                //A failure, and one worth singling out: the fires that run out of wall-clock time are the slowest
+                //and usually the largest, so leaving them out quietly biases the probability towards small fires.
+                outcome.Truncated = true;
+                return Settle(outcome, dir, record, $"ELMFIRE hit its wall-clock limit ({o.MaxRuntimeSeconds / 60.0:0} min, "
+                                                    + $"--max-runtime-minutes) before the fire's {o.Hours:0.##} h were up, so "
+                                                    + "the fire is incomplete and the realization counts as failed: " + run.Message);
             }
 
             if (!run.Ok)
