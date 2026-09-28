@@ -1,62 +1,65 @@
 # Examples
 
-Two scenarios ship in `Examples/`, and both load with the current engine. Their
-fire is imported from rasters (`AscImport`); neither runs ELMFIRE. Start with
-**Roxborough**.
+Two scenarios ship in `Examples/`. Both import their fire from rasters (`AscImport`), so they need neither
+ELMFIRE nor an OpenTopography key — only SUMO for the traffic — and both load with no warning. Neither turns
+the trigger boundary on. They are the quickest check that a build works; for an ELMFIRE scenario, build your own
+([below](#building-your-own)).
 
-## NFDRS4_Behave/Roxborough ✅ (recommended)
+## `NFDRS4_Behave/Roxborough` (start here)
 
-A Colorado (USA) scenario: `AscImport` fire + `MacroHouseholdSim` pedestrians +
-`SUMO` traffic, with a `GlobalSmoke` variant. Three evacuation groups are ordered
-out at the simulation start and respond by the `observed_average` curve.
+Roxborough Park, Colorado, 5–6 June 2001: FlamMap fire rasters on the grid of a FARSITE landscape, three evacuation
+groups ordered out at 11:00 and responding by the `observed_average` curve, SUMO traffic to three exits, and a
+variant with global smoke.
 
 ```
 Examples/NFDRS4_Behave/Roxborough/
 ├── Roxborough_no_smoke.wui        # start here
-├── Roxborough_global_smoke.wui    # same scenario + global smoke
-├── roxborough_weather.csv         # hourly weather for 2001
-├── population/                    # worldpop_population.csv (households and road access points)
-├── fire/                          # rox_big_burning_city.lcp ([Landscape])
-├── flammap/output/                # TOA.asc, ROS.asc, SD.asc, FI.asc (AscImport inputs, on the .lcp's grid)
-├── globalSmoke/                   # extCoeffRamp.exc (GlobalSmoke extinction)
-├── groups/                        # groupA/B/C .shp (one shapefile per evacuation group)
+├── Roxborough_global_smoke.wui    # the same, plus GlobalSmoke (a constant 0.2 /m) slowing the cars
+├── roxborough_weather.csv         # hourly weather for the run, reported only
+├── population/                    # worldpop_population.csv: households and their road access points
+├── fire/                          # rox_big_burning_city.lcp: the [Landscape] (414 x 405 cells of 30 m)
+├── flammap/output/                # TOA/ROS/SD/FI.asc (+ .prj, EPSG:32613): the AscImport fire, arrival times in minutes
+├── globalSmoke/                   # extCoeffRamp.exc
+├── groups/                        # groupA/B/C.shp: one polygon per evacuation group
 └── sumo/                          # rox.sumocfg + rox_big.net.xml
 ```
 
-Run it:
-
-```sh
-PREACT.exe Examples/NFDRS4_Behave/Roxborough/Roxborough_no_smoke.wui
+```powershell
+PREACT\PREACTexecute\bin\Release\net8.0\PREACT.exe Examples\NFDRS4_Behave\Roxborough\Roxborough_no_smoke.wui
 ```
 
-Results go to `_output/` next to the `.wui`.
+On the Linux bench (with SUMO) both variants ran in seconds; all 649 cars arrived by about 6600 s without smoke
+and about 7400 s with it. Results go to `_output/` beside the `.wui`.
 
-## CFFDRS/Lytton
+## `CFFDRS/Lytton`
 
-Lytton, British Columbia (Canada), 30 June 2021: `AscImport` fire rasters,
-terrain from separate elevation, slope and aspect grids, one evacuation group of
-106 households (252 people), and SUMO traffic on an OpenStreetMap network.
+Lytton, British Columbia, from 29 June 2021: imported fire rasters, terrain from separate elevation, slope and
+aspect grids (100 m), one evacuation group of 106 households (252 people), and SUMO traffic on an OpenStreetMap
+network.
 
 ```
 Examples/CFFDRS/Lytton/
 ├── Lytton.wui
 ├── Lytton_weather.csv
 ├── population/                    # worldpop_population_clipped.csv
-├── wildfire/                      # TOA/ROS/SD/FI.asc (AscImport), elevation/slope/aspect.asc ([Landscape])
+├── wildfire/                      # TOA/ROS/SD/FI.asc (+ .prj, EPSG:32610), elevation/slope/aspect.asc
 ├── groups/                        # lytton_all.shp
-└── sumo/                          # osm.sumocfg + network (the .netccfg/.polycfg record how it was built)
+└── sumo/                          # osm.sumocfg + network (osm.netccfg/.polycfg record how it was built)
 ```
 
-Its response curve is `Absolute`: households respond between 17:30 and 20:00 on
-30 June. Absolute curve times are measured from the simulation start and then
-shifted by the group's `EvacuationOrderDateTime`, which is why that is set to the
-simulation start here.
+Its response curve is `Absolute`: households respond between 17:30 and 20:00 on 30 June, on the scenario's
+calendar, whatever the group's order time. The run covers 5.5 days (it does not stop when everyone has left); all
+106 households arrive.
+
+## What to expect from v1
+
+Both scenarios use the household model's defaults, so **fire reaction is on**: a household leaves as soon as the
+fire front is within 500 m of its home, if that is before its drawn response. Earlier versions never did this; set
+`[MacroHouseholdSim] ReactToFire=false` to compare with old results.
 
 ## Building your own
 
-In the [Unity visualizer](getting-started.md#5-prepare-your-own-scenario), create
-the scenario with `File > New scenario`, work down the workflow panel (roads,
-population, fuels and the fire case are built from its rows or the Data menu;
-destinations and groups are under Evacuation), and `File > Save` the `.wui`. Then run
-it with [`PREACT.exe`](command-line-tools.md) or open it in the
-[Unity visualizer](getting-started.md#4-run-in-the-visualizer-unity).
+In the GUI: File > New scenario, then down the workflow panel — see [Getting started](getting-started.md). The
+panel builds the roads, population, fuels and the ELMFIRE case, and the scenario is saved as you go
+(File > Save). Then run it from the GUI, or with [`PREACT.exe`](command-line-tools.md#preactexe--run-a-scenario),
+and run a [trigger campaign](trigger-campaigns.md) on it.

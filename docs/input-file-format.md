@@ -1,142 +1,181 @@
 # The `.wui` input file format
 
-A PREACT simulation is described by a single plain-text project file with the
-`.wui` extension. This page is the authoritative reference for its syntax and
-every section it can contain.
+A scenario is one plain-text file with the `.wui` extension, plus the files it names. This page lists every
+section and key the parser (`PREACT/PREACTcore/Source/Input/`) reads, with its type, default and whether a run
+can start without it. The GUI writes these files for you; this page is for reading them, editing them by hand
+and scripting them.
 
-> This document is generated from the actual parser
-> (`PREACT/PREACTcore/Source/Input/`).
+A complete example is [`Examples/NFDRS4_Behave/Roxborough/Roxborough_no_smoke.wui`](../Examples/NFDRS4_Behave/Roxborough/Roxborough_no_smoke.wui).
 
-A complete, working example is
-[`Examples/NFDRS4_Behave/Roxborough/Roxborough_no_smoke.wui`](../Examples/NFDRS4_Behave/Roxborough/Roxborough_no_smoke.wui).
+## Syntax
+
+- **Sections** start with a header in square brackets, `[Simulation]`, and run to the next header. Their order in
+  the file does not matter.
+- **Keys** are `Key=Value`, split on the first `=`, so a value may contain `=`. Spaces are removed from the key;
+  the value is only trimmed, so `C:/Program Files/QGIS 3.44.2/bin` survives.
+- **Comments**: a line whose first non-blank character is `#`, and anything after a `#` that follows whitespace.
+  A `#` inside a word (a URL, a file name) is kept.
+- **Numbers and dates** are read with the invariant culture: `.` for decimals whatever the machine's locale.
+  Dates are ISO 8601, `2021-06-29T12:00:00`.
+- **Booleans** are `true`/`false`. **Lists** are comma-separated and each element is trimmed (`a, b`).
+  **Coordinates** are `lat,lon` in WGS84 degrees; **sizes** are `x,y`.
+- **Repeatable sections** — `[Destination]`, `[ResponseCurve]`, `[EvacuationGroup]`, `[Demographics]`,
+  `[IgnitionPoint]` — may appear any number of times. Any other section given twice is reported and only the
+  first is read (and saved).
+- **A key given twice** in one section is reported; the first value is used and the second is dropped on save.
+- **Paths** are relative to the folder holding the `.wui` and are written with `/`. A `\` is accepted on every
+  platform. A file that has moved is looked for, by name, one folder down from each folder above where it
+  was expected and in the scenario folder; the scenario check says which copy it used, and saving records the
+  new path.
+- Each section is read on its own: a problem in one is reported against that section and the rest of the file
+  is still read.
+- **A key or section the parser does not know** is ignored without a message, and a GUI save drops it. Check
+  the spelling against the tables below.
+
+## Required, optional and critical
+
+The scenario check (Scenario > Check scenario, or the list printed when a `.wui` loads) reports everything
+missing or wrong. An item is **critical** when the run cannot start without it; `PREACT.exe`, the GUI's Run and a
+campaign all refuse a scenario with a critical item. Everything else is a note: a default applies, or the thing
+is optional.
+
+In the tables, **Critical** means critical when the section's module is enabled. Sections of a module that is
+switched off are still read in full and kept when the scenario is saved, but nothing in them is critical.
+
+## What a save writes
+
+The GUI writes the file back from what it read (`PREACTInputWriter`):
+
+- a section that only restates its defaults is left out, unless a module sub-section follows it;
+- only the sub-section of the **selected** module is written: `[AscImport]` or `[ELMFIRE]` for the fire,
+  `[GlobalSmoke]` for smoke, `[kPERIL]` for the trigger boundary — a section for the module not chosen is dropped;
+- `[ElmfireNamelist]` is written only when the fire module is `ELMFIRE`;
+- paths are written with `/`; retired keys and sections are not written.
 
 ---
 
-## Syntax rules
+## `[Simulation]` — always required
 
-- **INI-style.** Sections are introduced by a header in square brackets, e.g.
-  `[Simulation]`. A section runs until the next header line.
-- **Key/value** pairs are written `Key=Value`.
-- `#` starts a comment; everything after it on a line is ignored.
-- **Keys are stripped of spaces; values are only trimmed.** `Key = Value` is
-  fine, and a value **may** contain spaces — `C:/Program Files/GDAL/bin` works.
-  (It did not until spaces stopped being stripped from the whole line, which
-  silently turned that path into `C:/ProgramFiles/GDAL/bin`.)
-- Comma-separated lists are trimmed element by element, so `a, b` is fine.
-- Blank lines and lines beginning with `#` are ignored.
-- Some sections (`[ResponseCurve]`) contain bare data lines with no `Key=`.
-- These sections may appear **multiple times** and are collected as a list:
-  `[Destination]`, `[ResponseCurve]`, `[EvacuationGroup]`, `[Demographics]`.
-  All other sections should appear at most once.
-- **Relative file paths are resolved against the folder that contains the
-  `.wui` file.**
+| Key | Type | Default | Critical | Notes |
+|---|---|---|---|---|
+| `Name` | text | – | yes | Names every output file, and the campaign folder. |
+| `LowerLeftLatLon` | lat,lon | – | yes | South-west corner of the evacuation domain. |
+| `DomainSize` | x,y metres | – | yes | Width (east) and height (north); both > 0. |
+| `StartDateTime` | date | – | yes | Local civil time at the domain (its time zone is looked up from the coordinates). |
+| `EndDateTime` | date | – | yes | Local time. Not after the start: a warning, and the run ends at once. |
+| `DeltaTime` | seconds | `1.0` | – | Time step; must be > 0. SUMO's step length is set to it. |
+| `StopWhenEvacuated` | bool | `false` | – | End the run once everyone has arrived. |
+| `RandomSeed` | int | `0` | – | Seeds departure times, walking speeds, household sizes and destination choice. Combined with the run index, so run *n* of a multi-run is reproducible on its own. `0` seeds from the clock. A campaign sets its own per realization. |
 
-**Required** below means the simulation aborts if the key/section is missing or
-cannot be parsed.
-
----
-
-## `[Simulation]` — required
-
-| Key | Type | Required | Default | Notes |
-|-----|------|----------|---------|-------|
-| `Name` | string | ✔ | – | Run name; used to name output files. |
-| `LowerLeftLatLon` | lat,lon | ✔ | – | South-west corner of the domain. |
-| `DomainSize` | x,y (metres) | ✔ | – | Domain width and height. |
-| `StartDateTime` | ISO 8601 | ✔ | – | e.g. `2001-06-05T11:00:00`. |
-| `EndDateTime` | ISO 8601 | ✔ | – | Interpreted in the simulation location's timezone. |
-| `DeltaTime` | float (s) | | `1.0` | Simulation time step. |
-| `StopWhenEvacuated` | bool | | `false` | End the run early once everyone has evacuated. |
-| `RandomSeed` | int | | `0` | Seeds everything stochastic — departure times, walking speeds, household sizes, destination choice — so a run can be repeated. Combined with the simulation index, so run *n* of a batch is reproducible on its own rather than every run of a batch being identical (which would make a convergence check meaningless). `0` draws from the clock, as before this key existed. |
+The simulation is measured in the UTM zone of its south-west corner, unless a georeferenced raster says
+otherwise: the imported fire's arrival-time raster (`[AscImport] TimeOfArrivalFile`) first, else the
+`[Landscape]` reference raster. For an ELMFIRE scenario that is the case's `dem.tif` once the case is built.
 
 ## `[Map]` — optional
 
+The visualizer's background; nothing in a run depends on it.
+
 | Key | Type | Default | Notes |
-|-----|------|---------|-------|
-| `MapProvider` | `Mapbox`\|`Bing`\|`OSM` | `Mapbox` | Visualizer background only. |
+|---|---|---|---|
+| `MapProvider` | `Mapbox` \| `Bing` \| `OSM` | `Mapbox` | |
 | `ZoomLevel` | int 0–20 | `13` | |
+
+## `[Landscape]` — optional
+
+The terrain (and, for a FARSITE-style landscape, fuels and canopy). Every key is optional; a named file that is
+missing is a note, and its path is kept so it is not lost on save. For an ELMFIRE scenario, building the case
+points the three terrain keys at the case's `dem.tif`, `slp.tif` and `asp.tif`, which are then the grid
+everything is painted and computed on. Fuel and canopy for ELMFIRE are named under `[ELMFIRE]`, not here.
+
+| Key | Type | Notes |
+|---|---|---|
+| `LandscapeFile` | path | A multiband GeoTIFF in LANDFIRE band order (elevation, slope, aspect, fuel model, canopy cover, canopy height, canopy base height, canopy bulk density), or a FARSITE `.lcp`. When set, the band keys below are ignored. An `.lcp` carries no CRS. |
+| `ElevationFile` | raster | Metres. |
+| `SlopeFile` | raster | Degrees. Computed from the elevation when not given. |
+| `AspectFile` | raster | Degrees clockwise from north, downhill direction. Computed from the elevation when not given. |
+| `FuelModelFile` | raster | Fuel model number per cell. |
+| `CanopyCoverFile` | raster | Percent. |
+| `CanopyHeightFile`, `CanopyBaseHeightFile`, `CanopyBulkDensityFile` | raster | All three or none: with only one or two given, none is used (a warning). |
+
+k-PERIL reads its slope and aspect from here; a missing band is treated as flat ground and said.
 
 ## `[Weather]` — optional
 
-| Key | Type | Notes |
-|-----|------|-------|
-| `WeatherFile` | csv path | Hourly record in Open-Meteo format. Existence is checked. See [Companion files](#companion-file-formats). Set by the ELMFIRE case build to the case's own ERA5 archive. |
-| `WeatherAnchorDateTime` | ISO 8601 | **Which moment in the record the simulation's start time reads from.** Unset means read at the scenario's own dates, as before this key. Set by the case build to the historical peak fire-weather day it drew, so the weather reported during a run is the weather the fire was computed against — a scenario dated 2020 may correctly report an August 2001 day. An offset rather than moving the scenario's dates, because response curves, evacuation orders and timed ignitions are all stated on the scenario's calendar. |
-| `DesiredLatLon` | lat,lon | Optional. |
-| `StartFFMC` | float | Fine fuel moisture code at the start. Default `85`. |
-| `StartDMC` | float | Duff moisture code. Default `6`. |
-| `StartDC` | float | Drought code. Default `15`. |
-| `StartHourlyFFMC` | float | Hourly FFMC. Default `85`. |
-| `StartKBDI` | float | Keetch-Byram drought index. Default `100`. |
-| `MeanAnnualPrcp` | float (mm) | For the KBDI. Default `1000`. |
-
-The six index seeds are here because they are weather, carried forward from the weather series whatever
-fire module is running. They used to be read off the cell-based fire model's own section, so they were only
-ever applied to a scenario using that module and silently defaulted everywhere else — and
-`MeanAnnualPrcp` was not read at all, being hardcoded to 1500.
-
-**What this section drives, and what it does not.** With ELMFIRE the fire's own behaviour comes entirely from
-the case's raster series (`ws`/`wd`/`m1`/`m10`/`m100`) — this section does not affect spread. What it produces
-is the temperature, humidity, hourly FFMC, FWI and KBDI reported in the output window. That used to be worth
-almost nothing, because the in-process spread models that consumed it were removed and the values were read at
-the scenario's own calendar date while the fire was computed against a historical day drawn out of ERA5 — two
-unrelated days. `WeatherAnchorDateTime` is what ties them together.
-
-Two limits worth knowing:
-
-- **`DMC` and `DC` still start at their seeds.** They are meant to accumulate over weeks of antecedent
-  weather, and nothing marches them over the record before the run begins — the code for it exists but is
-  commented out. So the drought codes describe the seeds, not the month leading up to the sampled day.
-- **Fire danger is reported, not used.** Nothing in the fire, the smoke or the trigger boundary reads it.
-
-## `[Population]` — required if the pedestrian module is enabled
+The hourly weather reported during a run: temperature, humidity, wind and the fire-danger indices. **It does not
+drive the fire** — an ELMFIRE fire spreads with the case's own weather rasters — nor the evacuation or the
+trigger boundary.
 
 | Key | Type | Default | Notes |
-|-----|------|---------|-------|
-| `PopulationFile` | csv path | – | See [Companion files](#companion-file-formats). |
-| `CullOutsideGroups` | bool | `false` | Drop households outside every evacuation group. |
+|---|---|---|---|
+| `WeatherFile` | path | – | Hourly CSV in the Open-Meteo layout ([below](#weather-csv)). Not set: no weather is reported and nothing is downloaded. Set but missing, or not covering the run: a run downloads what it needs from Open-Meteo and caches it. Building an ELMFIRE case points it at the case's ERA5 archive. |
+| `WeatherAnchorDateTime` | date | unset | The moment in the record that the simulation's start reads from, so a scenario dated today reports the historical day its fire was computed against. Set by the case build. Unset: the record is read at the scenario's own dates. |
+| `StartFFMC` | number | `85` | Fine fuel moisture code at the first local noon. |
+| `StartDMC` | number | `6` | Duff moisture code. |
+| `StartDC` | number | `15` | Drought code. |
+| `StartHourlyFFMC` | number | `85` | Hourly FFMC. |
+| `StartKBDI` | number | `100` | Keetch–Byram drought index. |
+| `MeanAnnualPrcp` | mm | `1000` | For the KBDI. |
 
-## `[Demographics]` — repeatable
+The daily codes advance at 12:00 local standard time (from the longitude, not the civil time zone) with the rain
+of the preceding 24 hours and the wind in km/h — the same derivation the ERA5 archive uses. DMC and DC start
+from the seeds above; nothing marches them over the weeks before the run.
 
-The first one defined is treated as the default. Referenced by name from
-`[EvacuationGroup]`.
+## `[Population]` — required when the pedestrian module is enabled
 
-| Key | Type | Required | Default |
-|-----|------|----------|---------|
-| `Name` | string | ✔ | – |
-| `AllowMoreThanOneCar` | bool | | `true` |
-| `MaxCars` | int | | `2` |
-| `MaxCarsProbability` | float | | `0.3` |
-| `Default` | bool | | – |
+| Key | Type | Default | Critical | Notes |
+|---|---|---|---|---|
+| `PopulationFile` | path | – | yes | Households CSV ([below](#population-csv)). |
+| `CullOutsideGroups` | bool | `false` | – | Remove households that lie in no evacuation group's area. |
+
+## `[Demographics]` — repeatable, optional
+
+Referenced by name from `[EvacuationGroup] Demographics`. The first one is the default unless another says
+`Default=true`. Nothing here is critical: a group whose demographics are missing uses the default ones. A
+section without `Name` is ignored with a warning.
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `Name` | text | – | |
+| `AllowMoreThanOneCar` | bool | `true` | |
+| `MaxCars` | int ≥ 1 | `2` | |
+| `MaxCarsProbability` | 0–1 | `0.3` | |
+| `Default` | bool | first section | |
 
 ## `[Evacuation]` — optional, holds no current keys
 
-The destinations, response curves and groups below are their own sections. `UseTriggerBufferEvacuation`,
-`TriggerBufferFile` and `EvacuationOrderStart` are retired: they were never read by the engine, are ignored with a
-notice when present, and are not written when a scenario is saved.
+The destinations, response curves and groups are sections of their own. The retired keys
+`UseTriggerBufferEvacuation`, `TriggerBufferFile` and `EvacuationOrderStart` are ignored with a notice and not
+written. With the traffic module on, at least one `[Destination]` is critical; with the pedestrian module on, at
+least one `[ResponseCurve]` and one `[EvacuationGroup]` are.
 
 ## `[Destination]` — repeatable
 
-| Key | Type | Required | Default | Notes |
-|-----|------|----------|---------|-------|
-| `Name` | string | ✔ | – | |
-| `LatLon` | lat,lon | ✔ | – | |
-| `Type` | `Exit`\|`Shelter` | ✔ | – | |
-| `MaxFlow` | float (cars/hr) | | `-1` | `-1` = unlimited. |
-| `MaxVehicles` | int | | `-1` | `-1` = unlimited. |
-| `MaxPeople` | int | | `-1` | `-1` = unlimited. |
-| `Blocked` | bool | | `false` | |
-| `Color` | r,g,b (0–1) | | random | Visualizer only. |
+| Key | Type | Default | Critical | Notes |
+|---|---|---|---|---|
+| `Name` | text | – | yes | A section without one is ignored (and reported). |
+| `LatLon` | lat,lon | – | yes | |
+| `Type` | `Exit` \| `Shelter` | `Exit` | – | |
+| `MaxFlow` | cars/h | `-1` | – | `-1` is unlimited. Applied as a rate of `MaxFlow`/3600 cars per second with up to one minute's worth in reserve; a car arriving over it is sent round again. |
+| `MaxVehicles` | int | `-1` | – | `-1` is unlimited. |
+| `MaxPeople` | int | `-1` | – | `-1` is unlimited. |
+| `Blocked` | bool | `false` | – | |
+| `Color` | r,g,b 0–1 | random | – | Display only. |
 
 ## `[ResponseCurve]` — repeatable
 
-Defines a cumulative departure-time distribution. After the keys, add **at least
-two** bare `time,probability` data lines.
+A cumulative distribution of when households start to leave. `Name` and `TimeInput`, then at least two bare
+`time,probability` rows (lines without `=`), in any order among the keys, with comments allowed.
 
-| Key | Type | Required | Notes |
-|-----|------|----------|-------|
-| `Name` | string | ✔ | |
-| `TimeInput` | `Relative`\|`Absolute` | ✔ | `Relative` = seconds from start; `Absolute` = ISO datetime. |
+| Key | Type | Default | Critical | Notes |
+|---|---|---|---|---|
+| `Name` | text | – | yes | |
+| `TimeInput` | `Relative` \| `Absolute` | `Relative` | – | An unreadable value is critical. |
+
+- **Relative** rows are seconds after the group's `EvacuationOrderDateTime`.
+- **Absolute** rows are dates (`2021-06-30T17:30:00,0.0`) on the scenario's own calendar; the order time is not
+  added to them.
+- Rows must rise in both time and probability; probabilities lie in 0–1. The first row is the curve's start
+  (probability 0 in effect). A curve that ends below 1 is allowed and warned about: the rest never leave.
 
 ```
 [ResponseCurve]
@@ -148,327 +187,310 @@ TimeInput=Relative
 6300, 1.0
 ```
 
-Probability is cumulative and runs from 0 to 1.
-
 ## `[EvacuationGroup]` — repeatable
 
-The first one defined is treated as the default.
+Every household belongs to one group, by its home's position in the group's area. The first group is the default
+unless another says `Default=true`; households in no group's area join the default group, unless
+`[Population] CullOutsideGroups=true` removes them.
 
-| Key | Type | Required | Notes |
-|-----|------|----------|-------|
-| `Name` | string | ✔ | |
-| `DestinationChoice` | enum | ✔ | `Random`, `ClosestEuclidean`, `EvacGroupCDF`, `EvacGroupClosestEuclidean`. |
-| `Demographics` | name | | Must match a `[Demographics] Name`. |
-| `Destinations` | name list | | Comma-separated destination names. |
-| `DestinationsCDF` | float list | | Must have the same count as `Destinations`. |
-| `ResponseCurves` | name list | ✔ | Comma-separated response-curve names. |
-| `ResponseCurvesCDF` | float list | | Same count as `ResponseCurves`. |
-| `ShapeFile` | .shp path | | Required when more than one group is defined. |
-| `EvacuationOrderDateTime` | ISO 8601 | | Defaults to the simulation start. |
-| `Default` | bool | | |
-| `Color` | r,g,b | | Visualizer only. |
-
-> An unrecognised `DestinationChoice` value causes the run to abort. Use exactly
-> one of the four enum values above (case-sensitive).
+| Key | Type | Default | Critical | Notes |
+|---|---|---|---|---|
+| `Name` | text | – | yes | |
+| `EvacuationOrderDateTime` | date | the simulation start | – | When the group is ordered out. |
+| `DestinationChoice` | `Random` \| `ClosestEuclidean` \| `EvacGroupCDF` \| `EvacGroupClosestEuclidean` | `EvacGroupCDF` | – | |
+| `Destinations` | name list | – | traffic on, and a choice that draws from the group's list (`EvacGroupCDF`, `EvacGroupClosestEuclidean`) | Names of `[Destination]`s. A name that does not exist is kept and reported. |
+| `DestinationsCDF` | number list | even split | traffic on and `EvacGroupCDF`, with more than one destination | Cumulative, one per destination, rising from 0 to 1. A step of 0 (e.g. `1,1`) means that destination is never chosen — warned about. A CDF ending below 1 sends the rest to the last destination. |
+| `ResponseCurves` | name list | – | pedestrian on | Names of `[ResponseCurve]`s. |
+| `ResponseCurvesCDF` | number list | even split | pedestrian on, with more than one curve | As `DestinationsCDF`. |
+| `Demographics` | name | the default demographics | – | |
+| `MaskFile` | raster | – | pedestrian on, when named | The group's area, as painted in the GUI (any positive value is inside). Wins over `ShapeFile`. |
+| `ShapeFile` | `.shp` | – | pedestrian on, when named and there is no `MaskFile` | The group's area as a polygon. With more than one group, each needs a `MaskFile` or `ShapeFile`. |
+| `Default` | bool | first section | – | |
+| `Color` | r,g,b | random | – | Display only. |
 
 ## `[PedestrianModule]`
 
 | Key | Type | Default | Notes |
-|-----|------|---------|-------|
+|---|---|---|---|
 | `Enabled` | bool | `false` | |
-| `Module` | `MacroHouseholdSim` | `MacroHouseholdSim` | The only pedestrian module. |
+| `Module` | `MacroHouseholdSim` | `MacroHouseholdSim` | The only one. |
 
-### `[MacroHouseholdSim]`
+### `[MacroHouseholdSim]` — optional
 
-| Key | Type | Default |
-|-----|------|---------|
-| `WalkingSpeedMinMax` | min,max | `0.7,1.0` |
-| `WalkingSpeedModifier` | float | `1.0` |
-| `WalkingDistanceModifier` | float | `1.0` |
+Every key is optional; an unreadable value keeps the default and says so.
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `WalkingSpeedMinMax` | min,max m/s | `0.7,1.0` | Each household's walking speed is drawn between them. |
+| `WalkingSpeedModifier` | > 0 | `1.0` | Multiplies walking speed. |
+| `WalkingDistanceModifier` | > 0 | `1.0` | Multiplies the walk from home to the car. |
+| `ReactToFire` | bool | `true` | A household that has not left yet leaves as soon as the fire front comes within `FireReactionDistance` of its home, instead of waiting for its drawn response time. Households whose drawn response is "never" stay. |
+| `FireReactionDistance` | metres ≥ 0 | `500` | Distance from home to the nearest burning cell (arrival time ≤ now). |
+| `FireReactionUpdateInterval` | seconds > 0 | `300` | How often the distance to the front is recomputed. |
 
 ## `[TrafficModule]`
 
 | Key | Type | Default | Notes |
-|-----|------|---------|-------|
+|---|---|---|---|
 | `Enabled` | bool | `false` | |
-| `Module` | `SUMO` | `SUMO` | The only traffic module. |
-| `VisibilityAffectsSpeed` | bool | `false` | Smoke reduces vehicle speed. |
+| `Module` | `SUMO` | `SUMO` | The only one. With traffic on, a `[SUMO]` section is critical. |
+
+`VisibilityAffectsSpeed` is no longer read; smoke acts through `[SUMO] SmokeAlpha/SmokeBeta`.
 
 ### `[SUMO]`
 
-| Key | Type | Required | Default |
-|-----|------|----------|---------|
-| `ConfigurationFile` | .sumocfg path | ✔ | – |
-| `OutputRasterSize` | double | | `25.0` |
-| `SmokeAlpha` | float | | `0` |
-| `SmokeBeta` | float | | `0` |
+| Key | Type | Default | Critical | Notes |
+|---|---|---|---|---|
+| `ConfigurationFile` | `.sumocfg` path | – | yes | The GUI's Roads step writes `sumo/osm.sumocfg`. The network must be in the simulation's UTM zone; one in another zone is reported as a warning at load. |
+| `OutputRasterSize` | metres > 0 | `25` | – | Cell size of the traffic raster output. |
+| `SmokeAlpha` | 0–1 | `0` | – | Speed factor in smoke: `1 − SmokeAlpha·exp(SmokeBeta / K)`, K the extinction coefficient (1/m), clamped to 0.05–1. `0` switches it off. |
+| `SmokeBeta` | number (< 0) | `0` | – | |
 
 ## `[WildfireModule]`
 
-| Key | Type | Default | Notes |
-|-----|------|---------|-------|
-| `Enabled` | bool | `false` | |
-| `Module` | `AscImport`\|`ELMFIRE` | – | Required when enabled. `ELMFIRE` runs ELMFIRE; `AscImport` reads a fire computed elsewhere. `ElmClone` — the removed cell-based model — is reported on load rather than silently mapped to either, since the two produce different fires. |
-| `GraphicalFireInputFile` | path | – | Painted WUI area / ignition area / initial ignition, written by the fire paint window. Optional. |
+| Key | Type | Default | Critical | Notes |
+|---|---|---|---|---|
+| `Enabled` | bool | – | – | Always write it. Without it v1 does not read the rest of the section, the `[IgnitionPoint]`s or `[ELMFIRE]`, and a save drops them — a [known issue](../CHANGELOG.md#known-issues). |
+| `Module` | `ELMFIRE` \| `AscImport` | – | yes, when enabled | `ELMFIRE` runs ELMFIRE on the scenario's case; `AscImport` reads a fire computed elsewhere. `None` with the module enabled is critical. `ElmClone`/`CellSpread` (the removed cell-based model) are reported as removed. |
+| `GraphicalFireInputFile` | `.gfi` path | – | – | The painted WUI area, ignition area and initial ignition ([below](#painted-areas-gfi)). Kept even when the file is missing, so a save does not lose the reference. |
+
+### `[IgnitionPoint]` — repeatable
+
+Fixed ignitions for a single run, placed with Fire > Ignition points. The case build measures them in the case's
+own CRS; a point outside the case grid is dropped and reported, never moved to the edge. They win over a painted
+initial ignition, and switch ELMFIRE's random ignition off. A campaign ignores them: each realization draws its
+own ignition.
+
+| Key | Type | Default | Critical | Notes |
+|---|---|---|---|---|
+| `LatLon` | lat,lon | – | yes | WGS84, so the point means the same ground whatever grid the case ends up on. |
+| `AbsoluteTime` | bool | `false` | – | |
+| `IgnitionTime` | seconds | `0` | – | After the simulation start, when `AbsoluteTime=false`. |
+| `IgnitionDateTime` | date | – | yes, when `AbsoluteTime=true` | The seconds are derived from it, so moving the scenario's start moves the ignition with it. |
 
 ### `[AscImport]` — when `Module=AscImport`
 
-Imports pre-computed fire behaviour rasters (from FARSITE, FlamMap, Prometheus,
-WISE, …). This is the recommended, validated fire module.
+A fire computed elsewhere — FARSITE, FlamMap, Prometheus, an ELMFIRE run by hand. ESRI ASCII (`.asc`) or GeoTIFF;
+all on one grid. A campaign writes this section into every realization's scenario.
 
-| Key | Type | Required | Notes |
-|-----|------|----------|-------|
-| `StartDateTime` | ISO 8601 | ✔ | Fire clock start. |
-| `TimeOfArrivalFile` | asc path | ✔ | `TOA.asc`. |
-| `RateOfSpreadFile` | asc path | ✔ | `ROS.asc`. |
-| `SpreadDirectionFile` | asc path | ✔ | `SD.asc`. |
-| `FirelineIntensityFile` | asc path | | `FI.asc`. |
-| `FuelModelFile` | raster path | | **Display only.** What the output window's fuel model mode draws; nothing about the fire depends on it, since an imported fire arrives with its behaviour computed. Must be on the fire grid. Set automatically for an ELMFIRE fire from the case's own `fbfm40`/`fbfm13`. |
-| `TimeOfArrivalUnits` | `Minutes`\|`Seconds` | | What the arrival times are measured in. Default `Seconds`. |
-
-**`TimeOfArrivalUnits` cannot be inferred from the raster, and getting it wrong is silent** — the fire
-arrives 60× early or late, which reads as a fire that barely moves or one that has already swept the
-domain before the evacuation starts. So the reader logs which unit it used, whichever way it goes.
-
-**Seconds is the default**: ELMFIRE writes seconds (`time_of_arrival` holds the simulation clock directly —
-a 600 s run produces values up to 370.8), and seconds is what the simulation clock and everything
-downstream work in. **FARSITE, FlamMap and Prometheus write minutes**, so a scenario importing one of those
-must say `TimeOfArrivalUnits=Minutes`. The four examples that ship do, explicitly, rather than relying on a
-default that could move under them.
+| Key | Type | Default | Critical | Notes |
+|---|---|---|---|---|
+| `StartDateTime` | date | – | yes | The moment arrival time 0 corresponds to. |
+| `TimeOfArrivalFile` | raster | – | yes | Also decides the simulation's UTM zone when it carries a CRS (a GeoTIFF, or an `.asc` with a `.prj`). |
+| `TimeOfArrivalUnits` | `Seconds` \| `Minutes` | `Seconds` | – | Cannot be read from the raster. ELMFIRE writes seconds; FARSITE, FlamMap and Prometheus write minutes. Wrong is silent: the fire arrives 60 times early or late. |
+| `RateOfSpreadFile` | raster | – | yes | m/min. |
+| `SpreadDirectionFile` | raster | – | yes | Degrees clockwise from north, the direction of spread. |
+| `FirelineIntensityFile` | raster | – | – | kW/m; reads as 0 without it. |
+| `MidflameWindSpeedFile` | raster | – | – | Midflame wind in **ft/min** (as ELMFIRE's `mfws_*.tif`). k-PERIL uses it, converted to mi/h, when set; without it, it falls back to `[kPERIL] WindSpeedFile` and warns. |
+| `FuelModelFile` | raster | – | – | Read and kept; nothing uses it. |
 
 ### `[ELMFIRE]` — when `Module=ELMFIRE`
 
-Runs ELMFIRE itself. Every key is optional — a scenario that says nothing but `Module=ELMFIRE` runs the
-vendored build against an `elmfire/` case beside it.
-
-ELMFIRE is a batch program: it computes a whole fire and writes rasters, so it cannot be stepped alongside
-the evacuation. The module runs it once when the simulation starts and then reads its output through the
-same reader `[AscImport]` uses, so an ELMFIRE fire and an imported one are the same thing from that point.
-Output already in the case folder is reused, so the wait falls on the first run.
-
-The namelist is **generated from the scenario** — see `[ElmfireNamelist]` below. A case that already has an
-`elmfire.data` keeps it, since that is where physics gets tuned by hand; `RebuildExistingLayers`, or
-deleting the file, is what lets regenerated settings reach it.
-
-When a `NamelistTemplate` is named instead, the coupling only patches the few keys it must: `PATH_TO_GDAL`,
-`SIMULATION_TSTOP`, and the dumps the reader needs (`DUMP_TIME_OF_ARRIVAL`, `DUMP_SPREAD_RATE`,
-`DUMP_SPREAD_DIRECTION`, `SPREAD_RATE_IN_M`). Everything else stays the template's, and `[ElmfireNamelist]`
-is not used at all.
+How ELMFIRE is run. Every key is optional: a scenario that only says `Module=ELMFIRE` runs the ELMFIRE build in
+the repository on a case in an `elmfire/` folder beside the `.wui`. What has to exist (the executable, the case,
+its rasters) is checked when the run starts. [ELMFIRE cases](elmfire-cases.md) describes the case this builds.
 
 | Key | Type | Default | Notes |
-|-----|------|---------|-------|
-| `CaseDirectory` | path | `elmfire` | Holds `inputs/`, `outputs/`, `scratch/` and the namelist. |
-| `ElmfireExe` | path | vendored build | `ThirdParty/elmfire/build/windows/bin/elmfire.exe` when empty. **Override only — not offered in the GUI**, which reports which build was resolved instead. |
-| `NamelistTemplate` | path | the case's `elmfire.data` | Resolved against the case directory first, then the scenario folder — the file picker writes scenario-relative paths, so `elmfire/mati.data` works. The console says which was used. |
-| `SimulationTstopHours` | float | `8` | Hours of fire, converted to seconds for ELMFIRE's `SIMULATION_TSTOP`. Independent of the evacuation's end time. **The case needs at least this many hourly weather bands** or ELMFIRE refuses the run. Supersedes `SimulationTstopSeconds`, which is still read (and divided by 3600) so existing scenarios keep their duration. |
-| `ReuseExistingOutput` | bool | `true` | Off means ELMFIRE runs again every simulation. |
-| `BuildCase` | bool | `false` | Produce only the layers the case is **missing** — a DEM if it has none, then slope, aspect, adj/phi, weather, namelist. Safe on a prepared case. |
-| `RebuildExistingLayers` | bool | `false` | Replace layers the case already has. Only needed when the domain or cell size changed; otherwise destructive — canopy with no source is refilled with zeros, and the namelist is rewritten. |
-| `CellSizeMetres` | float | `30` | Master grid resolution, when building. |
-| `PaddingMetres` | float | `2000` | Margin beyond the domain, so the fire is not clipped at its edge. |
-| `PathToGdal` | path | – | GDAL bin directory. Located automatically from `PATH`, then a QGIS or OSGeo4W install, and ELMFIRE's own `PATH_TO_GDAL='auto'` resolves it from there. **Override only — not offered in the GUI**, which reports which install was resolved. Set it to force a particular one. |
-| `WindNinjaExe` | path | – | **Override only — not offered in the GUI**, which reports what was found. `WindNinja_cli.exe`, for an install the probe does not find (`WINDNINJA_CLI`, then `PATH`, then `C:\WindNinja` and the `Program Files` roots). Used only while building. Without WindNinja the weather stage writes **one wind value across the whole domain**, which costs k-PERIL the terrain variation its spread ellipse is built from, so the trigger boundary comes out circular. The build reports which of the two it did. |
+|---|---|---|---|
+| `CaseDirectory` | folder | `elmfire` | Holds `inputs/`, `outputs/`, `scratch/`, `climatology/` and the namelist. |
+| `ElmfireExe` | path | the repository's build | `WUInity/Assets/ThirdParty/elmfire/build/windows/bin/elmfire.exe` (`build/linux/bin/elmfire` on Linux). Must be built from a7fb9d6 or later. |
+| `NamelistTemplate` | path | – | A namelist to run as it is, instead of the one generated from `[ElmfireNamelist]`. Looked for in the case folder, then beside the `.wui`. Only the stop time, `PATH_TO_GDAL`, the required outputs and the fuel table are written into it. |
+| `SimulationTstopHours` | hours | `8` | How long the fire burns, 1 to 240; independent of the evacuation's end. The GUI gives a new scenario its time window (at least 24 h). A legacy `SimulationTstopSeconds` is read (÷ 3600) when this key is absent. |
+| `CellSizeMetres` | metres | `30` | Case grid resolution. |
+| `PaddingMetres` | metres | `2000` | Margin around the evacuation domain, so the fire is not clipped at its edge. |
+| `ReuseExistingOutput` | bool | `true` | Reuse the case's `outputs/` when the namelist, the executable and every input are the same by content as the run that wrote them. |
+| `BuildCase` | bool | `false` | Build the case before each run. The GUI's Build fire case does it on demand instead. |
+| `RebuildExistingLayers` | bool | `false` | Replace every layer the case already has (re-warp sources, redraw the weather). Canopy with no source named is refilled with zeros. |
+| `PathToGdal` | folder | found | GDAL tools for ELMFIRE (`gdal_translate`, `gdalinfo`, `gdalsrsinfo`). Found on `PATH`, in QGIS, OSGeo4W or `SUMO_HOME`. |
+| `WindNinjaExe` | path | found | `WINDNINJA_CLI`, `PATH`, `C:\WindNinja`, Program Files. |
+| `CanopyDatasetFolder` | folder | – | The FIRE-RES pan-European canopy rasters (`panEu_canopyCover.tif`, `panEu_canopyHeight.tif`, `panEu_cbh.tif`, `panEu_cbd.tif`), for any canopy layer not named below. Real units: the LANDFIRE scaling flags are forced off. |
 
-#### Source layers — read only while building
+**Source layers.** Fuel, canopy and buildings have no global download, so they are named here. Any CRS and
+resolution: each is warped onto the case grid when the case is built, nearest-neighbour for class layers and
+bilinear for continuous ones. A layer the case already has is kept unless `RebuildExistingLayers` is on. A path
+that does not resolve is warned about at load and skipped at build. The GUI's LANDFIRE download (US) fills the
+fuel and canopy keys.
 
-Fuel, canopy and buildings have no global source the builder can download, so they are named here. Any CRS and
-any resolution: each is warped onto the case's master grid, **nearest-neighbour** for the categorical layers
-(fuel models, masks — averaging model 1 and model 9 would give model 5, a fuel neither cell contains) and
-bilinear for the continuous ones. Paths are relative to the scenario folder.
-
-A layer the case already carries is **kept** rather than re-warped unless `RebuildExistingLayers` is on, so
-naming a source is safe on a prepared case. A path that is set but does not resolve is reported by name and
-that layer skipped.
-
-| Key | Becomes | Notes |
+| Key | Case stem | Notes |
 |---|---|---|
-| `FuelModelFile` | `fbfm40.tif` / `fbfm13.tif` | Which, per `FuelModelStandard`. Categorical. |
-| `FuelModelStandard` | – | `FBFM40` (default, what LANDFIRE and the global products ship) or `FBFM13`. |
-| `CanopyCoverFile` | `cc.tif` | Percent. Also shades Nelson's dead fuel sticks. |
-| `CanopyHeightFile` | `ch.tif` | See `CH_TIMES_10` for the LANDFIRE scaled-integer trap. |
-| `CanopyBaseHeightFile` | `cbh.tif` | See `CBH_TIMES_10`. |
-| `CanopyBulkDensityFile` | `cbd.tif` | |
-| `BuildingAreaFile` | `bldg_area_avg.tif` | |
-| `BuildingSeparationFile` | `bldg_separation_distance.tif` | |
-| `BuildingNonBurnableFractionFile` | `bldg_nonburnable_frac.tif` | |
-| `BuildingFootprintFractionFile` | `bldg_footprint_frac.tif` | |
-| `BuildingFuelModelFile` | `bldg_fuel_model.tif` | Categorical; pairs with `building_fuel_models.csv`. |
-| `IgnitionMaskFile` | `ignition_mask.tif` | Categorical. A painted ignition area becomes this automatically. |
-| `BarriersFile` | `barriers.tif` | Fuel breaks and other barriers to spread. |
+| `FuelModelFile` | `fbfm40` or `fbfm13` | Class layer. |
+| `FuelModelStandard` | – | `FBFM40` (Scott & Burgan 40, default) or `FBFM13` (Anderson 13). |
+| `CanopyCoverFile` | `cc` | Percent. |
+| `CanopyHeightFile` | `ch` | See `CH_TIMES_10`. |
+| `CanopyBaseHeightFile` | `cbh` | See `CBH_TIMES_10`. |
+| `CanopyBulkDensityFile` | `cbd` | See `CBD_TIMES_100`. |
+| `BuildingAreaFile` | `bldg_area_avg` | The building spread model needs all five building layers. |
+| `BuildingSeparationFile` | `bldg_separation_distance` | |
+| `BuildingNonBurnableFractionFile` | `bldg_nonburnable_frac` | |
+| `BuildingFootprintFractionFile` | `bldg_footprint_frac` | |
+| `BuildingFuelModelFile` | `bldg_fuel_model` | Class layer; pairs with `building_fuel_models.csv`. |
+| `IgnitionMaskFile` | `ignition_mask` | Class layer. A painted ignition area replaces it. |
+| `BarriersFile` | `barriers` | Fuel breaks. |
+| `SuppressionDifficultyFile` | `sdi` | For `USE_SDI`. |
+| `LandValueFile` | `land_value` | For `USE_LAND_VALUE`. |
+| `PopulationDensityFile` | `population_density` | For `USE_POPULATION_DENSITY`. |
+| `RealEstateValueFile` | `real_estate_value` | For `USE_REAL_ESTATE_VALUE`. |
+| `EnergyReleaseComponentFile` | `erc` | For `USE_ERC`. |
+| `PyromesFile` | `pyromes` | For `USE_PYROMES` and the per-pyrome tables. |
 
-Two silences worth knowing, both of which the scenario editor now states on screen:
+In v1 the last six keys (`SuppressionDifficultyFile` to `PyromesFile`) are saved but not read back when the
+scenario is opened again — a [known issue](../CHANGELOG.md#known-issues).
 
-- **Canopy absent is filled with zeros**, which means surface fire only and no crown fire. A case with no
-  canopy builds and runs perfectly happily, so nothing else says so.
-- **The building spread model needs all five** `Building*` layers. Four is the state worth watching: the
-  layers are ingested and then not used, so `USE_BLDG_SPREAD_MODEL` stays off.
-
-`PREACTcli build-case` reads these same keys, and an explicit `--cc`/`--fbfm40`/… flag overrides the scenario
-rather than the other way round, so one layer can be tried against a scenario without editing it.
+Without canopy the case gets zero canopy — surface fire only, no crown fire — and the build says so.
 
 ### `[ElmfireNamelist]` — when `Module=ELMFIRE`
 
-The modelling choices the generated `elmfire.data` carries: canopy scaling, moisture, time stepping,
-ignition mode, crown fire, spotting, building spread, and which output rasters to dump. Around a hundred
-keys, all optional — a scenario without the section gets defaults that are ELMFIRE's own, except where the
-case builder's rasters make another value the only correct one.
+The modelling choices the generated `elmfire.data` carries: 255 of ELMFIRE's own keys, **named exactly as in
+ELMFIRE's namelist** (so a value can be checked against ELMFIRE's documentation), plus one of WUInity's. All are
+optional; without the section, ELMFIRE's defaults apply except where the case makes another value the only
+correct one. Edit them on the Fire > Fire behaviour (namelist) page, which groups them as ELMFIRE does and
+disables what the current choices make inert; Fire > Preview namelist shows the file they produce. The Fire model
+settings page's **Read this case into the editor** fills them from a case's existing namelist. A value that
+cannot be read is critical.
 
-**Key names are ELMFIRE's, verbatim**, so a value can be checked against ELMFIRE's documentation without a
-translation table, and the section reads like the namelist it produces. Edit them in the scenario editor's
-Hazards > Fire behaviour tab, which groups them the way ELMFIRE's namelist groups them and can preview the resulting file.
+Groups covered: `&INPUTS`, `&OUTPUTS`, `&SIMULATOR`, `&TIME_CONTROL`, `&MONTE_CARLO`, `&SPOTTING`,
+`&SUPPRESSION`, `&SMOKE`, `&CALIBRATION`, `&WUI`, `&MISCELLANEOUS`. Frequently changed:
 
-Two keys are WUInity's rather than ELMFIRE's:
+| Key | Default | Notes |
+|---|---|---|
+| `DT_METEOROLOGY` | `3600` | Seconds per weather band. The case's weather is written at this interval. |
+| `MeteorologyBands` | `0` | WUInity's. Weather bands to read; `0` counts them from the case's `ws.tif`, which is what you want. |
+| `WX_BANDS_KEPT_IN_MEM` | `30` | Weather bands ELMFIRE holds at once; lower saves memory on long fires (at least 2). |
+| `SIMULATION_DT`, `SIMULATION_DTMAX`, `TARGET_CFL` | `5`, `300`, `0.4` | Time stepping. |
+| `DTDUMP` | `3600` | Seconds between raster dumps. |
+| `LH_MOISTURE_CONTENT`, `LW_MOISTURE_CONTENT` | `60`, `90` | Live herbaceous and woody moisture, percent (a campaign draws its own). |
+| `FOLIAR_MOISTURE_CONTENT` | `90` | |
+| `CC_IN_PERCENT`, `CH_TIMES_10`, `CBH_TIMES_10`, `CBD_TIMES_100` | `true`, `false`, `false`, `false` | Canopy units. LANDFIRE stores height ×10 and bulk density ×100: the LANDFIRE download switches the three scaling flags on; FIRE-RES canopy forces them off. |
+| `ENABLE_SPOTTING` | `true` | With it off, the ember outputs are written off too (ELMFIRE otherwise crashes in MPI). |
+| `CROWN_FIRE_MODEL` | `1` | |
+| `USE_BLDG_SPREAD_MODEL` | – | Written on only when the case has all five building layers (or constant building parameters are on). |
+| `RANDOM_IGNITIONS`, `USE_IGNITION_MASK` | `false` | Forced off when the scenario has `[IgnitionPoint]`s. |
+| `SEED` | `2024` | A campaign sets it per realization. `RANDOMIZE_RANDOM_SEED` is refused (it would make every realization's seed meaningless). |
+| `MAX_RUNTIME` | `999999` | Wall-clock seconds; a campaign sets its own limit. |
 
-| Key | Type | Default | Notes |
-|-----|------|---------|-------|
-| `MeteorologyBands` | int | `0` | How many hourly weather bands to read. `0` counts them from the case's own `ws.tif`, which is what you want: too many fails the run, too few silently reuses hour one for the whole fire. Becomes `METEOROLOGY_BAND_STOP` / `NUM_METEOROLOGY_TIMES`. |
-| `RANDOM_IGNITIONS` / `USE_IGNITION_MASK` | bool | `false` | Both are forced off when the scenario has `[IgnitionPoint]` sections: explicit coordinates win, and the namelist says so in a comment. |
-
-Not in this section, deliberately: filenames, the grid, the time base, and the ignition coordinates. Those
-are facts about the case rather than choices, and are read off the case at build time. Offering them here
-would be offering the chance to disagree with the rasters, and a namelist that disagrees with its case
-fails in ways that name the wrong thing.
-
-Some keys are also written conditionally, because ELMFIRE's failure modes for the combinations are poor:
-
-- The **ember outputs** (`DUMP_SPOTTING_OUTPUTS`, `ACCUMULATE_EMBER_FLUX`, `DUMP_EMBER_FLUX`,
-  `DUMP_EMBER_IGNITION`) are written as `.FALSE.` whenever `ENABLE_SPOTTING` is off. With spotting off
-  their arrays are never allocated and ELMFIRE reduces a null pointer across MPI, dying with
-  `Fatal error in internal_Reduce: Invalid buffer pointer` — an error naming MPI, about a raster, caused
-  by an output flag.
-- **`USE_BLDG_SPREAD_MODEL`** is written as `.FALSE.` unless the case carries the complete set of five
-  building rasters or `USE_CONSTANT_BLDG_SPREAD_MODEL_PARAMS` is on. A partial set makes ELMFIRE read a
-  raster nobody produced.
-- The four **ember model** keys (`GENERATION_MODEL`, `SPOTTING_DISTANCE_MODEL`, `ACCUMULATION_MODEL`,
-  `IGNITION_MODEL`) are only written with `USE_SUPERSEDED_SPOTTING` off, which is the only state in which
-  ELMFIRE reads them.
-
-### `[IgnitionPoint]` — repeated, one per point
-
-Where a fire starts. Placed in the ignition point editor and read by the ELMFIRE case builder, which
-measures it in the case's own CRS. Independent of which fire module is selected.
-
-| Key | Type | Required | Notes |
-|-----|------|----------|-------|
-| `LatLon` | lat,lon | ✔ | WGS84. Deliberately not projected coordinates - see `docs/elmfire-case-automation.md`. |
-| `AbsoluteTime` | bool | | `true` to give a date and time rather than seconds. |
-| `IgnitionTime` | float | | Seconds from the simulation start, when `AbsoluteTime=false`. |
-| `IgnitionDateTime` | ISO 8601 | | When `AbsoluteTime=true`. The seconds are derived from it, so moving the simulation's start moves the ignition with it. |
-
-## `[TriggerBufferModule]`
-
-| Key | Type | Default | Notes |
-|-----|------|---------|-------|
-| `Enabled` | bool | `false` | |
-| `Module` | `kPERIL` | – | k-PERIL is integrated but not fully tested. |
-
-### `[kPERIL]`
-
-| Key | Type | Required | Default |
-|-----|------|----------|---------|
-| `MidflameWindspeed` | float | ✔ | – |
-| `OutputName` | string | ✔ | – |
-| `WuiAreaFile` | raster path | | Mask of the protected WUI area (cell value `1` = WUI). Without it k-PERIL has no community to protect and the trigger boundary is empty. |
-
-The rate of spread always comes from the fire module. `CalculateROSFromBehave`, `InitialFuelMoistureFile`
-and `FuelModelsFile` are **gone**, with BEHAVE itself — see [Modules](modules.md). A scenario that still
-carries them loads fine; the keys are ignored.
-
-`WindSpeedFile`/`WindDirectionFile` are **filled in from the ELMFIRE case** (`inputs/ws.tif`, `inputs/wd.tif`)
-when `Module=ELMFIRE` and they are not set here — the same wind the fire was computed with. Set them only
-to override that.
-
-An ELMFIRE case's wind rasters hold **one band per hour**. k-PERIL computes on a single wind field: its
-solver has no time axis, and the wind enters it once, as the length-to-breadth ratio of the Huygens ellipse
-at each cell. So the field is composed **per cell, from the band covering the hour the fire actually reached
-that cell** — a property of the fire rather than a setting, which is why there is no key for it. Cells the
-fire never reached take the last band; they lie ahead of the front, and k-PERIL evaluates the whole grid
-rather than just the burned footprint. The run logs how many cells came from each band.
-
-The band interval comes from `[ElmfireNamelist] DT_METEOROLOGY` for an ELMFIRE fire — the same value the fire
-was computed with. For an imported fire nothing in the scenario states it, so hourly is assumed.
-
-Building a case produces that series: one band per `DT_METEOROLOGY` step of `SimulationTstopSeconds`, each
-from its own hour of the sampled historical day, with a WindNinja solve per band. All five weather rasters
-(`ws`, `wd`, `m1`, `m10`, `m100`) always come out with the **same** band count, including when a stage falls
-back to uniform values — ELMFIRE reads them all against one `NUM_METEOROLOGY_TIMES`.
-
-This replaces `WindBand`, which chose one hour for the whole domain: an eight-hour burn was evaluated
-entirely against its first hour, so a fire that swung 90° mid-run had its later half analysed against wind it
-never saw. A `WindBand` key in an older scenario is ignored.
-
-k-PERIL takes the required safe egress time (RSET / WRSET) from the run itself:
-the **last-arrival evacuation time** (when the final vehicle reaches safety),
-converted to minutes. It is not a `.wui` key.
-
-Raster inputs (fire `.asc`/GeoTIFF, the WUI mask, topography) may be supplied as
-either ESRI ASCII grids (`.asc`) or GeoTIFF (`.tif`/`.tiff`) — the format is
-detected from the file extension.
+Not settings, and not in this section, because they are facts about the case: the filenames, the grid, the time
+base (`CURRENT_YEAR`, `HOUR_OF_YEAR`), the band count, the ignition coordinates and `SIMULATION_TSTOP` (from
+`SimulationTstopHours`). Every run forces `DUMP_TIME_OF_ARRIVAL`, `DUMP_SPREAD_RATE`, `DUMP_SPREAD_DIRECTION`,
+`SPREAD_RATE_IN_M` and `DUMP_MIDFLAME_WINDSPEED` on, whatever this section or a template says.
 
 ## `[SmokeModule]`
 
-| Key | Type | Default | Notes |
-|-----|------|---------|-------|
-| `Enabled` | bool | `false` | |
-| `Module` | `GlobalSmoke` | `GlobalSmoke` | The only smoke module. |
+| Key | Type | Default | Critical | Notes |
+|---|---|---|---|---|
+| `Enabled` | bool | `false` | – | |
+| `Module` | `GlobalSmoke` | `None` | yes, when enabled | |
 
 ### `[GlobalSmoke]`
 
-| Key | Type | Required | Notes |
-|-----|------|----------|-------|
-| `ExtinctionFile` | .exc path | ✔ | Global extinction coefficient over time. |
+| Key | Type | Critical | Notes |
+|---|---|---|---|
+| `ExtinctionFile` | `.exc` path | yes | The extinction coefficient over the whole domain over time ([below](#extinction-ramp-exc)). |
 
-## `[Events]` — optional
+## `[TriggerBufferModule]`
 
-| Key | Type | Notes |
-|-----|------|-------|
-| `BlockGoalEventFiles` | file list | Comma-separated list of event files. |
+| Key | Type | Default | Critical | Notes |
+|---|---|---|---|---|
+| `Enabled` | bool | `false` | – | |
+| `Module` | `kPERIL` | `None` | yes, when enabled | With the boundary on, a `[kPERIL]` section is critical. |
+
+### `[kPERIL]`
+
+k-PERIL computes the trigger boundary once the evacuation has run, from the fire's rate of spread and direction,
+the wind, the case's slope and aspect, and the required safe egress time — the run's own last-arrival time, in
+minutes. No boundary is computed for an area the fire never reached. See [Modules](modules.md#trigger-boundary).
+
+| Key | Type | Default | Critical | Notes |
+|---|---|---|---|---|
+| `WuiAreaSource` | `Raster` \| `EvacuationGroupsCombined` \| `EvacuationGroupsSeparate` | `Raster` | – | What k-PERIL protects: the WUI raster, the union of the evacuation groups' areas, or one boundary per group. A campaign refuses `EvacuationGroupsSeparate`. |
+| `WuiAreaFile` | raster | – | yes, when named and missing | The WUI area (1 = protected). Building the ELMFIRE case writes `elmfire/inputs/wui_area.tif` from the painted WUI area and points this at it. Without it, an ELMFIRE run uses its case's `wui_area.tif`, and failing that the painted WUI area if it is on the fire grid. |
+| `OutputName` | text | `trigger_boundary` | – | Names the output: `_output/<run index>_<OutputName>`, with `.asc` added when it has no extension, and the group's name before the extension when there is one boundary per group. |
+| `WindSpeedFile` | raster, **mi/h** | – | yes, when named and missing | Fallback only. With an ELMFIRE fire, or `[AscImport] MidflameWindSpeedFile`, the fire's own midflame wind is used and this is ignored. Otherwise it is used *as* midflame wind, with a warning. |
+| `WindDirectionFile` | raster, degrees (from) | – | yes, when named and missing | For an imported fire. An ELMFIRE fire's own weather direction is used instead and this is ignored with a warning. Multi-band: each cell takes the band covering the time the fire reached it. |
+| `WindBandSeconds` | seconds | `3600` | – | Seconds per band of the two wind rasters, for an imported fire. An ELMFIRE fire supplies its own. |
+
+`WindBand` (one hour for the whole domain) is no longer read.
 
 ---
 
-## Legacy keys
+## Retired keys and sections
 
-These keys appear in some shipped examples but are **not read** by the current
-parser. They are harmless (silently ignored) but do nothing — do not rely on
-them:
+Tolerated when read, reported once, and not written again:
 
-| Key | Section | Replacement |
-|-----|---------|-------------|
-| `EvacuationOrderStart` | `[Evacuation]` | Per-group `EvacuationOrderDateTime`. |
-| `MaxSimTime` | `[Simulation]` | `EndDateTime`. |
-| `UTMoffset` | `[SUMO]` | Derived internally. |
-| `RootFolder`, `WeatherStreamFile` | `[AscImport]` | Give paths relative to the `.wui` folder. |
-| `GraphicalFireInputFile` | `[WildfireModule]` | (commented out in the parser). |
+| Where | What | Now |
+|---|---|---|
+| `[Events]` | the whole section | Never implemented; removed. |
+| `[WUIShow]` | the whole section | The streaming output was removed. |
+| `[Evacuation]` | `UseTriggerBufferEvacuation`, `TriggerBufferFile`, `EvacuationOrderStart` | Never read by the engine. Use each group's `EvacuationOrderDateTime`. |
+| `[Weather]` | `DesiredLatLon` | Read but never used; ignored. |
+| `[TrafficModule]` | `VisibilityAffectsSpeed` | Ignored; smoke acts through `[SUMO] SmokeAlpha/SmokeBeta`. |
+| `[kPERIL]` | `WindBand` | Ignored; the band is chosen per cell from the arrival time. |
+| `[kPERIL]` | `MidflameWindspeed`, `CalculateROSFromBehave`, `InitialFuelMoistureFile`, `FuelModelsFile` | Ignored; the rate of spread always comes from the fire module. |
+| `[ELMFIRE]` | `SimulationTstopSeconds` | Read (÷ 3600) when `SimulationTstopHours` is absent; the next save writes hours. |
+| `[WildfireModule]` | `Module=ElmClone` / `CellSpread` | The cell-based model is gone; choose `ELMFIRE` or `AscImport`. |
 
 ---
 
-## Companion file formats
+## Companion files
 
 ### Population CSV
 
-Header row followed by one row per household:
+A header row, then one household per row:
 
 ```
 OriginLat,OriginLon,AccessLat,AccessLon,People
+39.3829238878821,-105.042008820747,39.38234,-105.0416,5
 ```
 
-- `OriginLat,OriginLon` – household (home) location.
-- `AccessLat,AccessLon` – the vehicle's road-access point. This must lie on the
-  road network, otherwise the vehicle is teleported to the nearest valid edge.
-- `People` – number of people in the household (integer).
-
-Generate this file with Data > Population (workflow step 3) in the visualizer or
-[`PREACTcli global-gpw-to-pop`](command-line-tools.md).
-
-### Fire rasters (`[AscImport]`)
-
-ESRI ASCII grids (`.asc`): `TOA.asc` (time of arrival), `ROS.asc` (rate of
-spread), `SD.asc` (spread direction) and, optionally, `FI.asc` (fireline
-intensity). WUI-NITY also accepts LCP and GeoTIFF landscape formats.
+`Origin` is the home; `Access` is where the household's car joins the road network (a point off the network is
+moved to the nearest edge); `People` is an integer. Blank lines are skipped; a malformed line is reported by
+number. The GUI's Population step (WorldPop to households) and
+[`PREACTcli global-gpw-to-pop`](command-line-tools.md#global-gpw-to-pop--population-csv-from-gpw) write it.
 
 ### Weather CSV
 
-Three metadata rows (latitude, longitude, elevation), then a header row, then
-hourly data: time, temperature, relative humidity, precipitation, wind speed,
-wind direction, cloud cover, radiation, boundary-layer height and the derived
-fire-weather indices (FFMC, DMC, DC, ISI, BUI, FWI).
+The layout Open-Meteo downloads are written in: three metadata rows, a header row, then one row per hour.
+
+```
+Latitide,50.22847
+Longitude,-121.579
+Elevation,254
+Time,Temperature_2m [°C],Relativehumidity_2m [%],Precipitation [mm],Windspeed_10m [m/s],Winddirection_10m [°],Cloudcover [%],Direct_radiation [W/m²],Boundary_layer_height [m],FFMC hourly [-],FFMC [-],DMC [-],DC [-],ISI [-],BUI [-],FWI [-]
+2021-01-01T00:00,6.2,71,0,1.34,207,97,3,150,84.96,0,0,0,0,0,0
+```
+
+Times are UTC. The case's ERA5 archive (`<case>/climatology/<Name>_era5_hourly.csv`) is the same layout with
+`archive_format=2` appended to the header line, marking codes derived at local noon from km/h wind and 24 h rain;
+an older archive is re-derived once when it is next read.
+
+### Extinction ramp (`.exc`)
+
+A header line, then `time,extinction coefficient` rows — seconds from the start, and 1/m — linearly
+interpolated:
+
+```
+time, ext. coeff. [1/m]
+0.0, 0.2
+360000, 0.2
+```
+
+### Fire rasters
+
+ESRI ASCII grids (`.asc`, header keywords in any order, `xllcorner`/`xllcenter`, optional `NODATA_value`) or
+GeoTIFFs; the format is taken from the extension. An `.asc` has no CRS unless a `.prj` sits beside it; without
+one it is assumed to be in the simulation's zone, with a warning. ELMFIRE's arrival times are seconds and its
+rates of spread m/min (with `SPREAD_RATE_IN_M`); FARSITE/FlamMap arrival times are minutes.
+
+### Painted areas (`.gfi`)
+
+Written by Fire > Fire areas. A binary file: the grid's column and row counts, then one byte per cell for each of
+four masks (WUI area, random-ignition area, initial ignition, and a trigger-buffer mask nothing uses), rows
+running north. It may end with a trailer recording the grid's south-west corner, cell size and EPSG code; without
+it a painting is matched to a grid by its size alone. An ELMFIRE scenario is painted on the case's `dem.tif`; a
+painting made on another grid is moved onto it with step 6's **Move painting onto the fire-case grid**, which
+writes `<name>_<W>x<H>.gfi` beside the original — see [ELMFIRE cases](elmfire-cases.md#painted-areas).
+
+### Evacuation group masks
+
+Written by Evacuation > Paint group areas as `evac_group_<name>.asc`, one per group, and named by that group's
+`MaskFile`. They are placed on the fire grid by cell, in simulation coordinates; they carry no georeference of
+their own.
