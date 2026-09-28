@@ -333,9 +333,6 @@ fuel and canopy keys.
 | `EnergyReleaseComponentFile` | `erc` | For `USE_ERC`. |
 | `PyromesFile` | `pyromes` | For `USE_PYROMES` and the per-pyrome tables. |
 
-In v1 the last six keys (`SuppressionDifficultyFile` to `PyromesFile`) are saved but not read back when the
-scenario is opened again — a [known issue](../CHANGELOG.md#known-issues).
-
 Without canopy the case gets zero canopy — surface fire only, no crown fire — and the build says so.
 
 ### `[ElmfireNamelist]` — when `Module=ELMFIRE`

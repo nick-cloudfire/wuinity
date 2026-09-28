@@ -245,14 +245,55 @@ namespace PREACT.Input
         /// </summary>
         public string PyromesFile = string.Empty;
 
+        /// <summary>One source layer: its <c>[ELMFIRE]</c> key, the ELMFIRE stem it becomes, and its field.</summary>
+        private sealed class SourceLayer
+        {
+            public readonly string Key;
+            public readonly string Stem;
+            public readonly Func<ElmfireInput, string> Get;
+            public readonly Action<ElmfireInput, string> Set;
+
+            public SourceLayer(string key, string stem, Func<ElmfireInput, string> get, Action<ElmfireInput, string> set)
+            {
+                Key = key;
+                Stem = stem;
+                Get = get;
+                Set = set;
+            }
+        }
+
         /// <summary>
-        /// The named source layers as (ELMFIRE stem, path) pairs, skipping the ones left empty.
+        /// Every source layer but the fuel model (whose stem depends on <see cref="FuelModelStandard"/>), in the
+        /// order they are listed to ELMFIRE.
         /// </summary>
         /// <remarks>
-        /// The mapping from field to stem lives here rather than at the call site so that adding a layer is one
-        /// edit: the stems are ELMFIRE's filenames and the field names are this codebase's, and nothing else
-        /// should have to know both.
+        /// The one list the parser, <see cref="GetSourceRasters"/> and <see cref="LoadSourcesFromCase"/> all read, so
+        /// that adding a layer is one edit: the stems are ELMFIRE's filenames and the keys are this codebase's, and
+        /// nothing else should have to know both. There used to be three lists, and the parser's lacked the last six
+        /// layers: <c>SuppressionDifficultyFile</c> to <c>PyromesFile</c> were saved but not read back, so the next
+        /// save of a reopened scenario dropped them.
         /// </remarks>
+        private static readonly SourceLayer[] SourceLayers =
+        {
+            new SourceLayer(nameof(CanopyCoverFile), "cc", e => e.CanopyCoverFile, (e, v) => e.CanopyCoverFile = v),
+            new SourceLayer(nameof(CanopyHeightFile), "ch", e => e.CanopyHeightFile, (e, v) => e.CanopyHeightFile = v),
+            new SourceLayer(nameof(CanopyBaseHeightFile), "cbh", e => e.CanopyBaseHeightFile, (e, v) => e.CanopyBaseHeightFile = v),
+            new SourceLayer(nameof(CanopyBulkDensityFile), "cbd", e => e.CanopyBulkDensityFile, (e, v) => e.CanopyBulkDensityFile = v),
+            new SourceLayer(nameof(BuildingAreaFile), "bldg_area_avg", e => e.BuildingAreaFile, (e, v) => e.BuildingAreaFile = v),
+            new SourceLayer(nameof(BuildingSeparationFile), "bldg_separation_distance", e => e.BuildingSeparationFile, (e, v) => e.BuildingSeparationFile = v),
+            new SourceLayer(nameof(BuildingNonBurnableFractionFile), "bldg_nonburnable_frac", e => e.BuildingNonBurnableFractionFile, (e, v) => e.BuildingNonBurnableFractionFile = v),
+            new SourceLayer(nameof(BuildingFootprintFractionFile), "bldg_footprint_frac", e => e.BuildingFootprintFractionFile, (e, v) => e.BuildingFootprintFractionFile = v),
+            new SourceLayer(nameof(BuildingFuelModelFile), "bldg_fuel_model", e => e.BuildingFuelModelFile, (e, v) => e.BuildingFuelModelFile = v),
+            new SourceLayer(nameof(IgnitionMaskFile), "ignition_mask", e => e.IgnitionMaskFile, (e, v) => e.IgnitionMaskFile = v),
+            new SourceLayer(nameof(BarriersFile), "barriers", e => e.BarriersFile, (e, v) => e.BarriersFile = v),
+            new SourceLayer(nameof(SuppressionDifficultyFile), "sdi", e => e.SuppressionDifficultyFile, (e, v) => e.SuppressionDifficultyFile = v),
+            new SourceLayer(nameof(LandValueFile), "land_value", e => e.LandValueFile, (e, v) => e.LandValueFile = v),
+            new SourceLayer(nameof(PopulationDensityFile), "population_density", e => e.PopulationDensityFile, (e, v) => e.PopulationDensityFile = v),
+            new SourceLayer(nameof(RealEstateValueFile), "real_estate_value", e => e.RealEstateValueFile, (e, v) => e.RealEstateValueFile = v),
+            new SourceLayer(nameof(EnergyReleaseComponentFile), "erc", e => e.EnergyReleaseComponentFile, (e, v) => e.EnergyReleaseComponentFile = v),
+            new SourceLayer(nameof(PyromesFile), "pyromes", e => e.PyromesFile, (e, v) => e.PyromesFile = v),
+        };
+
         /// <summary>
         /// Fills the source-layer fields from a case's own <c>case_sources.txt</c>.
         /// </summary>
@@ -288,29 +329,17 @@ namespace PREACT.Input
             {
                 { "fbfm40", v => { FuelModelFile = v; FuelModelStandard = FuelModelStandards.FBFM40; } },
                 { "fbfm13", v => { FuelModelFile = v; FuelModelStandard = FuelModelStandards.FBFM13; } },
-                { "cc", v => CanopyCoverFile = v },
-                { "ch", v => CanopyHeightFile = v },
-                { "cbh", v => CanopyBaseHeightFile = v },
-                { "cbd", v => CanopyBulkDensityFile = v },
-                { "bldg_area_avg", v => BuildingAreaFile = v },
-                { "bldg_separation_distance", v => BuildingSeparationFile = v },
-                { "bldg_nonburnable_frac", v => BuildingNonBurnableFractionFile = v },
-                { "bldg_footprint_frac", v => BuildingFootprintFractionFile = v },
-                { "bldg_fuel_model", v => BuildingFuelModelFile = v },
-                { "ignition_mask", v => IgnitionMaskFile = v },
-                { "barriers", v => BarriersFile = v },
-                { "sdi", v => SuppressionDifficultyFile = v },
-                { "land_value", v => LandValueFile = v },
-                { "population_density", v => PopulationDensityFile = v },
-                { "real_estate_value", v => RealEstateValueFile = v },
-                { "erc", v => EnergyReleaseComponentFile = v },
-                { "pyromes", v => PyromesFile = v },
                 { "CanopyDatasetFolder", v => CanopyDatasetFolder = v },
                 { "CellSizeMetres", v => { if (double.TryParse(v, System.Globalization.NumberStyles.Float,
                         System.Globalization.CultureInfo.InvariantCulture, out double d) && d > 0) CellSizeMetres = d; } },
                 { "PaddingMetres", v => { if (double.TryParse(v, System.Globalization.NumberStyles.Float,
                         System.Globalization.CultureInfo.InvariantCulture, out double d) && d >= 0) PaddingMetres = d; } },
             };
+            foreach (SourceLayer layer in SourceLayers)
+            {
+                SourceLayer captured = layer;
+                byStem[layer.Stem] = v => captured.Set(this, v);
+            }
 
             foreach (string raw in lines)
             {
@@ -334,33 +363,21 @@ namespace PREACT.Input
             return true;
         }
 
+        /// <summary>
+        /// The named source layers as (ELMFIRE stem, path) pairs, skipping the ones left empty.
+        /// </summary>
         public IEnumerable<KeyValuePair<string, string>> GetSourceRasters()
         {
             string fuelStem = FuelModelStandard == FuelModelStandards.FBFM13 ? "fbfm13" : "fbfm40";
+            if (!string.IsNullOrWhiteSpace(FuelModelFile))
+            {
+                yield return new KeyValuePair<string, string>(fuelStem, FuelModelFile);
+            }
 
-            foreach (var pair in new[]
+            foreach (SourceLayer layer in SourceLayers)
             {
-                new KeyValuePair<string, string>(fuelStem, FuelModelFile),
-                new KeyValuePair<string, string>("cc", CanopyCoverFile),
-                new KeyValuePair<string, string>("ch", CanopyHeightFile),
-                new KeyValuePair<string, string>("cbh", CanopyBaseHeightFile),
-                new KeyValuePair<string, string>("cbd", CanopyBulkDensityFile),
-                new KeyValuePair<string, string>("bldg_area_avg", BuildingAreaFile),
-                new KeyValuePair<string, string>("bldg_separation_distance", BuildingSeparationFile),
-                new KeyValuePair<string, string>("bldg_nonburnable_frac", BuildingNonBurnableFractionFile),
-                new KeyValuePair<string, string>("bldg_footprint_frac", BuildingFootprintFractionFile),
-                new KeyValuePair<string, string>("bldg_fuel_model", BuildingFuelModelFile),
-                new KeyValuePair<string, string>("ignition_mask", IgnitionMaskFile),
-                new KeyValuePair<string, string>("barriers", BarriersFile),
-                new KeyValuePair<string, string>("sdi", SuppressionDifficultyFile),
-                new KeyValuePair<string, string>("land_value", LandValueFile),
-                new KeyValuePair<string, string>("population_density", PopulationDensityFile),
-                new KeyValuePair<string, string>("real_estate_value", RealEstateValueFile),
-                new KeyValuePair<string, string>("erc", EnergyReleaseComponentFile),
-                new KeyValuePair<string, string>("pyromes", PyromesFile),
-            })
-            {
-                if (!string.IsNullOrWhiteSpace(pair.Value)) yield return pair;
+                string path = layer.Get(this);
+                if (!string.IsNullOrWhiteSpace(path)) yield return new KeyValuePair<string, string>(layer.Stem, path);
             }
         }
 
@@ -434,17 +451,12 @@ namespace PREACT.Input
             }
 
             ReadSourceRaster(inputToParse, nameof(FuelModelFile), ref newInput.FuelModelFile, rootFolder);
-            ReadSourceRaster(inputToParse, nameof(CanopyCoverFile), ref newInput.CanopyCoverFile, rootFolder);
-            ReadSourceRaster(inputToParse, nameof(CanopyHeightFile), ref newInput.CanopyHeightFile, rootFolder);
-            ReadSourceRaster(inputToParse, nameof(CanopyBaseHeightFile), ref newInput.CanopyBaseHeightFile, rootFolder);
-            ReadSourceRaster(inputToParse, nameof(CanopyBulkDensityFile), ref newInput.CanopyBulkDensityFile, rootFolder);
-            ReadSourceRaster(inputToParse, nameof(BuildingAreaFile), ref newInput.BuildingAreaFile, rootFolder);
-            ReadSourceRaster(inputToParse, nameof(BuildingSeparationFile), ref newInput.BuildingSeparationFile, rootFolder);
-            ReadSourceRaster(inputToParse, nameof(BuildingNonBurnableFractionFile), ref newInput.BuildingNonBurnableFractionFile, rootFolder);
-            ReadSourceRaster(inputToParse, nameof(BuildingFootprintFractionFile), ref newInput.BuildingFootprintFractionFile, rootFolder);
-            ReadSourceRaster(inputToParse, nameof(BuildingFuelModelFile), ref newInput.BuildingFuelModelFile, rootFolder);
-            ReadSourceRaster(inputToParse, nameof(IgnitionMaskFile), ref newInput.IgnitionMaskFile, rootFolder);
-            ReadSourceRaster(inputToParse, nameof(BarriersFile), ref newInput.BarriersFile, rootFolder);
+            foreach (SourceLayer layer in SourceLayers)
+            {
+                string path = layer.Get(newInput);
+                ReadSourceRaster(inputToParse, layer.Key, ref path, rootFolder);
+                layer.Set(newInput, path);
+            }
 
             if (inputToParse.TryGetValue(nameof(FuelModelStandard), out userInput)
                 && System.Enum.TryParse(userInput, true, out FuelModelStandards parsedStandard))

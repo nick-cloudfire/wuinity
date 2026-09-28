@@ -29,6 +29,82 @@ namespace PREACT.Tests
             runner.Add("format: ASC headers in any order, with centres and without nodata", AscHeaders);
             runner.Add("format: a missing landscape file keeps the ignition points, through load and save", MissingLandscapeKeepsIgnitions);
             runner.Add("format: the shipped examples load without a single warning", ExamplesLoadQuietly);
+            runner.Add("format: every [ELMFIRE] key is read back, through a save and from a case's source manifest", ElmfireKeysRoundTrip);
+        }
+
+        /// <summary>
+        /// A value unlike the default for every writable [ELMFIRE] field, as it would be written. Paths are
+        /// relative and, for the source layers, real files in the scenario folder, so the load has nothing to warn
+        /// about.
+        /// </summary>
+        private static Dictionary<string, string> NonDefaultElmfireKeys(string folder)
+        {
+            var fresh = new ElmfireInput();
+            var keys = new Dictionary<string, string>();
+            foreach (System.Reflection.FieldInfo f in typeof(ElmfireInput).GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+            {
+                object value = f.GetValue(fresh);
+                string text;
+                if (f.FieldType == typeof(string))
+                {
+                    text = f.Name.EndsWith("File") ? "sources/" + f.Name + ".tif" : "custom_" + f.Name;
+                    if (f.Name.EndsWith("File"))
+                    {
+                        Directory.CreateDirectory(Path.Combine(folder, "sources"));
+                        File.WriteAllText(Path.Combine(folder, text), "not read at load");
+                    }
+                }
+                else if (f.FieldType == typeof(bool)) text = (!(bool)value) ? "true" : "false";
+                else if (f.FieldType == typeof(double)) text = ((double)value + 1.5).ToString("R", CultureInfo.InvariantCulture);
+                else if (f.FieldType.IsEnum)
+                {
+                    Array values = Enum.GetValues(f.FieldType);
+                    text = values.GetValue((Array.IndexOf(values, value) + 1) % values.Length).ToString();
+                }
+                else continue; //the namelist settings, which are a section of their own
+                keys[f.Name] = text;
+            }
+            return keys;
+        }
+
+        private static string Text(object value) => value is double d ? d.ToString("R", CultureInfo.InvariantCulture)
+            : value is bool b ? (b ? "true" : "false") : value?.ToString();
+
+        /// <summary>
+        /// docs.md 3.1: SuppressionDifficultyFile, LandValueFile, PopulationDensityFile, RealEstateValueFile,
+        /// EnergyReleaseComponentFile and PyromesFile were written but never parsed, so reopening and saving a
+        /// scenario dropped them. Every writable field is checked, so a key added later without its parse fails here.
+        /// </summary>
+        private static void ElmfireKeysRoundTrip()
+        {
+            using var s = new Scenario();
+            Dictionary<string, string> keys = NonDefaultElmfireKeys(s.Folder);
+            Assert.True(keys.ContainsKey(nameof(ElmfireInput.PyromesFile)) && keys.Count > 25, "the fields were found: " + keys.Count);
+
+            var lines = new List<string>(Scenario.Lines) { "", "[WildfireModule]", "Enabled=true", "Module=ELMFIRE", "", "[ELMFIRE]" };
+            lines.AddRange(keys.Select(kv => kv.Key + "=" + kv.Value));
+
+            PREACTInput input = s.Load(lines, out bool _);
+            string[] saved = PREACTInputWriter.Write(input);
+            PREACTInput again = PREACTInput.LoadFromLines(saved, s.Folder, out bool _);
+            foreach (KeyValuePair<string, string> kv in keys)
+            {
+                System.Reflection.FieldInfo f = typeof(ElmfireInput).GetField(kv.Key);
+                Assert.Equal(kv.Value, Text(f.GetValue(input.WildfireModule.ElmfireInput)), "[ELMFIRE] " + kv.Key + " as read");
+                Assert.True(saved.Contains(kv.Key + "=" + kv.Value), "[ELMFIRE] " + kv.Key + " is written");
+                Assert.Equal(kv.Value, Text(f.GetValue(again.WildfireModule.ElmfireInput)), "[ELMFIRE] " + kv.Key + " after a save and reload");
+            }
+
+            //The other direction a case's layers come back by: the builder's case_sources.txt, stem=source.
+            List<KeyValuePair<string, string>> layers = input.WildfireModule.ElmfireInput.GetSourceRasters().ToList();
+            Assert.Equal(18, layers.Count, "source layers listed for the build");
+            string caseDir = Path.Combine(s.Folder, "case");
+            Directory.CreateDirectory(caseDir);
+            File.WriteAllLines(Path.Combine(caseDir, Utility.ElmfireCaseBuilder.SourceManifestName), layers.Select(kv => kv.Key + "=" + kv.Value));
+            var fromCase = new ElmfireInput();
+            Assert.True(fromCase.LoadSourcesFromCase(caseDir, out int applied, out string problem), "the manifest reads: " + problem);
+            Assert.Equal(18, applied, "every layer applied");
+            Assert.Equal(string.Join(";", layers), string.Join(";", fromCase.GetSourceRasters()), "the same layers come back");
         }
 
         /// <summary>

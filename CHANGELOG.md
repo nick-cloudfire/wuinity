@@ -131,6 +131,9 @@ longer downloads a year of weather on every run.
   allows comments after a `#`, reads each section on its own so that one bad value no longer loses the rest of the
   file, reports duplicate keys and sections, and a save no longer drops sections of a disabled module. See
   [the input format](docs/input-file-format.md).
+- The `[ELMFIRE]` source layers `SuppressionDifficultyFile`, `LandValueFile`, `PopulationDensityFile`,
+  `RealEstateValueFile`, `EnergyReleaseComponentFile` and `PyromesFile` are read back when a scenario is opened.
+  They used to be saved and then lost, so the next save dropped them.
 - A run stops on its first error, with the modules closed, instead of carrying on and logging every step.
 - A run whose cars mostly cannot be put into SUMO stops with an error instead of evacuating nobody.
 - A case build is refused while a campaign of the same scenario runs.
@@ -159,10 +162,6 @@ longer downloads a year of weather on every run.
 The Windows GUI's acceptance check is the [manual test](docs/manual-test-v1.md); the head-less paths were run
 end to end on Linux.
 
-- **Six `[ELMFIRE]` source-layer keys are not read back from the file**: `SuppressionDifficultyFile`,
-  `LandValueFile`, `PopulationDensityFile`, `RealEstateValueFile`, `EnergyReleaseComponentFile` and `PyromesFile`.
-  They are saved, but lost when the scenario is opened again. Set them again after opening the scenario, before
-  building the case.
 - **A `[WildfireModule]` section without an `Enabled` line** loses its ignition points, its painted-areas reference
   and its `[ELMFIRE]` settings when read, and a save then drops them. The GUI always writes `Enabled`; a
   hand-written file should too.
