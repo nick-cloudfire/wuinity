@@ -256,7 +256,7 @@ Every key is optional; an unreadable value keeps the default and says so.
 
 | Key | Type | Default | Critical | Notes |
 |---|---|---|---|---|
-| `Enabled` | bool | `false` | – | Missing or unreadable means off, with a note. The rest of the section, the `[IgnitionPoint]`s and the module's sections are read (and kept) either way. |
+| `Enabled` | bool | `false` | – | Missing or unreadable means off. A missing one is a notice the workflow panel shows as a warning ("Not set, so the fire module is off and the scenario runs without a fire ...", and the same for the other modules), since a section without it may well have meant the module to run; a save writes `Enabled=false`. The rest of the section, the `[IgnitionPoint]`s and the module's sections are read (and kept) either way. |
 | `Module` | `ELMFIRE` \| `AscImport` | – | yes, when enabled | `ELMFIRE` runs ELMFIRE on the scenario's case; `AscImport` reads a fire computed elsewhere. `None` with the module enabled is critical. `ElmClone`/`CellSpread` (the removed cell-based model) are reported as removed. |
 | `GraphicalFireInputFile` | `.gfi` path | – | – | The painted WUI area, ignition area and initial ignition ([below](#painted-areas-gfi)). Kept even when the file is missing, so a save does not lose the reference. |
 
@@ -303,7 +303,7 @@ and keeps its default.
 |---|---|---|---|
 | `CaseDirectory` | folder | `elmfire` | Holds `inputs/`, `outputs/`, `scratch/`, `climatology/` and the namelist. |
 | `ElmfireExe` | path | the repository's build | `WUInity/Assets/ThirdParty/elmfire/build/windows/bin/elmfire.exe` (`build/linux/bin/elmfire` on Linux). Must be built from a7fb9d6 or later. |
-| `NamelistTemplate` | path | – | A namelist to run as it is, instead of the one generated from `[ElmfireNamelist]`. Looked for in the case folder, then beside the `.wui`. Only the stop time, `PATH_TO_GDAL`, the required outputs and the fuel table are written into it. |
+| `NamelistTemplate` | path | – | A namelist to run as it is, instead of the one generated from `[ElmfireNamelist]`. Looked for in the case folder, then beside the `.wui`. Only the stop time, `PATH_TO_GDAL`, the weather band keys (fitted to the case's `ws.tif`), the required outputs and the fuel tables are written into it. |
 | `SimulationTstopHours` | hours | `8` | How long the fire burns, 1 to 240; independent of the evacuation's end. The GUI gives a new scenario its time window (at least 24 h). A legacy `SimulationTstopSeconds` is read (÷ 3600) when this key is absent. |
 | `CellSizeMetres` | metres | `30` | Case grid resolution. |
 | `PaddingMetres` | metres | `2000` | Margin around the evacuation domain, so the fire is not clipped at its edge. |
@@ -360,7 +360,7 @@ Groups covered: `&INPUTS`, `&OUTPUTS`, `&SIMULATOR`, `&TIME_CONTROL`, `&MONTE_CA
 | Key | Default | Notes |
 |---|---|---|
 | `DT_METEOROLOGY` | `3600` | Seconds per weather band. The case's weather is written at this interval. |
-| `MeteorologyBands` | `0` | WUInity's. Weather bands to read; `0` counts them from the case's `ws.tif`, which is what you want. |
+| `MeteorologyBands` | `0` | WUInity's. Weather bands the generated `elmfire.data` says to read; `0` counts them from the case's `ws.tif`, which is what you want. A run always reads every band the case's weather has: it sets `NUM_METEOROLOGY_TIMES` from `ws.tif`, as a campaign does per realization. |
 | `WX_BANDS_KEPT_IN_MEM` | `30` | Weather bands ELMFIRE holds at once; lower saves memory on long fires (at least 2). |
 | `SIMULATION_DT`, `SIMULATION_DTMAX`, `TARGET_CFL` | `5`, `300`, `0.4` | Time stepping. |
 | `DTDUMP` | `3600` | Seconds between raster dumps. |

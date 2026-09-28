@@ -33,6 +33,7 @@ Details: [Building](building.md).
 | `Could not interpret user input <value> for <key>.` | The value does not parse for that key (a comma for a decimal point, a misspelled module or unit name). The scenario check lists it as critical: fix it, see [the input format](input-file-format.md). |
 | `Could not interpret user input <value> for <key>; its default is used.` | Not critical: the default applies. Fix it if the default is not what you meant. |
 | `<key> was not found, this value is critical for the simulation to function …` | A required key is missing. |
+| `[WildfireModule] Enabled: Not set, so the fire module is off and the scenario runs without a fire. …` (and the same for the household, traffic, smoke and trigger-boundary modules) | The section has no `Enabled` line, so the module is off. Add `Enabled=true` to run it, or `Enabled=false` to say it is meant to be off. The workflow panel shows it as a warning. |
 | `<section> gives <key> more than once; the first value (…) is used and the one on line N (…) is ignored.` | Delete one of them. A GUI save keeps the first. |
 | `[<section>] is ignored. … It will not be written when the scenario is saved.` | A retired section; see [Retired keys and sections](input-file-format.md#retired-keys-and-sections). |
 | `Refers to "<name>", which does not exist.` | A group names a destination, response curve or demographics that no section defines. Names are case-sensitive. |
@@ -68,7 +69,8 @@ A run that cannot compute its fire stops with `ELMFIRE did not produce a fire: <
 | `… this elmfire build predates DUMP_MIDFLAME_WINDSPEED; rebuild it from the ELMFIRE-WUINITY submodule (a7fb9d6 or later) …` | Rebuild ELMFIRE from the submodule. |
 | `There is no ELMFIRE case at <folder>. Turn BuildCase on, or build one …` | Build the case (step 5, or `PREACTcli build-case`). |
 | `The namelist … names rasters that are not on the case grid, so ELMFIRE cannot run it: …` | Build the case again: it re-cuts every raster the namelists name onto the grid. |
-| `The case's weather cannot run this fire: … The scenario runs its own NamelistTemplate, …` | A template's weather is shorter than the fire. Extend it, or lower `[ELMFIRE] SimulationTstopHours`. A generated case extends its own weather. |
+| `The case's weather cannot run this fire: the weather covers 24 h (24 bands) and the fire runs 30 h. The scenario runs its own NamelistTemplate …` | The case's weather is shorter than the fire the template (a kept `elmfire.data.kept-<time>`, say) runs. Lower `[ELMFIRE] SimulationTstopHours`, or build the case again for the hours you need. A generated case extends its own weather. The band keys a template brings (`NUM_METEOROLOGY_TIMES = 72`) are not the problem: a run sets them from the case's `ws.tif` and says so (`Namelist weather bands fitted to ws.tif ...`). |
+| `The namelist … cannot run: it switches the building spread model on (&WUI USE_BLDG_SPREAD_MODEL) and ELMFIRE would read …/building_fuel_models.csv, which is not there …` | Put the table there, or switch the building spread model off. With ELMFIRE's source tree beside the executable, its own table is copied in without asking. |
 | `elmfire burned 0 acres (the ignition most likely landed on non-burnable fuel)` | Move the ignition onto burnable fuel. |
 | `ELMFIRE hit its wall-clock limit (MAX_RUNTIME) and stopped the fire early: …` | Raise `MAX_RUNTIME` (seconds) in Fire behaviour; its default, 999999, never stops a single run. |
 | `elmfire exited N: …` with ELMFIRE's own first lines | Some of ELMFIRE's messages point at the wrong thing (`DEM CRS does not appear to use metre linear units` means the GDAL tools were not found, for example): see [ELMFIRE errors that name the wrong thing](elmfire-cases.md#elmfire-errors-that-name-the-wrong-thing). ELMFIRE's full output is in the case's `elmfire.log`. |
@@ -91,7 +93,8 @@ A run that cannot compute its fire stops with `ELMFIRE did not produce a fire: <
 | `The fire never reached <area>, so no trigger boundary was computed for it. …` | Not an error: the fire did not reach the WUI area within its duration. Lengthen the fire or check the ignition. |
 | `No evacuation arrivals were recorded, so the required egress time is zero and the trigger boundary would collapse onto the WUI area. Not computing one. …` (exit 2) | The traffic did not run, or no car reached a destination. See the evacuation messages above. |
 | `Can't compute a trigger boundary without a wildfire module: …` | Enable the fire, or turn the boundary off. |
-| `k-PERIL has no topography, so the boundary is computed as if the ground were flat.` | Name slope and aspect under `[Landscape]` (an ELMFIRE case build does this). |
+| `k-PERIL has no topography, so the boundary is computed as if the ground were flat.` | Name slope and aspect under `[Landscape]` (an ELMFIRE case build does this). An ELMFIRE run uses its case's own `dem/slp/asp.tif` (`k-PERIL topography: the fire's own terrain ...`). |
+| `0_trigger_boundary.asc was written without a .prj: GDAL could not describe EPSG:… . GIS will not know its CRS …` | GDAL's PROJ database was not found (set `PROJ_DATA` or `PROJ_LIB` to PROJ's `share/proj`). Not for a UTM grid, whose `.prj` is written without it. The Results window marks such a boundary *(earlier version)*; it is not one. |
 | The boundary is round | The fire ran under one wind for the whole domain: no WindNinja when the case was built. |
 
 ## Trigger campaigns
@@ -115,7 +118,7 @@ each needs, are in [Trigger campaigns](trigger-campaigns.md#before-you-start). T
 
 | Message | Fix |
 |---|---|
-| `The type initializer for 'OSGeo.OSR.OsrPINVOKE' threw an exception.` (or `…GdalPINVOKE…`), with `Unable to load shared library '…_wrap' or one of its dependencies` beneath it | GDAL 3.10 (`libgdal.so.36`) is not on `LD_LIBRARY_PATH`. |
+| `The type initializer for 'OSGeo.OSR.OsrPINVOKE' threw an exception.` (or `…GdalPINVOKE…`), with `Unable to load shared library '…_wrap' or one of its dependencies` beneath it | GDAL 3.10 (`libgdal.so.36`) is not on `LD_LIBRARY_PATH`. `PREACTcli` says so as `ERROR: <command> stopped on an unexpected error: …` and exits 1; `PREACTcli --help` works without it. |
 | `Unable to find an entry point named '?' in shared library 'libsumocs'` | The committed SUMO bindings are for Windows. [Regenerate them](building.md#regenerating-the-sumo-c-glue-on-linux) in a local copy. |
 | No WindNinja found although it is installed | The search looks for `WindNinja_cli` on `PATH` and under `/opt/WindNinja`, `/usr/local/WindNinja` and `~/WindNinja`, and names where it looked. Set `WINDNINJA_CLI` to the executable, or pass `--windninja`. |
 
