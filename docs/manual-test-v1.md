@@ -42,6 +42,7 @@ Keep the **Console** visible throughout (docked along the bottom). After every s
 2. Drag the workflow panel out so it floats, then **View > Reset window layout**. It docks back on the left.
 3. Stop Play and press Play again. The arrangement you left is kept (ImGui keeps it in `WUInity/imgui.ini`).
    Close Unity, delete `WUInity/imgui.ini`, reopen and press Play: the default layout is laid out again.
+   `git status` does not list `imgui.ini` (it is ignored).
 4. **View > Theme > Dark**, then **Light**: the radio mark follows the theme.
 5. **Help > External tools and keys**: ELMFIRE, GDAL, WindNinja, SUMO, PROJ and the OpenTopography and Mapbox
    keys are listed with what was found. **Look again** re-probes without a hitch.
@@ -62,6 +63,10 @@ Keep the **Console** visible throughout (docked along the bottom). After every s
      it ...", with **Move painting onto the fire-case grid**. Apply to case is disabled with "move them onto the
      fire-case grid first".
    - **13. Trigger campaign** - Blocked by step 6.
+   - **Scenario > Check scenario** lists, as notes that do not block anything, the four retired keys in the file -
+     `[Evacuation] UseTriggerBufferEvacuation`, `[Weather] DesiredLatLon`, `[TrafficModule] VisibilityAffectsSpeed`
+     and `[kPERIL] WindBand` - each "is no longer used: ... It is ignored, and saving the scenario does not write
+     it." The Console has the same four lines once each.
 2. **Fire > Fire areas (WUI, ignition area)...** The window names the grid (`elmfire/inputs/dem.tif`, 566 x 541),
    says the saved painting is on a 616 x 590 grid, and has a **Move painting onto the fire-case grid** button.
    **Start painting** is disabled, with a tooltip saying to move the painting first.
@@ -75,10 +80,9 @@ Keep the **Console** visible throughout (docked along the bottom). After every s
    - In the Fire areas window, **Start painting** now shows the painted WUI area on the map.
 4. **File > Save** (Ctrl+S). The .wui now has `GraphicalFireInputFile=painted_fire_areas_566x541.gfi`.
 5. Row 5: decide about the hand-edited namelist. For this test press nothing - let the build set it aside.
-   (Pressing **Keep running it** sets `[ELMFIRE] NamelistTemplate=elmfire.data`; the Console then warns that a
-   re-cut grid leaves hand-made layers such as `fbfm40_roads101.tif` on the old grid. The way to keep roads out of
-   the fuel that survives a re-cut is to name that raster as the fuel source under **Data > Fuels, canopy and
-   buildings**.)
+   (Pressing **Keep running it** sets `[ELMFIRE] NamelistTemplate=elmfire.data`; the Console then logs - not as a
+   warning - that if a build has to re-cut the case grid, every raster this namelist names, hand-made ones such as
+   `fbfm40_roads101.tif` included, is re-cut onto the new grid with it.)
 6. Row 5 **Update the case** (and **Save** if asked). This takes minutes (WindNinja per weather hour). Expected:
    - The log says the case's dem.tif does not cover the domain padded by 2000 m and re-cuts the grid (about
      704 x 680 cells), moving the old rasters to `elmfire\inputs\_previous_grid`.
@@ -97,7 +101,8 @@ Keep the **Console** visible throughout (docked along the bottom). After every s
 9. **Evacuation > Paint group areas...**: the existing mask shows at once. Paint, close the window, reopen it:
    one window, no doubled controls. With the paint window open, add a second group in **Evacuation > Evacuation
    groups**; it appears in the paint window's list. Paint some cells for each and **Save group areas**: each
-   group's MaskFile names its own `evac_group_<name>.asc`. (Renaming a group drops its unsaved painted cells.)
+   group's MaskFile names its own `evac_group_<name>.asc`. Rename a group that has painted cells: its cells stay
+   (in the paint window and in its mask after **Save group areas**), and no `evac_group_<old name>.asc` is written.
 
 ---
 
@@ -125,10 +130,14 @@ Mati needs its SUMO network (row 2) and a fire; if row 11 lists blockers, fix th
 ## D. Results
 
 1. **Results > Results of the last run and campaign...** The window groups what was written: **Last run** (log,
-   arrival CSV, trigger boundary, fire arrival), **Campaign**, **Case** (wui_area.tif).
+   arrival CSV, trigger boundary, fire arrival), **Campaign**, **Case** (wui_area.tif). No `.prj`, `.aux.xml` or
+   `.ovr` file is listed as a result, although they sit beside the rasters. A boundary from before v1 (no `.prj`
+   beside it) is marked *(earlier version)*, and a campaign made before v1 has a line saying so.
 2. **Show on map** beside the fire arrival: the raster is drawn over the domain with a legend line in the window.
    **Hide from map** removes it. **Results > Show on map > Trigger boundary** draws the boundary.
 3. **View > Map layers > Markers**: unticking hides the destination and ignition markers; ticking shows them.
+   **View > Map layers > Fire grid outline** draws the edge of the fire-case grid in orange (about 2 km beyond the
+   domain on every side at Mati); it hides on the world map and, after a re-cut, follows the new grid.
 4. **Results > Live output** after the run shows the run's numbers. Open another scenario: Live output then says
    nothing has run for the open scenario yet (the last run was of mati), and the run window's "Last run" is empty.
 
@@ -137,7 +146,11 @@ Mati needs its SUMO network (row 2) and a fire; if row 11 lists blockers, fix th
 ## E. Trigger campaign: start, cancel, resume
 
 1. **Run > Trigger campaign...** opens the campaign window whatever the workflow says. If row 13 is blocked, the
-   window's **Run** is disabled and the reason is written beside it.
+   window's **Run** is disabled and the reason is written beside it. The copy of Nick's case still holds his August
+   campaign folders if you kept `_output`: row 13 warns that that campaign predates v1's k-PERIL fix and its
+   per-realization evacuation seeds, and Run starts a new campaign beside it - no **Reuse** is offered for it. The
+   window also says that every realization is seeded from the campaign seed and its index (the scenario's own
+   RandomSeed applies to single runs only).
 2. Set **Maximum realizations** to 3 and **Fire duration** to 24 hours. Without WindNinja, tick **Allow uniform
    weather** (the window warns otherwise). Press **Run**. With unsaved changes it asks to save first.
 3. While it runs:
@@ -174,6 +187,10 @@ Mati needs its SUMO network (row 2) and a fire; if row 11 lists blockers, fix th
    `wui_area.tif`/`ignition_mask.tif` are in the case.
 8. Rows 2 and 3 **Prepare missing**: OSM, RouterDb, SUMO network; then WorldPop and households. During a step, press
    **Stop** in its progress window: the chain ends after the link it is in, and says so.
+9. Row 5 **Rebuild everything**, and press **Stop** while the log shows WindNinja solving the weather. Expected: the
+   step ends `... STOPPED: The case build was stopped while its weather was being made: no wind was written ...`, within
+   seconds; no WindNinja process is left; the case has no new `ws.tif` (not a uniform one either) and the scenario
+   is not marked changed. **Update the case** afterwards carries on and finishes.
 
 ---
 
@@ -212,6 +229,4 @@ Mati needs its SUMO network (row 2) and a fire; if row 11 lists blockers, fix th
 
 ## What is known not to be there
 
-- View > Map layers has no fire-grid outline.
 - Evacuation group masks are written in simulation-space coordinates, not georeferenced.
-- `WUInity/imgui.ini` (the window arrangement) is not in `.gitignore`.

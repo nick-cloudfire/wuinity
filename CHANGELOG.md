@@ -88,6 +88,9 @@ California.
 3. **Rebuild existing ELMFIRE cases** (workflow step 5, *Update the case*). A grid that does not cover the padded
    domain is re-cut. If you edited `elmfire.data` by hand, the build sets it aside as `elmfire.data.kept-<time>`
    and says so: move the edits into Fire > Fire behaviour, or name the file as `[ELMFIRE] NamelistTemplate`.
+   *Update the case* keeps a case's existing weather; to give it weather on the corrected clock and sun (see the
+   ELMFIRE cases table), delete `inputs/ws.tif`, `wd.tif`, `m1.tif`, `m10.tif` and `m100.tif` first — only the
+   weather is then made again. The case's ERA5 archive is re-derived once (`archive_format=3`) when next read.
 4. **Paintings made on an older grid**: step 6 offers **Move painting onto the fire-case grid**, which writes a
    new `.gfi` beside the old one.
 5. **Campaigns before v1 cannot be resumed**: their folder layout, seeds and settings identity are new. Run them
@@ -125,7 +128,10 @@ California.
 - **Build scripts** `build.ps1` and `build.sh`.
 - **New scenario keys**: `[MacroHouseholdSim] ReactToFire`, `FireReactionDistance`, `FireReactionUpdateInterval`;
   `[AscImport] MidflameWindSpeedFile`; `[kPERIL] WindBandSeconds`; `[ELMFIRE] SimulationTstopHours` (hours
-  everywhere a user sees a fire duration). The `.gfi` painting may record where its grid lies.
+  everywhere a user sees a fire duration). A `.gfi` painting records the grid it was painted on (the GUI writes
+  it on every save, move and copy), and a painting of the right size recorded elsewhere is refused by the build,
+  a run and the painter; one without the record is matched by size, as before.
+- **View > Map layers > Fire grid outline** draws the edge of the fire-case grid on the map.
 - **New outputs**: a `.prj` beside every boundary and campaign raster; the boundary always ends in `.asc`;
   `outputs/run.data` and `outputs/run.fingerprint` in the case. See
   [Output files](docs/output-files.md).
@@ -153,6 +159,17 @@ California.
 - A run stops on its first error, with the modules closed, instead of carrying on and logging every step.
 - A run whose cars mostly cannot be put into SUMO stops with an error instead of evacuating nobody.
 - A case build is refused while a campaign of the same scenario runs.
+- **Stopping a case build** (Stop, or quitting) kills its WindNinja and starts no other: the build writes no wind
+  at all (it used to finish on a uniform field), leaves the scenario as it was, and the next build carries on. A
+  stopped or converged campaign starts no further WindNinja band. A build that fails after re-cutting the grid
+  leaves `inputs/_previous_grid/carry_pending.txt`, and the next build carries the old grid's layers.
+- The Results window lists the rasters, not the `.prj`, `.aux.xml` or `.ovr` beside them; it marks a boundary
+  without a `.prj` as from an earlier version, and step 13 and the Results window say when a campaign predates
+  v1's k-PERIL fix and evacuation seeds - such a campaign is not reused. Renaming an evacuation group keeps its
+  painted cells. Painted areas and `.lcp` landscapes open read-only. The GUI finds the case folder and a relative
+  `NamelistTemplate` the way the engine does.
+- `.gitignore` covers `WUInity/imgui.ini` (each user's window layout), ImGui's `imgui_log.txt`, Mono's
+  `mono_crash.*`, `*.tmp`, `*.partial` and the realization scenarios a killed campaign leaves beside the `.wui`.
 - WindNinja is found on Linux and macOS as `WindNinja_cli` (on `PATH`, `/opt/WindNinja`, `/usr/local/WindNinja` or
   `~/WindNinja`); the search looked for `WindNinja_cli.exe` only, so there only `WINDNINJA_CLI` or `--windninja`
   found it. The "not found" message names where it looked on the platform it runs on.
@@ -190,8 +207,11 @@ end to end on Linux.
   wind barely shapes the boundary above about 3 mi/h), and subtracts an upslope wind from the slope term rather
   than adding it. These are for k-PERIL's author; see [Modules](docs/modules.md#trigger-boundary).
 - **Linux**: the committed SUMO C# bindings match the Windows SUMO build only
-  ([regenerate them](docs/building.md#regenerating-the-sumo-c-glue-on-linux)); on the test bench the NFDRS4
-  library did not load, so dead and live fuel moisture fell back to uniform values.
+  ([regenerate them](docs/building.md#regenerating-the-sumo-c-glue-on-linux)).
 - **FOFEM**: the committed `FOFEM.dll` is a Debug build that needs Visual Studio's debug runtime. Nothing calls
   it yet.
 - **Evacuation group masks** are placed on the fire grid by cell and carry no georeference.
+- **Fire-weather day lengths north of the equator** are the standard 46° N ones at every latitude, as before v1:
+  the `cffdrs` package uses flatter factors for the DMC south of 30° N (a constant below 10° N) and a constant for
+  the DC south of 20° N (southern Florida and Texas, Hawaii, Mexico). v1 applies its latitude bands only south of
+  the equator, so as not to change northern results.

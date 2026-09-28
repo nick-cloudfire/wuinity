@@ -214,9 +214,10 @@ dotnet PREACT/PREACTcli/bin/Release/net8.0/PREACTcli.dll converge-trigger --wui 
 `PREACTcli` finds the `PREACT` apphost in `PREACT/PREACTexecute/bin/Release/net8.0/` by the platform's name, as
 on Windows.
 
-On the Linux test bench the NFDRS4 library did not load, so the live fuel moisture march and Nelson fell back to
-uniform values, and there was no WindNinja. A campaign there needs `--allow-uniform-weather` (it otherwise
-stops before its first fire); the results are then not terrain-resolved and should be treated as a pipeline test.
+On the Linux test bench the NFDRS4 library loads through the engine's resolver (Nelson's dead fuel moisture and
+the live fuel moisture march both ran), but there was no WindNinja. A campaign there needs
+`--allow-uniform-weather` (it otherwise stops before its first fire); its wind is then not terrain-resolved and the
+results should be treated as a pipeline test.
 
 Each realization with SUMO needs several GB of memory; on a 7 GB machine two at once were killed by the
 out-of-memory killer (exit 137, recorded as failed). Use `--parallel 1` on small machines.

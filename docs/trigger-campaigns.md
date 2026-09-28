@@ -204,7 +204,11 @@ format), conditioning days, WindNinja and its mesh, the scenario start, and the 
 - **Snapshots.** The template and the fuel tables are copied into the folder once and every realization reads
   those, so editing the case's own files mid-campaign cannot reach half of it.
 - **Campaigns from before v1** (`_output/trigger_convergence.csv`, `_output/0_trigger_<n>.asc`,
-  `_elmfire/<n>/`) cannot be resumed: the layout and the identity are new. The GUI ignores them.
+  `_elmfire/<n>/`) cannot be resumed: the layout and the identity are new. Nor can a `campaign_<Name>_<hash>/`
+  whose `campaign.json` has no `evacuation.seed` setting: it was made before v1's k-PERIL orientation fix and
+  per-realization evacuation seeds. Step 13 warns about such a campaign, the Results window says so, and Run starts a
+  new campaign beside it. The ERA5 archive's format and, with historical-day weather, the band clock are part of the
+  identity too, so a campaign made with an earlier v1 build before `archive_format=3` also starts afresh.
 
 ## Cancellation
 
@@ -216,7 +220,8 @@ format), conditioning days, WindNinja and its mesh, the scenario start, and the 
 | Killing the CLI hard (Task Manager) on Windows | Its children die with it: the CLI puts itself in a kill-on-close job object. |
 | `kill -9` on Linux | Leaves the children running; nothing in-process can prevent it. |
 
-A cancelled realization is neither a result nor a failure; `--resume` computes it.
+A cancelled realization is neither a result nor a failure; `--resume` computes it. A cancelled or converged
+campaign starts no further WindNinja band for a realization whose weather is being made.
 
 ## Reading the results
 
