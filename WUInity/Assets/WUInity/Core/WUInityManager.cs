@@ -19,8 +19,6 @@ using ImGuiNET;
 
 namespace WUInity
 {
-    public enum DataSampleMode { None, LocalGPW, PopulationMap, Relocated, TrafficDens, Paint, Farsite }
-
     [RequireComponent(typeof(EvacuationRenderer))]
     [RequireComponent(typeof(FireRenderer))]
     public class WUInityManager : MonoBehaviour, IExternalManager                     
@@ -63,10 +61,7 @@ namespace WUInity
         [SerializeField] private OverviewCamera _godCamera;
 
         [Header("Options")]
-        public bool DeveloperMode = false;
         public bool SuppressMessages = false;
-        [SerializeField] float _renderScale = 1.0f;
-        public float RenderScale { get => _renderScale; }
 
         [Header("Prefabs")]        
         [SerializeField] private GameObject _destinationMarkerPrefab;
@@ -79,8 +74,6 @@ namespace WUInity
         [SerializeField] private Mapbox.Unity.Map.AbstractMap _webMercatorMap;
         [SerializeField] private LineRenderer _simBorder;
         [SerializeField] private LineRenderer _boundingBoxRenderer;
-
-        public DataSampleMode dataSampleMode = DataSampleMode.None;
 
         private PreactGUI _wuiGUI;
         PREACTInput _input;
@@ -105,25 +98,10 @@ namespace WUInity
         bool _renderSmokeDispersion = false;
         bool _renderFireSpread = false;        
 
-        string dataSampleString;
-        public string GetDataSampleString()
-        {
-            return dataSampleString;
-        }
-        PREACT.Runtime.WorkingData _workingData;
         Engine _engine;
         public Engine Engine { get => _engine; }
         private void Awake()
         {
-            if (Application.isEditor)
-            {
-                DeveloperMode = true;
-            }
-            else
-            {
-                DeveloperMode = false;
-            }            
-
             //Checked before anything is dereferenced. A missing reference here used to throw a bare
             //NullReferenceException part-way through Awake, which left _engine unassigned and made
             //Update() throw on every frame from then on - so the visible error was dozens of lines
@@ -154,8 +132,7 @@ namespace WUInity
             SetWebMercatorMapInteraction(false);
 
             _engine = new Engine(this);
-            _workingData = new PREACT.Runtime.WorkingData();
-            _wuiGUI.SetManager(this, _engine, _workingData);  
+            _wuiGUI.SetManager(this, _engine);
 
             _painter = FindFirstObjectByType<Painter>();
             if (_painter == null)
@@ -248,64 +225,8 @@ namespace WUInity
             }            
         }
 
-        GameObject CreateLineObject(List<Vector3> points, int index)
-        {
-            GameObject gO = new GameObject("Route " + index);
-            gO.transform.position = points[0];
-            //gO.transform.parent = directionsGO.transform;
-            LineRenderer line = gO.AddComponent<LineRenderer>();
-            line.widthMultiplier = 10f;
-            line.positionCount = points.Count;
-
-            for (int i = 0; i < points.Count; i++)
-            {
-                line.SetPosition(i, points[i]);
-            }
-            return gO;
-        }
-
-        public void DrawOSMNetwork()
-        {
-
-        }
-
-        /*public void LoadFarsite()
-        {
-            FARSITE_VIEWER.ImportFarsite();
-            FARSITE_VIEWER.TransformCoordinates();
-
-            LOG(WUIEngine.LogType.Warning, "Farsite loaded succesfully.");
-        }*/           
-
-        public void SetSampleMode(DataSampleMode sampleMode)
-        {
-            dataSampleMode = sampleMode;
-        }
-        
         void Update()
-        {       
-            if (Input.GetMouseButtonDown(0))
-            {
-                if (dataSampleMode != DataSampleMode.None)
-                {
-                    Plane _yPlane = new Plane(Vector3.up, 0f);
-                    Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
-                    float enter = 0.0f;
-                    if (_yPlane.Raycast(ray, out enter))
-                    {
-                        /*Vector3 hitPoint = ray.GetPoint(enter);
-                        float xNorm = hitPoint.x / (float)_input.Simulation.DomainSize.x;
-                        //xNorm = Mathf.Clamp01(xNorm);
-                        int x = (int)(_input.Evacuation.Data.CellCount.x * xNorm);
-
-                        float yNorm = hitPoint.z / (float)_input.Simulation.DomainSize.y;
-                        //yNorm = Mathf.Clamp01(yNorm);
-                        int y = (int)(_input.Evacuation.Data.CellCount.y * yNorm);
-                        GetCellInfo(hitPoint, x, y);*/
-                    }
-                }                
-            }
-
+        {
             //Awake bailed out (it logs why), so there is nothing to drive. Returning keeps the
             //console readable instead of repeating the same NullReferenceException every frame.
             if (_engine == null)
@@ -525,20 +446,6 @@ namespace WUInity
             ActivateSuitableVisuals();
         }
 
-        public void RunAllCasesInFolder(string folder, EngineTask engineTask)
-        {            
-            string[] inputFiles = Directory.GetFiles(folder, "*.wui");
-            bool success;
-            for (int i = 0; i < inputFiles.Length; i++)
-            {
-                _engine.LoadInputFromFile(inputFiles[i], out success);
-                if(success)
-                {
-                    RunSimulation(engineTask);
-                }                
-            }
-        }
-
         public void StopSimulations()
         {
             HideAllRuntimeVisuals();
@@ -555,73 +462,6 @@ namespace WUInity
             _simBorder.SetPosition(3, _simBorder.GetPosition(2) - Vector3.right * (float)_input.Simulation.DomainSize.x);
             _simBorder.SetPosition(4, _simBorder.GetPosition(0));   
         }
-
-        /*void UpdateOSMBorder()
-        {            
-            if (_osmBorder != null)
-            {
-                _osmBorder.SetPosition(0, -Vector3.right * WUIEngine.RUNTIME_DATA.Routing.BorderSize - Vector3.forward * WUIEngine.RUNTIME_DATA.Routing.BorderSize + Vector3.up * 10f);
-                _osmBorder.SetPosition(1, _osmBorder.GetPosition(0) + Vector3.right * ((float)WUIEngine.INPUT.Simulation.Size.x + WUIEngine.RUNTIME_DATA.Routing.BorderSize * 2f));
-                _osmBorder.SetPosition(2, _osmBorder.GetPosition(1) + Vector3.forward * ((float)WUIEngine.INPUT.Simulation.Size.y + WUIEngine.RUNTIME_DATA.Routing.BorderSize * 2f));
-                _osmBorder.SetPosition(3, _osmBorder.GetPosition(2) - Vector3.right * ((float)WUIEngine.INPUT.Simulation.Size.x + WUIEngine.RUNTIME_DATA.Routing.BorderSize * 2f));
-                _osmBorder.SetPosition(4, _osmBorder.GetPosition(0));
-            }
-        }*/
-
-        void GetCellInfo(Vector3 pos, int x, int y)
-        {
-            dataSampleString = "No data to sample.";
-            if (dataSampleMode == DataSampleMode.LocalGPW && _engine.WorkingData.LocalGPWData != null)
-            {                
-                if (_simulationDomainVisualizer.IsDataPlaneActive())
-                {
-                    float xCellSize = (float)(_engine.WorkingData.LocalGPWData.RealWorldSize.x / _engine.WorkingData.LocalGPWData.CellCount.x);
-                    float yCellSize = (float)(_engine.WorkingData.LocalGPWData.RealWorldSize.y / _engine.WorkingData.LocalGPWData.CellCount.y);
-                    double cellArea = xCellSize * yCellSize / (1000000d);
-                    dataSampleString = "GPW people count: " + System.Convert.ToInt32(_engine.WorkingData.LocalGPWData.GetDensitySimulationSpace(new PREACT.Math.Vector2d(pos.x, pos.z)) * cellArea);
-                }
-                else
-                {
-                    dataSampleString = "GPW data not visible, activate to sample data.";
-                }
-            }
-            /*else if (x < 0 || x > _input.Evacuation.Data.CellCount.x || y < 0 || y > _input.Evacuation.Data.CellCount.y)
-            {
-                //dataSampleString = "Outside of data range.";
-                return;
-            }*/
-            else if (dataSampleMode == DataSampleMode.Paint)
-            {
-
-            }
-            else if (dataSampleMode == DataSampleMode.Farsite)
-            {
-
-            }
-            else if (_simulationDomainVisualizer.IsDataPlaneActive())
-            {
-                if (dataSampleMode == DataSampleMode.PopulationMap)
-                {
-                    dataSampleString = "Interpolated people count: " + _engine.WorkingData.PopulationMap.GetPeopleCount(x, y);
-                }
-                /*else if (dataSampleMode == DataSampleMode.TrafficDens)
-                {
-                    int people = currentPeopleInCells[x + y * _input.Evacuation.Data.CellCount.x];
-                    dataSampleString = "People: " + people;
-                    if (currenttrafficDensityData != null && currenttrafficDensityData[x + y * _input.Evacuation.Data.CellCount.x] != null)
-                    {
-                        int peopleInCars = currenttrafficDensityData[x + y * _input.Evacuation.Data.CellCount.x].peopleCount;
-                        int cars = currenttrafficDensityData[x + y * _input.Evacuation.Data.CellCount.x].carCount;
-
-                        dataSampleString += " | People in cars: " + peopleInCars + " (Cars: " + cars + "). Total people " + (people + peopleInCars);
-                    }
-                }*/
-            }
-            else
-            {
-                dataSampleString = "Data not visible, toggle on to sample data.";
-            }          
-        }          
 
         /// <summary>
         /// Whether the brush is live. The single source of truth for it.
@@ -692,8 +532,6 @@ namespace WUInity
             {
                 Engine.Message(null, Engine.LogType.Warning, "Paint mode not set correctly.");
             }
-            dataSampleMode = DataSampleMode.Paint;
-
             if(fireEdit)
             {
                 _simulationDomainVisualizer.SetVisibility(false);
@@ -709,32 +547,11 @@ namespace WUInity
         public void StopPainter()
         {
             Painter.gameObject.SetActive(false);
-            dataSampleMode = DataSampleMode.None;
             _simulationDomainVisualizer.SetVisibility(false);
             _fireDomainVisualizer.SetVisibility(false);
         }
         
                 
-        TrafficCellData[] currenttrafficDensityData;
-        int[] currentPeopleInCells;
-        /*public void DisplayClosestDensityData(float time)
-        {
-            if(_input.TrafficModule.Active)
-            {
-                int index = UnityEngine.Mathf.Max(0, (int)time / 600);
-                if (index > outputTextures.Count - 1)
-                {
-                    index = outputTextures.Count - 1;
-                }
-                Texture2D tex = outputTextures[index];
-
-                currenttrafficDensityData = trafficDensityData[index];
-                currentPeopleInCells = peopleInCells[index];
-
-                SetDataPlaneTexture(tex);
-            }            
-        }*/
-
         public void ActivateSuitableVisuals()
         {
             if(_input.PedestrianModule.Enabled)
@@ -905,16 +722,6 @@ namespace WUInity
             return map;
         }
 
-        public void DisplayTrafficUsageMap()
-        {
-            if(_trafficUsageMap == null)
-            {
-                CreateTrafficUsageMapTexture();
-            }
-            //SetDataPlaneTexture(_trafficUsageMap);
-            //SetDomainDataPlane(true);
-        }
-
         private void DisplayWUIAreaMap()
         {
             ShowPaintedTexture(Painter.GetWUIAreaTexture(), "the WUI area");
@@ -958,30 +765,6 @@ namespace WUInity
 
             _fireDomainVisualizer.EnsurePlane(gridSize, gridOrigin);
             _fireDomainVisualizer.SetLCPPlaneTexture(texture);
-        }
-
-        Texture2D _trafficUsageMap;
-        private void CreateTrafficUsageMapTexture()
-        {
-            double[,] data = ((SUMOModule)_engine.Simulation.Evacuation.TrafficModule).GetUsageMap();
-            double maxData = ((SUMOModule)_engine.Simulation.Evacuation.TrafficModule).GetMaxUsage();
-            _trafficUsageMap = new Texture2D(data.GetLength(0), data.GetLength(1));
-            _trafficUsageMap.filterMode = FilterMode.Point;
-            for (uint y = 0; y < data.GetLength(1); ++y)
-            {
-                for (uint x = 0; x < data.GetLength(0); ++x)
-                {
-                    float ratio = (float)(data[x, y] / maxData);
-                    Color color = Color.HSVToRGB(0.67f - 0.67f * ratio, 1.0f, 1.0f);
-                    color.a = 1f;
-                    if (data[x, y] == 0)
-                    {
-                        color.a = 0f;
-                    }
-                    _trafficUsageMap.SetPixel((int)x, (int)y, color);
-                }
-            }
-            _trafficUsageMap.Apply();
         }
 
         public void SetHouseholdRendering(bool enable)
@@ -1284,11 +1067,6 @@ namespace WUInity
             ShowUTMMap();
             _roadNetworkVisualizer.SetVisibility(true);
             return true;
-        }
-
-        public bool ToggleRoadNetwork()
-        {
-            return ShowRoadNetwork(!IsRoadNetworkVisible);
         }
 
         public void LoadUTMMap(PREACTInput input)

@@ -174,7 +174,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
         }
 
-        public void SetManager(WUInityManager wuinityManager, Engine engine, PREACT.Runtime.WorkingData workingData)
+        public void SetManager(WUInityManager wuinityManager, Engine engine)
         {
             _wuinityManager = wuinityManager;
             _engine = engine;

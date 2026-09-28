@@ -279,11 +279,6 @@ namespace WUInity.Visualization
             }
         }
 
-        private void InternalSpawnDestinationMarker()
-        {
-
-        }
-
         public void SpawnWildfireIgnitionMarkers(PREACTInput input, GameObject markerPrefab)
         {
             ClearIgnitionMarkers();

@@ -214,7 +214,7 @@ namespace WUInity
         /// </summary>
         private bool LeftButtonIsClaimed()
         {
-            if (_manager != null && _manager.dataSampleMode == DataSampleMode.Paint)
+            if (_manager != null && _manager.IsPainterActive())
             {
                 return true;
             }

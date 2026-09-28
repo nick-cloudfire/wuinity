@@ -11,33 +11,6 @@ namespace WUInity.Visualization
 {
     public static class VisualizeUtilities
     {
-        static MeshRenderer CreateDataPlane(float sizeX, float sizeY, Transform parent, Material material, string name, bool setActive)
-        {
-            GameObject gO = new GameObject(name);
-            gO.transform.parent = parent;
-            gO.isStatic = true;
-            // You can change that line to provide another MeshFilter
-            MeshFilter filter = gO.AddComponent<MeshFilter>();
-            Mesh mesh = new Mesh(); // filter.mesh;
-            filter.mesh = mesh;
-            MeshRenderer mR = gO.AddComponent<MeshRenderer>();
-            mR.receiveShadows = false;
-            mR.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            mesh.Clear();
-
-            Vector3 offset = Vector3.zero;
-            Vector2 maxUV = Vector2.one;
-
-            CreateSimplePlane(mesh, sizeX, sizeY, 0.0f, offset);
-
-            mR.material = material;
-            //move up one meter
-            gO.transform.position += Vector3.up;
-            gO.SetActive(setActive);
-            return mR;
-        }
-
-
         public static void CreateSimplePlane(Mesh mesh, float sizeX, float sizeZ, float yPos, Vector3 originOffset)
         {
             const int resX = 2;
