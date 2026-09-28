@@ -23,11 +23,22 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
     internal static class ElmfireNamelistPreviewWindow
     {
         private static bool _isOpen;
+        private static bool _subscribed;
+        private static float _nextRender;
         private static string _text = string.Empty;
 
         public static void Open(ElmfireInput elmfire)
         {
             _text = Render(elmfire);
+
+            if (!_subscribed)
+            {
+                _subscribed = true;
+                //Kept current: it used to be rendered once, on opening, and then went on showing a namelist the
+                //settings no longer produced.
+                ScenarioSession.Edited += RenderCurrent;
+                ScenarioSession.ScenarioChanged += RenderCurrent;
+            }
 
             if (!_isOpen)
             {
@@ -36,11 +47,19 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
             }
         }
 
+        private static void RenderCurrent()
+        {
+            if (!_isOpen) return;
+            ElmfireInput elmfire = ScenarioSession.Input?.WildfireModule?.ElmfireInput;
+            _text = elmfire != null ? Render(elmfire) : "No scenario is open.";
+        }
+
         private static string Render(ElmfireInput elmfire)
         {
             var facts = new ElmfireNamelistBuilder.CaseFacts
             {
-                Name = PreactGUI.Engine?.Simulation?.Input?.Simulation?.Name ?? "case",
+                //The open scenario's name, not the last run's (which was a different scenario, or none).
+                Name = ScenarioSession.Input?.Simulation?.Name ?? "case",
                 SimulationTstopSeconds = elmfire.TstopSeconds(),
 
                 //Stated as assumptions below rather than discovered: the case may not have been built yet.
@@ -83,8 +102,23 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
                 return;
             }
 
-            ImGui.SetNextWindowSize(new Vector2(720f, 620f), ImGuiCond.FirstUseEver);
-            ImGui.Begin("ELMFIRE namelist preview", ref _isOpen, PreactGUI.NoDockingNoCollapse);
+            PreactGUI.PlaceNextWindow(new Vector2(720f, 620f));
+            if (!ImGui.Begin("ELMFIRE namelist preview###NamelistPreview", ref _isOpen, PreactGUI.ToolWindowFlags))
+            {
+                ImGui.End();
+                if (!_isOpen)
+                {
+                    PreactGUI.CloseWindow(Draw);
+                }
+                return;
+            }
+
+            //Edits made while already unsaved raise no event, so it is also redrawn once a second while open.
+            if (UnityEngine.Time.realtimeSinceStartup > _nextRender)
+            {
+                _nextRender = UnityEngine.Time.realtimeSinceStartup + 1f;
+                RenderCurrent();
+            }
 
             ImGui.TextWrapped("What these settings produce. The case supplies the rest at build time: which "
                 + "optional layers it actually has, how many weather bands its rasters hold, and the ignition "
@@ -94,6 +128,11 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
             if (ImGui.Button("Copy to clipboard"))
             {
                 ImGui.SetClipboardText(_text);
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("Refresh"))
+            {
+                RenderCurrent();
             }
             ImGui.SameLine();
             ImGui.TextDisabled("Paste it beside the case as a namelist template to pin these values.");

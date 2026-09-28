@@ -10,8 +10,13 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
     public static class DestinationInputEditWindow
     {
         private static bool _isOpen;
+        //The copy being edited, and the scenario's own destination it came from (null for a new one). Edits go
+        //to the copy and reach the scenario on OK: this used to edit the scenario's destination directly, so
+        //closing the window kept half an edit, and a rename left the dictionary keyed by the old name.
         private static EvacuationDestinationInput _input;
+        private static EvacuationDestinationInput _original;
         private static Dictionary<string, EvacuationDestinationInput> _inputs;
+        private static bool _subscribed;
         public static string[] DestinationTypesStrings;
         static int _destinationTypeIndex;
         static string _oldKey = string.Empty;
@@ -30,13 +35,18 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
 
         public static void Open(Dictionary<string, EvacuationDestinationInput> inputs, EvacuationDestinationInput input)
         {
-            if(!_isOpen)
+            Reopen();
+
+            if (!_subscribed)
             {
-                PreactGUI.DrawWindow(Draw);
+                _subscribed = true;
+                //What is being edited belongs to the scenario the window was opened for.
+                ScenarioSession.ScenarioChanged += Close;
             }
-            _isOpen = true;
 
             _inputs = inputs;
+            _original = input;
+            _snapDescription = string.Empty;
             if(input == null)
             {
                 _input = new EvacuationDestinationInput();
@@ -44,9 +54,28 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             }
             else
             {
-                _input = input;
-                _oldKey = _input.Name;
-            }           
+                _input = Copy(input);
+                _oldKey = input.Name;
+            }
+        }
+
+        /// <summary>
+        /// Puts the window back without touching what is being edited - after a position has been picked on
+        /// the map, or the pick was abandoned. Reopening through Open used to reset the old name to the one
+        /// just typed, so renaming and then picking left the old entry behind as a duplicate.
+        /// </summary>
+        private static void Reopen()
+        {
+            if (!_isOpen)
+            {
+                PreactGUI.DrawWindow(Draw);
+            }
+            _isOpen = true;
+        }
+
+        private static EvacuationDestinationInput Copy(EvacuationDestinationInput d)
+        {
+            return new EvacuationDestinationInput(d.Name, d.LatLon, d.Type, d.Color, d.MaxFlow, d.MaxVehicles, d.MaxPeople, d.Blocked);
         }
 
         public static void Close()
@@ -65,14 +94,16 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                 return;
             }
 
-            ImGui.Begin("Evacuation destination editor", ref _isOpen, PreactGUI.NoDockingNoCollapse);
+            PreactGUI.PlaceNextWindow(new Vector2(460f, 380f));
+            ImGui.Begin("Evacuation destination###DestinationEditor", ref _isOpen, PreactGUI.ToolWindowFlags);
+            ImGui.BeginDisabled(ScenarioSession.EditingLocked);
 
             ImGui.InputText(nameof(_input.Name), ref _input.Name, 64);
 
             if(ImGui.Button("Set on map"))
             {
                 Close();
-                PreactGUI.WUInity.PickPosOnMap(SetDestinationPos);
+                PreactGUI.WUInity.PickPosOnMap(SetDestinationPos, Reopen);
             }
             ImGui.SameLine();
             //Float2 keeps six or seven significant digits, which at these magnitudes is about a metre of
@@ -150,21 +181,22 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             ImGui.BeginDisabled(!nameIsFree);
             if (ImGui.Button("OK"))
             {
-                _inputs.Remove(_oldKey);
-                _inputs[_input.Name] = _input;
+                Commit();
                 _isOpen = false;
-                //The markers are spawned from the scenario, so they have to be respawned for an edit to
-                //appear. Without this a moved destination stayed drawn where it was, which reads as an
-                //edit that did not take.
-                PreactGUI.WUInity.RefreshDestinationMarkers();
             }
             ImGui.EndDisabled();
+            ImGui.SameLine();
+            if (ImGui.Button("Cancel"))
+            {
+                _isOpen = false;
+            }
             if (!nameIsFree)
             {
                 ImGui.SameLine();
                 ImGui.TextDisabled(string.IsNullOrWhiteSpace(_input.Name) ? "Needs a name." : "That name is already used.");
             }
 
+            ImGui.EndDisabled();
             ImGui.End();
             if(!_isOpen)
             {
@@ -172,9 +204,48 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             }
         }    
         
+        /// <summary>Writes the edited copy into the scenario, under its (possibly new) name.</summary>
+        private static void Commit()
+        {
+            //Evacuation groups refer to destinations by name, so a rename is carried into them - otherwise
+            //the group silently loses the destination when the scenario is next loaded.
+            if (_original != null && _oldKey != _input.Name)
+            {
+                foreach (PREACT.Evacuation.EvacuationGroupInput group in ScenarioSession.Input.Evacuation.EvacuationGroupInputs.Values)
+                {
+                    for (int i = 0; i < group.Destinations.Count; ++i)
+                    {
+                        if (group.Destinations[i] == _oldKey) group.Destinations[i] = _input.Name;
+                    }
+                }
+            }
+
+            if (_original != null)
+            {
+                _inputs.Remove(_oldKey);
+                _original.Name = _input.Name;
+                _original.LatLon = _input.LatLon;
+                _original.Type = _input.Type;
+                _original.Color = _input.Color;
+                _original.MaxFlow = _input.MaxFlow;
+                _original.MaxVehicles = _input.MaxVehicles;
+                _original.MaxPeople = _input.MaxPeople;
+                _original.Blocked = _input.Blocked;
+                _inputs[_original.Name] = _original;
+            }
+            else
+            {
+                _inputs[_input.Name] = _input;
+            }
+
+            //The markers are spawned from the scenario, so they have to be respawned for an edit to appear.
+            PreactGUI.WUInity.RefreshDestinationMarkers();
+            ScenarioSession.NotifyEdited("destination " + _input.Name);
+        }
+
         private static void SetDestinationPos(PREACT.Math.Vector2d simulationPos)
         {
-            _input.LatLon = ScenarioEditorWindow.Input.Simulation.Data.GetWGS84FromSimulationPosition(simulationPos);
+            _input.LatLon = ScenarioSession.Input.Simulation.Data.GetWGS84FromSimulationPosition(simulationPos);
             _snapDescription = string.Empty;
 
             if (_snapToRoad)
@@ -184,7 +255,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                 SnapToNearestLane(false);
             }
 
-            Open(_inputs, _input);
+            Reopen();
         }
 
         /// <summary>
@@ -197,13 +268,13 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
         /// </summary>
         private static void SnapToNearestLane(bool reportWhenAlreadyOnRoad)
         {
-            if (!ScenarioEditorWindow.HasInput)
+            if (!ScenarioSession.HasInput)
             {
                 _snapDescription = "No scenario is loaded, so there is no network to snap to.";
                 return;
             }
 
-            PREACT.Input.SimulationData data = ScenarioEditorWindow.Input.Simulation.Data;
+            PREACT.Input.SimulationData data = ScenarioSession.Input.Simulation.Data;
             PREACT.Math.Vector2d simulationPos = data.GetSimulationPosition(_input.LatLon);
 
             if (!PreactGUI.WUInity.TrySnapToRoadNetwork(simulationPos, out PREACT.Utility.SumoNetworkGeometry.Snap snap))

@@ -27,6 +27,12 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
         private static IgnitionPointInput _point;
         private static int _index = -1;
 
+        //The point as it was in the list when the editor opened, so a commit can tell whether the list has
+        //changed underneath it (a point removed in the Fire areas window while this was open) instead of
+        //overwriting whatever now sits at that index.
+        private static IgnitionPointInput _originalPoint;
+        private static bool _subscribed;
+
         private static bool _snapToCell = true;
         private static string _snapDescription = string.Empty;
         private static string _absoluteText = string.Empty;
@@ -36,12 +42,19 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
         {
             Reopen();
 
+            if (!_subscribed)
+            {
+                _subscribed = true;
+                ScenarioSession.ScenarioChanged += Close;
+            }
+
             _points = points;
             _index = index;
 
             if (index >= 0 && index < points.Count)
             {
                 _point = points[index];
+                _originalPoint = _point;
             }
             else
             {
@@ -87,12 +100,14 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                 return;
             }
 
-            ImGui.Begin("Ignition point editor", ref _isOpen, PreactGUI.NoDockingNoCollapse);
+            PreactGUI.PlaceNextWindow(new Vector2(480f, 330f));
+            ImGui.Begin("Ignition point###IgnitionPointEditor", ref _isOpen, PreactGUI.ToolWindowFlags);
+            ImGui.BeginDisabled(ScenarioSession.EditingLocked);
 
             if (ImGui.Button("Set on map"))
             {
                 Close();
-                PreactGUI.WUInity.PickPosOnMap(SetIgnitionPos);
+                PreactGUI.WUInity.PickPosOnMap(SetIgnitionPos, Reopen);
             }
             ImGui.SameLine();
             //Only written back when the field was actually edited: a float2 holds about a metre of latitude
@@ -171,7 +186,13 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             {
                 Commit();
             }
+            ImGui.SameLine();
+            if (ImGui.Button("Cancel"))
+            {
+                _isOpen = false;
+            }
 
+            ImGui.EndDisabled();
             ImGui.End();
             if (!_isOpen)
             {
@@ -181,7 +202,8 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
 
         private static void Commit()
         {
-            if (_index >= 0 && _index < _points.Count)
+            bool unchanged = _index >= 0 && _index < _points.Count && _points[_index].Equals(_originalPoint);
+            if (unchanged)
             {
                 //IgnitionPointInput is a struct, so the edited copy has to be put back rather than assumed
                 //to have mutated in place.
@@ -189,18 +211,23 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             }
             else
             {
+                if (_index >= 0)
+                {
+                    Engine.Message(null, Engine.LogType.Log, "The ignition list changed while this point was being edited, "
+                        + "so it was added as a new point rather than written over another.");
+                }
                 _points.Add(_point);
             }
 
             _isOpen = false;
             //Or the marker stays where the point used to be, which reads as an edit that did not take.
             PreactGUI.WUInity.RefreshWildfireIgnitionMarkers();
-            Engine.Message(null, Engine.LogType.Log, "Ignition point set. Save the scenario to keep it.");
+            ScenarioSession.NotifyEdited("ignition point");
         }
 
         private static void SetIgnitionPos(Vector2d simulationPos)
         {
-            _point.LatLon = ScenarioEditorWindow.Input.Simulation.Data.GetWGS84FromSimulationPosition(simulationPos);
+            _point.LatLon = ScenarioSession.Input.Simulation.Data.GetWGS84FromSimulationPosition(simulationPos);
             _snapDescription = string.Empty;
 
             if (_snapToCell)
@@ -218,13 +245,13 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
         /// </summary>
         private static void SnapToCellCentre(bool reportWhenAlreadyCentred)
         {
-            if (!ScenarioEditorWindow.HasInput)
+            if (!ScenarioSession.HasInput)
             {
                 _snapDescription = "No scenario is loaded, so there is no grid to snap to.";
                 return;
             }
 
-            PREACT.Input.SimulationData data = ScenarioEditorWindow.Input.Simulation.Data;
+            PREACT.Input.SimulationData data = ScenarioSession.Input.Simulation.Data;
             Vector2d simulationPos = data.GetSimulationPosition(_point.LatLon);
 
             if (!PreactGUI.WUInity.TrySnapToFireGridCell(simulationPos, out Vector2d snapped,
@@ -246,19 +273,19 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
 
         private static DateTime StartDateTime()
         {
-            return ScenarioEditorWindow.HasInput
-                ? ScenarioEditorWindow.Input.Simulation.StartDateTime
+            return ScenarioSession.HasInput
+                ? ScenarioSession.Input.Simulation.StartDateTime
                 : DateTime.Now;
         }
 
         private static Vector2d DomainCentre()
         {
-            if (!ScenarioEditorWindow.HasInput)
+            if (!ScenarioSession.HasInput)
             {
                 return new Vector2d(0.0, 0.0);
             }
 
-            PREACT.Input.SimulationInput simulation = ScenarioEditorWindow.Input.Simulation;
+            PREACT.Input.SimulationInput simulation = ScenarioSession.Input.Simulation;
             return simulation.Data.GetWGS84FromSimulationPosition(
                 new Vector2d(0.5 * simulation.DomainSize.x, 0.5 * simulation.DomainSize.y));
         }

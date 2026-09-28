@@ -38,7 +38,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
                     && input.WildfireModule.ElmfireInput.SimulationTstopHours < 24.0)
                 {
                     double hours = input.WildfireModule.ElmfireInput.SimulationTstopHours;
-                    Fields.Warn($"The fire stops after {hours:F1} h (Fire > Timing and reuse). No boundary is",
+                    Fields.Warn($"The fire stops after {hours:F1} h (Fire > Fire model settings, Timing and reuse). No boundary is",
                                 "computed for an area the fire never reaches, so a short run can produce none.");
                 }
 
@@ -68,7 +68,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
             if (peril.WuiAreaSource == kPERILInput.WuiAreaSources.Raster)
             {
                 Fields.Path("WuiAreaFile", () => peril.WuiAreaFile, v => peril.WuiAreaFile = v);
-                Fields.Hint("Left empty, the painted WUI area is used instead (Ignitions and areas).");
+                Fields.Hint("Left empty, the painted WUI area is used instead (Fire > Fire areas, step 6).");
             }
 
             ImGui.SeparatorText("Wind");

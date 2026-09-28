@@ -21,7 +21,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
         private static readonly List<EvacuationGroupInput> _ordered = new List<EvacuationGroupInput>();
         private static int _selected;
         /// <summary>Whether this window's brush is live, asked of the painter rather than remembered.</summary>
-        /// <remarks>See FirePaintWindow.Painting: two windows each remembering this separately meant
+        /// <remarks>See FireAreasWindow.Painting: two windows each remembering this separately meant
         /// neither agreed with the painter, nor with the other.</remarks>
         private static bool Painting
         {
@@ -32,6 +32,10 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
         private const float GroupOverlayOpacity = 0.3f;
         private static bool _keepGroupsVisible = true;
 
+        //What reading the groups' existing masks found wrong, shown until the next read.
+        private static readonly List<string> _maskProblems = new List<string>();
+        private static bool _subscribed;
+
         public static void Open(Dictionary<string, EvacuationGroupInput> inputs)
         {
             if (!_isOpen)
@@ -40,8 +44,48 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             }
             _isOpen = true;
 
+            if (!_subscribed)
+            {
+                _subscribed = true;
+                //The dictionary this window holds belongs to the scenario it was opened for; after another is
+                //loaded, carrying on would paint into, and save the masks of, one that is no longer open.
+                //Unregistered here as well: Draw returns before its own close path once _isOpen is false, and
+                //the next Open would then register a second copy that draws over the first.
+                ScenarioSession.ScenarioChanged += () =>
+                {
+                    if (_isOpen)
+                    {
+                        _isOpen = false;
+                        PreactGUI.CloseWindow(Draw);
+                    }
+                };
+            }
+
             _inputs = inputs;
             RebuildOrder();
+            LoadExistingMasks(false);
+        }
+
+        /// <summary>
+        /// Reads the groups' saved masks into the painter, once per grid, so painting continues from them.
+        /// Painting used to start from nothing every time, and saving then overwrote every group that had
+        /// received a stroke - so a group's area could be added to, but never edited.
+        /// </summary>
+        private static void LoadExistingMasks(bool force)
+        {
+            if (!ScenarioSession.HasInput || PreactGUI.WUInity == null)
+            {
+                return;
+            }
+
+            global::WUInity.Painter painter = PreactGUI.WUInity.Painter;
+            if (!force && painter.EvacGroupMasksLoaded)
+            {
+                return;
+            }
+
+            _maskProblems.Clear();
+            painter.LoadEvacGroupMasks(_ordered, ScenarioSession.RootFolder, _maskProblems);
         }
 
         /// <summary>
@@ -88,7 +132,8 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                 return;
             }
 
-            ImGui.Begin("Paint evacuation groups", ref _isOpen, PreactGUI.NoDockingNoCollapse);
+            ImGui.SetNextWindowSize(new Vector2(420f, 460f), ImGuiCond.FirstUseEver);
+            ImGui.Begin("Paint evacuation groups###PaintGroups", ref _isOpen, PreactGUI.ToolWindowFlags);
 
             if (_ordered.Count == 0)
             {
@@ -98,6 +143,14 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             }
 
             ImGui.TextWrapped("Left click paints, right click flood fills, keypad +/- changes the brush size.");
+
+            global::WUInity.Painter painter = PreactGUI.WUInity.Painter;
+            ImGui.TextDisabled(painter.GridDescription);
+
+            for (int i = 0; i < _maskProblems.Count; ++i)
+            {
+                ImGui.TextColored(Fields.Warning, _maskProblems[i]);
+            }
 
             ImGui.SeparatorText("Group being painted");
             for (int i = 0; i < _ordered.Count; ++i)
@@ -144,18 +197,16 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                 }
             }
 
+            ImGui.BeginDisabled(ScenarioSession.EditingLocked);
             if (!Painting)
             {
                 if (ImGui.Button("Start painting"))
                 {
                     StartPainting();
                 }
-                ImGui.TextDisabled("Groups are painted on the fire grid: the landscape's, or the imported "
-                    + "time of arrival raster's when the fire comes from one.");
                 if (_startFailed)
                 {
-                    ImGui.TextColored(new Vector4(0.9f, 0.7f, 0.2f, 1f),
-                        "The fire grid could not be established - see the console for what is missing.");
+                    ImGui.TextColored(Fields.Warning, "No paint grid: " + painter.GridDescription);
                 }
             }
             else
@@ -164,14 +215,42 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                 {
                     StopPainting();
                 }
-
-                ImGui.SameLine();
-                if (ImGui.Button("Save painted areas"))
-                {
-                    SaveMasks();
-                }
-                ImGui.TextWrapped("Saving writes one mask per group into the scenario folder and points each group at its own, replacing any shapefile.");
             }
+
+            //Offered whether or not the brush is down, like the fire areas: the areas survive the brush being
+            //put away, and being able to save them only while it was up was a way to lose them.
+            ImGui.SameLine();
+            ImGui.BeginDisabled(!painter.HasEvacGroupCells);
+            if (ImGui.Button("Save group areas"))
+            {
+                SaveMasks();
+            }
+            ImGui.EndDisabled();
+            if (!painter.HasEvacGroupCells && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            {
+                ImGui.SetTooltip("Nothing painted yet.");
+            }
+
+            ImGui.SameLine();
+            if (ImGui.Button("Reload saved areas"))
+            {
+                LoadExistingMasks(true);
+                if (Painting)
+                {
+                    SelectForPainting();
+                }
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Discards unsaved strokes and reads each group's saved mask again.");
+            }
+            ImGui.EndDisabled();
+
+            if (painter.UnsavedGroupStrokes)
+            {
+                Fields.Warn("Unsaved strokes - Save group areas to keep them.");
+            }
+            ImGui.TextWrapped("Saving writes one mask per group into the scenario folder and points each group at its own, replacing any shapefile.");
 
             End();
         }
@@ -205,6 +284,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
         private static void StartPainting()
         {
             PushGroupsToPainter();
+            LoadExistingMasks(false);
             PreactGUI.WUInity.ShowUTMMap();
             //Through the manager, so the painter object is actually switched on and the sample mode
             //says painting is happening. Setting the mode on the painter alone left it inert whenever
@@ -252,28 +332,49 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
 
         private static void SaveMasks()
         {
-            string folder = ScenarioEditorWindow.Input.RootFolder;
-            string[] written = PreactGUI.WUInity.Painter.ExportEvacGroupMasks(folder);
+            SaveMasksFor(ScenarioSession.Input);
+        }
+
+        /// <summary>
+        /// Writes one mask per painted group and points each group at its own. Also what File &gt; Save calls
+        /// when there are unsaved group strokes, so Save keeps what is on screen.
+        /// </summary>
+        public static void SaveMasksFor(PREACT.Input.PREACTInput input)
+        {
+            if (input == null || PreactGUI.WUInity == null)
+            {
+                return;
+            }
+
+            //The painter's indices follow the order it was last given, which is this window's order when it
+            //has been opened for this scenario, and the dictionary's order otherwise.
+            var ordered = new List<EvacuationGroupInput>(input.Evacuation.EvacuationGroupInputs.Values);
+            if (_inputs == input.Evacuation.EvacuationGroupInputs && _ordered.Count == ordered.Count)
+            {
+                ordered = new List<EvacuationGroupInput>(_ordered);
+            }
+
+            string[] written = PreactGUI.WUInity.Painter.ExportEvacGroupMasks(input.RootFolder);
             if (written == null)
             {
                 return;
             }
 
-            for (int i = 0; i < written.Length && i < _ordered.Count; ++i)
+            for (int i = 0; i < written.Length && i < ordered.Count; ++i)
             {
                 if (string.IsNullOrEmpty(written[i]))
                 {
                     continue;
                 }
 
-                _ordered[i].MaskFile = written[i];
+                ordered[i].MaskFile = written[i];
                 //Cleared so there is no question which of the two defines the area. The parser
                 //prefers the mask anyway, but leaving a stale shapefile behind invites the reader to
                 //believe it still matters.
-                _ordered[i].ShapeFile = string.Empty;
+                ordered[i].ShapeFile = string.Empty;
             }
 
-            Engine.Message(null, Engine.LogType.Log, "Painted evacuation group areas saved. Save the scenario to keep them.");
+            ScenarioSession.NotifyEdited("group masks");
         }
     }
 }

@@ -21,6 +21,8 @@ namespace WUInity
     public static class RecentScenario
     {
         private const string Key = "WUInity.LastScenarioFile";
+        private const string ListKey = "WUInity.RecentScenarioFiles";
+        private const int MaxRecent = 5;
 
         /// <summary>The remembered scenario, or an empty string when there is none that still exists.</summary>
         public static string Path
@@ -44,16 +46,69 @@ namespace WUInity
             }
 
             PlayerPrefs.SetString(Key, path);
+
+            //Most recent first, each once, compared as full paths so two spellings of one file do not both
+            //take a slot.
+            string full = Full(path);
+            var list = new System.Collections.Generic.List<string> { path };
+            foreach (string known in ReadList())
+            {
+                if (list.Count >= MaxRecent) break;
+                if (!string.Equals(Full(known), full, System.StringComparison.OrdinalIgnoreCase))
+                {
+                    list.Add(known);
+                }
+            }
+            PlayerPrefs.SetString(ListKey, string.Join("\n", list));
+
             //Written now rather than at quit: a crash or a stop from the editor's play button never
             //reaches OnApplicationQuit, and losing the one thing this exists to remember to that is
             //worse than the write costs.
             PlayerPrefs.Save();
         }
 
+        /// <summary>
+        /// Stops the last scenario being reopened at start-up (File &gt; Close), without taking it off the
+        /// recent list.
+        /// </summary>
         public static void Forget()
         {
             PlayerPrefs.DeleteKey(Key);
             PlayerPrefs.Save();
+        }
+
+        /// <summary>The recently opened scenarios that still exist, most recent first.</summary>
+        public static System.Collections.Generic.List<string> Recent
+        {
+            get
+            {
+                var existing = new System.Collections.Generic.List<string>();
+                foreach (string path in ReadList())
+                {
+                    if (File.Exists(path)) existing.Add(path);
+                }
+                return existing;
+            }
+        }
+
+        /// <summary>Empties the recent list (and forgets the last scenario).</summary>
+        public static void ClearRecent()
+        {
+            PlayerPrefs.DeleteKey(ListKey);
+            Forget();
+        }
+
+        private static string[] ReadList()
+        {
+            string raw = PlayerPrefs.GetString(ListKey, string.Empty);
+            return string.IsNullOrEmpty(raw)
+                ? new string[0]
+                : raw.Split(new[] { '\n' }, System.StringSplitOptions.RemoveEmptyEntries);
+        }
+
+        private static string Full(string path)
+        {
+            try { return System.IO.Path.GetFullPath(path); } catch { return path; }
         }
     }
 }

@@ -33,8 +33,6 @@ namespace WUInity
             }
         }
 
-        public static bool IsApiKeyValid => !string.IsNullOrEmpty(ApiKey);
-
         private static void Load()
         {
             _loaded = true;

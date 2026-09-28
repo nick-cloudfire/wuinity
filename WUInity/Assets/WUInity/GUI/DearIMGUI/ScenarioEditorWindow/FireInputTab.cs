@@ -56,7 +56,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
             switch (input.WildfireModule.Module)
             {
                 case WildfireModuleInput.WildfireModules.ELMFIRE:
-                    DrawElmfire(input.WildfireModule.ElmfireInput);
+                    DrawElmfire(input, input.WildfireModule.ElmfireInput);
                     break;
 
                 case WildfireModuleInput.WildfireModules.AscImport:
@@ -76,7 +76,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
         /// case, its rasters) is checked when the run starts, where the paths are resolved and the reason can
         /// be specific.
         /// </remarks>
-        private static void DrawElmfire(ElmfireInput elmfire)
+        private static void DrawElmfire(PREACTInput input, ElmfireInput elmfire)
         {
             ImGui.TextWrapped("ELMFIRE computes the whole fire and writes rasters, so it runs once when the "
                 + "simulation starts and the fire is read back from its output. The first run takes minutes; "
@@ -162,13 +162,13 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
                     ImGui.Unindent();
                 }
 
-                Fields.Hint("The same build runs from Scenario > Prepare data, where it can be done once",
-                            "rather than at the start of a run.");
+                Fields.Hint("The same build runs from the workflow (step 5) and Data > Build fire case, where it is",
+                            "done once rather than as a multi-minute side effect of starting a run.");
 
                 ImGui.Unindent();
             }
 
-            DrawSourceLayers(elmfire);
+            DrawSourceLayers(input);
         }
 
         /// <summary>
@@ -188,22 +188,35 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
         /// </remarks>
         private static void DrawResolvedTools(ElmfireInput elmfire)
         {
-            string root = ScenarioEditorWindow.Input?.RootFolder;
+            //Read from the cached probe, never probed from here: WindNinja's search is a recursive walk of its
+            //install roots, and this used to run it on every frame the tab was open.
+            global::WUInity.Workflow.ExternalToolsSnapshot tools = ToolsService.Current;
+            if (!tools.Probed)
+            {
+                ImGui.TextDisabled(ToolsService.Probing ? "Looking for ELMFIRE, GDAL and WindNinja..." : "Tools not probed yet.");
+                return;
+            }
 
-            Tool("ELMFIRE", PREACT.Utility.ElmfireCoupling.ResolveExecutable(root, elmfire.ElmfireExe),
-                elmfire.ElmfireExe,
+            Tool("ELMFIRE", tools.ElmfireExe, elmfire.ElmfireExe,
                 "the vendored build under ThirdParty/elmfire",
                 "No elmfire.exe found. The run cannot compute a fire.");
 
-            Tool("GDAL", PREACT.Utility.GdalTools.FindBinDirectory(), elmfire.PathToGdal,
+            Tool("GDAL", tools.GdalBin, elmfire.PathToGdal,
                 "PATH, then a QGIS or OSGeo4W install",
                 "No GDAL tools found. ELMFIRE shells out to gdal_translate and gdalinfo, and fails its own "
                 + "DEM check without them - reporting a problem with the DEM rather than with GDAL.");
 
-            Tool("WindNinja", PREACT.Utility.WindNinjaRunner.FindExecutable(), elmfire.WindNinjaExe,
+            Tool("WindNinja", tools.WindNinjaExe, elmfire.WindNinjaExe,
                 "WINDNINJA_CLI, PATH, then the installer's locations",
                 "No WindNinja found. The case gets one wind value for the whole domain, so the trigger "
                 + "boundary comes out circular instead of wind-driven.");
+
+            if (ImGui.SmallButton(ToolsService.Probing ? "Looking...###ToolsRefresh" : "Look again###ToolsRefresh"))
+            {
+                ToolsService.Refresh();
+            }
+            Fields.Hint("The tools are looked for when the application starts and when a scenario is opened.",
+                        "Look again after installing one. Help > External tools and keys lists them all.");
         }
 
         /// <summary>One resolved tool: what is in use, or what is missing and what that costs.</summary>
@@ -239,7 +252,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
         /// </remarks>
         private static void DrawNamelistImport(ElmfireInput elmfire)
         {
-            string root = ScenarioEditorWindow.Input?.RootFolder;
+            string root = ScenarioSession.RootFolder;
             if (string.IsNullOrEmpty(root))
             {
                 return;
@@ -252,8 +265,8 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
                 : Resolve(root, elmfire.NamelistTemplate);
             string generated = Resolve(root, System.IO.Path.Combine(elmfire.CaseDirectory ?? "elmfire", "elmfire.data"));
 
-            string source = !string.IsNullOrEmpty(named) && System.IO.File.Exists(named) ? named
-                          : (System.IO.File.Exists(generated) ? generated : null);
+            string source = !string.IsNullOrEmpty(named) && GuiFiles.Exists(named) ? named
+                          : (GuiFiles.Exists(generated) ? generated : null);
 
             if (source == null)
             {
@@ -288,6 +301,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
                 //The source layers, which the namelist has no way to express. Reported separately so a case
                 //built before the manifest existed says why the layer fields stayed empty rather than looking
                 //like the read half-failed.
+                ScenarioSession.NotifyEdited("namelist read from the case");
                 if (elmfire.LoadSourcesFromCase(caseDir, out int sourcesApplied, out string sourcesProblem))
                 {
                     _importStatus += $" Restored {sourcesApplied} source layer path(s) from "
@@ -322,16 +336,8 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
             catch { return null; }
         }
 
-        /// <summary>
-        /// The layers that have to come from outside, because no global source exists to download them.
-        /// </summary>
-        /// <remarks>
-        /// Every one is optional and every one changes what the fire can do, which is why the consequence of
-        /// leaving each blank is spelled out rather than left to a tooltip. Canopy is the sharp one: absent it
-        /// is filled with zeros and the run is surface fire only — a quiet switch, since a case with no canopy
-        /// builds and runs perfectly happily.
-        /// </remarks>
-        private static void DrawSourceLayers(ElmfireInput elmfire)
+        /// <summary>The source layers, drawn by the panel that owns them (Data &gt; Fuels, canopy and buildings).</summary>
+        private static void DrawSourceLayers(PREACTInput input)
         {
             if (!ImGui.CollapsingHeader("Source layers (fuel, canopy, buildings)"))
             {
@@ -339,125 +345,9 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
             }
 
             ImGui.Indent();
-
-            ImGui.TextWrapped("Any CRS and any resolution - each is warped onto the case's grid when the case "
-                + "is built, nearest-neighbour for the categorical layers and bilinear for the continuous "
-                + "ones. A layer the case already has is kept unless 'Rebuild layers the case already has' is "
-                + "on, so naming a source here is safe on a prepared case.");
-
-            if (!elmfire.BuildCase)
-            {
-                Fields.Warn("These are only read while building, and 'Build what the case is missing' is off.");
-            }
-
-            ImGui.SeparatorText("Fuel");
-            Fields.Path("FuelModelFile", () => elmfire.FuelModelFile, v => elmfire.FuelModelFile = v,
-                filter: FileBrowser.geoTiffFilter);
-            Fields.Choice("FuelModelStandard", ref elmfire.FuelModelStandard, FuelModelStandards);
-            Fields.Hint("Which standard the raster holds, and so whether it becomes fbfm40.tif or fbfm13.tif.",
-                        "Scott & Burgan 40 is what LANDFIRE and the global products ship.");
-
-            ImGui.SeparatorText("Canopy");
-
-            //Offered before the individual layers because it is the answer for most cases: point it at the
-            //dataset once and every case in Europe gets canopy, instead of four rasters per case or none.
-            Fields.Folder("CanopyDatasetFolder", () => elmfire.CanopyDatasetFolder,
-                v => elmfire.CanopyDatasetFolder = v,
-                "A folder of FIRE-RES pan-European canopy rasters. Supplies whichever of the four layers "
-                + "below are not named individually, clipped to this case's grid.");
-            Fields.Hint("Pan-European rasters, so nothing is downloaded per case - the domain is cut out of",
-                        "them. They hold real units where LANDFIRE holds scaled integers, so the case forces",
-                        "CH_TIMES_10 / CBH_TIMES_10 / CBD_TIMES_100 off. Only canopy is taken: terrain stays",
-                        "the case's own DEM and the fuel model stays the raster above.");
-
-            Fields.Path("CanopyCoverFile", () => elmfire.CanopyCoverFile, v => elmfire.CanopyCoverFile = v,
-                filter: FileBrowser.geoTiffFilter);
-            Fields.Path("CanopyHeightFile", () => elmfire.CanopyHeightFile, v => elmfire.CanopyHeightFile = v,
-                filter: FileBrowser.geoTiffFilter);
-            Fields.Path("CanopyBaseHeightFile", () => elmfire.CanopyBaseHeightFile, v => elmfire.CanopyBaseHeightFile = v,
-                filter: FileBrowser.geoTiffFilter);
-            Fields.Path("CanopyBulkDensityFile", () => elmfire.CanopyBulkDensityFile, v => elmfire.CanopyBulkDensityFile = v,
-                filter: FileBrowser.geoTiffFilter);
-
-            bool anyCanopy = !string.IsNullOrEmpty(elmfire.CanopyDatasetFolder)
-                             || !string.IsNullOrEmpty(elmfire.CanopyCoverFile)
-                             || !string.IsNullOrEmpty(elmfire.CanopyHeightFile)
-                             || !string.IsNullOrEmpty(elmfire.CanopyBaseHeightFile)
-                             || !string.IsNullOrEmpty(elmfire.CanopyBulkDensityFile);
-
-            if (!anyCanopy)
-            {
-                //Coloured rather than disabled: this is the default state, and its consequence is one a user
-                //would otherwise have to infer from a fire that never crowns.
-                Fields.Warn("None set, so canopy is filled with zeros: surface fire only, no crown fire.");
-            }
-            else
-            {
-                Fields.Hint("Whichever of the four are not set are filled with zeros. Check CH_TIMES_10 and",
-                            "CBH_TIMES_10 under Fire behaviour if these came from LANDFIRE.");
-            }
-
-            ImGui.SeparatorText("Buildings");
-            Fields.Path("BuildingAreaFile", () => elmfire.BuildingAreaFile, v => elmfire.BuildingAreaFile = v,
-                filter: FileBrowser.geoTiffFilter);
-            Fields.Path("BuildingSeparationFile", () => elmfire.BuildingSeparationFile, v => elmfire.BuildingSeparationFile = v,
-                filter: FileBrowser.geoTiffFilter);
-            Fields.Path("BuildingNonBurnableFractionFile", () => elmfire.BuildingNonBurnableFractionFile,
-                v => elmfire.BuildingNonBurnableFractionFile = v, filter: FileBrowser.geoTiffFilter);
-            Fields.Path("BuildingFootprintFractionFile", () => elmfire.BuildingFootprintFractionFile,
-                v => elmfire.BuildingFootprintFractionFile = v, filter: FileBrowser.geoTiffFilter);
-            Fields.Path("BuildingFuelModelFile", () => elmfire.BuildingFuelModelFile,
-                v => elmfire.BuildingFuelModelFile = v, filter: FileBrowser.geoTiffFilter);
-
-            int buildingLayers = 0;
-            foreach (string layer in new[]
-                     {
-                         elmfire.BuildingAreaFile, elmfire.BuildingSeparationFile,
-                         elmfire.BuildingNonBurnableFractionFile, elmfire.BuildingFootprintFractionFile,
-                         elmfire.BuildingFuelModelFile,
-                     })
-            {
-                if (!string.IsNullOrEmpty(layer)) ++buildingLayers;
-            }
-
-            //All five or none: ELMFIRE's building spread model needs the whole set, so four is the state worth
-            //flagging - it looks like progress and behaves like nothing.
-            if (buildingLayers == 0)
-            {
-                Fields.Hint("None set, so building-to-building spread is off and the fire burns vegetation only.");
-            }
-            else if (buildingLayers < 5)
-            {
-                Fields.Caution($"{buildingLayers} of 5 set. All five are needed to switch building spread on,",
-                               "so as it stands these will be ingested and then not used.");
-            }
-            else
-            {
-                Fields.Hint("All five set, so USE_BLDG_SPREAD_MODEL comes on. Put building_fuel_models.csv",
-                            "beside the case with the case builder's copy step.");
-            }
-
-            ImGui.SeparatorText("Other");
-            Fields.Path("IgnitionMaskFile", () => elmfire.IgnitionMaskFile, v => elmfire.IgnitionMaskFile = v,
-                filter: FileBrowser.geoTiffFilter);
-            Fields.Hint("Where ELMFIRE may start its own ignitions. A painted ignition area becomes this",
-                        "automatically, so it is only needed for a mask prepared elsewhere.");
-
-            Fields.Path("BarriersFile", () => elmfire.BarriersFile, v => elmfire.BarriersFile = v,
-                filter: FileBrowser.geoTiffFilter);
-            Fields.Hint("Fuel breaks and other barriers to spread.");
-
-            Fields.Path("SuppressionDifficultyFile",
-                () => elmfire.SuppressionDifficultyFile, v => elmfire.SuppressionDifficultyFile = v,
-                filter: FileBrowser.geoTiffFilter);
-            Fields.Hint("Suppression difficulty index, for the extended attack model. Nothing here produces",
-                        "one, so it is a raster you bring; without it USE_SDI cannot be switched on.");
-
+            SourceLayersPanel.DrawContents(input);
             ImGui.Unindent();
         }
-
-        private static readonly string[] FuelModelStandards =
-            Enum.GetNames(typeof(ElmfireInput.FuelModelStandards));
 
         /// <summary>A fire computed elsewhere, read back from its rasters.</summary>
         private static void DrawAscImport(AscImportInput asc)
@@ -474,9 +364,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
 
             Fields.Path("FuelModelFile", () => asc.FuelModelFile, v => asc.FuelModelFile = v,
                 filter: FileBrowser.geoTiffFilter);
-            Fields.Hint("Display only - an imported fire brings its own behaviour and needs no fuel to spread.",
-                        "It is what the output window's fuel model display mode draws. Set automatically for",
-                        "an ELMFIRE fire, from the case's own fuel layer.");
+            Fields.Hint("Display only - an imported fire brings its own behaviour and needs no fuel to spread.");
 
             //Cannot be inferred from the raster, and wrong is silent - the fire arrives 60x early or late.
             //Set automatically for an ELMFIRE fire; this is for one imported by hand.

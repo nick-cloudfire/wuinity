@@ -20,8 +20,45 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
     /// </remarks>
     public static class LandscapeInputTab
     {
-        public static void Draw(PREACT.Input.LandscapeInput input)
+        public static void Draw(PREACT.Input.PREACTInput scenario)
         {
+            PREACT.Input.LandscapeInput input = scenario.Landscape;
+
+            //An ELMFIRE scenario's terrain is its case's: the fire, the painted areas, the groups and k-PERIL's
+            //slope are all on the case's dem.tif, and a second DEM beside it (Mati had mati_dem.tif at 27.6 m
+            //next to the case's 30 m dem.tif) is how two grids came to be painted on.
+            if (scenario.WildfireModule.Module == PREACT.Input.WildfireModuleInput.WildfireModules.ELMFIRE)
+            {
+                string caseDem = global::WUInity.Workflow.ScenarioFiles.CaseInput(scenario, "dem.tif");
+                bool caseBuilt = GuiFiles.Exists(GuiFiles.Resolve(scenario.RootFolder, caseDem));
+                bool usesCase = input.ElevationFile?.Replace('\\', '/') == caseDem && string.IsNullOrEmpty(input.LandscapeFile);
+
+                ImGui.TextWrapped("With an ELMFIRE fire, the terrain is the fire case's own: " + caseDem
+                    + ". The case build sets it; it is what everything is painted on.");
+                if (!caseBuilt)
+                {
+                    Fields.Hint("The case has not been built yet (workflow step 5).");
+                }
+                else if (usesCase)
+                {
+                    Fields.Ok("Using the case terrain.");
+                }
+                else
+                {
+                    Fields.Warn("The scenario names other terrain than the case's.");
+                    if (ImGui.Button("Use the case terrain"))
+                    {
+                        ScenarioDataSteps.AdoptCaseTerrain(scenario);
+                        ScenarioSession.NotifyEdited("case terrain");
+                    }
+                }
+
+                if (!ImGui.CollapsingHeader("Set by hand###LandscapeByHand"))
+                {
+                    return;
+                }
+            }
+
             ImGui.TextWrapped("Elevation is the one that matters: it is what the domain is drawn on, what painted "
                 + "areas are measured against, and where slope and aspect come from when they are not given "
                 + "separately. Everything here is optional.");
@@ -43,7 +80,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
             Fields.Path("AspectFile", () => input.AspectFile, v => input.AspectFile = v,
                 filter: FileBrowser.geoTiffFilter);
             Fields.Hint("Slope in degrees, aspect in degrees clockwise from north. Both are computed from the",
-                        "elevation when not given; Prepare data writes them out. k-PERIL corrects its spread",
+                        "elevation when not given; Data > Advanced > Download DEM writes them out. k-PERIL corrects its spread",
                         "ellipse with the slope, so a scenario with terrain gets a better trigger boundary.");
 
             ImGui.EndDisabled();
@@ -56,7 +93,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
             //Said here because this is where someone will come looking for them, having previously set them
             //here. Naming the tab and the section is the whole point - "somewhere else" would not help.
             ImGui.SeparatorText("Fuel and canopy");
-            ImGui.TextWrapped("Set under Hazards > Fire > Source layers, not here. They are inputs to the fire "
+            ImGui.TextWrapped("Set under Data > Fuels, canopy and buildings, not here. They are inputs to the fire "
                 + "model rather than properties of the terrain, and ELMFIRE warps them onto its own grid when "
                 + "the case is built.");
         }

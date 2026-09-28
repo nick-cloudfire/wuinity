@@ -27,22 +27,10 @@ namespace WUInity.Visualization
         float upperFirelineIntensityValue = 6000.0f;
 
         Texture2D horizontalRandomLegend;
-        Texture2D fuelModelLegendTexture;
-
-
-        public Material GetFireMaterial()
-        {
-            return _fireMaterial;
-        }
-
-        public Material GetSootMaterial()
-        {
-            return sootMaterial;
-        }
 
         public bool ToggleFire(PREACTInput input)
         {
-            if(input.WildfireModule.Enabled)
+            if(input.WildfireModule.Enabled && fireMeshRenderer != null)
             {
                 fireMeshRenderer.gameObject.SetActive(!fireMeshRenderer.gameObject.activeSelf);
                 return fireMeshRenderer.gameObject.activeSelf;
@@ -55,7 +43,7 @@ namespace WUInity.Visualization
 
         public bool ToggleSoot(PREACTInput input)
         {
-            if(input.SmokeModule.Enabled)
+            if(input.SmokeModule.Enabled && sootMeshRenderer != null)
             {
                 sootMeshRenderer.gameObject.SetActive(!sootMeshRenderer.gameObject.activeSelf);
                 return sootMeshRenderer.gameObject.activeSelf;
@@ -69,6 +57,12 @@ namespace WUInity.Visualization
         public void CreateBuffers(Simulation simulation)
         {
             Release(simulation, true);
+
+            //The previous run's planes. Each run used to add a new FireSpread and SootSpread object and mesh
+            //without removing the last, so every earlier run's fire stayed in the scene, still active, under
+            //the new one - and the toggles only ever reached the newest.
+            DestroyPlane(ref fireMeshRenderer);
+            DestroyPlane(ref sootMeshRenderer);
 
             if (simulation.Input.WildfireModule.Enabled)
             {
@@ -88,7 +82,7 @@ namespace WUInity.Visualization
             _fireBuffer = new ComputeBuffer(_fireCellCountX * _fireCellCountY, sizeof(float));
             _fireMaterial.SetInteger("_CellsX", _fireCellCountX);
             _fireMaterial.SetInteger("_CellsY", _fireCellCountY);
-            SetFireDisplayMode(FireDisplayMode.FirelineIntensity);
+            SetFirelineIntensityDisplay();
             fireMeshRenderer = CreateDataPlane(_fireMaterial, "FireSpread", true, simulation);
         }
 
@@ -116,73 +110,34 @@ namespace WUInity.Visualization
             }
         }       
         
-        public enum FireDisplayMode { FirelineIntensity, FuelModelNumber, TimeOfArrival, DistanceToFront }
-        FireDisplayMode _fireDisplayMode = FireDisplayMode.FirelineIntensity;
-
-        public void SetFireDisplayMode(FireDisplayMode mode)
+        //Fireline intensity is the only thing the fire plane has ever been asked to show. The fuel model,
+        //arrival time and distance-to-front modes it also offered had no caller; results rasters (arrival,
+        //probability, the trigger boundary) are drawn by FireDomainVisualizerUnity.DisplayRaster instead.
+        private void SetFirelineIntensityDisplay()
         {
-            if(_fireMaterial == null)
+            if (_fireMaterial == null)
             {
                 return;
             }
 
-            _fireDisplayMode = mode;
-            if(_fireDisplayMode == FireDisplayMode.FirelineIntensity)
-            {
-                _fireMaterial.SetFloat("_LowerCutOff", 0.01f);
-                _fireMaterial.SetFloat("_MinValue", lowerFirelineIntensityValue);
-                _fireMaterial.SetFloat("_MaxValue", upperFirelineIntensityValue);
-                _fireMaterial.SetFloat("_DataMultiplier", 1.0f);
+            _fireMaterial.SetFloat("_LowerCutOff", 0.01f);
+            _fireMaterial.SetFloat("_MinValue", lowerFirelineIntensityValue);
+            _fireMaterial.SetFloat("_MaxValue", upperFirelineIntensityValue);
+            _fireMaterial.SetFloat("_DataMultiplier", 1.0f);
 
-                if(horizontalRandomLegend == null)
-                {
-                    horizontalRandomLegend = (Texture2D)_fireMaterial.GetTexture("_ScaleGradient");
-                }
-                _fireMaterial.SetTexture("_ScaleGradient", horizontalRandomLegend);
-            }
-            else if(_fireDisplayMode == FireDisplayMode.FuelModelNumber)
+            if (horizontalRandomLegend == null)
             {
-                _fireMaterial.SetFloat("_LowerCutOff", 0.0f);
-                _fireMaterial.SetFloat("_MinValue", 0);
-                _fireMaterial.SetFloat("_MaxValue", 256);
-                _fireMaterial.SetFloat("_DataMultiplier", 1.0f);
-
-                if(fuelModelLegendTexture == null)
-                {
-                    CreateRandomFuelModelLegend();
-                }
-                _fireMaterial.SetTexture("_ScaleGradient", fuelModelLegendTexture);
+                horizontalRandomLegend = (Texture2D)_fireMaterial.GetTexture("_ScaleGradient");
             }
-            else if(_fireDisplayMode == FireDisplayMode.TimeOfArrival)
-            {
-                _fireMaterial.SetFloat("_LowerCutOff", 0.01f);
-                _fireMaterial.SetFloat("_MinValue", lowerFirelineIntensityValue);
-                _fireMaterial.SetFloat("_MaxValue", upperFirelineIntensityValue);
-                _fireMaterial.SetFloat("_DataMultiplier", 1.0f);
-            }
-            else if (_fireDisplayMode == FireDisplayMode.DistanceToFront)
-            {
-                _fireMaterial.SetFloat("_LowerCutOff", 0.0f);
-                _fireMaterial.SetFloat("_MinValue", 0.0f);
-                _fireMaterial.SetFloat("_MaxValue", 500.0f);
-                _fireMaterial.SetFloat("_DataMultiplier", 1.0f);
-            }
+            _fireMaterial.SetTexture("_ScaleGradient", horizontalRandomLegend);
         }
 
         public void UpdateFireRenderer(bool renderFire, bool renderSoot, Simulation simulation)
         {
             if (renderFire)
             {
-                float[] fireData = null;
-                if (_fireDisplayMode == FireDisplayMode.FirelineIntensity)
-                {
-                    fireData = simulation.Hazards.Wildfire.GetFireLineIntensityData();
-                }
-                else if(_fireDisplayMode == FireDisplayMode.FuelModelNumber)
-                {
-                    fireData = simulation.Hazards.Wildfire.GetFuelModelNumberData();
-                }
-                
+                float[] fireData = simulation.Hazards.Wildfire.GetFireLineIntensityData();
+
                 if (fireData != null)
                 {
                     _fireBuffer.SetData(fireData);
@@ -206,6 +161,22 @@ namespace WUInity.Visualization
                     Engine.Message(null, Engine.LogType.Warning, "Unsupported smoke module, fire/smoke renderer failed to initialize.");
                 }
             }
+        }
+
+        private static void DestroyPlane(ref MeshRenderer plane)
+        {
+            if (plane == null)
+            {
+                return;
+            }
+
+            MeshFilter filter = plane.GetComponent<MeshFilter>();
+            if (filter != null && filter.sharedMesh != null)
+            {
+                Destroy(filter.sharedMesh);
+            }
+            Destroy(plane.gameObject);
+            plane = null;
         }
 
         MeshRenderer CreateDataPlane(Material material, string name, bool setActive, Simulation simulation)
@@ -241,62 +212,9 @@ namespace WUInity.Visualization
             return mR;
         }
 
-        void CreateRandomFuelModelLegend()
-        {
-            fuelModelLegendTexture = new Texture2D(256, 2);
-            fuelModelLegendTexture.filterMode = FilterMode.Point;
-            for (int i = 0; i < 256; i++)
-            {
-                PREACTColor fuelColor = FuelModelColors.GetFuelColor(i);
-                fuelModelLegendTexture.SetPixel(i, 0, fuelColor.UnityColor());
-                fuelModelLegendTexture.SetPixel(i, 1, fuelColor.UnityColor());
-            }
-            fuelModelLegendTexture.Apply();
-        }
-
-        public float GetUpperFirelineIntensityLimit()
-        {
-            return upperFirelineIntensityValue;
-        }
-
-        public void SetUpperFirelineIntensityLimit(float value)
-        {
-            _fireMaterial.SetFloat("_MaxValue", upperFirelineIntensityValue);
-        }
-
-        public float GetLowerFirelineIntensityLimit()
-        {
-            return lowerFirelineIntensityValue;
-        }
-
-        public void SetLowerFirelineIntensityLimit(float value)
-        {
-            _fireMaterial.SetFloat("_MinValue", lowerFirelineIntensityValue);
-        }
-
-        public float GetUpperExtCoeff()
-        {
-            return upperExtCoeff;
-        }
-
-        public void SetUpperOpticalDensityLimit(float value)
-        {
-            sootMaterial.SetFloat("_MaxValue", value); //5 meters with C = 3
-        }
-
-        public float GetLowerExtCoeff()
-        {
-            return lowerExtCoeff;
-        }
-
-        public void SetLowerOpticalDensityLimit(float value)
-        {
-            sootMaterial.SetFloat("_MinValue", value); //5 meters with C = 3
-        }
-
         void OnDisable()
         {
-            SetFireDisplayMode(FireDisplayMode.FirelineIntensity);
+            SetFirelineIntensityDisplay();
             Release();          
         }
 
