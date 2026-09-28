@@ -1120,7 +1120,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
             try
             {
                 var to = PREACT.Utility.PaintedMaskResampler.Grid.FromRaster(GuiFiles.Resolve(input.RootFolder, currentGrid));
-                if (to.Ncols == strokeGrid.x && to.Nrows == strokeGrid.y) return;
+                //Nothing to carry when the strokes are on this grid: its size, and - when they record one - its place.
+                if (to.Ncols == strokeGrid.x && to.Nrows == strokeGrid.y && to.DescribeMismatch(data.PaintedGrid) == null) return;
 
                 string previousPath = GuiFiles.Resolve(input.RootFolder, previousGrid);
                 if (previousPath == null || !File.Exists(previousPath))
@@ -1128,7 +1129,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                     return;
                 }
                 var from = PREACT.Utility.PaintedMaskResampler.Grid.FromRaster(previousPath);
-                if (from.Ncols != strokeGrid.x || from.Nrows != strokeGrid.y) return;
+                if (from.Ncols != strokeGrid.x || from.Nrows != strokeGrid.y || from.DescribeMismatch(data.PaintedGrid) != null) return;
 
                 var masks = new PREACT.Utility.PaintedMaskResampler.Masks
                 {
@@ -1141,6 +1142,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 data.InitialIgnition = moved.InitialIgnition;
                 data.ManualTriggerBuffer = moved.ManualTriggerBuffer;
                 data.PaintedCellCount = new Vector2int(to.Ncols, to.Nrows);
+                data.PaintedGrid = to.ToPaintedGrid();
                 Engine.Message(null, Engine.LogType.Log, $"The fire areas painted and not saved were carried from the old "
                     + $"{from.Ncols} x {from.Nrows} case grid onto the new {to.Ncols} x {to.Nrows} one; they are still unsaved.");
             }

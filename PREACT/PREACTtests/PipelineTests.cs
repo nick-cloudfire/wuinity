@@ -207,7 +207,8 @@ namespace PREACT.Tests
                 Assert.True(PaintedAreasReadable(gfi, g), "a file with the trailer still reads as every older reader reads it");
 
                 var wrong = BuildWith(moved);
-                Assert.True(!wrong.Ok && wrong.Error.Contains("-300 m east"), "same size, 10 cells away: refused, saying so: " + wrong.Error);
+                Assert.True(!wrong.Ok && wrong.Error.Contains("starts 300 m west of the grid the painting was made on"),
+                    "same size, 10 cells away: refused, saying so: " + wrong.Error);
 
                 var legacy = BuildWith(null);
                 Assert.True(legacy.Ok && legacy.Log.Contains("matched by its size alone"), "an older file is matched by size, and it is said");

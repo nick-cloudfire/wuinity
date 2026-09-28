@@ -681,7 +681,24 @@ namespace PREACT.Evacuation
 
             if (painted.Length == xCount * yCount)
             {
-                return painted;
+                //The right size is not the right ground when the painting records where it was made: the same rule as
+                //the case build's, against the fire grid's own corner (unknown, (0, 0), for a module that has none).
+                GraphicalFireInput.PaintedGrid recorded = _input.WildfireModule.Data.PaintedGrid;
+                WildfireModule fire = simulation.Hazards.Wildfire;
+                Math.Vector2d origin = fire != null ? fire.GetGridOriginUtm() : Math.Vector2d.zero;
+                string elsewhere = recorded != null && (origin.x != 0.0 || origin.y != 0.0)
+                    ? recorded.DescribeMismatch(origin.x, origin.y, fire.GetCellSizeX(), fire.GetGridEpsgCode())
+                    : null;
+                if (elsewhere == null)
+                {
+                    return painted;
+                }
+
+                Engine.Message(simulation, Engine.LogType.SimulationError,
+                    $"The painted WUI area is the fire grid's size, but it was painted on {recorded.Describe()} and the fire grid "
+                    + elsewhere + ", so it cannot be used here - move the painting onto the fire grid (the GUI's workflow step "
+                    + "6), or set [kPERIL] WuiAreaFile to a mask on this grid.");
+                return null;
             }
 
             Math.Vector2int cells = _input.WildfireModule.Data.PaintedCellCount;

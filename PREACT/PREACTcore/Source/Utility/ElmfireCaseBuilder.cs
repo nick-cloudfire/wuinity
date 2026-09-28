@@ -1486,8 +1486,9 @@ namespace PREACT.Utility
                     $"The painted areas in {Path.GetFileName(o.PaintedMasksPath)} are {masks.Ncols}x{masks.Nrows} cells, "
                     + $"but the fire-case grid is {grid.Header.Ncols}x{grid.Header.Nrows} and {landscape}"
                     + (misplaced.Count > 0 ? " (" + string.Join("; ", misplaced) + ")" : "")
-                    + ", so there is no telling which ground they were painted on. Repaint the ignition and WUI areas "
-                    + "on the fire-case grid (load the case's dem.tif as the landscape), then build again.");
+                    + ", so there is no telling which ground they were painted on. Move the painting onto the fire-case "
+                    + "grid (the GUI's workflow step 6 offers it when it knows the grid it was painted on) or repaint the "
+                    + "ignition and WUI areas on it, then build again.");
             }
 
             log($"  painted: {masks.Ncols}x{masks.Nrows} painting placed via {paintedOn}"
@@ -1552,8 +1553,8 @@ namespace PREACT.Utility
                 string previousDem = ElmfireStems.Tif(previousGridDirectory, ElmfireStems.Dem);
                 if (File.Exists(previousDem))
                 {
-                    MasterGrid previous = MasterGrid.FromRasterFile(previousDem);
-                    if (Fits(previous, "the case grid this build replaced"))
+                    MasterGrid previous = TryReadGrid(previousDem, "the case grid this build replaced", misplaced);
+                    if (previous != null && Fits(previous, "the case grid this build replaced"))
                     {
                         paintedOn = "the case grid this build replaced";
                         return previous;
@@ -1563,8 +1564,8 @@ namespace PREACT.Utility
 
             if (!string.IsNullOrEmpty(landscapePath) && File.Exists(landscapePath))
             {
-                MasterGrid landscape = MasterGrid.FromRasterFile(landscapePath);
-                if (Fits(landscape, "the landscape raster " + Path.GetFileName(landscapePath)))
+                MasterGrid landscape = TryReadGrid(landscapePath, "the landscape raster " + Path.GetFileName(landscapePath), misplaced);
+                if (landscape != null && Fits(landscape, "the landscape raster " + Path.GetFileName(landscapePath)))
                 {
                     paintedOn = "the landscape raster " + Path.GetFileName(landscapePath) + " (painted before the case grid existed)";
                     return landscape;
@@ -1575,32 +1576,32 @@ namespace PREACT.Utility
         }
 
         /// <summary>
+        /// A candidate grid for a painting, or null with the reason added to <paramref name="unusable"/>: Mati's own
+        /// 27.59 x 27.62 m DEM is refused as a grid (non-square cells), which used to end the build with that message
+        /// instead of the one about the painting.
+        /// </summary>
+        private static MasterGrid TryReadGrid(string path, string what, List<string> unusable)
+        {
+            try
+            {
+                return MasterGrid.FromRasterFile(path);
+            }
+            catch (InvalidOperationException e)
+            {
+                unusable?.Add(what + " cannot hold a painting the build can place (" + e.Message + ")");
+                return null;
+            }
+        }
+
+        /// <summary>
         /// Why a painting recorded at <paramref name="recorded"/> was not painted on <paramref name="grid"/>, or null
         /// when it was - or cannot be told, because the file records no position.
         /// </summary>
         public static string DescribePaintedGridMismatch(GraphicalFireInput.PaintedGrid recorded, MasterGrid grid)
         {
-            if (recorded == null) return null;
-
-            double cs = grid.Header.CellSize;
-            if (System.Math.Abs(recorded.CellSize - cs) > 0.001 * cs)
-            {
-                return $"has {cs:F1} m cells and the painting {recorded.CellSize:F1} m";
-            }
-
-            if (recorded.EpsgCode > 0 && !string.IsNullOrEmpty(grid.Epsg)
-                && !string.Equals(grid.Epsg, "EPSG:" + recorded.EpsgCode.ToString(CultureInfo.InvariantCulture), StringComparison.OrdinalIgnoreCase))
-            {
-                return $"is in {grid.Epsg} and the painting in EPSG:{recorded.EpsgCode}";
-            }
-
-            double dx = grid.XMin - recorded.XllCorner, dy = grid.YMin - recorded.YllCorner;
-            if (System.Math.Abs(dx) > 0.5 * cs || System.Math.Abs(dy) > 0.5 * cs)
-            {
-                return $"starts {dx:F0} m east and {dy:F0} m north of the grid the painting was made on";
-            }
-
-            return null;
+            //The rule itself is GraphicalFireInput's, so the resampler and the GUI apply the same one.
+            return recorded?.DescribeMismatch(grid.XMin, grid.YMin, grid.Header.CellSize,
+                GraphicalFireInput.PaintedGrid.EpsgNumber(grid.Epsg));
         }
 
         private static string DescribeDimensions(string rasterPath)

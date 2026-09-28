@@ -158,8 +158,9 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             bool movable = model.PaintingOnOtherGrid && !string.IsNullOrEmpty(model.PaintedOnReference);
             if (model.PaintingOnOtherGrid)
             {
-                Fields.Caution($"The saved painting ({model.PaintedAreasFile}) is on a {model.PaintedWidth} x {model.PaintedHeight} grid"
-                    + (movable ? $", {model.PaintedOnReference}'s." : ", which none of the scenario's rasters matches."));
+                Fields.Caution($"The saved painting ({model.PaintedAreasFile}) is on another {model.PaintedWidth} x {model.PaintedHeight} grid "
+                    + $"(this one {model.PaintGridDifference})"
+                    + (movable ? $": {model.PaintedOnReference}'s." : ", which none of the scenario's rasters is."));
                 if (movable)
                 {
                     ImGui.BeginDisabled(ScenarioSession.IsBusy);

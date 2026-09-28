@@ -55,6 +55,12 @@ namespace WUInity
         double _fireGridCellSize;
         bool _haveFireGrid;
 
+        //Where that grid lies in its own CRS, as every saved painting records it (GraphicalFireInput's trailer), read
+        //from the raster the grid came from the way the case builder and the resampler read theirs, so all three
+        //compare the same numbers. Null when the grid's raster could not be read that way; the painting is then
+        //saved without the record and matched by its size, as every painting was before.
+        GraphicalFireInput.PaintedGrid _fireGridRecord;
+
         //wui area stuff
         Texture2D wuiAreaTex;
         Color[] wuiAreaColorArray;   
@@ -331,6 +337,7 @@ namespace WUInity
                 _fireGridOrigin = _lcpData.OriginOffset;
                 _fireGridCellSize = fireDataCellCount.x > 0 ? fireDataRealSize.x / fireDataCellCount.x : 0.0;
                 _haveFireGrid = _fireGridCellSize > 0.0;
+                _fireGridRecord = RecordOfLandscape(input);
                 _gridReference = "(landscape)";
                 _gridDescription = "the loaded landscape";
                 _evacGroupMasksLoaded = false;
@@ -372,6 +379,7 @@ namespace WUInity
             //simulation's own UTM origin. Mixing the two frames puts everything painted somewhere else.
             _fireGridOrigin = new Vector2d(header.XllCorner, header.YllCorner) - input.Simulation.Data.UTMOrigin;
             _fireGridCellSize = header.CellSize;
+            _fireGridRecord = RecordOf(path, header.Ncols, header.Nrows);
             _haveFireGrid = true;
             _gridReference = reference;
             _gridDescription = what + " (" + reference + ")";
@@ -399,6 +407,46 @@ namespace WUInity
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// The record of a grid read from <paramref name="rasterPath"/>, if it has the paint grid's size; null when GDAL
+        /// cannot read it as a north-up grid.
+        /// </summary>
+        private static GraphicalFireInput.PaintedGrid RecordOf(string rasterPath, int ncols, int nrows)
+        {
+            try
+            {
+                var grid = PREACT.Utility.PaintedMaskResampler.Grid.FromRaster(rasterPath);
+                return grid.Ncols == ncols && grid.Nrows == nrows ? grid.ToPaintedGrid() : null;
+            }
+            catch (System.Exception)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// The record of a loaded landscape's grid: from the raster it was read from, when that raster is where the
+        /// landscape says it is (its corner within half a cell); null otherwise (an .lcp GDAL cannot place).
+        /// </summary>
+        private GraphicalFireInput.PaintedGrid RecordOfLandscape(PREACT.Input.PREACTInput input)
+        {
+            string reference = input?.Landscape?.GetReferenceFile();
+            if (string.IsNullOrEmpty(reference) || _fireGridCellSize <= 0.0)
+            {
+                return null;
+            }
+
+            string path = System.IO.Path.IsPathRooted(reference) ? reference : System.IO.Path.Combine(input.RootFolder, reference);
+            GraphicalFireInput.PaintedGrid record = System.IO.File.Exists(path) ? RecordOf(path, fireDataCellCount.x, fireDataCellCount.y) : null;
+            if (record == null)
+            {
+                return null;
+            }
+
+            Vector2d corner = _fireGridOrigin + input.Simulation.Data.UTMOrigin;
+            return record.DescribeMismatch(corner.x, corner.y, _fireGridCellSize, record.EpsgCode) == null ? record : null;
         }
 
         public void SetPainterMode(PaintMode mode)
@@ -618,7 +666,7 @@ namespace WUInity
                 return false;
             }
 
-            GraphicalFireInput.SaveGraphicalFireInput(path, fireData, fireDataCellCount.x, fireDataCellCount.y);
+            GraphicalFireInput.SaveGraphicalFireInput(path, fireData, fireDataCellCount.x, fireDataCellCount.y, _fireGridRecord);
             return true;
         }
 
@@ -658,6 +706,7 @@ namespace WUInity
             fireDataRealSize = Vector2d.zero;
             _fireGridOrigin = Vector2d.zero;
             _fireGridCellSize = 0.0;
+            _fireGridRecord = null;
             _gridReference = null;
             _gridDescription = null;
             _gridProblem = null;
@@ -998,8 +1047,11 @@ namespace WUInity
             string name = FileNameOnThisGrid(folder, string.IsNullOrEmpty(fileName) ? GraphicalFireInput.DefaultFileName : fileName);
             string path = System.IO.Path.Combine(folder, name);
 
-            GraphicalFireInput.SaveGraphicalFireInput(path, fireData, fireDataCellCount.x, fireDataCellCount.y);
+            //With the grid's record (review MI-3): the case builder places the painting only on the grid it was made on,
+            //not on any grid of its size - a domain moved by whole cells used to take the old painting as its own.
+            GraphicalFireInput.SaveGraphicalFireInput(path, fireData, fireDataCellCount.x, fireDataCellCount.y, _fireGridRecord);
             fireData.PaintedCellCount = fireDataCellCount;
+            fireData.PaintedGrid = _fireGridRecord;
             UnsavedFireStrokes = false;
 
             Engine.Message(null, Engine.LogType.Log,
@@ -1024,22 +1076,18 @@ namespace WUInity
                 return name;
             }
 
-            int width = 0, height = 0;
-            try
+            //Unreadable (no size): not a painting anything can be recovered from, so it is replaced as before.
+            GraphicalFireInput.PaintedGrid recorded = GraphicalFireInput.ReadGrid(path, out int width, out int height);
+            if (width <= 0)
             {
-                using (var br = new System.IO.BinaryReader(System.IO.File.OpenRead(path)))
-                {
-                    width = br.ReadInt32();
-                    height = br.ReadInt32();
-                }
-            }
-            catch (System.Exception)
-            {
-                //Unreadable: not a painting anything can be recovered from, so it is replaced as before.
                 return name;
             }
 
-            if (width == fireDataCellCount.x && height == fireDataCellCount.y)
+            //Another grid is another size, or the same size somewhere else by the records of both.
+            string elsewhere = recorded != null && _fireGridRecord != null
+                ? recorded.DescribeMismatch(_fireGridRecord.XllCorner, _fireGridRecord.YllCorner, _fireGridRecord.CellSize, _fireGridRecord.EpsgCode)
+                : null;
+            if (width == fireDataCellCount.x && height == fireDataCellCount.y && elsewhere == null)
             {
                 return name;
             }
@@ -1049,8 +1097,9 @@ namespace WUInity
             string freshName = string.IsNullOrEmpty(relativeFolder)
                 ? System.IO.Path.GetFileName(fresh)
                 : relativeFolder + "/" + System.IO.Path.GetFileName(fresh);
-            Engine.Message(null, Engine.LogType.Warning, $"{name} holds a painting on a {width} x {height} grid, so it is kept; "
-                + $"the areas painted on this {fireDataCellCount.x} x {fireDataCellCount.y} grid are saved as {freshName}.");
+            Engine.Message(null, Engine.LogType.Warning, $"{name} holds a painting on a {width} x {height} grid"
+                + (elsewhere != null ? $" of the same size elsewhere (this grid {elsewhere})" : string.Empty)
+                + $", so it is kept; the areas painted on this {fireDataCellCount.x} x {fireDataCellCount.y} grid are saved as {freshName}.");
             return freshName;
         }
 
@@ -1140,6 +1189,27 @@ namespace WUInity
                     fireData.PaintedCellCount = new Vector2int(0, 0);
                 }
 
+                //The same size is still another grid when the masks record a place that is not this grid's (review MI-3):
+                //a domain moved by whole cells. Shown here they would sit on the wrong ground, and strokes added to them
+                //would be saved as this grid's. The saved file is left alone; the case build refuses it for the same reason.
+                string elsewhere = fireData.PaintedGrid != null && _fireGridRecord != null && fireData.WuiArea != null
+                                   && fireData.WuiArea.Length == cells
+                    ? fireData.PaintedGrid.DescribeMismatch(_fireGridRecord.XllCorner, _fireGridRecord.YllCorner,
+                        _fireGridRecord.CellSize, _fireGridRecord.EpsgCode)
+                    : null;
+                if (elsewhere != null)
+                {
+                    Engine.Message(null, Engine.LogType.Warning, (UnsavedFireStrokes
+                            ? "Fire areas painted on the previous grid and not saved could not be carried onto this one"
+                            : "The saved fire areas cannot be shown or added to here")
+                        + $": they are on {fireData.PaintedGrid.Describe()}, and this {cellCount.x} x {cellCount.y} grid {elsewhere}. "
+                        + "What was saved is still in " + (_manager.PREACTInput.WildfireModule.GraphicalFireInputFile ?? "its file")
+                        + "; painting and saving again keeps it and writes a new file.");
+                    UnsavedFireStrokes = false;
+                    fireData.WuiArea = fireData.RandomIgnition = fireData.InitialIgnition = fireData.ManualTriggerBuffer = null;
+                    fireData.PaintedCellCount = new Vector2int(0, 0);
+                }
+
                 if (fireData.WuiArea == null || fireData.WuiArea.Length != cells)
                 {
                     fireData.UpdateWUIArea(null, cellCount.x, cellCount.y);
@@ -1152,6 +1222,9 @@ namespace WUInity
                 {
                     fireData.UpdateInitialIgnitionIndices(null, cellCount.x, cellCount.y);
                 }
+
+                //From here the masks are this grid's: strokes go into them on it, and a run checks them against it.
+                fireData.PaintedGrid = _fireGridRecord;
 
                 //painter
                 requestedColorArray = new Color[cellCount.x * cellCount.y];

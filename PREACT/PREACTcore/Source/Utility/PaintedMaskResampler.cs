@@ -65,6 +65,27 @@ namespace PREACT.Utility
             /// <summary>The raster the grid was read from.</summary>
             public string Path;
 
+            /// <summary>
+            /// The grid as a painting records it (<see cref="GraphicalFireInput.PaintedGrid"/>): corner, cell width and
+            /// EPSG code - the same numbers the case builder compares a painting's record with.
+            /// </summary>
+            public GraphicalFireInput.PaintedGrid ToPaintedGrid()
+            {
+                return new GraphicalFireInput.PaintedGrid
+                {
+                    XllCorner = XMin,
+                    YllCorner = YMin,
+                    CellSize = CellWidth,
+                    EpsgCode = GraphicalFireInput.PaintedGrid.EpsgNumber(Epsg),
+                };
+            }
+
+            /// <summary>Why <paramref name="recorded"/> says a painting was not made on this grid, or null.</summary>
+            public string DescribeMismatch(GraphicalFireInput.PaintedGrid recorded)
+            {
+                return recorded?.DescribeMismatch(XMin, YMin, CellWidth, GraphicalFireInput.PaintedGrid.EpsgNumber(Epsg));
+            }
+
             public double XMax => XMin + Ncols * CellWidth;
             public double YMax => YMin + Nrows * CellHeight;
             public double CellArea => CellWidth * CellHeight;
@@ -282,7 +303,9 @@ namespace PREACT.Utility
         /// </summary>
         /// <remarks>
         /// Never overwrites: an existing <paramref name="outputGfi"/>, or one that is the painting itself, is refused.
-        /// <see cref="NewFileName"/> gives a free name beside the painting.
+        /// <see cref="NewFileName"/> gives a free name beside the painting. A painting that records where its grid lies
+        /// is moved only from that grid, and the moved painting records the target grid, so the case builder (which
+        /// checks the record) accepts it on that grid and nowhere else.
         /// </remarks>
         public static Result ResampleFile(string gfiPath, string sourceGridRaster, string targetGridRaster, string outputGfi)
         {
@@ -293,7 +316,8 @@ namespace PREACT.Utility
             }
 
             GraphicalFireInput.LoadGraphicalFireInput(gfiPath, out int ncols, out int nrows,
-                out bool[] wui, out bool[] ignitionArea, out bool[] initial, out bool[] buffer, out bool success);
+                out bool[] wui, out bool[] ignitionArea, out bool[] initial, out bool[] buffer,
+                out GraphicalFireInput.PaintedGrid recorded, out bool success);
             if (!success)
             {
                 throw new InvalidDataException("Could not read the painting in " + gfiPath + ".");
@@ -311,6 +335,16 @@ namespace PREACT.Utility
 
             Grid source = Grid.FromRaster(sourceGridRaster);
             Grid target = Grid.FromRaster(targetGridRaster);
+
+            //Checked once the sizes agree (Resample says so when they do not): a raster of the painting's size is not
+            //the grid it was painted on when the painting records another place.
+            string misplaced = masks.Ncols == source.Ncols && masks.Nrows == source.Nrows ? source.DescribeMismatch(recorded) : null;
+            if (misplaced != null)
+            {
+                throw new InvalidDataException($"{System.IO.Path.GetFileName(gfiPath)} records that it was painted on {recorded.Describe()}; "
+                    + $"{System.IO.Path.GetFileName(sourceGridRaster)} is its size but {misplaced}, so it is not the grid to move it from.");
+            }
+
             Masks moved = Resample(masks, source, target, out bool reprojected);
 
             string folder = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(outputGfi));
@@ -328,7 +362,7 @@ namespace PREACT.Utility
             string partial = outputGfi + ".partial";
             try
             {
-                GraphicalFireInput.SaveGraphicalFireInput(partial, data, moved.Ncols, moved.Nrows);
+                GraphicalFireInput.SaveGraphicalFireInput(partial, data, moved.Ncols, moved.Nrows, target.ToPaintedGrid());
                 //As old as the painting it came from: nothing was painted, only placed on other cells, so masks a
                 //build already made from the original are not stale against it.
                 File.SetLastWriteTimeUtc(partial, File.GetLastWriteTimeUtc(gfiPath));

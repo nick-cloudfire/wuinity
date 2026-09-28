@@ -53,8 +53,18 @@ namespace WUInity.Workflow
         /// <summary>Scenario-relative path of the raster <see cref="PaintGrid"/> comes from.</summary>
         public string PaintGridReference { get; private set; }
 
-        /// <summary>The painted areas file is on another grid than <see cref="PaintGrid"/>.</summary>
+        /// <summary>
+        /// The painted areas file is on another grid than <see cref="PaintGrid"/>: another size, or the same size
+        /// somewhere else by the grid the file records (the case build refuses both).
+        /// </summary>
         public bool PaintingOnOtherGrid { get; private set; }
+
+        /// <summary>
+        /// When <see cref="PaintingOnOtherGrid"/>: how the paint grid differs from the painting's, as the end of a
+        /// sentence about the paint grid - "is 566 x 541", or "is the same size but starts 300 m east and 0 m north of
+        /// the grid the painting was made on".
+        /// </summary>
+        public string PaintGridDifference { get; private set; }
 
         /// <summary>
         /// When <see cref="PaintingOnOtherGrid"/>: the scenario-relative raster whose grid the painting's cells
@@ -125,6 +135,7 @@ namespace WUInity.Workflow
             PaintGrid = null;
             PaintGridReference = null;
             PaintingOnOtherGrid = false;
+            PaintGridDifference = null;
             PaintedOnReference = null;
             SetAsideNamelist = null;
             RefreshedAt = DateTime.Now;
@@ -169,7 +180,10 @@ namespace WUInity.Workflow
 
             _paintedPath = _in.WildfireModule.GraphicalFireInputFile;
             _painted = Exists(_paintedPath) ? _files.Read(Abs(_paintedPath), "gfi", PaintedAreasInfo.Read, null) : null;
-            PaintingOnOtherGrid = _painted != null && PaintGrid != null && !_painted.SameSize(PaintGrid);
+            PaintingOnOtherGrid = _painted != null && PaintGrid != null && !_painted.OnGrid(PaintGrid);
+            PaintGridDifference = !PaintingOnOtherGrid ? null
+                : _painted.SameSize(PaintGrid) ? "is the same size but " + _painted.DescribeMismatch(PaintGrid)
+                : $"is {PaintGrid.Width} x {PaintGrid.Height}";
             PaintedOnReference = PaintingOnOtherGrid ? FindPaintedOnGrid() : null;
 
             string population = _in.Population.PopulationFile;
@@ -214,7 +228,8 @@ namespace WUInity.Workflow
 
         /// <summary>
         /// Where a painting that is not on the paint grid was painted: the first of the scenario's rasters that
-        /// has its size and says where it is. A .gfi holds no georeferencing, so this is the only way to know.
+        /// has its size and says where it is - and, when the painting records where its grid lies, lies there. The
+        /// grid itself has to be a raster: moving the painting reads both grids from rasters.
         /// </summary>
         /// <remarks>
         /// In order: the scenario's own terrain ([Landscape], which is what painting was done on before the fire
@@ -239,7 +254,7 @@ namespace WUInity.Workflow
             {
                 if (string.IsNullOrWhiteSpace(candidate) || Normalise(candidate) == paintGrid || !Exists(candidate)) continue;
                 RasterInfo raster = Raster(candidate);
-                if (raster != null && raster.HasGeoTransform && _painted.SameSize(raster))
+                if (raster != null && raster.HasGeoTransform && _painted.OnGrid(raster))
                 {
                     return candidate.Replace('\\', '/');
                 }
@@ -1030,16 +1045,16 @@ namespace WUInity.Workflow
             {
                 //Painted on a grid the scenario still has: moving it is one step, and nothing is repainted.
                 s.Error($"The areas were painted on a {_painted.Width} x {_painted.Height} grid ({PaintedOnReference}); the fire grid "
-                    + $"({PaintGridReference}) is {PaintGrid.Width} x {PaintGrid.Height}. Move the painting onto it: each cell of the "
+                    + $"({PaintGridReference}) {PaintGridDifference}. Move the painting onto it: each cell of the "
                     + $"fire grid takes the painted value at its centre, in a new file beside {_paintedPath}, which is kept.",
                     WorkflowAction.MovePaintingToCaseGrid, MoveLabel);
             }
             else if (PaintingOnOtherGrid)
             {
-                s.Error($"The areas were painted on a {_painted.Width} x {_painted.Height} grid; the fire grid ({PaintGridReference}) is "
-                    + $"{PaintGrid.Width} x {PaintGrid.Height}, and none of the scenario's rasters is {_painted.Width} x {_painted.Height}, "
-                    + "so there is no telling which ground they were painted on. Point [Landscape] at the raster they were "
-                    + "painted on to move them, or repaint them on the fire grid.",
+                s.Error($"The areas were painted on a {_painted.Width} x {_painted.Height} grid; the fire grid ({PaintGridReference}) "
+                    + $"{PaintGridDifference}, and none of the scenario's rasters is the grid they were painted on, "
+                    + "so they cannot be moved from it. Point [Landscape] at the raster they were painted on to move them, "
+                    + "or repaint them on the fire grid.",
                     WorkflowAction.OpenFireAreas, "Repaint");
             }
             else if (_painted != null)
@@ -1339,10 +1354,10 @@ namespace WUInity.Workflow
                 }
                 else if (_painted != null && _painted.WuiCells > 0)
                 {
-                    if (PaintGrid != null && !_painted.SameSize(PaintGrid))
+                    if (PaintingOnOtherGrid)
                     {
                         s.Error("No WuiAreaFile, so k-PERIL falls back to the painted WUI area - which is on another grid "
-                            + $"({_painted.Width} x {_painted.Height}), so it refuses it and the run stops.",
+                            + $"(the fire grid {PaintGridDifference}), so it refuses it and the run stops.",
                             caseWuiExists ? WorkflowAction.UseCaseWuiArea
                                 : PaintedOnReference != null ? WorkflowAction.MovePaintingToCaseGrid : WorkflowAction.OpenFireAreas,
                             caseWuiExists ? "Use " + caseWui : PaintedOnReference != null ? MoveLabel : "Repaint");
