@@ -131,7 +131,7 @@ namespace PREACT.Pedestrian
                 }
 
                 //Time(s),Households left,People left,Total households responded, Total people responded,Total households reached car,Total people reached car,Total cars activated,Avg. walking dist.
-                output.Add(currentTime + "," + totalHouseholdsLeft + "," + peopleLeft + "," + totalHouseholdsResponded + "," + totalPeopleResponded + "," + totalHouseholdsReachedCar + "," + totalPeopleReachedCar + "," + totalCarsReached + "," + avgWalkDist);
+                output.Add(System.FormattableString.Invariant($"{currentTime},{totalHouseholdsLeft},{peopleLeft},{totalHouseholdsResponded},{totalPeopleResponded},{totalHouseholdsReachedCar},{totalPeopleReachedCar},{totalCarsReached},{avgWalkDist}"));
                 //string output = currentTime + "," +  peopleWhoReachedCar";
                 //SaveToFile(output, false);
             }

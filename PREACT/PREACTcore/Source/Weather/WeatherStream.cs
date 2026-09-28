@@ -96,15 +96,15 @@ namespace PREACT.Weather
 
                         string line = sr.ReadLine();
                         string[] data = line.Split(',');
-                        double.TryParse(line, out latitude);
+                        double.TryParse(line, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out latitude);
 
                         line = sr.ReadLine();
                         data = line.Split(',');
-                        double.TryParse(data[1], out longitude);
+                        double.TryParse(data[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out longitude);
 
                         line = sr.ReadLine();
                         data = line.Split(',');
-                        double.TryParse(data[1], out elevation);
+                        double.TryParse(data[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out elevation);
 
                         line = sr.ReadLine(); //header line, skip                    
                         line = sr.ReadLine();
@@ -116,23 +116,23 @@ namespace PREACT.Weather
                             {
                                 if (j == 4)
                                 {
-                                    DateTime.TryParse(data[0], out first);
+                                    DateTime.TryParse(data[0], System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out first);
                                 }
                                 else
                                 {
-                                    DateTime.TryParse(data[0], out last);
+                                    DateTime.TryParse(data[0], System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out last);
                                 }
 
                                 float temp, rh, precip, windSpeed, windDirection, cloudCover, directRadiation, boundrayLayerHeight;
 
-                                bool b1 = float.TryParse(data[1], out temp);
-                                bool b2 = float.TryParse(data[2], out rh);
-                                bool b3 = float.TryParse(data[3], out precip);
-                                bool b4 = float.TryParse(data[4], out windSpeed);
-                                bool b5 = float.TryParse(data[5], out windDirection);
-                                bool b6 = float.TryParse(data[6], out cloudCover);
-                                bool b7 = float.TryParse(data[7], out directRadiation);
-                                bool b8 = float.TryParse(data[8], out boundrayLayerHeight);
+                                bool b1 = float.TryParse(data[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out temp);
+                                bool b2 = float.TryParse(data[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out rh);
+                                bool b3 = float.TryParse(data[3], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out precip);
+                                bool b4 = float.TryParse(data[4], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out windSpeed);
+                                bool b5 = float.TryParse(data[5], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out windDirection);
+                                bool b6 = float.TryParse(data[6], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out cloudCover);
+                                bool b7 = float.TryParse(data[7], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out directRadiation);
+                                bool b8 = float.TryParse(data[8], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out boundrayLayerHeight);
 
                                 HourlyWeather wD = new HourlyWeather(temp, rh, precip, windSpeed, windDirection, cloudCover, directRadiation, boundrayLayerHeight);
                                 weatherData.Add(wD);

@@ -416,8 +416,8 @@ namespace PREACT
                             //save actual data to usable format in memory
                             HourlyWeather[] hourlyArray = new HourlyWeather[hourly.Time.Length];
                             DateTime startDateTime, endDateTime;
-                            DateTime.TryParse(hourly.Time[0], out startDateTime);
-                            DateTime.TryParse(hourly.Time[hourly.Time.Length - 1], out endDateTime);
+                            DateTime.TryParse(hourly.Time[0], System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out startDateTime);
+                            DateTime.TryParse(hourly.Time[hourly.Time.Length - 1], System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out endDateTime);
                             _weatherData = new WeatherStream(weatherStream.Latitude, weatherStream.Longitude, weatherStream.Elevation, startDateTime, endDateTime, hourlyArray);
 
                             Wildfire.FireWeatherIndex fwi = new Wildfire.FireWeatherIndex();
@@ -426,7 +426,7 @@ namespace PREACT
                             //loop through all data
                             for (int i = 0; i < hourly.Time.Length; i++)
                             {
-                                bool timeParsed = DateTime.TryParse(hourly.Time[i], out DateTime dateTime);
+                                bool timeParsed = DateTime.TryParse(hourly.Time[i], System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out DateTime dateTime);
                                 if(timeParsed && dateTime.Hour == 12)
                                 {
                                     fwi.CalculateDay(dateTime, hourly.Temperature_2m[i] ?? 0, hourly.Relativehumidity_2m[i] ?? 0, hourly.Windspeed_10m[i] ?? 0, hourly.Precipitation[i] ?? 0);

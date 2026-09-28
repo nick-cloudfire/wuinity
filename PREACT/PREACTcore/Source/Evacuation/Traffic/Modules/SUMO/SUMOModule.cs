@@ -232,14 +232,14 @@ namespace PREACT.Traffic
             }
 
             //Time(s),Total cars injected, Total cars arrived,Current cars in system, Exiting people
-            string dataLine = currentTime + "," + totalVehiclesInjected + "," + totalVehiclesArrived + "," + currentVehiclessInSystem + "," + totalPeopleArrived + "," + totalSumoVehiclesInjected + "," + totalSumoVehiclesArrived;
+            var dataLine = new System.Text.StringBuilder(System.FormattableString.Invariant(
+                $"{currentTime},{totalVehiclesInjected},{totalVehiclesArrived},{currentVehiclessInSystem},{totalPeopleArrived},{totalSumoVehiclesInjected},{totalSumoVehiclesArrived}"));
             for (int i = 0; i < _simulation.Evacuation.Destinations.Count; ++i)
             {
-                dataLine += "," + _simulation.Evacuation.Destinations[i].CurrentPeople;
-                dataLine += "," + _simulation.Evacuation.Destinations[i].Vehicles.Count;
-                dataLine += "," + _simulation.Evacuation.Destinations[i].CurrentVehicleFlow;
+                EvacuationDestination destination = _simulation.Evacuation.Destinations[i];
+                dataLine.Append(System.FormattableString.Invariant($",{destination.CurrentPeople},{destination.Vehicles.Count},{destination.CurrentVehicleFlow}"));
             }
-            output.Add(dataLine);
+            output.Add(dataLine.ToString());
         }
 
         private void UpdateOutputMaps(SUMOVehicle vehicle, double deltaTime)

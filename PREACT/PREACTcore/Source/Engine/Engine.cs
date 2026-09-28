@@ -431,7 +431,7 @@ namespace PREACT
                 for(int i = 0; i < data.Length - 1; ++i)
                 {
                     double value;
-                    if(double.TryParse(data[i], out value))
+                    if(double.TryParse(data[i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out value))
                     {
                         result.Add(value);
                     }

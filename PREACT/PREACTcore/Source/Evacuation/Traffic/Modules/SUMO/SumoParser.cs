@@ -109,8 +109,8 @@ namespace PREACT.Traffic
             if(netOffset != null)
             {
                 string[] offset = netOffset.Value.Split(',');
-                double.TryParse(offset[0], out double offsetX);
-                double.TryParse(offset[1], out double offsetY);
+                double.TryParse(offset[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double offsetX);
+                double.TryParse(offset[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double offsetY);
                 UTMOffset = new Math.Vector2d(offsetX, offsetY);  
             }
 

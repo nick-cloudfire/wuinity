@@ -91,34 +91,34 @@ namespace PREACT.Population
                 string[] dummy = d[0].Split(' ');
                 double xD;
                 double yD;
-                double.TryParse(dummy[0], out xD);
-                double.TryParse(dummy[1], out yD);
+                double.TryParse(dummy[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out xD);
+                double.TryParse(dummy[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out yD);
                 actualOriginDegrees = new Vector2d(xD, yD);
 
                 dummy = d[1].Split(' ');
-                double.TryParse(dummy[0], out xD);
-                double.TryParse(dummy[1], out yD);
+                double.TryParse(dummy[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out xD);
+                double.TryParse(dummy[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out yD);
                 originOffset = new Vector2d(xD, yD);
 
                 dummy = d[2].Split(' ');
-                double.TryParse(dummy[0], out xD);
-                double.TryParse(dummy[1], out yD);
+                double.TryParse(dummy[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out xD);
+                double.TryParse(dummy[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out yD);
                 realWorldSize = new Vector2d(xD, yD);
 
                 dummy = d[3].Split(' ');
                 int xI;
                 int yI;
-                int.TryParse(dummy[0], out xI);
-                int.TryParse(dummy[1], out yI);
+                int.TryParse(dummy[0], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out xI);
+                int.TryParse(dummy[1], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out yI);
                 _cellCount = new Vector2int(xI, yI);
 
-                int.TryParse(d[4], out totalPopulation);
+                int.TryParse(d[4], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out totalPopulation);
 
                 dummy = d[5].Split(' ');
                 density = new double[_cellCount.x * _cellCount.y];
                 for (int i = 0; i < density.Length; ++i)
                 {
-                    double.TryParse(dummy[i], out density[i]);
+                    double.TryParse(dummy[i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out density[i]);
                 }
 
                 localGPWData = new LocalGPWData(actualOriginDegrees, originOffset, realWorldSize, _cellCount, totalPopulation, density);
@@ -340,17 +340,17 @@ namespace PREACT.Population
 
                 //read and save general stuff
                 string[] dummy = d[0].Split(' ');
-                int.TryParse(dummy[dummy.Length - 1], out ncols);
+                int.TryParse(dummy[dummy.Length - 1], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out ncols);
                 dummy = d[1].Split(' ');
-                int.TryParse(dummy[dummy.Length - 1], out nrows);
+                int.TryParse(dummy[dummy.Length - 1], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out nrows);
                 dummy = d[2].Split(' ');
-                double.TryParse(dummy[dummy.Length - 1], out xllcorner);
+                double.TryParse(dummy[dummy.Length - 1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out xllcorner);
                 dummy = d[3].Split(' ');
-                double.TryParse(dummy[dummy.Length - 1], out yllcorner);
+                double.TryParse(dummy[dummy.Length - 1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out yllcorner);
                 dummy = d[4].Split(' ');
-                double.TryParse(dummy[dummy.Length - 1], out cellsize);
+                double.TryParse(dummy[dummy.Length - 1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out cellsize);
                 dummy = d[5].Split(' ');
-                int.TryParse(dummy[dummy.Length - 1], out NODATA_value);
+                int.TryParse(dummy[dummy.Length - 1], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out NODATA_value);
 
                 Vector2d degreesToRead = SizeToDegrees(latLon, size);
                 //number of columns and rows
@@ -404,7 +404,7 @@ namespace PREACT.Population
                         if (j >= xSI && j <= xEI && realYIndex >= ySI && realYIndex <= yEI)
                         {
                             int index = (j - xSI) + (realYIndex - ySI) * cells.x;
-                            double.TryParse(e[j], out density[index]);
+                            double.TryParse(e[j], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out density[index]);
                         }
                     }
                 }

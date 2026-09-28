@@ -79,7 +79,7 @@ namespace PREACT.Utility
                     code = srs.GetAuthorityCode("PROJCS") ?? srs.GetAuthorityCode("GEOGCS");
                 }
 
-                return int.TryParse(code, out int epsg) ? epsg : 0;
+                return int.TryParse(code, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int epsg) ? epsg : 0;
             }
             catch
             {
@@ -154,8 +154,8 @@ namespace PREACT.Utility
                 return null;
             }
 
-            int.TryParse(SplitLine(lines[0])[1], out header.Ncols);
-            int.TryParse(SplitLine(lines[1])[1], out header.Nrows);
+            int.TryParse(SplitLine(lines[0])[1], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out header.Ncols);
+            int.TryParse(SplitLine(lines[1])[1], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out header.Nrows);
             double.TryParse(SplitLine(lines[2])[1], NumberStyles.Any, CultureInfo.InvariantCulture, out header.XllCorner);
             double.TryParse(SplitLine(lines[3])[1], NumberStyles.Any, CultureInfo.InvariantCulture, out header.YllCorner);
             double.TryParse(SplitLine(lines[4])[1], NumberStyles.Any, CultureInfo.InvariantCulture, out header.CellSize);
@@ -363,8 +363,8 @@ namespace PREACT.Utility
                     }
                 }
 
-                int.TryParse(SplitLine(lines[0])[1], out header.Ncols);
-                int.TryParse(SplitLine(lines[1])[1], out header.Nrows);
+                int.TryParse(SplitLine(lines[0])[1], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out header.Ncols);
+                int.TryParse(SplitLine(lines[1])[1], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out header.Nrows);
                 double.TryParse(SplitLine(lines[2])[1], NumberStyles.Any, CultureInfo.InvariantCulture, out header.XllCorner);
                 double.TryParse(SplitLine(lines[3])[1], NumberStyles.Any, CultureInfo.InvariantCulture, out header.YllCorner);
                 double.TryParse(SplitLine(lines[4])[1], NumberStyles.Any, CultureInfo.InvariantCulture, out header.CellSize);

@@ -49,8 +49,8 @@ namespace PREACT.Dispersion
                 if (rampLine.Length == 2)
                 {
                     float time, value;
-                    bool validTime = float.TryParse(rampLine[0], out time);
-                    bool validValue = float.TryParse(rampLine[1], out value);
+                    bool validTime = float.TryParse(rampLine[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out time);
+                    bool validValue = float.TryParse(rampLine[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out value);
                     if (validTime && validValue)
                     {
                         validRampLines.Add(new Vector2(time, value));

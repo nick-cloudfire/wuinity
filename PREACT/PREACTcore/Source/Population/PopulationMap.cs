@@ -441,24 +441,24 @@ namespace PREACT.Population
             if (d.Length == 9)
             {
                 _totalActiveCells = 0;
-                double.TryParse(d[0], out _lowerLeftLatLong.x);
-                double.TryParse(d[1], out _lowerLeftLatLong.y);
-                double.TryParse(d[2], out _size.x);
-                double.TryParse(d[3], out _size.y);
+                double.TryParse(d[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _lowerLeftLatLong.x);
+                double.TryParse(d[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _lowerLeftLatLong.y);
+                double.TryParse(d[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _size.x);
+                double.TryParse(d[3], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _size.y);
                 int temp;
-                int.TryParse(d[4], out temp);
+                int.TryParse(d[4], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out temp);
                 _cells.x = temp;
-                int.TryParse(d[5], out temp);
+                int.TryParse(d[5], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out temp);
                 _cells.y = temp;
-                float.TryParse(d[6], out _cellSize);
+                float.TryParse(d[6], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _cellSize);
                 _cellArea = _cellSize * _cellSize / 1000000d; // people/square km
-                int.TryParse(d[7], out _totalPopulation);
+                int.TryParse(d[7], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out _totalPopulation);
                 _mask = new bool[_cells.x * _cells.y];
                 string[] dummy = d[8].Split(' ');
                 for (int i = 0; i < _mask.Length; ++i)
                 {
                     int input;
-                    int.TryParse(dummy[i], out input);
+                    int.TryParse(dummy[i], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out input);
                     if (input == 1)
                     {
                         _mask[i] = true;
@@ -484,24 +484,24 @@ namespace PREACT.Population
             if (d.Length == 9)
             {
                 _totalActiveCells = 0;
-                double.TryParse(d[0], out _lowerLeftLatLong.x);
-                double.TryParse(d[1], out _lowerLeftLatLong.y);
-                double.TryParse(d[2], out _size.x);
-                double.TryParse(d[3], out _size.y);
+                double.TryParse(d[0], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _lowerLeftLatLong.x);
+                double.TryParse(d[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _lowerLeftLatLong.y);
+                double.TryParse(d[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _size.x);
+                double.TryParse(d[3], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _size.y);
                 int temp;
-                int.TryParse(d[4], out temp);
+                int.TryParse(d[4], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out temp);
                 _cells.x = temp;
-                int.TryParse(d[5], out temp);
+                int.TryParse(d[5], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out temp);
                 _cells.y = temp;
-                float.TryParse(d[6], out _cellSize);
+                float.TryParse(d[6], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _cellSize);
                 _cellArea = _cellSize * _cellSize / 1000000d; // people/square km
-                int.TryParse(d[7], out _totalPopulation);
+                int.TryParse(d[7], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out _totalPopulation);
                 _cellPopulations = new int[_cells.x * _cells.y];
                 _mask = new bool[_cells.x * _cells.y];                
                 string[] dummy = d[8].Split(' ');
                 for (int i = 0; i < _cellPopulations.Length; ++i)
                 {
-                    int.TryParse(dummy[i], out _cellPopulations[i]);
+                    int.TryParse(dummy[i], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out _cellPopulations[i]);
                     if(_cellPopulations[i] > 0)
                     {
                         _mask[i] = true;

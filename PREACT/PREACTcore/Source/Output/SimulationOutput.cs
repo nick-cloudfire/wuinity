@@ -61,7 +61,7 @@ namespace PREACT.Output
                 List<double> data = _simulation.Evacuation.TrafficModule.GetArrivalData();
                 foreach (double value in data)
                 {
-                    outputFile.WriteLine(value.ToString());
+                    outputFile.WriteLine(value.ToString("R", System.Globalization.CultureInfo.InvariantCulture));
                 }
             }
         }
