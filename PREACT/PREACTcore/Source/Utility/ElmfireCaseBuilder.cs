@@ -1376,7 +1376,7 @@ namespace PREACT.Utility
         /// the DEM request needs, reusing the same flat-earth metres/degrees conversion the
         /// population tools already use to interpret <c>DomainSize</c>.
         /// </summary>
-        private static (Vector2d southWest, Vector2d northEast) PaddedBounds(Options o)
+        public static (Vector2d southWest, Vector2d northEast) PaddedBounds(Options o)
         {
             Vector2d padded = new Vector2d(
                 o.DomainSizeMetres.x + 2.0 * o.PaddingMetres,

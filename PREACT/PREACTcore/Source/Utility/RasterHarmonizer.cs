@@ -69,6 +69,15 @@ namespace PREACT.Utility
             (double xMin, double yMin, double xMax, double yMax) =
                 ProjectBounds(epsg, southLatitude, westLongitude, northLatitude, eastLongitude);
 
+            //Whole cells, outward. gdalwarp given an extent and a resolution that do not divide rounds the cell count,
+            //so the grid could end a few metres inside the box it was cut for - 9 m short in the south and 4 m in the
+            //east on Mati (e2e F12). Snapping the corners out to multiples of the cell size makes the grid cover the
+            //whole box, and puts every case's cell edges on the same lattice.
+            if (cellSize.HasValue && cellSize.Value > 0.0)
+            {
+                (xMin, yMin, xMax, yMax) = SnapOutward(xMin, yMin, xMax, yMax, cellSize.Value);
+            }
+
             var args = new List<string>
             {
                 "-t_srs", epsg,
@@ -86,6 +95,20 @@ namespace PREACT.Utility
 
             Warp(sourcePath, destPath, args.ToArray());
             return MasterGrid.FromRasterFile(destPath);
+        }
+
+        /// <summary>
+        /// An extent grown to whole multiples of <paramref name="cellSize"/>: the minimum corner rounded down, the
+        /// maximum up, with a nanometre of slack so a corner already on the lattice stays where it is.
+        /// </summary>
+        public static (double XMin, double YMin, double XMax, double YMax) SnapOutward(double xMin, double yMin,
+            double xMax, double yMax, double cellSize)
+        {
+            const double slack = 1e-9;
+            return (System.Math.Floor(xMin / cellSize + slack) * cellSize,
+                    System.Math.Floor(yMin / cellSize + slack) * cellSize,
+                    System.Math.Ceiling(xMax / cellSize - slack) * cellSize,
+                    System.Math.Ceiling(yMax / cellSize - slack) * cellSize);
         }
 
         /// <summary>

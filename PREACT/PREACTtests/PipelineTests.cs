@@ -18,6 +18,27 @@ namespace PREACT.Tests
             runner.Add("paths: Windows backslash [ELMFIRE] paths resolve for the case, its sources and its template", BackslashElmfirePaths);
             runner.Add("preflight: a missing ELMFIRE is reported with the path that was tried", MissingElmfireNamed);
             runner.Add("weather: a user's archive is never rewritten; the build works on a copy", ArchiveWorkingCopy);
+            runner.Add("builder: the case grid covers the whole padded domain, in whole cells", GridCoversPaddedDomain);
+        }
+
+        private static void GridCoversPaddedDomain()
+        {
+            using (var c = new SyntheticCase())
+            {
+                string caseDir = Path.Combine(c.Folder, "case");
+                ElmfireCaseBuilder.Options o = c.Options(caseDir, 317.0, new List<string>());
+                ElmfireCaseBuilder.Result r = ElmfireCaseBuilder.Build(o).GetAwaiter().GetResult();
+
+                (Math.Vector2d sw, Math.Vector2d ne) = ElmfireCaseBuilder.PaddedBounds(o);
+                (double xMin, double yMin, double xMax, double yMax) = RasterHarmonizer.ProjectBounds(r.Grid.Epsg, sw.x, sw.y, ne.x, ne.y);
+                MasterGrid g = MasterGrid.FromRasterFile(ElmfireStems.Tif(Path.Combine(caseDir, "inputs"), ElmfireStems.Dem));
+
+                string box = $"grid {g.XMin:F2},{g.YMin:F2} - {g.XMax:F2},{g.YMax:F2}; padded domain {xMin:F2},{yMin:F2} - {xMax:F2},{yMax:F2}";
+                Assert.True(g.XMin <= xMin && g.YMin <= yMin && g.XMax >= xMax && g.YMax >= yMax, "covers it: " + box);
+                Assert.True(g.XMin > xMin - 30 && g.YMin > yMin - 30 && g.XMax < xMax + 30 && g.YMax < yMax + 30, "by less than a cell: " + box);
+                Assert.Near(0.0, System.Math.IEEERemainder(g.XMin, 30.0), 1e-6, "west edge on the 30 m lattice");
+                Assert.Near(0.0, System.Math.IEEERemainder(g.YMax, 30.0), 1e-6, "north edge on the 30 m lattice");
+            }
         }
 
         private static void ArchiveWorkingCopy()
