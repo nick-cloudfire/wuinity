@@ -14,9 +14,16 @@ namespace PREACT.Wildfire
         public double BUI { get => _bui; }
         public double FWI { get => _fwi; }
 
-        public FireWeatherIndex(double startFFMC = 85.0, double startDMC = 6.0, double startDC = 15.0) 
+        /// <summary>
+        /// Degrees north of the place the codes are for, which picks the day-length factors of the DMC and the DC.
+        /// NaN (unknown) reads as the northern hemisphere, whose standard factors every result so far was computed with.
+        /// </summary>
+        public double Latitude { get; set; } = double.NaN;
+
+        public FireWeatherIndex(double startFFMC = 85.0, double startDMC = 6.0, double startDC = 15.0, double latitude = double.NaN)
         {
             Reset(startFFMC, startDMC, startDC);
+            Latitude = latitude;
         }
 
         public void Reset(double startFFMC = 85.0, double startDMC = 6.0, double startDC = 15.0)
@@ -27,23 +34,29 @@ namespace PREACT.Wildfire
             _dc0 = startDC;
         }
 
+        /// <summary>
+        /// Advances the daily codes by one day, at its noon.
+        /// </summary>
+        /// <remarks>
+        /// All year, wherever the place is. The FWI used to be set to 0 for January and October to December (the
+        /// comment said November to February), a northern-hemisphere fire season: south of the equator that hid the
+        /// fire season itself, and in the north it hid the autumn wind events of places whose season never ends -
+        /// California's Diablo and Santa Ana days - from the case weather's draw of the worst days on record. The codes
+        /// themselves marched on through those months either way; only the index was zeroed. On Mati's 26-year ERA5
+        /// archive dropping the cut changes neither an annual maximum nor a day of the 260-day candidate pool: the
+        /// peaks are in June to September there. Where snow lies all winter the index is simply low.
+        /// </remarks>
         public void CalculateDay(DateTime dateTime, double temp, double rhum, double wind, double prcp)
         {
             FFMCcalc(temp, rhum, wind, prcp, _ffmc0, out _ffmc);
-            DMCcalc(temp, rhum, prcp, _dmc0, dateTime.Month, out _dmc);
-            DCcalc(temp, prcp, _dc0, dateTime.Month, out _dc);
+            DMCcalc(temp, rhum, prcp, _dmc0, dateTime.Month, Latitude, out _dmc);
+            DCcalc(temp, prcp, _dc0, dateTime.Month, Latitude, out _dc);
             ISIcalc(_ffmc, wind, out _isi);
             BUIcalc(_dmc, _dc, out _bui);
             FWIcalc(_isi, _bui, out _fwi);
             _ffmc0 = _ffmc;
             _dmc0 = _dmc;
             _dc0 = _dc;
-
-            //do not count november - february
-            if (dateTime.Month < 2 || dateTime.Month > 9)
-            {
-                _fwi = 0.0;
-            }
 
             if (double.IsNaN(_fwi))
             {
@@ -184,14 +197,48 @@ namespace PREACT.Wildfire
             if (ffmc <= 0.0) ffmc = 0.0;
         }
 
-        // DMC calculation 
+        //Day-length factors. The standard ones (Van Wagner 1987) are for about 46 N and are kept for the whole northern
+        //hemisphere, so no northern result changes. South of the equator they would put the drying in the wrong half of
+        //the year, so the southern bands of Lawson and Armitage (2008), as the cffdrs R package applies them
+        //(lat.adjust), are used there: DMC by 10 and 30 S, DC by 20 S, and near the equator a constant.
+        private static readonly double[] DmcDayLengthNorth = { 6.5, 7.5, 9.0, 12.8, 13.9, 13.9, 12.4, 10.9, 9.4, 8.0, 7.0, 6.0 };
+        private static readonly double[] DmcDayLength10To30South = { 10.1, 9.6, 9.1, 8.5, 8.1, 7.8, 7.9, 8.3, 8.9, 9.4, 9.9, 10.2 };
+        private static readonly double[] DmcDayLengthBeyond30South = { 11.5, 10.5, 9.2, 7.9, 6.8, 6.2, 6.5, 7.4, 8.7, 10.0, 11.2, 11.8 };
+        private const double DmcDayLengthEquator = 9.0;
+        private static readonly double[] DcDayLengthNorth = { -1.6, -1.6, -1.6, 0.9, 3.8, 5.8, 6.4, 5.0, 2.4, 0.4, -1.6, -1.6 };
+        private static readonly double[] DcDayLengthBeyond20South = { 6.4, 5.0, 2.4, 0.4, -1.6, -1.6, -1.6, -1.6, -1.6, 0.9, 3.8, 5.8 };
+        private const double DcDayLengthEquator = 1.4;
+
+        /// <summary>The DMC's effective day length for <paramref name="month"/> (1-12) at <paramref name="latitude"/>.</summary>
+        public static double DmcDayLength(int month, double latitude)
+        {
+            if (double.IsNaN(latitude) || latitude >= 0.0) return DmcDayLengthNorth[month - 1];
+            if (latitude > -10.0) return DmcDayLengthEquator;
+            if (latitude > -30.0) return DmcDayLength10To30South[month - 1];
+            return DmcDayLengthBeyond30South[month - 1];
+        }
+
+        /// <summary>The DC's day-length adjustment for <paramref name="month"/> (1-12) at <paramref name="latitude"/>.</summary>
+        public static double DcDayLength(int month, double latitude)
+        {
+            if (double.IsNaN(latitude) || latitude >= 0.0) return DcDayLengthNorth[month - 1];
+            if (latitude > -20.0) return DcDayLengthEquator;
+            return DcDayLengthBeyond20South[month - 1];
+        }
+
+        // DMC calculation, with the northern hemisphere's day lengths
         public static void DMCcalc(double T, double H, double Ro, double Po, int I, out double dmc)
         {
+            DMCcalc(T, H, Ro, Po, I, double.NaN, out dmc);
+        }
+
+        // DMC calculation at a latitude
+        public static void DMCcalc(double T, double H, double Ro, double Po, int I, double latitude, out double dmc)
+        {
             double Re, Mo, Mr, K, B, P, Pr;
-            double[] Le = { 6.5, 7.5, 9.0, 12.8, 13.9, 13.9, 12.4, 10.9, 9.4, 8.0, 7.0, 6.0 };
             if (T >= -1.1)
             {
-                K = 1.894 * (T + 1.1) * (100.0 - H) * Le[I - 1] * 0.0001; //Eq. 16
+                K = 1.894 * (T + 1.1) * (100.0 - H) * DmcDayLength(I, latitude) * 0.0001; //Eq. 16
             }
             else
             {
@@ -236,11 +283,17 @@ namespace PREACT.Wildfire
             dmc = P;
         }
 
-        // DC calculation 
+        // DC calculation, with the northern hemisphere's day lengths
         public static void DCcalc(double T, double Ro, double Do, int I, out double dc)
         {
+            DCcalc(T, Ro, Do, I, double.NaN, out dc);
+        }
+
+        // DC calculation at a latitude
+        public static void DCcalc(double T, double Ro, double Do, int I, double latitude, out double dc)
+        {
             double Rd, Qo, Qr, V, Dr;
-            double[] Lf = { -1.6, -1.6, -1.6, 0.9, 3.8, 5.8, 6.4, 5.0, 2.4, 0.4, -1.6, -1.6 };
+            double Lf = DcDayLength(I, latitude);
             if (Ro > 2.8)
             {
                 Rd = 0.83 * (Ro) - 1.27; //Eq. 18
@@ -259,11 +312,11 @@ namespace PREACT.Wildfire
             //Eq. 22
             if (T > -2.8)
             {
-                V = 0.36 * (T + 2.8) + Lf[I - 1];
+                V = 0.36 * (T + 2.8) + Lf;
             }
             else
             {
-                V = Lf[I - 1];
+                V = Lf;
             }
             if (V < 0.0)
             {

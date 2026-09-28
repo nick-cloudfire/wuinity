@@ -31,7 +31,7 @@ namespace PREACT.Utility
 
     /// <summary>
     /// The full, physically-consistent set of conditions on one year's peak fire-weather day
-    /// (docs/probabilistic-trigger-convergence.md, "Climatology sampling").
+    /// (docs/elmfire-cases.md, "Weather").
     /// </summary>
     public struct AnnualMaximaDay
     {
@@ -47,20 +47,17 @@ namespace PREACT.Utility
     }
 
     /// <summary>
-    /// Builds the annual-maxima fire-weather distribution described in
-    /// docs/probabilistic-trigger-convergence.md ("Climatology sampling — annual fire-weather
-    /// maxima") on top of the CSV <c>OpenMeteoDownloader.Download</c> already writes, and draws
+    /// Builds the annual-maxima fire-weather distribution (docs/elmfire-cases.md, "Weather", and
+    /// docs/trigger-campaigns.md for the campaign's fitted pool) on top of the CSV
+    /// <c>OpenMeteoDownloader.Download</c> already writes, and draws
     /// realizations from it by empirical resampling (each Monte Carlo realization gets the full,
     /// physically-consistent conditions of one actual historical peak-fire-weather day, rather
     /// than independently-sampled variables that could combine into an implausible day).
     ///
-    /// Caveat: <see cref="PREACT.Wildfire.FireWeatherIndex.CalculateDay"/> hard-zeroes FWI for
-    /// October-January (`dateTime.Month &lt; 2 || dateTime.Month &gt; 9`), which encodes a
-    /// Northern-Hemisphere fire season. That is fine for domains like Mediterranean Greece, but
-    /// would suppress genuine peak-fire-weather days in the Southern Hemisphere or in tropical/
-    /// dry-season climates — a real gap against the design doc's "works for any location on
-    /// Earth" goal that a global deployment will need to revisit in the FWI engine itself, not
-    /// worked around here.
+    /// The fire weather index is derived all year, with the day-length factors of the archive's own latitude
+    /// (<see cref="PREACT.Wildfire.FireWeatherIndex"/>): it used to be zeroed for January and October to
+    /// December, a northern-hemisphere fire season, which hid the southern hemisphere's peak days and the
+    /// northern autumn wind events of all-year fire climates from this draw.
     /// </summary>
     public static class ClimatologySampler
     {
@@ -107,12 +104,13 @@ namespace PREACT.Utility
         // ------------------------------------------------------------------ archive format
 
         /// <summary>
-        /// The archive format this code writes and reads. Version 2 derives the fire weather index from km/h wind
-        /// and the 24 h rain sum at 12:00 local standard time; version 1 (unmarked) passed m/s wind and one hour
-        /// of rain at 12:00 UTC, which kept the Drought Code from ever resetting and ranked the candidate days by
-        /// drought accumulation instead of by wind.
+        /// The archive format this code writes and reads. Version 3 derives the fire weather index all year, with the
+        /// DMC and DC day lengths of the archive's latitude; version 2 zeroed it for January and October to December
+        /// and used the northern day lengths everywhere. Both derive it from km/h wind and the 24 h rain sum at 12:00
+        /// local standard time; version 1 (unmarked) passed m/s wind and one hour of rain at 12:00 UTC, which kept the
+        /// Drought Code from ever resetting and ranked the candidate days by drought accumulation instead of by wind.
         /// </summary>
-        public const int ArchiveFormatVersion = 2;
+        public const int ArchiveFormatVersion = 3;
 
         /// <summary>The token in the column header line that marks the format.</summary>
         public const string ArchiveFormatToken = "archive_format=";
@@ -132,7 +130,8 @@ namespace PREACT.Utility
         public static string FormatHeaderSuffix(double longitude)
         {
             return "," + ArchiveFormatToken + ArchiveFormatVersion.ToString(CultureInfo.InvariantCulture)
-                   + $" (FWI at 12:00 local standard time = {FwiNoonUtcHour(longitude):00}:00 UTC; wind km/h; rain 24 h)";
+                   + $" (FWI at 12:00 local standard time = {FwiNoonUtcHour(longitude):00}:00 UTC; wind km/h; rain 24 h;"
+                   + " all year; day lengths of the latitude)";
         }
 
         /// <summary>The format version a header line declares; 1 when it declares none.</summary>
@@ -176,12 +175,16 @@ namespace PREACT.Utility
         /// Also the run's own fire-danger report (WeatherManager), seeded with the scenario's <c>[Weather]</c>
         /// start codes through <paramref name="daily"/> and <paramref name="hourly"/>; without them the
         /// equations' standard start values are used. The state objects are advanced in place.
+        ///
+        /// <paramref name="latitude"/> picks the day lengths of the DMC and the DC (a <paramref name="daily"/> given
+        /// without one takes it); the index is derived all year.
         /// </remarks>
-        public static DerivedCodes[] DeriveFireWeatherCodes(IList<RawHour> hours, double longitude,
+        public static DerivedCodes[] DeriveFireWeatherCodes(IList<RawHour> hours, double latitude, double longitude,
             PREACT.Wildfire.FireWeatherIndex daily = null, PREACT.Wildfire.HourlyFFMC hourly = null)
         {
             var result = new DerivedCodes[hours.Count];
-            daily = daily ?? new PREACT.Wildfire.FireWeatherIndex();
+            daily = daily ?? new PREACT.Wildfire.FireWeatherIndex(latitude: latitude);
+            if (double.IsNaN(daily.Latitude)) daily.Latitude = latitude;
             hourly = hourly ?? new PREACT.Wildfire.HourlyFFMC();
             int noon = FwiNoonUtcHour(longitude);
 
@@ -268,6 +271,7 @@ namespace PREACT.Utility
             if (lines.Length < 5) return false;
             if (ReadFormatVersion(lines[3]) >= ArchiveFormatVersion) return true;
 
+            double latitude = ReadHeaderNumber(lines[0]);
             double longitude = ReadHeaderNumber(lines[1]);
 
             var raw = new List<RawHour>(lines.Length - 4);
@@ -290,7 +294,7 @@ namespace PREACT.Utility
                 rawLines.Add(c);
             }
 
-            DerivedCodes[] codes = DeriveFireWeatherCodes(raw, longitude);
+            DerivedCodes[] codes = DeriveFireWeatherCodes(raw, latitude, longitude);
 
             string header = lines[3];
             int oldMarker = header.IndexOf("," + ArchiveFormatToken, StringComparison.Ordinal);
@@ -313,7 +317,8 @@ namespace PREACT.Utility
 
             log?.Invoke($"  climatology: re-derived the fire weather index of {Path.GetFileName(path)} ({raw.Count} hours) "
                         + $"for format {ArchiveFormatVersion}: km/h wind, 24 h rain, 12:00 local standard time "
-                        + $"({FwiNoonUtcHour(longitude):00}:00 UTC). The candidate days are ranked by the corrected index.");
+                        + $"({FwiNoonUtcHour(longitude):00}:00 UTC), all year, day lengths for {latitude:F1} degrees. "
+                        + "The candidate days are ranked by the corrected index.");
             return true;
         }
 

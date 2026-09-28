@@ -232,7 +232,7 @@ namespace PREACT.Tests
                     WindSpeedMps = double.Parse(c[4], CultureInfo.InvariantCulture),
                 });
             }
-            ClimatologySampler.DerivedCodes[] expected = ClimatologySampler.DeriveFireWeatherCodes(raw, -120.0,
+            ClimatologySampler.DerivedCodes[] expected = ClimatologySampler.DeriveFireWeatherCodes(raw, 38.0, -120.0,
                 new FireWeatherIndex(seeds.StartFFMC, seeds.StartDMC, seeds.StartDC), new HourlyFFMC(seeds.StartHourlyFFMC));
 
             var daily = new Dictionary<int, double>();

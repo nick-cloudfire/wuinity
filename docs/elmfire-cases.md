@@ -198,9 +198,10 @@ A case's weather is a **historical peak fire-weather day**:
 1. **ERA5.** Hourly ERA5 reanalysis for the domain centre from Open-Meteo, 2000 to the last complete year,
    downloaded once into `climatology/` and reused. Fire-weather codes are derived for every hour: the Canadian
    FWI system's daily codes at 12:00 local standard time (from the longitude: 10:00 UTC at Mati, 17:00–20:00 UTC
-   across the continental US), from km/h wind and the rain of the preceding 24 hours. Days from October to
-   January get an FWI of 0, a northern-hemisphere fire season; see the [changelog's known
-   issues](../CHANGELOG.md#known-issues) for what that means south of the equator.
+   across the continental US), from km/h wind and the rain of the preceding 24 hours, every day of the year —
+   there is no off-season, so an autumn wind event in California counts as much as a summer day, and south of
+   the equator the drought codes dry out in the southern summer (the DMC and DC day lengths of the archive's
+   latitude).
 2. **The day.** Each year's highest-FWI noon; one is drawn (`--weather-seed`, default 0) or named
    (`--weather-date`).
 3. **Bands.** One per `DT_METEOROLOGY` (3600 s) for the fire's `SimulationTstopHours`, walking consecutive

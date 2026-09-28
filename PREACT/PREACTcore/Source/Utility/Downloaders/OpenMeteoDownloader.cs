@@ -135,7 +135,7 @@ namespace PREACT.Tools
                             }
 
                             Utility.ClimatologySampler.DerivedCodes[] codes =
-                                Utility.ClimatologySampler.DeriveFireWeatherCodes(raw, weatherStream.Longitude);
+                                Utility.ClimatologySampler.DeriveFireWeatherCodes(raw, weatherStream.Latitude, weatherStream.Longitude);
 
                             for (int i = 0; i < hourly.Time.Length; i++)
                             {

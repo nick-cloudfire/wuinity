@@ -16,6 +16,123 @@ namespace PREACT.Tests
             runner.Add("time: a scenario's zone, its daylight saving and its gaps, from the domain's coordinates", ScenarioZone);
             runner.Add("weather: a case's bands start at the scenario's local hour, read at the archive's UTC hour", BandsStartAtLocalHour);
             runner.Add("weather: the sun Nelson's terrain factor uses peaks at local solar noon, at Mati and in California", SunAtLocalNoon);
+            runner.Add("fwi: derived all year; northern codes unchanged, southern day lengths, a southern year peaks in its summer", FwiAllYear);
+            runner.Add("fwi: Mati's real archive keeps every annual peak and pool day without the old season cut (data permitting)", FwiMatiUnchanged);
+        }
+
+        /// <summary>One year of synthetic hourly weather, hottest and driest around <paramref name="peakDay"/>, wet in the opposite season.</summary>
+        private static List<ClimatologySampler.RawHour> SyntheticYear(int year, int peakDay)
+        {
+            var hours = new List<ClimatologySampler.RawHour>();
+            for (DateTime t = new DateTime(year, 1, 1); t.Year == year; t = t.AddHours(1))
+            {
+                double season = System.Math.Cos(2.0 * System.Math.PI * (t.DayOfYear - peakDay) / 365.0); //1 at the peak
+                double diurnal = System.Math.Sin(2.0 * System.Math.PI * (t.Hour - 8) / 24.0);
+                bool wet = season < -0.3 && t.DayOfYear % 5 == 0 && t.Hour == 6;
+                hours.Add(new ClimatologySampler.RawHour
+                {
+                    Time = t,
+                    Temperature = 18 + 10 * season + 5 * diurnal,
+                    RelativeHumidity = System.Math.Max(10, 55 - 25 * season - 10 * diurnal),
+                    Precipitation = wet ? 6.0 : 0.0,
+                    WindSpeedMps = 5.5,
+                });
+            }
+            return hours;
+        }
+
+        /// <summary>
+        /// docs.md 3.4: FireWeatherIndex zeroed the FWI for January and October to December (its comment said November
+        /// to February), a northern fire season, and its day lengths were the 46 N ones everywhere, so a southern
+        /// hemisphere case's peak days were never drawn.
+        /// </summary>
+        private static void FwiAllYear()
+        {
+            //North of the equator nothing changes where it was in season: the same march with and without a latitude.
+            List<ClimatologySampler.RawHour> north = SyntheticYear(2021, 200);
+            ClimatologySampler.DerivedCodes[] plain = ClimatologySampler.DeriveFireWeatherCodes(north, double.NaN, Mati.lon);
+            ClimatologySampler.DerivedCodes[] at38 = ClimatologySampler.DeriveFireWeatherCodes(north, Mati.lat, Mati.lon);
+            for (int i = 0; i < north.Count; ++i)
+            {
+                Assert.True(plain[i].Fwi == at38[i].Fwi && plain[i].Dc == at38[i].Dc && plain[i].Dmc == at38[i].Dmc,
+                    $"northern codes are the standard ones at {north[i].Time:MM-dd HH}:00");
+            }
+            int december = north.FindIndex(h => h.Time == new DateTime(2021, 12, 15, 10, 0, 0));
+            Assert.True(at38[december].Fwi > 0.0, $"a northern December day has its index ({at38[december].Fwi:F2}); it was set to 0");
+
+            //South of the equator the drying follows the southern sun.
+            Assert.Equal(11.5, Wildfire.FireWeatherIndex.DmcDayLength(1, -34.0), "DMC day length, January at 34 S");
+            Assert.Equal(6.5, Wildfire.FireWeatherIndex.DmcDayLength(1, 38.0), "and at 38 N");
+            Assert.Equal(10.1, Wildfire.FireWeatherIndex.DmcDayLength(1, -20.0), "between 10 and 30 S");
+            Assert.Equal(9.0, Wildfire.FireWeatherIndex.DmcDayLength(7, -5.0), "near the equator");
+            Assert.Equal(6.4, Wildfire.FireWeatherIndex.DcDayLength(1, -34.0), "DC day length, January at 34 S");
+            Assert.Equal(-1.6, Wildfire.FireWeatherIndex.DcDayLength(1, 38.0), "and at 38 N");
+            Assert.Equal(1.4, Wildfire.FireWeatherIndex.DcDayLength(1, -10.0), "near the equator");
+
+            //A Sydney year, hot and dry in January: its worst day is in its summer, not in the northern one.
+            List<ClimatologySampler.RawHour> south = SyntheticYear(2019, 15);
+            ClimatologySampler.DerivedCodes[] codes = ClimatologySampler.DeriveFireWeatherCodes(south, Sydney.lat, Sydney.lon);
+            int noon = ClimatologySampler.FwiNoonUtcHour(Sydney.lon);
+            var rows = south.Select((h, i) => new HourlyWeatherRow
+            {
+                Time = h.Time, Temperature = h.Temperature, RelativeHumidity = h.RelativeHumidity, WindSpeed = h.WindSpeedMps,
+                Fwi = codes[i].Fwi, Dc = codes[i].Dc, IsFwiNoon = h.Time.Hour == noon,
+            }).ToList();
+            AnnualMaximaDay peak = ClimatologySampler.BuildAnnualMaxima(rows).Single();
+            Assert.True(peak.Date.Month <= 3 || peak.Date.Month == 12, $"Sydney's peak FWI day is in its summer: {peak.Date:yyyy-MM-dd} (FWI {peak.Fwi:F1})");
+            List<AnnualMaximaDay> pool = ClimatologySampler.BuildCandidatePool(rows, 10);
+            Assert.True(pool.All(d => d.Date.Month <= 4 || d.Date.Month >= 11), "and so is its whole pool of ten: " + string.Join(",", pool.Select(d => d.Date.ToString("MM-dd"))));
+            //January dries the duff and the deep fuel faster with the southern day lengths than the northern ones did.
+            ClimatologySampler.DerivedCodes[] asNorth = ClimatologySampler.DeriveFireWeatherCodes(south, double.NaN, Sydney.lon);
+            int endOfJanuary = south.FindIndex(h => h.Time == new DateTime(2019, 1, 31, noon, 0, 0));
+            Assert.True(codes[endOfJanuary].Dc > asNorth[endOfJanuary].Dc + 50 && codes[endOfJanuary].Dmc > asNorth[endOfJanuary].Dmc,
+                $"by 31 January DC {codes[endOfJanuary].Dc:F0} and DMC {codes[endOfJanuary].Dmc:F0} with the southern day lengths, "
+                + $"{asNorth[endOfJanuary].Dc:F0} and {asNorth[endOfJanuary].Dmc:F0} with the northern ones");
+        }
+
+        /// <summary>
+        /// Removing the cut instead of moving it is safe for the pipeline only if the northern draw does not change:
+        /// on Mati's 26-year ERA5 archive, every annual maximum and every day of the 10-a-year pool is the same with
+        /// the Oct-Jan index zeroed (the old rule) and without.
+        /// </summary>
+        private static List<string> FwiMatiUnchanged()
+        {
+            var warnings = new List<string>();
+            string archive = Environment.GetEnvironmentVariable("PREACT_TEST_ERA5_ARCHIVE")
+                             ?? "/home/claude/cases/mati_generated/elmfire/climatology/mati_era5_hourly.csv";
+            if (!File.Exists(archive))
+            {
+                warnings.Add("no real ERA5 archive on this machine (set PREACT_TEST_ERA5_ARCHIVE=<csv>); skipped");
+                return warnings;
+            }
+
+            string folder = Directory.CreateTempSubdirectory("preact-fwi-").FullName;
+            try
+            {
+                string copy = Path.Combine(folder, Path.GetFileName(archive));
+                File.Copy(archive, copy);
+                Assert.True(ClimatologySampler.EnsureArchiveFormat(copy, null), "the copy is brought to the current format");
+                List<HourlyWeatherRow> rows = ClimatologySampler.ParseOpenMeteoCsv(copy);
+                List<HourlyWeatherRow> cut = rows.Select(r =>
+                {
+                    if (r.Time.Month < 2 || r.Time.Month > 9) r.Fwi = 0.0;
+                    return r;
+                }).ToList();
+
+                List<AnnualMaximaDay> now = ClimatologySampler.BuildAnnualMaxima(rows), before = ClimatologySampler.BuildAnnualMaxima(cut);
+                Assert.Equal(before.Count, now.Count, "annual maxima");
+                Assert.True(before.Select(d => d.Date).SequenceEqual(now.Select(d => d.Date)), "the same peak day every year");
+                List<DateTime> poolNow = ClimatologySampler.BuildCandidatePool(rows, 10).Select(d => d.Date).ToList();
+                List<DateTime> poolBefore = ClimatologySampler.BuildCandidatePool(cut, 10).Select(d => d.Date).ToList();
+                Assert.True(poolBefore.SequenceEqual(poolNow), "the same 10-a-year pool");
+                Console.WriteLine($"  INFO {Path.GetFileName(archive)}: {now.Count} annual peaks and {poolNow.Count} pool days, "
+                                  + "unchanged without the Oct-Jan cut");
+            }
+            finally
+            {
+                try { Directory.Delete(folder, true); } catch { }
+            }
+            return warnings;
         }
 
         /// <summary>

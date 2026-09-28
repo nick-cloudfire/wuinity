@@ -472,8 +472,9 @@ Time,Temperature_2m [°C],Relativehumidity_2m [%],Precipitation [mm],Windspeed_1
 ```
 
 Times are UTC. The case's ERA5 archive (`<case>/climatology/<Name>_era5_hourly.csv`) is the same layout with
-`archive_format=2` appended to the header line, marking codes derived at local noon from km/h wind and 24 h rain;
-an older archive is re-derived once when it is next read.
+`archive_format=3` appended to the header line, marking codes derived at local noon from km/h wind and 24 h rain,
+all year, with the drought codes' day lengths for the archive's latitude; an older archive is re-derived once, from
+its own hourly columns, when it is next read.
 
 ### Extinction ramp (`.exc`)
 

@@ -126,8 +126,8 @@ namespace PREACT
             }
 
             Input.WeatherInput seeds = _simulation.Input.Weather;
-            _codes = Utility.ClimatologySampler.DeriveFireWeatherCodes(hours, _weatherData.Longitude,
-                new Wildfire.FireWeatherIndex(seeds.StartFFMC, seeds.StartDMC, seeds.StartDC),
+            _codes = Utility.ClimatologySampler.DeriveFireWeatherCodes(hours, _weatherData.Latitude, _weatherData.Longitude,
+                new Wildfire.FireWeatherIndex(seeds.StartFFMC, seeds.StartDMC, seeds.StartDC, _weatherData.Latitude),
                 new Wildfire.HourlyFFMC(seeds.StartHourlyFFMC));
             _codesFirstRow = first;
             _currentCodes = _codes.Length > 0 ? _codes[0] : default;
@@ -490,7 +490,7 @@ namespace PREACT
                                 });
                             }
                             Utility.ClimatologySampler.DerivedCodes[] codes =
-                                Utility.ClimatologySampler.DeriveFireWeatherCodes(raw, weatherStream.Longitude);
+                                Utility.ClimatologySampler.DeriveFireWeatherCodes(raw, weatherStream.Latitude, weatherStream.Longitude);
 
                             for (int i = 0; i < hourly.Time.Length; i++)
                             {

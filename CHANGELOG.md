@@ -41,6 +41,7 @@ Magnitudes are from the Mati (Greece) case and the shipped examples, measured on
 | What | Before v1 | In v1 | Size of the change |
 |---|---|---|---|
 | Fire-weather index of the ERA5 archive | Computed from the wind in m/s, the noon hour's rain alone, at 12:00 UTC. The weather pool was biased toward drought and away from wind. | km/h wind, the rain of the preceding 24 h, 12:00 local standard time. Old archives are re-derived once. | Mati archive: maximum DC 3049 → 928, BUI 609 → 257, FWI 42.9 → 81.1. The fitted pool's mean wind 4.99 → 7.49 m/s. |
+| Fire-weather season | The FWI was set to 0 for January and October to December everywhere, and the drought codes used the day lengths of 46° N: south of the equator the fire season's peak days could never be drawn, nor the autumn wind events of all-year fire climates such as California's. | Derived all year; south of the equator the DMC and DC use the southern day lengths of Lawson and Armitage (2008), as the `cffdrs` package does. Northern codes are unchanged. Archives are re-derived once (`archive_format=3`). | Mati archive: no annual peak and no pool day changes. A campaign's settings identity changes with the archive format, so it starts a new campaign folder. |
 | Burn probability | Counted only over realizations that produced a boundary. | Over every completed fire. | Lower wherever fires often missed the WUI area. |
 | Fires that never reach the WUI area | Counted as failed, after a full evacuation run. | `not-threatened`: no evacuation run, left out of the trigger probability, counted in the fire statistics. | The trigger probability's denominator is unchanged. |
 | Each realization's evacuation seed | The base scenario's `RandomSeed` (often 0, a clock seed). | `seed + 2,000,000 + index`, recorded per realization. | Evacuations are now reproducible. |
@@ -177,9 +178,6 @@ California.
 The Windows GUI's acceptance check is the [manual test](docs/manual-test-v1.md); the head-less paths were run
 end to end on Linux.
 
-- **Southern hemisphere fire seasons.** The fire-weather codes set October to January to an FWI of 0, a northern
-  hemisphere winter. In the southern hemisphere those months are the fire season, so its peak days are never
-  drawn.
 - **k-PERIL** does not cap the length-to-breadth ratio, evaluates the spread ellipse at its parametric angle (so
   wind barely shapes the boundary above about 3 mi/h), and subtracts an upslope wind from the slope term rather
   than adding it. These are for k-PERIL's author; see [Modules](docs/modules.md#trigger-boundary).
