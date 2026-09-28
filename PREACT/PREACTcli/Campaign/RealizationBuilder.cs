@@ -250,9 +250,13 @@ namespace PREACTcli.Campaigns
                 //A failure, and one worth singling out: the fires that run out of wall-clock time are the slowest
                 //and usually the largest, so leaving them out quietly biases the probability towards small fires.
                 outcome.Truncated = true;
+                string stop = run.Message ?? string.Empty;
+                int at = stop.IndexOf("early: ", StringComparison.Ordinal);
+                if (at >= 0) stop = stop.Substring(at + "early: ".Length);
                 return Settle(outcome, dir, record, $"ELMFIRE hit its wall-clock limit ({o.MaxRuntimeSeconds / 60.0:0} min, "
                                                     + $"--max-runtime-minutes) before the fire's {o.Hours:0.##} h were up, so "
-                                                    + "the fire is incomplete and the realization counts as failed: " + run.Message);
+                                                    + "the fire is incomplete and the realization counts as failed ("
+                                                    + stop.Trim() + ")");
             }
 
             if (!run.Ok)

@@ -244,8 +244,8 @@ namespace PREACTcli.Campaigns
             if (truncated <= 0) return null;
             return $"{truncated} of {completed} realization(s) were stopped by ELMFIRE's wall-clock limit "
                    + $"({maxRuntimeSeconds / 60.0:0} min) and are counted as failed. They are the slowest fires, usually the "
-                   + "largest, so the probability raster under-represents large fires; raise --max-runtime-minutes and "
-                   + "--resume to compute them.";
+                   + "largest, so the probability raster under-represents large fires. Run the campaign with a larger "
+                   + "--max-runtime-minutes (the limit is one of its settings, so that is a new campaign folder).";
         }
 
         private static void Fold(int[,] insideCount, float[,] boundary, AscRaster.Header header)
