@@ -86,3 +86,11 @@ crashlytics-build.properties
 
 # Unity 6 writes a .slnx beside the (already ignored) generated .csproj files
 *.slnx
+
+# PREACTcore's Release build lands here (BaseOutputPath in PREACTcore.csproj) and build.ps1 /
+# build.sh regenerate it, so the binaries are not committed. Their .meta files are, so Unity keeps
+# the same GUIDs and plugin import settings; the .pdb.meta Unity writes beside each .pdb is not.
+/[Aa]ssets/[Pp]REACT/[Rr]elease/**
+!/[Aa]ssets/[Pp]REACT/[Rr]elease/**/
+!/[Aa]ssets/[Pp]REACT/[Rr]elease/**/*.meta
+/[Aa]ssets/[Pp]REACT/[Rr]elease/**/*.pdb.meta
