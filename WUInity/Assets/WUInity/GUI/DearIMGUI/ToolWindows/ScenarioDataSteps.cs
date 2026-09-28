@@ -2,44 +2,59 @@ using ImGuiNET;
 using PREACT;
 using PREACT.Input;
 using PREACT.Math;
+using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Threading.Tasks;
 using UnityEngine;
+using WUInity.Workflow;
 
 namespace Assets.WUInity.GUI.DearIMGUI
 {
     /// <summary>
-    /// The data-preparation steps a scenario needs: WorldPop, OSM, the RouterDb, the population CSV,
-    /// the SUMO network, LANDFIRE and weather.
-    ///
-    /// These used to live inside the new-scenario creator and were reachable only from it, which meant
-    /// there was no way to build a missing RouterDb - or any other of these - for a scenario loaded
-    /// from disk: opening the creator calls ScenarioEditorWindow.ClearInput and starts a fresh input,
-    /// so the loaded scenario was discarded to get at the buttons. They are therefore separated from
-    /// the creator's own state here and act on whichever input is assigned to <see cref="Input"/>.
-    ///
-    /// Every step names its output after the scenario, relative to the scenario root, so a folder
-    /// prepared for a scenario stays portable and a step can tell whether it has already run.
+    /// The data-preparation steps a scenario needs - OSM, the RouterDb, the SUMO network, WorldPop, the
+    /// population, LANDFIRE fuels and canopy, a DEM, weather, the ELMFIRE case - and the chains the workflow
+    /// runs them in.
     /// </summary>
+    /// <remarks>
+    /// Every step names its output after the scenario, relative to the scenario root, so a folder prepared
+    /// for a scenario stays portable and a step can tell whether it has already run.
+    ///
+    /// A step works on the scenario it was started for. Its area, name, dates and folder are captured when
+    /// it starts (<see cref="StepContext"/>), it runs on a worker thread, and the paths it produces are set
+    /// on the scenario on the main thread once it has succeeded - and only if that scenario is still the one
+    /// open. These closures used to read a static <c>Input</c> when they finished, so a step that took
+    /// minutes wrote its paths into whichever scenario happened to be loaded by then, from a worker thread.
+    /// </remarks>
     public static class ScenarioDataSteps
     {
-        /// <summary>The scenario the steps read their area of interest from and write their paths into.</summary>
-        public static PREACTInput Input;
+        /// <summary>The scenario the step buttons describe: always the open one.</summary>
+        public static PREACTInput Input { get => ScenarioSession.Input; }
 
         //Household sizes for the population step, and which fuel model set LANDFIRE is asked for.
-        //Shared rather than duplicated per window so the value shown is the value used.
+        //Shared rather than duplicated per window so the value shown is the value used. Scott & Burgan 40 by
+        //default: it is what ELMFIRE and the LANDFIRE products are normally run with.
         public static int MinHouseholdSize = 1;
         public static int MaxHouseholdSize = 5;
-        public static bool UseAnderson13 = true;
+        public static bool UseAnderson13 = false;
 
         //Feedback. Without it even a working download looks like a dead button: these steps take tens
         //of seconds to minutes and would otherwise sit silent throughout, which is indistinguishable
         //from nothing having happened.
         private static string _status = string.Empty;
         private static volatile bool _busy;
+        private static volatile bool _lastFailed;
         public static string Status { get => _status; }
         public static bool Busy { get => _busy; }
+        public static bool LastFailed { get => _lastFailed; }
         /// <summary>The step or chain running now, or last run.</summary>
         public static string CurrentTitle { get => _progressTitle; }
+
+        /// <summary>The workflow step the running (or last) chain belongs to.</summary>
+        public static WorkflowStepId Owner { get; private set; }
+
+        /// <summary>Raised on the main thread when a step or chain has finished, after its results were applied.</summary>
+        public static event Action<WorkflowStepId, bool> StepFinished;
 
         //The progress window's own copy of what the running step said. Written from the step's worker
         //thread and read while drawing, hence the lock; the console gets the same lines through
@@ -50,10 +65,13 @@ namespace Assets.WUInity.GUI.DearIMGUI
         //which the bar renders as a sweep rather than pretending to a percentage it does not have.
         private static bool _progressWindowOpen;
         private static string _progressTitle = string.Empty;
+        private static volatile string _progressLink = string.Empty;
         private static volatile float _progressFraction = -1f;
-        private static string _progressDetail = string.Empty;
-        private static readonly System.Collections.Generic.List<string> _progressLog = new System.Collections.Generic.List<string>();
+        private static volatile string _progressDetail = string.Empty;
+        private static readonly List<string> _progressLog = new List<string>();
         public static bool ProgressWindowOpen { get => _progressWindowOpen; set => _progressWindowOpen = value; }
+        public static float ProgressFraction { get => _progressFraction; }
+        public static string ProgressLink { get => _progressLink; }
 
         //OpenTopography requires a key per request, and it comes from the same place the Mapbox token
         //does: a gitignored JSON file under Resources, read by OpenTopographyAccess. That is the answer
@@ -66,7 +84,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
         /// <summary>
         /// The key that will actually be used, and where it came from. The configuration file wins, so a
-        /// key typed here once cannot quietly shadow the one the file supplies from then on.
+        /// key typed here once cannot quietly shadow the one the file supplies from then on. Main thread
+        /// only (it reads a Unity resource).
         /// </summary>
         public static string EffectiveOpenTopographyApiKey
         {
@@ -119,6 +138,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
             PREACT.Tools.OpenTopographyDownloader.DemTypeSrtm90
         };
 
+        // ------------------------------------------------------------------ where the steps write
+
         //Where the steps write, relative to the scenario root.
         //
         //A scenario folder holds twenty-odd files by the time it runs, and every step used to drop its
@@ -127,125 +148,170 @@ namespace Assets.WUInity.GUI.DearIMGUI
         //and what they record is the path including the folder.
         //
         //Separators are forward slashes rather than Path.Combine's. These strings go into the .wui as well
-        //as being resolved on disk, and a backslash written on Windows is not a separator anywhere else,
-        //which would make the scenario unreadable on another machine. Windows accepts either.
+        //as being resolved on disk, and a backslash written on Windows is not a separator anywhere else.
 
         /// <summary>Raw downloads, as they arrive: before clipping, warping, or conversion.</summary>
-        public const string DownloadsFolder = "downloads";
+        public const string DownloadsFolder = ScenarioFiles.DownloadsFolder;
 
         /// <summary>The terrain rasters a scenario runs on, on the simulation's own grid.</summary>
-        public const string LandscapeFolder = "elmfire/inputs";
+        public const string LandscapeFolder = ScenarioFiles.LandscapeFolder;
 
-        private static string Named(string suffix) => Input.Simulation.Name + suffix;
+        private static string Name => Input?.Simulation?.Name ?? string.Empty;
 
-        public static string WorldPopBaseName => Named("_worldpop");
-        public static string WorldPopFile => DownloadsFolder + "/" + WorldPopBaseName + ".tif";
-        //The reprojected raster the download also writes, and the one the population step has to read:
-        //PopulationMap.CreatePopulation treats the geotransform as UTM metres. Handed the WGS84 clip above
-        //it computes cell centres in degrees, transforms them as though they were eastings, and finds no
-        //road within a cell of anywhere - so it writes a CSV holding nothing but its header, and says
-        //"0 people with access to road network" in a log line that is easy to miss. WorldPopDownloader
-        //names it by appending _UTM, which is what is repeated here.
-        public static string WorldPopUtmFile => DownloadsFolder + "/" + WorldPopBaseName + "_UTM.tif";
-        public static string DemFile => LandscapeFolder + "/" + Named("_dem.tif");
-        //Written out rather than only computed in memory. ELMFIRE takes all three as separate GeoTIFF
-        //inputs, and a derived raster that exists only inside a load cannot be handed to anything else,
-        //inspected in QGIS, or compared against what a previous run used.
-        public static string SlopeFile => LandscapeFolder + "/" + Named("_slope.tif");
-        public static string AspectFile => LandscapeFolder + "/" + Named("_aspect.tif");
-        //The download as it arrives, in degrees, before it is warped into the simulation's zone. Kept
-        //rather than deleted: it is the slow part to obtain, and a failed warp can be retried from it.
-        public static string DemDownloadFile => DownloadsFolder + "/" + Named("_dem_wgs84.tif");
-        public static string OsmFile => DownloadsFolder + "/" + Named(".osm.xml");
+        public static string WorldPopBaseName => ScenarioFiles.WorldPopBaseName(Name);
+        public static string WorldPopFile => ScenarioFiles.WorldPop(Name);
+        public static string WorldPopUtmFile => ScenarioFiles.WorldPopUtm(Name);
+        public static string DemFile => ScenarioFiles.Dem(Name);
+        public static string SlopeFile => ScenarioFiles.Slope(Name);
+        public static string AspectFile => ScenarioFiles.Aspect(Name);
+        public static string DemDownloadFile => ScenarioFiles.DemDownload(Name);
+        public static string OsmFile => ScenarioFiles.Osm(Name);
+        public static string RouterDbFile => ScenarioFiles.RouterDb(Name);
+        public static string PopulationFile => ScenarioFiles.Population(Name);
+        public static string WeatherFile => ScenarioFiles.Weather(Name);
 
-        //These three stay in the root: they are the scenario's own description of itself rather than
-        //data fetched or derived for it, and they are what a person opening the folder looks for.
-        public static string RouterDbFile => Named(".routerdb");
-        public static string PopulationFile => Named("_population.csv");
-        public static string WeatherFile => Named("_weather.csv");
+        public const string SumoFolder = ScenarioFiles.SumoFolder;
+        public static string SumoConfigFile => ScenarioFiles.SumoConfig;
 
-        //The SUMO network and configuration live in their own folder, since netconvert writes several
-        //files beside the one named here.
-        public const string SumoFolder = PREACT.Utility.SumoNetworkBuilder.SumoFolderName;
-        public static string SumoConfigFile => SumoFolder + "/" + PREACT.Utility.SumoNetworkBuilder.ConfigurationFileName;
+        /// <summary>The ELMFIRE case's namelist, which is what marks the case as built.</summary>
+        public static string ElmfireNamelistFile => ScenarioFiles.ElmfireNamelist(Input);
+
+        // ------------------------------------------------------------------ the captured scenario
 
         /// <summary>
-        /// Set when the SUMO step succeeds, so a caller showing a "have SUMO input?" choice can follow
-        /// what the step did rather than contradicting it.
+        /// What a step knows about the scenario it was started for, captured on the main thread before the
+        /// worker starts, and the path writes it wants made once it has succeeded.
         /// </summary>
-        public static volatile bool SumoNetworkBuilt;
-
-        /// <summary>
-        /// A step button with a completion marker. Completion is judged by the output file existing
-        /// rather than by a flag set when the button was pressed, so it stays correct across a restart,
-        /// and after a step is re-run or its file deleted outside the editor.
-        ///
-        /// An existing file is not a reason to refuse: the button says "(redo)" and re-running
-        /// overwrites, which is what a changed area of interest or a truncated download needs.
-        /// </summary>
-        public static bool StepButton(string label, string producedFile)
+        public sealed class StepContext
         {
-            string path = Input != null && !string.IsNullOrEmpty(Input.Simulation.Name) ? CachedFindInRoot(producedFile) : null;
-            bool done = path != null && GuiFiles.Exists(path);
+            public PREACTInput Input;
+            public string Root;
+            public string Name;
+            public Vector2d LowerLeft;
+            public Vector2d UpperRight;
+            public Vector2d DomainSize;
+            public DateTime Start;
+            public DateTime End;
+            public int UtmEpsg;
+            public bool PedestrianEnabled;
+            public bool TrafficEnabled;
+            public string OpenTopographyKey;
+            public string OpenTopographyKeySource;
+            public string DemType;
+            public bool UseAnderson13;
+            public int MinHouseholdSize, MaxHouseholdSize;
+            public DateTime StartedUtc;
 
-            bool pressed = ImGui.Button(done ? label + " (redo)" : label);
+            internal readonly List<Action<PREACTInput>> Writes = new List<Action<PREACTInput>>();
+            internal readonly List<Action> AfterApply = new List<Action>();
 
-            ImGui.SameLine();
-            if (done)
+            /// <summary>The step changed the scenario itself (the ELMFIRE case build does, in place).</summary>
+            public bool ChangedInPlace;
+
+            /// <summary>Queues a change to the scenario, made on the main thread if the step succeeds.</summary>
+            public void Set(Action<PREACTInput> write) { Writes.Add(write); }
+
+            /// <summary>Queues main-thread work to do after the writes, if the step succeeds.</summary>
+            public void Then(Action work) { AfterApply.Add(work); }
+
+            public string InRoot(string relative) => Path.Combine(Root, relative);
+
+            /// <summary>Where a step is about to write, with its folder created.</summary>
+            public string InRootForWriting(string relative)
             {
-                //ImGui has no tick glyph in the default font, so this uses text that renders in any
-                //font rather than a symbol that might come out as a box.
-                ImGui.TextColored(Fields.Good, "[done] " + producedFile);
-                if (ImGui.IsItemHovered())
+                string path = InRoot(relative);
+                string folder = Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(folder)) Directory.CreateDirectory(folder);
+                return path;
+            }
+
+            /// <summary>Where a step's earlier output actually is (it may have been moved to a subfolder).</summary>
+            public string FindInRoot(string relative)
+            {
+                if (PREACT.Utility.ScenarioFileLocator.TryResolve(Root, relative, out string resolved, out string _))
                 {
-                    long length = GuiFiles.Probe.Length(path);
-                    System.DateTime? written = GuiFiles.Probe.LastWriteUtc(path);
-                    ImGui.SetTooltip($"{length / (1024.0 * 1024.0):F2} MB, written "
-                        + $"{(written.HasValue ? written.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm") : "?")}."
-                        + "\nRunning the step again overwrites it.");
+                    return Path.IsPathRooted(resolved) ? resolved : InRoot(resolved);
                 }
-            }
-            else
-            {
-                ImGui.TextDisabled("[pending]");
+                return InRoot(relative);
             }
 
-            return pressed;
+            public bool Has(string relative) => File.Exists(FindInRoot(relative));
         }
 
-        //Where each step's output was last found, for a second. FindInRoot searches the scenario's subfolders
-        //when a file is not where it is recorded, and step buttons are drawn every frame.
-        private static readonly System.Collections.Generic.Dictionary<string, (System.DateTime at, string path)> _found =
-            new System.Collections.Generic.Dictionary<string, (System.DateTime, string)>();
-
-        private static string CachedFindInRoot(string fileName)
+        /// <summary>One link of a chain: skipped when <see cref="Needed"/> says its output is already there.</summary>
+        public sealed class ChainLink
         {
-            string key = Input.RootFolder + "|" + fileName;
-            System.DateTime now = System.DateTime.UtcNow;
-            if (_found.TryGetValue(key, out var hit) && (now - hit.at).TotalSeconds < 1.0)
+            public string Title;
+            public Func<StepContext, bool> Needed;
+            public Func<StepContext, Task> Work;
+
+            public ChainLink(string title, Func<StepContext, bool> needed, Func<StepContext, Task> work)
             {
-                return hit.path;
+                Title = title;
+                Needed = needed;
+                Work = work;
+            }
+        }
+
+        private static StepContext Capture()
+        {
+            PREACTInput input = Input;
+            if (input == null)
+            {
+                return null;
             }
 
-            string path = FindInRoot(fileName);
-            _found[key] = (now, path);
-            return path;
+            return new StepContext
+            {
+                Input = input,
+                Root = input.RootFolder,
+                Name = input.Simulation.Name,
+                LowerLeft = input.Simulation.LowerLeftLatLon,
+                UpperRight = UpperRightLatLon(input),
+                DomainSize = input.Simulation.DomainSize,
+                Start = input.Simulation.StartDateTime,
+                End = input.Simulation.EndDateTime,
+                UtmEpsg = input.Simulation.Data.UtmEpsgCode,
+                PedestrianEnabled = input.PedestrianModule.Enabled,
+                TrafficEnabled = input.TrafficModule.Enabled,
+                OpenTopographyKey = EffectiveOpenTopographyApiKey,
+                OpenTopographyKeySource = OpenTopographyApiKeySource,
+                DemType = DemType,
+                UseAnderson13 = UseAnderson13,
+                MinHouseholdSize = MinHouseholdSize,
+                MaxHouseholdSize = MaxHouseholdSize,
+                StartedUtc = DateTime.UtcNow,
+            };
+        }
+
+        // ------------------------------------------------------------------ running
+
+        /// <summary>Runs one step for the workflow step <paramref name="owner"/>.</summary>
+        public static void RunStep(string what, WorkflowStepId owner, Func<StepContext, Task> work)
+        {
+            RunChain(what, owner, new ChainLink(what, _ => true, work));
         }
 
         /// <summary>
-        /// Runs one step off the UI thread, reporting start, success and failure.
-        ///
-        /// Exceptions are caught and shown rather than left to vanish into a faulted Task, which is
-        /// what happens by default with the fire-and-forget Task.Run used elsewhere in the GUI.
+        /// Runs the links in order on one worker, skipping those whose output already exists, stopping at the
+        /// first that fails. Paths each link produced are applied to the scenario when the whole chain has
+        /// finished - also after a failure, for the links that did succeed, since those files are real.
         /// </summary>
-        public static void RunStep(string what, System.Func<System.Threading.Tasks.Task> work)
+        public static void RunChain(string title, WorkflowStepId owner, params ChainLink[] links)
         {
             if (_busy)
             {
                 return;
             }
 
-            if (!ValidateAio(out string problem))
+            if (ScenarioSession.IsBusy)
+            {
+                _status = "Not started: " + ScenarioSession.BusyReason + ".";
+                return;
+            }
+
+            StepContext ctx = Capture();
+            if (!ValidateAio(ctx, out string problem))
             {
                 _status = problem;
                 LogStep(problem);
@@ -253,42 +319,155 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
 
             _busy = true;
-            _status = what + "...";
+            _lastFailed = false;
+            Owner = owner;
+            _status = title + "...";
             _progressWindowOpen = true;
-            _progressTitle = what;
+            _progressTitle = title;
+            _progressLink = string.Empty;
             _progressDetail = string.Empty;
             _progressFraction = -1f;
             lock (_logSync) { _progressLog.Clear(); }
-            LogStep(what + "...");
+            LogStep(title + "...");
 
-            System.Threading.Tasks.Task.Run(async () =>
+            Task.Run(async () =>
             {
-                try
+                bool ok = true;
+                string failure = null;
+                int ran = 0;
+                foreach (ChainLink link in links)
                 {
-                    await work();
-                    _status = what + ": done.";
-                    LogStep(what + ": done.");
+                    bool needed;
+                    try { needed = link.Needed(ctx); }
+                    catch { needed = true; }
+
+                    if (!needed)
+                    {
+                        LogStep(link.Title + ": already done, skipped.");
+                        continue;
+                    }
+
+                    _progressLink = link.Title;
+                    _progressDetail = string.Empty;
+                    _progressFraction = -1f;
+                    if (links.Length > 1) LogStep(link.Title + "...");
+
+                    try
+                    {
+                        await link.Work(ctx);
+                        ++ran;
+                        if (links.Length > 1) LogStep(link.Title + ": done.");
+                    }
+                    catch (Exception e)
+                    {
+                        ok = false;
+                        failure = link.Title + " FAILED: " + (e is AggregateException ae ? ae.GetBaseException().Message : e.Message);
+                        LogStep(failure);
+                        break;
+                    }
                 }
-                catch (System.Exception e)
-                {
-                    _status = what + " FAILED: " + e.Message;
-                    LogStep(what + " FAILED: " + e.Message);
-                }
-                finally
-                {
-                    _busy = false;
-                    //Completed steps show a full bar rather than freezing wherever they stopped.
-                    _progressFraction = 1f;
-                }
+
+                string summary = ok
+                    ? (ran == 0 ? title + ": nothing to do, everything was already there." : title + ": done.")
+                    : failure;
+                if (ok) LogStep(summary);
+
+                PreactGUI.Post(() => Finish(ctx, owner, ok, summary));
             });
         }
 
+        /// <summary>On the main thread: applies what the step produced, then lets everything else know.</summary>
+        private static void Finish(StepContext ctx, WorkflowStepId owner, bool ok, string summary)
+        {
+            bool stillOpen = ScenarioSession.Input == ctx.Input;
+
+            if (stillOpen)
+            {
+                foreach (Action<PREACTInput> write in ctx.Writes)
+                {
+                    try { write(ctx.Input); }
+                    catch (Exception e) { LogStep("Could not set a produced path on the scenario: " + e.Message); }
+                }
+
+                foreach (Action after in ctx.AfterApply)
+                {
+                    try { after(); }
+                    catch (Exception e) { LogStep("After the step: " + e.Message); }
+                }
+            }
+            else if (ctx.Writes.Count > 0)
+            {
+                //Cannot happen through the GUI - opening another scenario waits for the step - but said if it
+                //does, rather than writing into a scenario the step was not run for.
+                LogStep("The scenario was closed while this ran, so the paths it produced were not set on any scenario.");
+            }
+
+            _status = summary;
+            _lastFailed = !ok;
+            _busy = false;
+            _progressFraction = 1f;
+
+            if (stillOpen && (ctx.Writes.Count > 0 || ctx.ChangedInPlace))
+            {
+                ScenarioSession.NotifyEdited(ctx.Name);
+            }
+
+            GuiFiles.Probe.Invalidate();
+            StepFinished?.Invoke(owner, ok);
+        }
+
         /// <summary>
-        /// The step progress window: what is running, how far along, and the messages it produced.
-        /// Its own window rather than a modal, so the map and console stay usable during a long
-        /// download. Call it from a window's Draw, after that window's End.
+        /// Runs a job that is not about the scenario's data (copying a folder) with the same progress window
+        /// and the same busy state, handing its result to <paramref name="done"/> on the main thread.
         /// </summary>
-        private static int _progressDrawnOnFrame = -1;
+        public static void RunUtility(string title, Func<string> work, Action<string> done)
+        {
+            if (_busy || ScenarioSession.IsBusy)
+            {
+                return;
+            }
+
+            _busy = true;
+            _lastFailed = false;
+            Owner = WorkflowStepId.None;
+            _status = title + "...";
+            _progressWindowOpen = true;
+            _progressTitle = title;
+            _progressLink = string.Empty;
+            _progressDetail = string.Empty;
+            _progressFraction = -1f;
+            lock (_logSync) { _progressLog.Clear(); }
+            LogStep(title + "...");
+
+            Task.Run(() =>
+            {
+                string result = null;
+                string failure = null;
+                try { result = work(); }
+                catch (Exception e) { failure = title + " FAILED: " + e.Message; LogStep(failure); }
+
+                PreactGUI.Post(() =>
+                {
+                    _busy = false;
+                    _lastFailed = failure != null;
+                    _progressFraction = 1f;
+                    _status = failure ?? title + ": done.";
+                    if (failure == null)
+                    {
+                        done?.Invoke(result);
+                    }
+                });
+            });
+        }
+
+        // ------------------------------------------------------------------ progress
+
+        /// <summary>
+        /// The step progress window: what is running, how far along, and the messages it produced. Its own
+        /// window rather than a modal, so the map and console stay usable during a long download. Drawn from
+        /// the GUI's layout every frame, so it no longer disappears (and stops updating) when whichever window
+        /// started the step is closed.
+        /// </summary>
         public static void DrawProgressWindow()
         {
             if (!_progressWindowOpen)
@@ -296,19 +475,19 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 return;
             }
 
-            //Once per frame, however many windows call it: both the creator and the loaded-scenario
-            //window draw it, and with both open the same window would otherwise have its contents
-            //appended twice.
-            int frame = ImGui.GetFrameCount();
-            if (_progressDrawnOnFrame == frame)
+            PreactGUI.PlaceNextWindow(new Vector2(520f, 320f));
+            if (!ImGui.Begin("Data preparation###StepProgress", ref _progressWindowOpen, PreactGUI.ToolWindowFlags))
             {
+                ImGui.End();
                 return;
             }
-            _progressDrawnOnFrame = frame;
-
-            ImGui.Begin("Scenario data preparation", ref _progressWindowOpen, ImGuiWindowFlags.NoCollapse);
 
             ImGui.TextWrapped(_progressTitle);
+            string link = _progressLink;
+            if (_busy && !string.IsNullOrEmpty(link) && link != _progressTitle)
+            {
+                ImGui.TextDisabled("Now: " + link);
+            }
 
             float fraction = _progressFraction;
             if (fraction >= 0f)
@@ -326,17 +505,18 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
             else
             {
-                ImGui.ProgressBar(1f, new Vector2(-1, 0), "idle");
+                ImGui.ProgressBar(1f, new Vector2(-1, 0), _lastFailed ? "failed" : "finished");
             }
 
-            if (!string.IsNullOrEmpty(_progressDetail))
+            string detail = _progressDetail;
+            if (!string.IsNullOrEmpty(detail))
             {
-                ImGui.TextWrapped(_progressDetail);
+                ImGui.TextWrapped(detail);
             }
 
             ImGui.Separator();
 
-            ImGui.BeginChild("step_log", new Vector2(0, 160), (ImGuiChildFlags)1, ImGuiWindowFlags.HorizontalScrollbar);
+            ImGui.BeginChild("step_log", new Vector2(0, -ImGui.GetFrameHeightWithSpacing()), (ImGuiChildFlags)1, ImGuiWindowFlags.HorizontalScrollbar);
             lock (_logSync)
             {
                 for (int i = 0; i < _progressLog.Count; ++i)
@@ -360,9 +540,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             ImGui.End();
         }
 
-        /// <summary>
-        /// Draws the status line and a way back to the progress window once it has been closed.
-        /// </summary>
+        /// <summary>Draws the status line and a way back to the progress window once it has been closed.</summary>
         public static void DrawStatus()
         {
             if (string.IsNullOrEmpty(_status))
@@ -370,15 +548,16 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 return;
             }
 
-            ImGui.TextWrapped(_status);
-            if (!_progressWindowOpen && ImGui.Button("Show progress"))
+            if (_lastFailed) ImGui.TextColored(Fields.Alert, _status);
+            else ImGui.TextWrapped(_status);
+
+            if (!_progressWindowOpen && ImGui.SmallButton("Show progress###ShowStepProgress"))
             {
                 _progressWindowOpen = true;
             }
         }
 
-        /// <summary>Records a message in the progress window and the console; safe to call from a
-        /// step's worker thread.</summary>
+        /// <summary>Records a message in the progress window and the console; safe to call from a step's worker thread.</summary>
         public static void LogStep(string message)
         {
             lock (_logSync)
@@ -411,30 +590,36 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
         }
 
+        // ------------------------------------------------------------------ checks and helpers
+
         /// <summary>Checked up front because every step depends on it, and an unset area of interest
         /// otherwise produces a confusing failure from deep inside a downloader.</summary>
         public static bool ValidateAio(out string problem)
         {
+            return ValidateAio(Capture(), out problem);
+        }
+
+        private static bool ValidateAio(StepContext ctx, out string problem)
+        {
             problem = null;
 
-            if (Input == null)
+            if (ctx == null)
             {
-                problem = "No scenario is loaded, so there is nothing to prepare data for.";
+                problem = "No scenario is open, so there is nothing to prepare data for.";
                 return false;
             }
 
-            if (Input.Simulation.DomainSize.x <= 0.0 || Input.Simulation.DomainSize.y <= 0.0)
+            if (ctx.DomainSize.x <= 0.0 || ctx.DomainSize.y <= 0.0)
             {
                 //Reports what was actually read rather than just asserting the area is unset - the
                 //values are what distinguish "never picked" from "picked but not stored".
-                problem = "Set the area of interest first. Currently lower-left " +
-                          $"{Input.Simulation.LowerLeftLatLon.x:F5}, {Input.Simulation.LowerLeftLatLon.y:F5} " +
-                          $"with domain {Input.Simulation.DomainSize.x:F0} x {Input.Simulation.DomainSize.y:F0} m " +
-                          "(click two opposite corners on the map, or type the values in directly).";
+                problem = "Set the area of interest first (step 1, Place and time). Currently lower-left " +
+                          $"{ctx.LowerLeft.x:F5}, {ctx.LowerLeft.y:F5} " +
+                          $"with domain {ctx.DomainSize.x:F0} x {ctx.DomainSize.y:F0} m.";
                 return false;
             }
 
-            if (string.IsNullOrEmpty(Input.Simulation.Name))
+            if (string.IsNullOrEmpty(ctx.Name))
             {
                 problem = "Give the scenario a name first - it is used for the downloaded file names.";
                 return false;
@@ -452,39 +637,16 @@ namespace Assets.WUInity.GUI.DearIMGUI
         /// Where a step's output actually is: the folder it writes to now, or wherever the file has since
         /// been moved to among the scenario's own subfolders - including the scenario root, which is where
         /// every one of these lived before the steps started using subfolders.
-        ///
-        /// Reads and "has this step already run?" go through here while writes go to the new folders, so
-        /// changing the layout does not make finished work look unfinished, or a prerequisite that is
-        /// plainly on disk look missing.
         /// </summary>
         public static string FindInRoot(string fileName)
         {
             if (PREACT.Utility.ScenarioFileLocator.TryResolve(Input.RootFolder, fileName, out string resolved, out string _))
             {
-                return InRoot(resolved);
+                return Path.IsPathRooted(resolved) ? resolved : InRoot(resolved);
             }
 
             //The path it would be written to, so a caller reporting "not found" names where it should be.
             return InRoot(fileName);
-        }
-
-        /// <summary>
-        /// Where a step is about to write, with the folder created.
-        ///
-        /// Separate from <see cref="InRoot"/>, which is also used to ask whether a step has already run:
-        /// creating folders as a side effect of that would leave an empty <c>downloads</c> beside every
-        /// scenario that had never downloaded anything. Every writer goes through here, because the outputs
-        /// now sit in subfolders and none of the downloaders or raster writers creates its own.
-        /// </summary>
-        public static string InRootForWriting(string fileName)
-        {
-            string path = InRoot(fileName);
-            string folder = Path.GetDirectoryName(path);
-            if (!string.IsNullOrEmpty(folder))
-            {
-                Directory.CreateDirectory(folder);
-            }
-            return path;
         }
 
         /// <summary>
@@ -493,330 +655,538 @@ namespace Assets.WUInity.GUI.DearIMGUI
         /// size is converted with the same flat-earth approximation the population tools already use
         /// to interpret DomainSize.
         /// </summary>
-        public static Vector2d UpperRightLatLon()
+        public static Vector2d UpperRightLatLon(PREACTInput input)
         {
-            Vector2d ll = Input.Simulation.LowerLeftLatLon;
+            Vector2d ll = input.Simulation.LowerLeftLatLon;
             //SizeToDegrees returns (lonDegrees, latDegrees) for a size given as (east, north)
-            Vector2d deg = PREACT.Population.LocalGPWData.SizeToDegrees(ll, Input.Simulation.DomainSize);
+            Vector2d deg = PREACT.Population.LocalGPWData.SizeToDegrees(ll, input.Simulation.DomainSize);
             return new Vector2d(ll.x + deg.y, ll.y + deg.x);
         }
 
-        public static void DownloadWorldPop()
+        /// <summary>
+        /// A step button with a completion marker. Completion is judged by the output file existing
+        /// rather than by a flag set when the button was pressed, so it stays correct across a restart,
+        /// and after a step is re-run or its file deleted outside the editor.
+        /// </summary>
+        public static bool StepButton(string label, string producedFile)
         {
-            RunStep("Downloading WorldPop", async () =>
+            string path = Input != null && !string.IsNullOrEmpty(Input.Simulation.Name) ? CachedFindInRoot(producedFile) : null;
+            bool done = path != null && GuiFiles.Exists(path);
+
+            bool pressed = ImGui.Button(done ? label + " (redo)###" + label : label + "###" + label);
+
+            ImGui.SameLine();
+            if (done)
             {
-                //The downloader takes a folder and a bare name, and writes both the clip and its _UTM
-                //reprojection into that folder - so the folder is peeled off the path here rather than
-                //passing the root and letting it decide.
-                string folder = Path.GetDirectoryName(InRootForWriting(WorldPopFile));
-
-                await PREACT.Tools.WorldPopDownloader.DownloadRegionUTM(
-                    Input.Simulation.StartDateTime.Year,
-                    Input.Simulation.LowerLeftLatLon, UpperRightLatLon(),
-                    folder, WorldPopBaseName,
-                    ReportBytes);
-            });
-        }
-
-        public static void DownloadOsm()
-        {
-            RunStep("Downloading OSM data", async () =>
-            {
-                await PREACT.Tools.OSMDownloader.Download(
-                    Input.Simulation.LowerLeftLatLon, UpperRightLatLon(), InRootForWriting(OsmFile));
-            });
-        }
-
-        public static void BuildSumoNetwork()
-        {
-            RunStep("Building SUMO network", () =>
-            {
-                string osmPath = FindInRoot(OsmFile);
-                if (!File.Exists(osmPath))
+                //ImGui has no tick glyph in the default font, so this uses text that renders in any
+                //font rather than a symbol that might come out as a box.
+                ImGui.TextColored(Fields.Good, "[done] " + producedFile);
+                if (ImGui.IsItemHovered())
                 {
-                    throw new FileNotFoundException("Download the OSM data first.", osmPath);
-                }
-
-                //The engine already locates SUMO's bin folder from the machine PATH, so the builder is
-                //given that before it starts looking for netconvert itself.
-                string configurationPath = PREACT.Utility.SumoNetworkBuilder.Build(
-                    osmPath, InRoot(SumoFolder), PreactGUI.Engine.SumoPath, LogStep);
-
-                if (configurationPath == null)
-                {
-                    throw new System.Exception("netconvert did not produce a network; see the messages above.");
-                }
-
-                //Stored relative to the scenario root, like every other generated path, so the
-                //scenario stays portable. Setting it here is the point of automating the step: the
-                //configuration is the thing the scenario actually refers to.
-                Input.TrafficModule.SumoInput.ConfigurationFile = SumoConfigFile;
-                SumoNetworkBuilt = true;
-                LogStep("Scenario now points at " + SumoConfigFile + ".");
-
-                return System.Threading.Tasks.Task.CompletedTask;
-            });
-        }
-
-        public static void BuildRouterDb()
-        {
-            RunStep("Building RouterDb", () =>
-            {
-                string osm = FindInRoot(OsmFile);
-                if (!File.Exists(osm))
-                {
-                    throw new FileNotFoundException("Download the OSM data first.", osm);
-                }
-
-                PREACT.Tools.PopulationTools.CreateAndSaveRouterDb(osm, InRootForWriting(RouterDbFile), out bool ok);
-                if (!ok)
-                {
-                    throw new System.Exception("RouterDb creation failed - see the log.");
-                }
-                return System.Threading.Tasks.Task.CompletedTask;
-            });
-        }
-
-        public static void GeneratePopulation()
-        {
-            RunStep("Generating population", () =>
-            {
-                //The UTM reprojection, not the WGS84 clip beside it - see WorldPopUtmFile.
-                string worldPop = FindInRoot(WorldPopUtmFile);
-                string routerDb = FindInRoot(RouterDbFile);
-
-                if (!File.Exists(worldPop))
-                {
-                    throw new FileNotFoundException(
-                        "The reprojected WorldPop raster is missing. Re-run the WorldPop download, which writes it "
-                        + "beside the clip.", worldPop);
-                }
-                if (!File.Exists(routerDb)) throw new FileNotFoundException("Build the RouterDb first.", routerDb);
-
-                PREACT.Tools.PopulationTools.CreatePopulationFromWorldPop(
-                    MinHouseholdSize, MaxHouseholdSize, worldPop, routerDb, InRootForWriting(PopulationFile), out bool ok);
-                if (!ok)
-                {
-                    throw new System.Exception("Population generation failed - see the log.");
-                }
-
-                //Reported because an empty result is otherwise indistinguishable from a full one: the
-                //file is written either way, so the [done] marker appears for a CSV holding nothing but
-                //its header - which is what a RouterDb with no reachable roads produces.
-                int households = CountPopulationRows(FindInRoot(PopulationFile));
-                LogStep($"Population file holds {households} households.");
-                if (households == 0)
-                {
-                    throw new System.Exception("The population file came out empty - no household could be placed. "
-                        + "Check that the RouterDb covers the area and that WorldPop has people in it.");
-                }
-
-                //Stored relative to the scenario folder, so it stays relocatable.
-                Input.Population.PopulationFile = PopulationFile;
-                return System.Threading.Tasks.Task.CompletedTask;
-            });
-        }
-
-        /// <summary>Data rows in a population CSV, excluding its header.</summary>
-        private static int CountPopulationRows(string path)
-        {
-            int rows = 0;
-            using (StreamReader reader = new StreamReader(path))
-            {
-                //header
-                reader.ReadLine();
-                while (reader.ReadLine() is string line)
-                {
-                    if (!string.IsNullOrWhiteSpace(line)) ++rows;
+                    long length = GuiFiles.Probe.Length(path);
+                    DateTime? written = GuiFiles.Probe.LastWriteUtc(path);
+                    ImGui.SetTooltip($"{length / (1024.0 * 1024.0):F2} MB, written "
+                        + $"{(written.HasValue ? written.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm") : "?")}."
+                        + "\nRunning the step again overwrites it.");
                 }
             }
-            return rows;
+            else
+            {
+                ImGui.TextDisabled("[pending]");
+            }
+
+            return pressed;
+        }
+
+        //Where each step's output was last found, for a second. FindInRoot searches the scenario's subfolders
+        //when a file is not where it is recorded, and step buttons are drawn every frame.
+        private static readonly Dictionary<string, (DateTime at, string path)> _found = new Dictionary<string, (DateTime, string)>();
+
+        private static string CachedFindInRoot(string fileName)
+        {
+            string key = Input.RootFolder + "|" + fileName;
+            DateTime now = DateTime.UtcNow;
+            if (_found.TryGetValue(key, out var hit) && (now - hit.at).TotalSeconds < 1.0)
+            {
+                return hit.path;
+            }
+
+            string path = FindInRoot(fileName);
+            _found[key] = (now, path);
+            return path;
+        }
+
+        // ------------------------------------------------------------------ the steps
+
+        private static Task DoDownloadWorldPop(StepContext ctx)
+        {
+            //The downloader takes a folder and a bare name, and writes both the clip and its _UTM
+            //reprojection into that folder - so the folder is peeled off the path here rather than
+            //passing the root and letting it decide.
+            string folder = Path.GetDirectoryName(ctx.InRootForWriting(ScenarioFiles.WorldPop(ctx.Name)));
+            return PREACT.Tools.WorldPopDownloader.DownloadRegionUTM(ctx.Start.Year, ctx.LowerLeft, ctx.UpperRight,
+                folder, ScenarioFiles.WorldPopBaseName(ctx.Name), ReportBytes);
+        }
+
+        private static Task DoDownloadOsm(StepContext ctx)
+        {
+            return PREACT.Tools.OSMDownloader.Download(ctx.LowerLeft, ctx.UpperRight, ctx.InRootForWriting(ScenarioFiles.Osm(ctx.Name)));
+        }
+
+        private static Task DoBuildSumoNetwork(StepContext ctx, string sumoBin)
+        {
+            string osmPath = ctx.FindInRoot(ScenarioFiles.Osm(ctx.Name));
+            if (!File.Exists(osmPath))
+            {
+                throw new FileNotFoundException("Download the OSM data first.", osmPath);
+            }
+
+            //The engine already locates SUMO's bin folder from the machine PATH, so the builder is
+            //given that before it starts looking for netconvert itself.
+            string configurationPath = PREACT.Utility.SumoNetworkBuilder.Build(osmPath, ctx.InRoot(ScenarioFiles.SumoFolder), sumoBin, LogStep);
+            if (configurationPath == null)
+            {
+                throw new Exception("netconvert did not produce a network; see the messages above.");
+            }
+
+            //Stored relative to the scenario root, like every other generated path, so the scenario stays
+            //portable. Setting it is the point of automating the step: the configuration is the thing the
+            //scenario actually refers to.
+            ctx.Set(i => i.TrafficModule.SumoInput.ConfigurationFile = ScenarioFiles.SumoConfig);
+            LogStep("The scenario will point at " + ScenarioFiles.SumoConfig + ".");
+            return Task.CompletedTask;
+        }
+
+        private static Task DoBuildRouterDb(StepContext ctx)
+        {
+            string osm = ctx.FindInRoot(ScenarioFiles.Osm(ctx.Name));
+            if (!File.Exists(osm))
+            {
+                throw new FileNotFoundException("Download the OSM data first.", osm);
+            }
+
+            PREACT.Tools.PopulationTools.CreateAndSaveRouterDb(osm, ctx.InRootForWriting(ScenarioFiles.RouterDb(ctx.Name)), out bool ok);
+            if (!ok)
+            {
+                throw new Exception("RouterDb creation failed - see the log.");
+            }
+            return Task.CompletedTask;
+        }
+
+        private static Task DoGeneratePopulation(StepContext ctx)
+        {
+            //The UTM reprojection, not the WGS84 clip beside it: PopulationMap.CreatePopulation treats the
+            //geotransform as UTM metres, and handed the clip it finds no road within a cell of anywhere.
+            string worldPop = ctx.FindInRoot(ScenarioFiles.WorldPopUtm(ctx.Name));
+            string routerDb = ctx.FindInRoot(ScenarioFiles.RouterDb(ctx.Name));
+
+            if (!File.Exists(worldPop))
+            {
+                throw new FileNotFoundException(
+                    "The reprojected WorldPop raster is missing. Re-run the WorldPop download, which writes it "
+                    + "beside the clip.", worldPop);
+            }
+            if (!File.Exists(routerDb)) throw new FileNotFoundException("Build the RouterDb first.", routerDb);
+
+            string output = ctx.InRootForWriting(ScenarioFiles.Population(ctx.Name));
+            PREACT.Tools.PopulationTools.CreatePopulationFromWorldPop(
+                ctx.MinHouseholdSize, ctx.MaxHouseholdSize, worldPop, routerDb, output, out bool ok);
+            if (!ok)
+            {
+                throw new Exception("Population generation failed - see the log.");
+            }
+
+            //Reported because an empty result is otherwise indistinguishable from a full one: the file is
+            //written either way - which is what a RouterDb with no reachable roads produces.
+            int households = ScenarioFiles.CountPopulationRows(output);
+            LogStep($"Population file holds {households} households.");
+            if (households == 0)
+            {
+                throw new Exception("The population file came out empty - no household could be placed. "
+                    + "Check that the RouterDb covers the area and that WorldPop has people in it.");
+            }
+
+            ctx.Set(i => i.Population.PopulationFile = ScenarioFiles.Population(ctx.Name));
+            return Task.CompletedTask;
         }
 
         /// <summary>
         /// Downloads a DEM for the area of interest and warps it into the zone the simulation measures in.
-        ///
-        /// The warp is the part that matters. OpenTopography serves geographic coordinates - degrees, with
-        /// a cell size of about 0.00028 - and everything here works in UTM metres: the landscape reader
-        /// takes the cell size as metres, the painter places cells by it, k-PERIL measures distances with
-        /// it. Handing a scenario a raster in degrees would put its cells 0.0003 m apart and its corner at
-        /// an easting of 23.
+        /// For a scenario without an ELMFIRE fire: an ELMFIRE scenario's terrain is its case's dem.tif.
         /// </summary>
-        public static void DownloadDem()
+        private static async Task DoDownloadDem(StepContext ctx)
         {
-            RunStep("Downloading DEM", async () =>
+            if (string.IsNullOrWhiteSpace(ctx.OpenTopographyKey))
             {
-                string apiKey = EffectiveOpenTopographyApiKey;
-                if (string.IsNullOrWhiteSpace(apiKey))
-                {
-                    throw new System.Exception("OpenTopography needs an API key, set the same way as the Mapbox "
-                        + "token: copy Assets/Resources/OpenTopography/OpenTopographyConfigurationTemplate.txt to "
-                        + "OpenTopographyConfiguration.txt beside it and paste a key into it. One is free from "
-                        + "portal.opentopography.org.");
-                }
-                LogStep("Using the OpenTopography key from " + OpenTopographyApiKeySource + ".");
+                throw new Exception("OpenTopography needs an API key, set the same way as the Mapbox "
+                    + "token: copy Assets/Resources/OpenTopography/OpenTopographyConfigurationTemplate.txt to "
+                    + "OpenTopographyConfiguration.txt beside it and paste a key into it. One is free from "
+                    + "portal.opentopography.org. Help > External tools and keys says where it is looked for.");
+            }
+            LogStep("Using the OpenTopography key from " + ctx.OpenTopographyKeySource + ".");
 
-                Vector2d requestLowerLeft = Input.Simulation.LowerLeftLatLon;
-                Vector2d requestUpperRight = UpperRightLatLon();
+            //Asked for with a margin. A latitude/longitude box is not a rectangle in UTM, so the bounding box
+            //the warp clips to reaches beyond the corners of what was downloaded - and GDAL fills what the
+            //source does not cover with zero, which beside a hillside reads as a cliff.
+            const double marginDegrees = 0.005;
+            Vector2d paddedLowerLeft = new Vector2d(ctx.LowerLeft.x - marginDegrees, ctx.LowerLeft.y - marginDegrees);
+            Vector2d paddedUpperRight = new Vector2d(ctx.UpperRight.x + marginDegrees, ctx.UpperRight.y + marginDegrees);
 
-                //Asked for with a margin. A latitude/longitude box is not a rectangle in UTM, so the
-                //bounding box the warp clips to reaches beyond the corners of what was downloaded - and
-                //GDAL fills what the source does not cover, with zero when the source declares no nodata,
-                //which Copernicus does not. Beside 400 m of hillside that fill reads as a cliff: measured
-                //without the margin, Mati's downloaded DEM came out with slopes up to 86 degrees against
-                //47 for the same ground from a DEM that covers it properly.
-                //
-                //Half a kilometre in degrees, which is a few cells at any DEM resolution offered here.
-                const double marginDegrees = 0.005;
-                Vector2d paddedLowerLeft = new Vector2d(requestLowerLeft.x - marginDegrees, requestLowerLeft.y - marginDegrees);
-                Vector2d paddedUpperRight = new Vector2d(requestUpperRight.x + marginDegrees, requestUpperRight.y + marginDegrees);
+            string downloaded = ctx.InRootForWriting(ScenarioFiles.DemDownload(ctx.Name));
+            await PREACT.Tools.OpenTopographyDownloader.Download(paddedLowerLeft, paddedUpperRight, ctx.OpenTopographyKey, downloaded, ctx.DemType);
 
-                string downloaded = InRootForWriting(DemDownloadFile);
-                await PREACT.Tools.OpenTopographyDownloader.Download(
-                    paddedLowerLeft, paddedUpperRight, apiKey, downloaded, DemType);
+            LogStep("Warping the DEM into the simulation's UTM zone...");
 
-                LogStep("Warping the DEM into the simulation's UTM zone...");
+            //Into the zone the simulation measures in, named explicitly rather than recomputed from the
+            //domain's centre: on a zone boundary the two differ by half a million metres.
+            PREACT.Utility.MasterGrid grid = PREACT.Utility.RasterHarmonizer.BuildUtmMasterGrid(
+                downloaded, ctx.InRootForWriting(ScenarioFiles.Dem(ctx.Name)),
+                ctx.LowerLeft.x, ctx.LowerLeft.y, ctx.UpperRight.x, ctx.UpperRight.y, null, ctx.UtmEpsg);
 
-                //Clipped to the area of interest that was asked for, not to the padded box that was
-                //downloaded: the margin exists to give the warp data to work with at the corners, not to
-                //enlarge the scenario's domain.
-                Vector2d ll = requestLowerLeft;
-                Vector2d ur = requestUpperRight;
+            LogStep($"DEM on the simulation's grid: {grid.Header.Ncols} x {grid.Header.Nrows} cells of "
+                + $"{grid.Header.CellSize:F1} m, in {grid.Epsg}.");
 
-                //Clipped as well as reprojected: the download is cut to a lat/lon box, which is not a
-                //rectangle in UTM, so the warped extent is the bounding box of the four transformed
-                //corners rather than the box that was asked for.
-                //
-                //Into the zone the simulation measures in, named explicitly rather than recomputed from
-                //the domain's centre. For a domain on a zone boundary the two differ, and a DEM in one
-                //zone beside a fire in the next is half a million metres of disagreement.
-                PREACT.Utility.MasterGrid grid = PREACT.Utility.RasterHarmonizer.BuildUtmMasterGrid(
-                    downloaded, InRootForWriting(DemFile), ll.x, ll.y, ur.x, ur.y,
-                    null, Input.Simulation.Data.UtmEpsgCode);
+            WriteSlopeAndAspect(ctx, grid);
 
-                LogStep($"DEM on the simulation's grid: {grid.Header.Ncols} x {grid.Header.Nrows} cells of "
-                    + $"{grid.Header.CellSize:F1} m, in {grid.Epsg}.");
-
-                WriteSlopeAndAspect(grid);
-
-                //Set on the scenario, which is the point of the step: this is what makes terrain, slope
-                //and aspect available to everything that wants them.
-                Input.Landscape.ElevationFile = DemFile;
-                LogStep("Scenario now points at " + DemFile + ", " + SlopeFile + " and " + AspectFile + ".");
+            ctx.Set(i =>
+            {
+                i.Landscape.ElevationFile = ScenarioFiles.Dem(ctx.Name);
+                i.Landscape.SlopeFile = ScenarioFiles.Slope(ctx.Name);
+                i.Landscape.AspectFile = ScenarioFiles.Aspect(ctx.Name);
             });
         }
 
-        /// <summary>
-        /// Derives slope and aspect from the DEM and writes both as GeoTIFFs on its grid.
-        ///
-        /// On disk rather than only in memory, because they are inputs in their own right: ELMFIRE takes
-        /// elevation, slope and aspect as three separate GeoTIFFs, and a raster that exists only inside a
-        /// scenario load cannot be handed to it, opened in QGIS, or compared against what an earlier run
-        /// used. The scenario still recomputes them if the files are absent, so nothing depends on this
-        /// having been run - it makes them available, it does not make them required.
-        /// </summary>
-        private static void WriteSlopeAndAspect(PREACT.Utility.MasterGrid grid)
+        /// <summary>Derives slope and aspect from the DEM and writes both as GeoTIFFs on its grid.</summary>
+        private static void WriteSlopeAndAspect(StepContext ctx, PREACT.Utility.MasterGrid grid)
         {
-            float[,] elevation = PREACT.Utility.AscRaster.ReadGeoTiff(FindInRoot(DemFile),
+            float[,] elevation = PREACT.Utility.AscRaster.ReadGeoTiff(ctx.FindInRoot(ScenarioFiles.Dem(ctx.Name)),
                 out PREACT.Utility.AscRaster.Header header, out bool ok);
             if (!ok || elevation == null)
             {
-                LogStep("Could not read the DEM back, so no slope or aspect was written.");
-                return;
+                throw new Exception("Could not read the DEM back, so no slope or aspect was written.");
             }
 
-            PREACT.Utility.SlopeAspect.Compute(elevation, header.CellSize,
-                out float[,] slope, out float[,] aspect);
+            PREACT.Utility.SlopeAspect.Compute(elevation, header.CellSize, out float[,] slope, out float[,] aspect);
+            PREACT.Utility.GeoTiffRasterWriter.WriteBand(grid, slope, ctx.InRootForWriting(ScenarioFiles.Slope(ctx.Name)));
+            PREACT.Utility.GeoTiffRasterWriter.WriteBand(grid, aspect, ctx.InRootForWriting(ScenarioFiles.Aspect(ctx.Name)));
 
-            PREACT.Utility.GeoTiffRasterWriter.WriteBand(grid, slope, InRootForWriting(SlopeFile));
-            PREACT.Utility.GeoTiffRasterWriter.WriteBand(grid, aspect, InRootForWriting(AspectFile));
-
-            Input.Landscape.SlopeFile = SlopeFile;
-            Input.Landscape.AspectFile = AspectFile;
-
-            //Reported with their ranges, because a slope raster is the one of the three whose plausibility
-            //can be judged at a glance: tens of degrees is terrain, ninety is a nodata edge.
+            //Reported with their ranges, because slope is the raster whose plausibility can be judged at a
+            //glance: tens of degrees is terrain, ninety is a nodata edge.
             float slopeMax = 0f, slopeMean = 0f;
             int cells = 0;
             for (int y = 0; y < header.Nrows; ++y)
             {
                 for (int x = 0; x < header.Ncols; ++x)
                 {
-                    slopeMax = System.Math.Max(slopeMax, slope[x, y]);
+                    slopeMax = Math.Max(slopeMax, slope[x, y]);
                     slopeMean += slope[x, y];
                     ++cells;
                 }
             }
             if (cells > 0) slopeMean /= cells;
 
-            LogStep($"Wrote {SlopeFile} and {AspectFile} (slope mean {slopeMean:F1} deg, max {slopeMax:F0} deg).");
+            LogStep($"Wrote {ScenarioFiles.Slope(ctx.Name)} and {ScenarioFiles.Aspect(ctx.Name)} (slope mean {slopeMean:F1} deg, max {slopeMax:F0} deg).");
         }
 
-        public static void DownloadLandfire()
+        private static async Task DoDownloadWeather(StepContext ctx)
         {
-            RunStep("Downloading LANDFIRE data", async () =>
-            {
-                await PREACT.Tools.LandfireLandscapeDownloader.Download(
-                    Input.Simulation.StartDateTime.Year, UseAnderson13,
-                    Input.Simulation.LowerLeftLatLon, UpperRightLatLon(), Input.RootFolder);
-            });
-        }
+            await PREACT.Tools.OpenMeteoDownloader.Download(
+                new Vector2d(0.5 * (ctx.LowerLeft.x + ctx.UpperRight.x), 0.5 * (ctx.LowerLeft.y + ctx.UpperRight.y)),
+                ctx.Start, ctx.End, ctx.InRootForWriting(ScenarioFiles.Weather(ctx.Name)));
 
-        public static void DownloadWeather()
-        {
-            RunStep("Downloading weather", async () =>
-            {
-                Vector2d ll = Input.Simulation.LowerLeftLatLon;
-                Vector2d ur = UpperRightLatLon();
-                await PREACT.Tools.OpenMeteoDownloader.Download(
-                    new Vector2d(0.5 * (ll.x + ur.x), 0.5 * (ll.y + ur.y)),
-                    Input.Simulation.StartDateTime, Input.Simulation.EndDateTime,
-                    InRootForWriting(WeatherFile));
-
-                Input.Weather.WeatherFile = WeatherFile;
-            });
-        }
-
-        /// <summary>The ELMFIRE case's namelist, which is what marks the case as built.</summary>
-        /// <remarks>
-        /// The namelist rather than a raster, because it is written last and only once every layer is in place
-        /// — so its presence means the whole build finished, where any single raster could be left behind by
-        /// one that failed halfway.
-        /// </remarks>
-        public static string ElmfireNamelistFile
-        {
-            get
-            {
-                string caseDirectory = Input?.WildfireModule?.ElmfireInput?.CaseDirectory;
-                if (string.IsNullOrEmpty(caseDirectory)) { caseDirectory = "elmfire"; }
-                return caseDirectory + "/elmfire.data";
-            }
+            ctx.Set(i => i.Weather.WeatherFile = ScenarioFiles.Weather(ctx.Name));
         }
 
         /// <summary>
-        /// Builds the ELMFIRE case: the rasters, the weather series and the namelist.
+        /// LANDFIRE's fuel model and four canopy layers for the area, split into the single-band rasters the
+        /// ELMFIRE case builder warps, and named as the scenario's ELMFIRE source layers.
         /// </summary>
         /// <remarks>
-        /// Here rather than only at the start of a run, which is where it used to happen exclusively. The build
-        /// downloads a DEM, runs WindNinja once per weather band and marches Nelson over a conditioning window,
-        /// so it takes minutes and produces files that are then reused — the same shape as every other step in
-        /// this window, and not something to discover while waiting for a simulation to start.
+        /// The download used to set nothing at all: it left a zip and a multi-band GeoTIFF in the scenario
+        /// folder, the scenario did not refer to them, and ELMFIRE - which takes fuel and canopy only from the
+        /// [ELMFIRE] source layers - never saw them. The LFPS job returns one GeoTIFF with a band per requested
+        /// product, in request order (elevation, slope, aspect, fuel model, CC, CH, CBH, CBD, FCCS); the bands
+        /// are matched by their descriptions where LFPS supplies them and by that order otherwise.
+        ///
+        /// LANDFIRE stores canopy height and base height in metres x 10 and bulk density in kg/m3 x 100, so the
+        /// namelist's CH_TIMES_10 / CBH_TIMES_10 / CBD_TIMES_100 are switched on to match.
         /// </remarks>
-        public static void BuildElmfireCase()
+        private static async Task DoDownloadLandfire(StepContext ctx)
         {
-            RunStep("Building the ELMFIRE case", () =>
+            Vector2d centre = new Vector2d(0.5 * (ctx.LowerLeft.x + ctx.UpperRight.x), 0.5 * (ctx.LowerLeft.y + ctx.UpperRight.y));
+            if (!ScenarioFiles.IsInLandfireCoverage(ctx.LowerLeft, ctx.UpperRight))
             {
-                bool ok = PREACT.Utility.ElmfireCoupling.BuildCaseOnly(Input, LogStep, out string problem);
+                throw new Exception("LANDFIRE covers the United States only, and this domain is outside it. Name a fuel "
+                    + "model raster of your own, and the FIRE-RES canopy folder for Europe, instead.");
+            }
 
-                if (!ok)
+            try
+            {
+                string iso3 = await PREACT.Tools.WorldPopDownloader.LatLonToISO3(centre.x, centre.y);
+                if (!string.IsNullOrEmpty(iso3) && iso3 != "USA")
                 {
-                    //Thrown rather than returned: RunStep reports a faulted step, and a build that failed must
-                    //not read as one that succeeded just because it was the last thing to run.
-                    throw new System.Exception(problem ?? "the case could not be built");
+                    throw new Exception("LANDFIRE covers the United States only, and this domain is in " + iso3 + ".");
+                }
+            }
+            catch (Exception e) when (!e.Message.StartsWith("LANDFIRE"))
+            {
+                //The country lookup is a courtesy; the bounding box already said this is plausibly US ground.
+                LogStep("Could not confirm the country (" + e.Message + "); asking LANDFIRE anyway.");
+            }
+
+            string folder = ctx.InRoot(ScenarioFiles.LandfireFolder);
+            Directory.CreateDirectory(folder);
+            DateTime started = DateTime.UtcNow.AddSeconds(-5);
+
+            await PREACT.Tools.LandfireLandscapeDownloader.Download(ctx.Start.Year, ctx.UseAnderson13, ctx.LowerLeft, ctx.UpperRight, folder);
+
+            //The downloader reports a failed status check by returning, so what arrived is the only evidence.
+            string multiband = null;
+            DateTime newest = DateTime.MinValue;
+            foreach (string tif in Directory.GetFiles(folder, "*.tif"))
+            {
+                DateTime written = File.GetLastWriteTimeUtc(tif);
+                if (written >= started && written > newest && !Path.GetFileName(tif).StartsWith(ctx.Name + "_lf_"))
+                {
+                    newest = written;
+                    multiband = tif;
+                }
+            }
+
+            if (multiband == null)
+            {
+                throw new Exception("LANDFIRE returned nothing usable - the job failed, timed out or the download was cut "
+                    + "short. See the messages above; the LFPS service is sometimes simply busy, and trying again later works.");
+            }
+
+            LogStep("Splitting " + Path.GetFileName(multiband) + " into the layers ELMFIRE takes...");
+            string fuelStem = ctx.UseAnderson13 ? "fbfm13" : "fbfm40";
+            var wanted = new List<(string stem, string key, int fallbackBand)>
+            {
+                (fuelStem, "FBFM", 4), ("cc", "CC", 5), ("ch", "CH", 6), ("cbh", "CBH", 7), ("cbd", "CBD", 8),
+            };
+
+            var layers = new Dictionary<string, string>();
+            OSGeo.GDAL.Gdal.AllRegister();
+            using (OSGeo.GDAL.Dataset source = OSGeo.GDAL.Gdal.Open(multiband, OSGeo.GDAL.Access.GA_ReadOnly))
+            {
+                if (source == null)
+                {
+                    throw new Exception("Could not open " + multiband + ".");
                 }
 
-                return System.Threading.Tasks.Task.CompletedTask;
+                int bands = source.RasterCount;
+                var descriptions = new string[bands + 1];
+                for (int b = 1; b <= bands; ++b)
+                {
+                    using (OSGeo.GDAL.Band band = source.GetRasterBand(b))
+                    {
+                        descriptions[b] = (band.GetDescription() ?? string.Empty).ToUpperInvariant();
+                    }
+                }
+
+                foreach ((string stem, string key, int fallbackBand) in wanted)
+                {
+                    int bandIndex = ScenarioFiles.FindLandfireBand(descriptions, key, fallbackBand);
+                    if (bandIndex < 1 || bandIndex > bands)
+                    {
+                        LogStep($"No {key} band in the download ({bands} band(s)); {stem} is left unset.");
+                        continue;
+                    }
+
+                    string relative = ScenarioFiles.LandfireLayer(ctx.Name, stem);
+                    string destination = ctx.InRootForWriting(relative);
+                    var options = new OSGeo.GDAL.GDALTranslateOptions(new[] { "-b", bandIndex.ToString(), "-of", "GTiff", "-co", "COMPRESS=DEFLATE" });
+                    using (OSGeo.GDAL.Dataset band = OSGeo.GDAL.Gdal.wrapper_GDALTranslate(destination, source, options, null, null))
+                    {
+                        if (band == null)
+                        {
+                            throw new Exception($"Could not write band {bandIndex} ({key}) to {destination}.");
+                        }
+                        band.FlushCache();
+                    }
+                    layers[stem] = relative;
+                    LogStep($"  band {bandIndex} ({(string.IsNullOrEmpty(descriptions[bandIndex]) ? key : descriptions[bandIndex])}) -> {relative}");
+                }
+            }
+
+            if (!layers.ContainsKey(fuelStem))
+            {
+                throw new Exception("The download holds no fuel model band, so it cannot supply the case's fuel.");
+            }
+
+            bool anderson = ctx.UseAnderson13;
+            ctx.Set(i =>
+            {
+                ElmfireInput e = i.WildfireModule.ElmfireInput;
+                e.FuelModelFile = layers[fuelStem];
+                e.FuelModelStandard = anderson ? ElmfireInput.FuelModelStandards.FBFM13 : ElmfireInput.FuelModelStandards.FBFM40;
+                if (layers.TryGetValue("cc", out string cc)) e.CanopyCoverFile = cc;
+                if (layers.TryGetValue("ch", out string ch)) e.CanopyHeightFile = ch;
+                if (layers.TryGetValue("cbh", out string cbh)) e.CanopyBaseHeightFile = cbh;
+                if (layers.TryGetValue("cbd", out string cbd)) e.CanopyBulkDensityFile = cbd;
+                //LANDFIRE's scaled integers.
+                e.Namelist.CC_IN_PERCENT = true;
+                e.Namelist.CH_TIMES_10 = true;
+                e.Namelist.CBH_TIMES_10 = true;
+                e.Namelist.CBD_TIMES_100 = true;
             });
+            LogStep("The scenario's ELMFIRE source layers will name these. Build (or rebuild) the fire case to warp them onto its grid.");
         }
+
+        /// <summary>
+        /// Builds the ELMFIRE case: the rasters, the weather series and the namelist. With
+        /// <paramref name="rebuildExisting"/> every layer is made again, as for a changed domain or cell size.
+        /// </summary>
+        private static Task DoBuildElmfireCase(StepContext ctx, bool rebuildExisting)
+        {
+            ElmfireInput settings = ctx.Input.WildfireModule.ElmfireInput;
+            bool previous = settings.RebuildExistingLayers;
+            settings.RebuildExistingLayers = rebuildExisting || previous;
+
+            ctx.ChangedInPlace = true;
+            bool ok;
+            string problem;
+            try
+            {
+                // V1-INTEGRATION: C1 - BuildCaseOnly updates the input in place (today: the weather anchor and file;
+                // once C1 lands also [Landscape] dem/slp/asp and [kPERIL] WuiAreaFile). This runs on the worker
+                // while editing is locked, and Finish marks the scenario changed and refreshes everything after.
+                ok = PREACT.Utility.ElmfireCoupling.BuildCaseOnly(ctx.Input, LogStep, out problem);
+            }
+            finally
+            {
+                settings.RebuildExistingLayers = previous;
+            }
+
+            if (!ok)
+            {
+                //Thrown rather than returned: RunChain reports a faulted step, and a build that failed must not
+                //read as one that succeeded just because it was the last thing to run.
+                throw new Exception(problem ?? "the case could not be built");
+            }
+
+            DateTime builtFrom = ctx.StartedUtc;
+            ctx.Then(() => AdoptCaseOutputs(ctx.Input, builtFrom));
+            return Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// Points the scenario at what the case build made: its terrain for [Landscape], and the WUI area it
+        /// rasterised for k-PERIL. Idempotent, so it stays harmless once the engine does the same.
+        /// </summary>
+        // V1-INTEGRATION: C1 - the GUI-side copy of what ElmfireCoupling.BuildCaseOnly will do in place on success.
+        // Kept because it is a no-op once the engine has done it, and it makes an existing case consistent now.
+        public static void AdoptCaseOutputs(PREACTInput input, DateTime builtSinceUtc)
+        {
+            if (input == null) return;
+
+            string caseDir = (input.WildfireModule.ElmfireInput.CaseDirectory ?? "elmfire").Replace('\\', '/').TrimEnd('/');
+            string dem = caseDir + "/inputs/dem.tif";
+            string slp = caseDir + "/inputs/slp.tif";
+            string asp = caseDir + "/inputs/asp.tif";
+            string wui = caseDir + "/inputs/wui_area.tif";
+
+            if (File.Exists(Path.Combine(input.RootFolder, dem)) && string.IsNullOrEmpty(input.Landscape.LandscapeFile))
+            {
+                if (input.Landscape.ElevationFile != dem)
+                {
+                    LogStep($"[Landscape] now uses the fire case's terrain ({dem}) instead of {Show(input.Landscape.ElevationFile)}, "
+                        + "so the map, painting, the evacuation groups and k-PERIL's slope are all on the case grid.");
+                    input.Landscape.ElevationFile = dem;
+                }
+                if (File.Exists(Path.Combine(input.RootFolder, slp))) input.Landscape.SlopeFile = slp;
+                if (File.Exists(Path.Combine(input.RootFolder, asp))) input.Landscape.AspectFile = asp;
+            }
+
+            //Only a WUI area this build wrote: an older wui_area.tif may be from masks painted since replaced.
+            kPERILInput peril = input.TriggerBufferModule?.kPERILInput;
+            string wuiPath = Path.Combine(input.RootFolder, wui);
+            if (peril != null && peril.WuiAreaSource == kPERILInput.WuiAreaSources.Raster
+                && File.Exists(wuiPath) && File.GetLastWriteTimeUtc(wuiPath) >= builtSinceUtc.AddSeconds(-5)
+                && peril.WuiAreaFile != wui)
+            {
+                LogStep($"[kPERIL] WuiAreaFile now names {wui}, the painted WUI area the case build put on its grid.");
+                peril.WuiAreaFile = wui;
+            }
+
+            PreactGUI.WUInity?.Painter?.ResetForScenario();
+        }
+
+        private static string Show(string path) => string.IsNullOrEmpty(path) ? "nothing" : path;
+
+        // ------------------------------------------------------------------ what the workflow and windows call
+
+        /// <summary>Everything the road network needs, skipping what exists: OSM, the RouterDb, and the SUMO network.</summary>
+        public static void PrepareRoads(bool redo)
+        {
+            string sumo = PreactGUI.Engine?.SumoPath;
+            RunChain(redo ? "Rebuilding the road network" : "Preparing the road network", WorkflowStepId.Roads,
+                new ChainLink("Downloading OSM roads", c => redo || !c.Has(ScenarioFiles.Osm(c.Name)), DoDownloadOsm),
+                new ChainLink("Building the RouterDb", c => redo || !c.Has(ScenarioFiles.RouterDb(c.Name)), DoBuildRouterDb),
+                new ChainLink("Building the SUMO network", c => c.TrafficEnabled && (redo || !c.Has(ScenarioFiles.SumoConfig)),
+                    c => DoBuildSumoNetwork(c, sumo)));
+        }
+
+        /// <summary>Everything households need, skipping what exists: WorldPop, the roads they leave by, and the population.</summary>
+        public static void PreparePopulation(bool redo)
+        {
+            RunChain(redo ? "Regenerating the population" : "Preparing the population", WorkflowStepId.Population,
+                new ChainLink("Downloading WorldPop", c => redo || !c.Has(ScenarioFiles.WorldPopUtm(c.Name)), DoDownloadWorldPop),
+                new ChainLink("Downloading OSM roads", c => !c.Has(ScenarioFiles.RouterDb(c.Name)) && !c.Has(ScenarioFiles.Osm(c.Name)), DoDownloadOsm),
+                new ChainLink("Building the RouterDb", c => !c.Has(ScenarioFiles.RouterDb(c.Name)), DoBuildRouterDb),
+                new ChainLink("Generating households", c => redo || !PopulationIsSet(c), DoGeneratePopulation));
+        }
+
+        private static bool PopulationIsSet(StepContext c)
+        {
+            string recorded = c.Input.Population.PopulationFile;
+            string path = GuiFiles.Resolve(c.Root, recorded);
+            return !string.IsNullOrEmpty(recorded) && File.Exists(path) && ScenarioFiles.CountPopulationRows(path) > 0;
+        }
+
+        public static void DownloadLandfireFuels()
+        {
+            RunStep("Downloading LANDFIRE fuels and canopy", WorkflowStepId.Fuels, DoDownloadLandfire);
+        }
+
+        public static void BuildElmfireCase(bool rebuildExisting = false)
+        {
+            RunStep(rebuildExisting ? "Rebuilding the fire case" : "Building the fire case", WorkflowStepId.FireCase,
+                c => DoBuildElmfireCase(c, rebuildExisting));
+        }
+
+        /// <summary>
+        /// Rebuilds the case keeping its layers, so newly painted masks become its ignition_mask.tif and
+        /// wui_area.tif ("Apply to case").
+        /// </summary>
+        public static void ApplyPaintedAreasToCase()
+        {
+            RunStep("Applying the painted areas to the fire case", WorkflowStepId.FireAreas, c => DoBuildElmfireCase(c, false));
+        }
+
+        public static void DownloadDemOnly()
+        {
+            RunStep("Downloading a DEM", WorkflowStepId.FireCase, DoDownloadDem);
+        }
+
+        public static void DownloadWeatherOnly()
+        {
+            RunStep("Downloading Open-Meteo weather", WorkflowStepId.PlaceAndTime, DoDownloadWeather);
+        }
+
+        // The single steps, for the windows that still offer them one at a time.
+        public static void DownloadWorldPop() => RunStep("Downloading WorldPop", WorkflowStepId.Population, DoDownloadWorldPop);
+        public static void DownloadOsm() => RunStep("Downloading OSM data", WorkflowStepId.Roads, DoDownloadOsm);
+        public static void BuildRouterDb() => RunStep("Building RouterDb", WorkflowStepId.Roads, DoBuildRouterDb);
+        public static void BuildSumoNetwork()
+        {
+            string sumo = PreactGUI.Engine?.SumoPath;
+            RunStep("Building SUMO network", WorkflowStepId.Roads, c => DoBuildSumoNetwork(c, sumo));
+        }
+        public static void GeneratePopulation() => RunStep("Generating population", WorkflowStepId.Population, DoGeneratePopulation);
+        public static void DownloadDem() => DownloadDemOnly();
+        public static void DownloadWeather() => DownloadWeatherOnly();
+        public static void DownloadLandfire() => DownloadLandfireFuels();
     }
 }

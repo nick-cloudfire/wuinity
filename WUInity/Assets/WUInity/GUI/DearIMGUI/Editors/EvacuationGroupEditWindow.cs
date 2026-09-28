@@ -19,8 +19,13 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
     {
         private static bool _isOpen;
         private static Dictionary<string, EvacuationGroupInput> _inputs;
+        //The copy being edited and the scenario's group it came from (null for a new one). This used to edit
+        //the scenario's group directly, so Cancel kept every change and a rename left the dictionary keyed by
+        //the old name - two list rows could then show the same name and share ImGui IDs.
         private static EvacuationGroupInput _input;
+        private static EvacuationGroupInput _original;
         private static string _oldKey = string.Empty;
+        private static bool _subscribed;
 
         private static string[] DestinationChoiceStrings = Enum.GetNames(typeof(DestinationChoices));
         private static int _destinationChoiceIndex;
@@ -33,7 +38,14 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             }
             _isOpen = true;
 
+            if (!_subscribed)
+            {
+                _subscribed = true;
+                ScenarioSession.ScenarioChanged += () => { if (_isOpen) { _isOpen = false; PreactGUI.CloseWindow(Draw); } };
+            }
+
             _inputs = inputs;
+            _original = input;
             if (input == null)
             {
                 _input = new EvacuationGroupInput();
@@ -41,8 +53,8 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             }
             else
             {
-                _input = input;
-                _oldKey = _input.Name;
+                _input = Copy(input);
+                _oldKey = input.Name;
             }
             _destinationChoiceIndex = (int)_input.DestinationChoice;
 
@@ -52,12 +64,65 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             //walked forward two thousand years to reach the simulated day.
             if (_input.EvacuationOrderDateTime == default(DateTime))
             {
-                PREACT.Input.PREACTInput scenario = ScenarioEditorWindow.Input;
+                PREACT.Input.PREACTInput scenario = ScenarioSession.Input;
                 if (scenario != null)
                 {
                     _input.EvacuationOrderDateTime = scenario.Simulation.StartDateTime;
                 }
             }
+        }
+
+        private static EvacuationGroupInput Copy(EvacuationGroupInput g)
+        {
+            return new EvacuationGroupInput
+            {
+                Name = g.Name,
+                EvacuationOrderDateTime = g.EvacuationOrderDateTime,
+                Color = g.Color,
+                DestinationChoice = g.DestinationChoice,
+                Destinations = new List<string>(g.Destinations),
+                DestinationsCDF = new List<double>(g.DestinationsCDF),
+                ResponseCurves = new List<string>(g.ResponseCurves),
+                ResponseCurvesCDF = new List<double>(g.ResponseCurvesCDF),
+                Demographics = g.Demographics,
+                ShapeFile = g.ShapeFile,
+                MaskFile = g.MaskFile,
+                Default = g.Default,
+            };
+        }
+
+        private static void CopyInto(EvacuationGroupInput from, EvacuationGroupInput to)
+        {
+            to.Name = from.Name;
+            to.EvacuationOrderDateTime = from.EvacuationOrderDateTime;
+            to.Color = from.Color;
+            to.DestinationChoice = from.DestinationChoice;
+            to.Destinations = new List<string>(from.Destinations);
+            to.DestinationsCDF = new List<double>(from.DestinationsCDF);
+            to.ResponseCurves = new List<string>(from.ResponseCurves);
+            to.ResponseCurvesCDF = new List<double>(from.ResponseCurvesCDF);
+            to.Demographics = from.Demographics;
+            to.ShapeFile = from.ShapeFile;
+            to.MaskFile = from.MaskFile;
+            to.Default = from.Default;
+        }
+
+        /// <summary>Writes the edited copy into the scenario under its (possibly new) name.</summary>
+        private static void Commit()
+        {
+            if (_original != null)
+            {
+                _inputs.Remove(_oldKey);
+                CopyInto(_input, _original);
+                _inputs[_original.Name] = _original;
+            }
+            else
+            {
+                _original = Copy(_input);
+                _inputs[_original.Name] = _original;
+            }
+            _oldKey = _original.Name;
+            ScenarioSession.NotifyEdited("evacuation group " + _original.Name);
         }
 
         public static void Draw()
@@ -67,7 +132,9 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                 return;
             }
 
-            ImGui.Begin("Evacuation group editor", ref _isOpen, PreactGUI.NoDockingNoCollapse);
+            PreactGUI.PlaceNextWindow(new Vector2(520f, 560f));
+            ImGui.Begin("Evacuation group###GroupEditor", ref _isOpen, PreactGUI.ToolWindowFlags);
+            ImGui.BeginDisabled(ScenarioSession.EditingLocked);
 
             ImGui.InputText(nameof(_input.Name), ref _input.Name, 64);
 
@@ -113,11 +180,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             ImGui.BeginDisabled(!nameIsFree);
             if (ImGui.Button("OK"))
             {
-                if (_input.Name != _oldKey)
-                {
-                    _inputs.Remove(_oldKey);
-                }
-                _inputs[_input.Name] = _input;
+                Commit();
                 _isOpen = false;
             }
             ImGui.EndDisabled();
@@ -131,6 +194,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                 ImGui.TextDisabled(string.IsNullOrWhiteSpace(_input.Name) ? "Needs a name." : "That name is already used.");
             }
 
+            ImGui.EndDisabled();
             ImGui.End();
             if (!_isOpen)
             {
@@ -144,7 +208,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
         /// </summary>
         private static void DrawOrderTimeNote()
         {
-            PREACT.Input.PREACTInput scenario = ScenarioEditorWindow.Input;
+            PREACT.Input.PREACTInput scenario = ScenarioSession.Input;
             if (scenario == null)
             {
                 return;
@@ -193,24 +257,21 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             //the dictionary, since every group is painted against the others. Rather than a button that
             //silently leaves the new group out, this commits it first - which is what pressing OK would
             //have done anyway, and the editor stays open on it.
-            bool isNew = _inputs != null && !_inputs.ContainsKey(_input.Name);
-            bool canCommit = !string.IsNullOrWhiteSpace(_input.Name);
+            //Painting works from the scenario's groups, all at once, so the group being edited is written to the
+            //scenario first - what OK would have done anyway - and the editor stays open on it.
+            bool nameUsable = !string.IsNullOrWhiteSpace(_input.Name)
+                              && (_input.Name == _oldKey || _inputs == null || !_inputs.ContainsKey(_input.Name));
 
-            ImGui.BeginDisabled(isNew && !canCommit);
-            if (ImGui.Button(isNew ? "Add this group and paint the areas" : "Paint group areas on the map"))
+            ImGui.BeginDisabled(!nameUsable);
+            if (ImGui.Button(_original == null ? "Add this group and paint the areas" : "Apply and paint group areas on the map"))
             {
-                if (isNew)
-                {
-                    _inputs.Remove(_oldKey);
-                    _inputs[_input.Name] = _input;
-                    _oldKey = _input.Name;
-                    Engine.Message(null, Engine.LogType.Log, "Evacuation group " + _input.Name + " added, so its area can be painted.");
-                }
+                Commit();
+                _input = Copy(_original);
                 EvacuationGroupPaintWindow.Open(_inputs);
             }
             ImGui.EndDisabled();
 
-            if (isNew && !canCommit)
+            if (!nameUsable)
             {
                 ImGui.TextDisabled("Name the group first: painting works on all the groups at once, and they are identified by name.");
             }
@@ -223,21 +284,21 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
         /// </summary>
         private static string[] DestinationNames()
         {
-            PREACT.Input.PREACTInput scenario = ScenarioEditorWindow.Input;
+            PREACT.Input.PREACTInput scenario = ScenarioSession.Input;
             if (scenario == null) return new string[0];
             return new List<string>(scenario.Evacuation.EvacuationDestinationInputs.Keys).ToArray();
         }
 
         private static string[] ResponseCurveNames()
         {
-            PREACT.Input.PREACTInput scenario = ScenarioEditorWindow.Input;
+            PREACT.Input.PREACTInput scenario = ScenarioSession.Input;
             if (scenario == null) return new string[0];
             return new List<string>(scenario.Evacuation.ResponseCurves.Keys).ToArray();
         }
 
         private static string[] DemographicNames()
         {
-            PREACT.Input.PREACTInput scenario = ScenarioEditorWindow.Input;
+            PREACT.Input.PREACTInput scenario = ScenarioSession.Input;
             if (scenario == null) return new string[0];
             return new List<string>(scenario.Population.Demographics.Keys).ToArray();
         }

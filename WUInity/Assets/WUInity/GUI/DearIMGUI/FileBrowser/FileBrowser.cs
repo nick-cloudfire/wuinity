@@ -19,23 +19,35 @@ namespace Assets.WUInity.GUI.DearIMGUI
         public static void OpenLoadInput()
         {
             SimpleFileBrowser.FileBrowser.SetFilters(false, wuiFilter);
-            string initialPath = PreactGUI.Engine.WorkingFolder;
+            string initialPath = ScenarioSession.HasInput
+                ? Path.GetDirectoryName(ScenarioSession.RootFolder.TrimEnd('\\', '/'))
+                : PreactGUI.Engine.WorkingFolder;
             SimpleFileBrowser.FileBrowser.ShowLoadDialog(LoadInput, Cancel, SimpleFileBrowser.FileBrowser.PickMode.Files, false, initialPath, null, "Load WUI file", "Load");
         }
         private static void LoadInput(string[] paths)
         {
-            bool success;
-            PreactGUI.Engine.LoadInputFromFile(paths[0], out success);
-            //Shown whether or not the load was complete: an incomplete scenario is now opened rather
-            //than refused, and the checklist is how that gets said.
-            ScenarioChecklistWindow.ShowFor(Path.GetFileName(paths[0]));
+            ScenarioSession.Load(paths[0]);
+        }
+
+        /// <summary>Picks the folder File &gt; Copy scenario to... copies the scenario's folder into.</summary>
+        public static void OpenCopyScenario(bool includeOutputs)
+        {
+            SimpleFileBrowser.FileBrowser.SetFilters(true);
+            string initialPath = ScenarioSession.HasInput
+                ? Path.GetDirectoryName(ScenarioSession.RootFolder.TrimEnd('\\', '/'))
+                : PreactGUI.Engine.WorkingFolder;
+            SimpleFileBrowser.FileBrowser.ShowLoadDialog(paths => ScenarioSession.CopyTo(paths[0], includeOutputs), Cancel,
+                SimpleFileBrowser.FileBrowser.PickMode.Folders, false, initialPath, null, "Copy the scenario into", "Copy here");
         }
 
         public static void OpenSaveInput()
         {
             SimpleFileBrowser.FileBrowser.SetFilters(false, wuiFilter);
-            string initialPath = PreactGUI.Engine.WorkingFolder;
-            SimpleFileBrowser.FileBrowser.ShowSaveDialog(ScenarioEditorWindow.SaveNewInput, Cancel, SimpleFileBrowser.FileBrowser.PickMode.Files, false, initialPath, ".wui", "Save file", "Save");
+            //Opened in the scenario's own folder, which is the only folder Save as writes into.
+            string initialPath = ScenarioSession.RootFolder ?? PreactGUI.Engine.WorkingFolder;
+            SimpleFileBrowser.FileBrowser.ShowSaveDialog(paths => ScenarioSession.SaveAs(paths[0]), Cancel,
+                SimpleFileBrowser.FileBrowser.PickMode.Files, false, initialPath, ScenarioSession.DisplayName + ".wui",
+                "Save scenario as (in its own folder)", "Save");
         }
 
         private static string _relativeTo;

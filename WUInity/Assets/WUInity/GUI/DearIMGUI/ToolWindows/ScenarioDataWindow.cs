@@ -134,10 +134,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 return;
             }
 
-            //Pointed at the loaded scenario every frame rather than once on opening, so loading a
-            //different scenario while this is open cannot leave the steps writing into the old one.
-            ScenarioDataSteps.Input = input;
-
             ImGui.Text("Scenario: " + input.Simulation.Name);
             ImGui.Text("Folder: " + input.RootFolder);
             ImGui.Text($"Area: lower-left {input.Simulation.LowerLeftLatLon.x:F5}, {input.Simulation.LowerLeftLatLon.y:F5}, "
@@ -212,14 +208,11 @@ namespace Assets.WUInity.GUI.DearIMGUI
             ImGui.BeginDisabled(ScenarioSession.EditingLocked || !ScenarioEditorWindow.HasInput);
             if (ImGui.Button("Save scenario"))
             {
-                ScenarioEditorWindow.SaveInput();
+                ScenarioSession.Save();
             }
             ImGui.EndDisabled();
 
             ImGui.End();
-
-            //A sibling window rather than one nested inside this, and drawn after End for that reason.
-            ScenarioDataSteps.DrawProgressWindow();
 
             if (!_isOpen)
             {

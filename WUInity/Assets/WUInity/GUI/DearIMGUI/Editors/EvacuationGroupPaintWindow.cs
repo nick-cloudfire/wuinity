@@ -323,28 +323,49 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
 
         private static void SaveMasks()
         {
-            string folder = ScenarioSession.RootFolder;
-            string[] written = PreactGUI.WUInity.Painter.ExportEvacGroupMasks(folder);
+            SaveMasksFor(ScenarioSession.Input);
+        }
+
+        /// <summary>
+        /// Writes one mask per painted group and points each group at its own. Also what File &gt; Save calls
+        /// when there are unsaved group strokes, so Save keeps what is on screen.
+        /// </summary>
+        public static void SaveMasksFor(PREACT.Input.PREACTInput input)
+        {
+            if (input == null || PreactGUI.WUInity == null)
+            {
+                return;
+            }
+
+            //The painter's indices follow the order it was last given, which is this window's order when it
+            //has been opened for this scenario, and the dictionary's order otherwise.
+            var ordered = new List<EvacuationGroupInput>(input.Evacuation.EvacuationGroupInputs.Values);
+            if (_inputs == input.Evacuation.EvacuationGroupInputs && _ordered.Count == ordered.Count)
+            {
+                ordered = new List<EvacuationGroupInput>(_ordered);
+            }
+
+            string[] written = PreactGUI.WUInity.Painter.ExportEvacGroupMasks(input.RootFolder);
             if (written == null)
             {
                 return;
             }
 
-            for (int i = 0; i < written.Length && i < _ordered.Count; ++i)
+            for (int i = 0; i < written.Length && i < ordered.Count; ++i)
             {
                 if (string.IsNullOrEmpty(written[i]))
                 {
                     continue;
                 }
 
-                _ordered[i].MaskFile = written[i];
+                ordered[i].MaskFile = written[i];
                 //Cleared so there is no question which of the two defines the area. The parser
                 //prefers the mask anyway, but leaving a stale shapefile behind invites the reader to
                 //believe it still matters.
-                _ordered[i].ShapeFile = string.Empty;
+                ordered[i].ShapeFile = string.Empty;
             }
 
-            Engine.Message(null, Engine.LogType.Log, "Painted evacuation group areas saved. Save the scenario to keep them.");
+            ScenarioSession.NotifyEdited("group masks");
         }
     }
 }

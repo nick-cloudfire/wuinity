@@ -65,7 +65,6 @@ namespace WUInity
         [Header("Options")]
         public bool DeveloperMode = false;
         public bool SuppressMessages = false;
-        public bool AutoLoadExample = true;
         [SerializeField] float _renderScale = 1.0f;
         public float RenderScale { get => _renderScale; }
 
@@ -227,36 +226,16 @@ namespace WUInity
 
         private void Start()
         {
-            //The scenario from last time, before any example. Opening a session on the case that was
-            //being worked on is nearly always what is wanted, and the alternative was reopening it by
-            //hand every run.
-            if (RecentScenario.Have)
+            //The scenario from last time. Opening a session on the case that was being worked on is nearly
+            //always what is wanted. Nothing else is opened automatically: the example this used to fall back
+            //to (Examples/Development) no longer exists, and every editor window used to pop up on a load too.
+            if (_engine != null && RecentScenario.Have)
             {
                 string recent = RecentScenario.Path;
-                //The load is accepted even when incomplete, and _input is set by UpdateInput during it,
-                //so that - not the success flag - is what says a scenario is now open.
-                _engine.LoadInputFromFile(recent, out bool _);
-                if (_input != null)
+                if (ScenarioSession.Load(recent))
                 {
-                    ScenarioChecklistWindow.ShowFor(Path.GetFileName(recent));
-                }
-                Engine.Message(null, Engine.LogType.Log, "Reopened " + recent
-                    + ". Use File > Load to open another; it becomes the one reopened next time.");
-                return;
-            }
-
-            if (AutoLoadExample && DeveloperMode)
-            {
-                bool success = false;
-                string file = Path.Combine(Directory.GetParent(Application.dataPath).ToString(), "..\\Examples\\Development\\Development.wui");
-                if (File.Exists(file))
-                {
-                    _engine.LoadInputFromFile(file, out success);
-
-                }
-                else
-                {
-                    print("Could not find input file for auto load in path " + file);
+                    Engine.Message(null, Engine.LogType.Log, "Reopened " + recent
+                        + ". File > Open recent lists the others; File > Close stops it being reopened next time.");
                 }
             }
         }
@@ -370,6 +349,11 @@ namespace WUInity
                     _pickingPos = false;
                     _onClick = null;
                     NewLogMessage("Picking a position on the map was cancelled.");
+                    //The window that asked closed itself to get out of the way; this brings it back, with
+                    //whatever was being edited, instead of leaving it gone.
+                    System.Action cancelled = _onPickCancelled;
+                    _onPickCancelled = null;
+                    cancelled?.Invoke();
                 }
                 //collect click
                 else if (clickedOnMap)
@@ -390,6 +374,9 @@ namespace WUInity
                     _pickingBoundingBox = false;
                     _onClicks = null;
                     NewLogMessage("Picking the area of interest was cancelled.");
+                    System.Action cancelled = _onPickCancelled;
+                    _onPickCancelled = null;
+                    cancelled?.Invoke();
                     return;
                 }
 
@@ -1360,9 +1347,15 @@ namespace WUInity
         private PREACT.Math.Vector2d[] _clickLatLons = new PREACT.Math.Vector2d[2];
         private System.Action<PREACT.Math.Vector2d[]> _onClicks;
         private System.Action<PREACT.Math.Vector2d> _onClick;
-        public void PickBoundingBoxOnMap(System.Action<PREACT.Math.Vector2d[]> clicks)
+        private System.Action _onPickCancelled;
+
+        /// <summary>True while the map is waiting for a click (a position, or the corners of an area).</summary>
+        public bool IsPicking { get => _pickingPos || _pickingBoundingBox; }
+
+        public void PickBoundingBoxOnMap(System.Action<PREACT.Math.Vector2d[]> clicks, System.Action cancelled = null)
         {
             _onClicks = clicks;
+            _onPickCancelled = cancelled;
             _clicks = 0;
             SetWebMercatorMapInteraction(true);
             _pickingBoundingBox = true;
@@ -1379,14 +1372,16 @@ namespace WUInity
         {
             _boundingBoxRenderer.gameObject.SetActive(false);
             _pickingBoundingBox = false;
+            _onPickCancelled = null;
             _onClicks(_clickLatLons);
             _onClicks = null;
         }
 
-        public void PickPosOnMap(System.Action<PREACT.Math.Vector2d> onClick)
+        public void PickPosOnMap(System.Action<PREACT.Math.Vector2d> onClick, System.Action cancelled = null)
         {
             _pickingPos = true;
             _onClick = onClick;
+            _onPickCancelled = cancelled;
             //The editor window closes to get out of the way, so without this nothing on screen says
             //the application is waiting for a click, or how to move the map while looking for the spot.
             NewLogMessage("Click the map to place. Drag to pan, scroll to zoom, arrow keys to move, Escape to cancel.");
@@ -1395,6 +1390,7 @@ namespace WUInity
         private void FinishPickPosOnMap(Vector3 clickPos)
         {
             _pickingPos = false;
+            _onPickCancelled = null;
             _onClick(new PREACT.Math.Vector2d(clickPos.x, clickPos.z));
             _onClick = null;
         }

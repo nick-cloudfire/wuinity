@@ -127,6 +127,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 if (removeDemographics != null)
                 {
                     input.Population.Demographics.Remove(removeDemographics);
+                    ScenarioSession.NotifyEdited("demographics removed");
                 }
 
                 ImGui.EndTabItem();
@@ -157,6 +158,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                     eInput.EvacuationDestinationInputs.Remove(removeDestination);
                     //Or its marker stays on the map, marking a destination the scenario no longer has.
                     PreactGUI.WUInity.RefreshDestinationMarkers();
+                    ScenarioSession.NotifyEdited("destination removed");
                 }
 
                 ImGui.EndTabItem();
@@ -187,6 +189,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 if (removeCurve != null)
                 {
                     eInput.ResponseCurves.Remove(removeCurve);
+                    ScenarioSession.NotifyEdited("response curve removed");
                 }
 
                 ImGui.EndTabItem();
@@ -228,6 +231,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 if (removeGroup != null)
                 {
                     eInput.EvacuationGroupInputs.Remove(removeGroup);
+                    ScenarioSession.NotifyEdited("evacuation group removed");
                 }
 
                 ImGui.EndTabItem();
@@ -272,7 +276,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             //Checked as it stands, not only as it is picked: the field is editable text and scenarios exist
             //that already hold the wrong file - which is how a run fails with "could not load configuration".
-            string root = ScenarioEditorWindow.HasInput ? ScenarioEditorWindow.Input.RootFolder : string.Empty;
+            string root = ScenarioSession.RootFolder ?? string.Empty;
             bool usable = PREACT.Utility.SumoConfigurationLocator.IsConfiguration(input.ConfigurationFile)
                           && GuiFiles.Exists(GuiFiles.Resolve(root, input.ConfigurationFile));
 

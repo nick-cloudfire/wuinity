@@ -45,20 +45,50 @@ namespace Assets.WUInity.GUI.DearIMGUI
             //whatever is loaded, which is the property worth grouping on.
             bool busy = ScenarioSession.IsBusy;
 
-            if (ImGui.MenuItem("New scenario...", !busy)) { NewScenarioWindow.Open(true); }
+            if (ImGui.MenuItem("New scenario...", "Ctrl+N", false, !busy)) { ScenarioSession.RequestNew(); }
             BusyTooltip(busy);
             //Gated like New: loading replaced the scenario a running data step was about to write its paths
             //into, and the one a running simulation was reading.
-            if (ImGui.MenuItem("Load scenario...", !busy)) { FileBrowser.OpenLoadInput(); }
+            if (ImGui.MenuItem("Open scenario...", "Ctrl+O", false, !busy)) { ScenarioSession.RequestOpen(); }
             BusyTooltip(busy);
+
+            System.Collections.Generic.List<string> recent = global::WUInity.RecentScenario.Recent;
+            if (ImGui.BeginMenu("Open recent", !busy && recent.Count > 0))
+            {
+                for (int i = 0; i < recent.Count; ++i)
+                {
+                    if (ImGui.MenuItem(recent[i] + "###recent" + i)) { ScenarioSession.RequestOpen(recent[i]); }
+                }
+                ImGui.Separator();
+                if (ImGui.MenuItem("Clear list")) { global::WUInity.RecentScenario.ClearRecent(); }
+                ImGui.EndMenu();
+            }
 
             ImGui.Separator();
 
             bool canSave = ScenarioSession.HasInput && !ScenarioSession.EditingLocked;
-            if (ImGui.MenuItem("Save", "Ctrl+S", false, canSave)) { ScenarioEditorWindow.SaveInput(); }
-            BusyTooltip(ScenarioSession.EditingLocked);
-            if (ImGui.MenuItem("Save as...", canSave)) { FileBrowser.OpenSaveInput(); }
-            BusyTooltip(ScenarioSession.EditingLocked);
+            if (ImGui.MenuItem("Save", "Ctrl+S", false, canSave && ScenarioSession.IsDirty)) { ScenarioSession.Save(); }
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            {
+                ImGui.SetTooltip(ScenarioSession.EditingLocked ? ScenarioSession.BusyTooltip
+                    : ScenarioSession.IsDirty ? "Unsaved: " + ScenarioSession.DirtySummary + "."
+                    : "Nothing to save.");
+            }
+            if (ImGui.MenuItem("Save as... (same folder)", canSave && !busy)) { FileBrowser.OpenSaveInput(); }
+            BusyTooltip(busy);
+            if (ImGui.MenuItem("Copy scenario to...", ScenarioSession.HasInput && !busy)) { FileBrowser.OpenCopyScenario(false); }
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            {
+                ImGui.SetTooltip(busy ? ScenarioSession.BusyTooltip : "Copies the scenario's folder (without _output and campaign "
+                    + "realizations) into another folder, writes the scenario as it is now into the copy, and opens it.");
+            }
+
+            if (ImGui.MenuItem("Reveal scenario folder", ScenarioSession.HasInput)) { OpenInFileManager(ScenarioSession.RootFolder); }
+            if (ImGui.MenuItem("Close scenario", ScenarioSession.HasInput && !busy)) { ScenarioSession.RequestClose(); }
+            BusyTooltip(busy);
+
+            ImGui.Separator();
+            if (ImGui.MenuItem("Quit")) { ScenarioSession.RequestQuit(); }
 
             ImGui.EndMenu();
         }
@@ -158,6 +188,20 @@ namespace Assets.WUInity.GUI.DearIMGUI
             //says "not available now"; there was never such an editor, so it said the wrong thing forever.
 
             ImGui.EndMenu();
+        }
+
+        /// <summary>Opens a folder (or file) in the operating system's own viewer.</summary>
+        public static void OpenInFileManager(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return;
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
+            }
+            catch (System.Exception e)
+            {
+                PREACT.Engine.Message(null, PREACT.Engine.LogType.Warning, "Could not open " + path + ": " + e.Message);
+            }
         }
 
         /// <summary>Says why the item just drawn is disabled, when it is disabled for being busy.</summary>

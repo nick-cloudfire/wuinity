@@ -34,12 +34,17 @@ namespace Assets.WUInity.GUI.DearIMGUI
             //case where it has already initialised (the event would then never fire again).
             UImGuiUtility.OnInitialize += OnImGuiInitialized;
             ApplyTheme();
+
+            //Asked before the application quits, so unsaved work and a running simulation are not lost to
+            //a closed window.
+            Application.wantsToQuit += ScenarioSession.OnWantsToQuit;
         }
 
         private void OnDisable()
         {
             UImGuiUtility.Layout -= OnLayout;
             UImGuiUtility.OnInitialize -= OnImGuiInitialized;
+            Application.wantsToQuit -= ScenarioSession.OnWantsToQuit;
         }
 
         private void OnImGuiInitialized(UImGui.UImGui obj)
@@ -68,6 +73,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 return;
             }
 
+            ScenarioSession.Update();
+
             MainDock();
             MainMenuBar.Draw();      
             ConsoleWindow.Draw(_messages);
@@ -76,7 +83,14 @@ namespace Assets.WUInity.GUI.DearIMGUI
             if(Windows != null)
             {
                 Windows.Invoke();
-            }           
+            }
+
+            //Drawn here rather than by whichever window started a step, so it stays up (and keeps updating)
+            //when that window is closed.
+            ScenarioDataSteps.DrawProgressWindow();
+
+            //Last, so the modal question sits on top of everything.
+            ConfirmPrompt.Draw();
         }
 
         /// <summary>Kept for windows that still float and refuse to dock (the campaign window uses it).</summary>

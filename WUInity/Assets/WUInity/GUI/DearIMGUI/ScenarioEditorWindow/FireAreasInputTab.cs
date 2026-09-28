@@ -79,6 +79,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
                 ignitions.RemoveAt(removeIgnition);
                 //Or its marker stays on the map, marking an ignition the scenario no longer has.
                 PreactGUI.WUInity.RefreshWildfireIgnitionMarkers();
+                ScenarioSession.NotifyEdited("ignition point removed");
             }
         }
     }

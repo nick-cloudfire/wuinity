@@ -262,8 +262,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
 
             input.WildfireModule.GraphicalFireInputFile = written;
             _savedAs = written;
-            Engine.Message(null, Engine.LogType.Log,
-                "Painted fire areas saved. Save the scenario to keep the reference to them.");
+            ScenarioSession.NotifyEdited("painted fire areas");
         }
     }
 }

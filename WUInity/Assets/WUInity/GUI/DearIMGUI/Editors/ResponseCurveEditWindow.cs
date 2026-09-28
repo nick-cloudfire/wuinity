@@ -31,6 +31,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
         //float array and the curve can hold a few hundred points.
         private static float[] _plotProbabilities = new float[0];
         private static bool _plotDirty = true;
+        private static bool _subscribed;
 
         public static void Open(Dictionary<string, ResponseCurve> inputs, ResponseCurve? curve)
         {
@@ -39,6 +40,12 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                 PreactGUI.DrawWindow(Draw);
             }
             _isOpen = true;
+
+            if (!_subscribed)
+            {
+                _subscribed = true;
+                ScenarioSession.ScenarioChanged += () => { if (_isOpen) { _isOpen = false; PreactGUI.CloseWindow(Draw); } };
+            }
 
             _inputs = inputs;
             _points.Clear();
@@ -76,7 +83,9 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                 return;
             }
 
-            ImGui.Begin("Response curve editor", ref _isOpen, PreactGUI.NoDockingNoCollapse);
+            PreactGUI.PlaceNextWindow(new Vector2(480f, 520f));
+            ImGui.Begin("Response curve###ResponseCurveEditor", ref _isOpen, PreactGUI.ToolWindowFlags);
+            ImGui.BeginDisabled(ScenarioSession.EditingLocked);
 
             ImGui.InputText("Name", ref _name, 64);
 
@@ -123,6 +132,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                 ImGui.TextDisabled("A curve needs at least two points.");
             }
 
+            ImGui.EndDisabled();
             ImGui.End();
             if (!_isOpen)
             {
@@ -314,8 +324,21 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             if (_oldKey != _name)
             {
                 _inputs.Remove(_oldKey);
+
+                //Groups refer to curves by name.
+                if (!string.IsNullOrEmpty(_oldKey) && ScenarioSession.HasInput)
+                {
+                    foreach (EvacuationGroupInput group in ScenarioSession.Input.Evacuation.EvacuationGroupInputs.Values)
+                    {
+                        for (int i = 0; i < group.ResponseCurves.Count; ++i)
+                        {
+                            if (group.ResponseCurves[i] == _oldKey) group.ResponseCurves[i] = _name;
+                        }
+                    }
+                }
             }
             _inputs[_name] = curve;
+            ScenarioSession.NotifyEdited("response curve " + _name);
         }
     }
 }

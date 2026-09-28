@@ -95,15 +95,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
         public static void SaveInput()
         {
-            //ParseMainData();
-            PREACT.Input.PREACTInput.SaveToDisk(ScenarioSession.Input, PreactGUI.Engine.WorkingFile);
-        }
-
-        public static void SaveNewInput(string[] paths)
-        {
-            //ParseMainData();
-            PREACT.Input.PREACTInput.SaveToDisk(ScenarioSession.Input, paths[0]);
-            PreactGUI.Engine.LoadInputFromFile(paths[0], out bool success);
+            ScenarioSession.Save();
         }
     }
 }

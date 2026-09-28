@@ -96,17 +96,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
             ImGui.Text($"{nameof(_input.RootFolder)}: {_input.RootFolder}");
 
-            //Re-pointed every frame rather than once, since this window and the one for an already
-            //loaded scenario share the steps and either may have run last.
-            ScenarioDataSteps.Input = _input;
-
-            //The SUMO step sets the configuration on the scenario, so the choice above it follows.
-            if (ScenarioDataSteps.SumoNetworkBuilt)
-            {
-                _haveSumo = true;
-                ScenarioDataSteps.SumoNetworkBuilt = false;
-            }
-
             SimulationInput simIn = _input.Simulation;
 
             ImGui.SeparatorText("Basic scenario data");
@@ -145,15 +134,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 }
                 else
                 {
-                    ImGui.InputInt("Min household size", ref ScenarioDataSteps.MinHouseholdSize);
-                    ImGui.InputInt("Max household size", ref ScenarioDataSteps.MaxHouseholdSize);
-
-                    ImGui.BeginDisabled(ScenarioSession.IsBusy);
-                    if (ScenarioDataSteps.StepButton("Step 1: Download WorldPop", WorldPopFile)) { ScenarioDataSteps.DownloadWorldPop(); }
-                    if (ScenarioDataSteps.StepButton("Step 2: Download OSM data", OsmFile)) { ScenarioDataSteps.DownloadOsm(); }
-                    if (ScenarioDataSteps.StepButton("Step 3: Build RouterDb", RouterDbFile)) { ScenarioDataSteps.BuildRouterDb(); }
-                    if (ScenarioDataSteps.StepButton("Step 4: Generate population", PopulationFile)) { ScenarioDataSteps.GeneratePopulation(); }
-                    ImGui.EndDisabled();
+                    ImGui.TextDisabled("Generated once the scenario exists (Data > Population).");
                 }
             }
 
@@ -189,11 +170,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 }
                 else
                 {
-                    ImGui.BeginDisabled(ScenarioSession.IsBusy);
-                    if (ScenarioDataSteps.StepButton("Step 1: Download OSM data", OsmFile)) { ScenarioDataSteps.DownloadOsm(); }
-                    if (ScenarioDataSteps.StepButton("Step 2: Build SUMO network", SumoConfigFile)) { ScenarioDataSteps.BuildSumoNetwork(); }
-                    ImGui.EndDisabled();
-                    ImGui.TextWrapped("Step 2 runs SUMO's own netconvert on the downloaded OSM and writes the configuration, which is then set on the scenario. It needs SUMO installed.");
+                    ImGui.TextDisabled("Built once the scenario exists (Data > Roads).");
                 }
             }
 
@@ -209,13 +186,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             ImGui.SameLine();
             ImGui.Text($"{nameof(_input.Landscape.ElevationFile)}: {_input.Landscape.ElevationFile}");
 
-            ScenarioDataWindow.DrawOpenTopographyKey();
-            ImGui.BeginDisabled(ScenarioSession.IsBusy);
-            if (ScenarioDataSteps.StepButton("Or download a DEM", ScenarioDataSteps.DemFile)) { ScenarioDataSteps.DownloadDem(); }
-            ImGui.EndDisabled();
-            ImGui.TextWrapped("A DEM can be had for anywhere on Earth, and slope and aspect are computed from it, "
-                + "so this alone is enough terrain to paint on and to give k-PERIL a slope. The download is "
-                + "reprojected into the simulation's UTM zone.");
+            ImGui.TextDisabled("Or download one once the scenario exists; an ELMFIRE case builds its own.");
 
             ImGui.SeparatorText("Hazards");
             ImGui.Checkbox("Wildfire spread?", ref _wantWildfire);
@@ -241,12 +212,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 }
                 else
                 {
-                    ImGui.Checkbox("Anderson 13 fuel models (otherwise Scott & Burgan 40)", ref ScenarioDataSteps.UseAnderson13);
-                    ImGui.BeginDisabled(ScenarioSession.IsBusy);
-                    if (ImGui.Button("Step 1: Download Landfire data")) { ScenarioDataSteps.DownloadLandfire(); }
-                    ImGui.EndDisabled();
-                    //LANDFIRE is US-only; outside it the request simply returns nothing useful.
-                    ImGui.TextWrapped("LANDFIRE covers the United States only. Elsewhere, supply the landscape file yourself.");
+                    ImGui.TextDisabled("LANDFIRE fuels and canopy (US) are offered once the scenario exists (Data > Fuels).");
                 }
 
                 ImGui.Checkbox("Have weather?", ref _haveWeather);
@@ -256,16 +222,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 }
                 else
                 {
-                    ImGui.BeginDisabled(ScenarioSession.IsBusy);
-                    if (ScenarioDataSteps.StepButton("Step 1: Download weather file", WeatherFile)) { ScenarioDataSteps.DownloadWeather(); }
-                    ImGui.EndDisabled();
+                    ImGui.TextDisabled("The ELMFIRE case build fetches its own weather.");
                 }
-            }
-
-            if (!string.IsNullOrEmpty(ScenarioDataSteps.Status))
-            {
-                ImGui.SeparatorText("Data preparation");
-                ScenarioDataSteps.DrawStatus();
             }
 
             ImGui.Separator();
@@ -305,11 +263,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
             if (ImGui.Button("Generate scenario")) { GenerateScenario(); }
 
             ImGui.End();
-
-            //Drawn after the main window is closed off, so it is a sibling window rather than
-            //nested inside the creator. It is still tied to the creator's lifetime - Draw returns
-            //early once that closes - which is why a running step keeps the creator open.
-            ScenarioDataSteps.DrawProgressWindow();
 
             if (!_isOpen)
             {
@@ -422,13 +375,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
             //".wui" - rather than "<root>\<name>.wui".
             string filePath = Path.Combine(_input.RootFolder, _input.Simulation.Name + ".wui");
 
-            PREACTInput.SaveToDisk(_input, filePath);
-            PreactGUI.Engine.SetInput(_input, filePath);
-
-            if (File.Exists(filePath))
-            {
-                Engine.Message(null, Engine.LogType.Log, "Scenario written to " + filePath);
-            }
+            //Written first and opened from disk, so every relative path in it has a folder to be relative to.
+            ScenarioSession.CreateAndOpen(_input, filePath);
         }
         private static void OpenSetRootFolder()
         {
