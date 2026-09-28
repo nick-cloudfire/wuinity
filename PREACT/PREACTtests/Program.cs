@@ -111,11 +111,8 @@ namespace PREACT.Tests
         }
 
         public void UpdateInput(PREACTInput input) { }
-        public void SimulationStarted() { }
         public int FinishedCount;
         public void SimulationsFinished() { ++FinishedCount; }
-        public void StopSimulations() { }
-        public void PauseSimulations() { }
         public void UpdateDestinations(List<Evacuation.EvacuationDestination> destinations) { }
     }
 

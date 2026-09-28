@@ -39,11 +39,8 @@ namespace PREACT.Input
         /// Fuel model raster on the same grid, for display only. Optional, and read by nothing that computes.
         /// </summary>
         /// <remarks>
-        /// The output window offers a "Fuel model" display mode which did nothing at all —
-        /// <c>GetFuelModelNumberData()</c> returned null, so the renderer drew the previous frame's buffer. An
-        /// imported fire brings its own behaviour and needs no fuel to spread, so nothing else wanted this
-        /// raster and the display mode had no source. For an ELMFIRE fire it is set automatically from the
-        /// case's own fuel layer, which is the raster the fire was actually computed against.
+        /// Read and kept on save, but nothing uses it now: it fed the output window's "Fuel model" display mode,
+        /// which is gone (an imported fire brings its own behaviour and needs no fuel to spread).
         /// </remarks>
         public string FuelModelFile = string.Empty;
 

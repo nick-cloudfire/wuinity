@@ -81,12 +81,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 DrawGroups(input);
                 ImGui.EndTabItem();
             }
-
-            if (ImGui.BeginTabItem("Trigger buffer file"))
-            {
-                DrawTriggerBufferFile(eInput);
-                ImGui.EndTabItem();
-            }
         }
 
         /// <summary>Whether the pedestrian and traffic modules run, and their settings.</summary>
@@ -145,18 +139,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
             if (ScenarioDataSteps.MinHouseholdSize < 1) ScenarioDataSteps.MinHouseholdSize = 1;
             if (ScenarioDataSteps.MaxHouseholdSize < ScenarioDataSteps.MinHouseholdSize) ScenarioDataSteps.MaxHouseholdSize = ScenarioDataSteps.MinHouseholdSize;
             Fields.Hint("Used the next time households are generated (Data > Population).");
-        }
-
-        public static void DrawTriggerBufferFile(EvacuationInput eInput)
-        {
-            ImGui.Checkbox(nameof(eInput.UseTriggerBufferEvacuation), ref eInput.UseTriggerBufferEvacuation);
-            Fields.Hint("Order groups to leave when the fire crosses a trigger boundary read from a file, instead of",
-                        "at their fixed order times.");
-            if(eInput.UseTriggerBufferEvacuation)
-            {
-                Fields.Path(nameof(eInput.TriggerBufferFile), () => eInput.TriggerBufferFile,
-                    v => eInput.TriggerBufferFile = v);
-            }
         }
 
         public static void DrawDemographics(PREACTInput input)

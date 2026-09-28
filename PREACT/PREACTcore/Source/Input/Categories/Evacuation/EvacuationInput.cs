@@ -18,12 +18,10 @@ namespace PREACT.Input
         public Dictionary<string, EvacuationGroupInput> EvacuationGroupInputs = new Dictionary<string, EvacuationGroupInput>(5);
 
         /// <summary>
-        /// No longer part of the format: never consumed by the engine. Kept only because the Unity scenario
-        /// editor still binds to it; not read, not written. Remove together with the GUI checkbox.
+        /// <c>[Evacuation]</c> keys that were once part of the format and are now only tolerated on read.
+        /// <c>UseTriggerBufferEvacuation</c>/<c>TriggerBufferFile</c> were never consumed by the engine.
         /// </summary>
-        [NotInFile] public bool UseTriggerBufferEvacuation = false;
-        /// <summary>See <see cref="UseTriggerBufferEvacuation"/>.</summary>
-        [NotInFile] public string TriggerBufferFile = string.Empty;
+        private static readonly string[] RetiredKeys = { "UseTriggerBufferEvacuation", "TriggerBufferFile", "EvacuationOrderStart" };
 
         public EvacuationInput()
         {
@@ -49,7 +47,7 @@ namespace PREACT.Input
             if (startIndex >= 0)
             {
                 Dictionary<string, string> inputToParse = PREACTInput.GetHeaderInput(inputLines, startIndex);
-                foreach (string retired in new[] { nameof(UseTriggerBufferEvacuation), nameof(TriggerBufferFile), "EvacuationOrderStart" })
+                foreach (string retired in RetiredKeys)
                 {
                     if (inputToParse.ContainsKey(retired))
                     {

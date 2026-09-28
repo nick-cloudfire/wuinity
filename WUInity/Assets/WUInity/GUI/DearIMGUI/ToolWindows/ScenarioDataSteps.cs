@@ -46,7 +46,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
         private static volatile bool _lastFailed;
         public static string Status { get => _status; }
         public static bool Busy { get => _busy; }
-        public static bool LastFailed { get => _lastFailed; }
         /// <summary>The step or chain running now, or last run.</summary>
         public static string CurrentTitle { get => _progressTitle; }
 
@@ -71,7 +70,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
         private static readonly List<string> _progressLog = new List<string>();
         public static bool ProgressWindowOpen { get => _progressWindowOpen; set => _progressWindowOpen = value; }
         public static float ProgressFraction { get => _progressFraction; }
-        public static string ProgressLink { get => _progressLink; }
 
         //OpenTopography requires a key per request, and it comes from the same place the Mapbox token
         //does: a gitignored JSON file under Resources, read by OpenTopographyAccess. That is the answer
@@ -130,51 +128,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
         //Copernicus GLO-30 by default: free, global, and 30 m, which is finer than the cell size any of
         //these scenarios run at.
         public static string DemType = PREACT.Tools.OpenTopographyDownloader.DemTypeCopernicus30;
-        public static readonly string[] DemTypes =
-        {
-            PREACT.Tools.OpenTopographyDownloader.DemTypeCopernicus30,
-            PREACT.Tools.OpenTopographyDownloader.DemTypeCopernicus90,
-            PREACT.Tools.OpenTopographyDownloader.DemTypeSrtm30,
-            PREACT.Tools.OpenTopographyDownloader.DemTypeSrtm90
-        };
-
-        // ------------------------------------------------------------------ where the steps write
-
-        //Where the steps write, relative to the scenario root.
-        //
-        //A scenario folder holds twenty-odd files by the time it runs, and every step used to drop its
-        //output straight into the root beside the .wui. Sorting them afterwards broke the scenario, since
-        //the paths recorded in it were bare file names - so the folders are the steps' own convention now,
-        //and what they record is the path including the folder.
-        //
-        //Separators are forward slashes rather than Path.Combine's. These strings go into the .wui as well
-        //as being resolved on disk, and a backslash written on Windows is not a separator anywhere else.
-
-        /// <summary>Raw downloads, as they arrive: before clipping, warping, or conversion.</summary>
-        public const string DownloadsFolder = ScenarioFiles.DownloadsFolder;
-
-        /// <summary>The terrain rasters a scenario runs on, on the simulation's own grid.</summary>
-        public const string LandscapeFolder = ScenarioFiles.LandscapeFolder;
-
-        private static string Name => Input?.Simulation?.Name ?? string.Empty;
-
-        public static string WorldPopBaseName => ScenarioFiles.WorldPopBaseName(Name);
-        public static string WorldPopFile => ScenarioFiles.WorldPop(Name);
-        public static string WorldPopUtmFile => ScenarioFiles.WorldPopUtm(Name);
-        public static string DemFile => ScenarioFiles.Dem(Name);
-        public static string SlopeFile => ScenarioFiles.Slope(Name);
-        public static string AspectFile => ScenarioFiles.Aspect(Name);
-        public static string DemDownloadFile => ScenarioFiles.DemDownload(Name);
-        public static string OsmFile => ScenarioFiles.Osm(Name);
-        public static string RouterDbFile => ScenarioFiles.RouterDb(Name);
-        public static string PopulationFile => ScenarioFiles.Population(Name);
-        public static string WeatherFile => ScenarioFiles.Weather(Name);
-
-        public const string SumoFolder = ScenarioFiles.SumoFolder;
-        public static string SumoConfigFile => ScenarioFiles.SumoConfig;
-
-        /// <summary>The ELMFIRE case's namelist, which is what marks the case as built.</summary>
-        public static string ElmfireNamelistFile => ScenarioFiles.ElmfireNamelist(Input);
 
         // ------------------------------------------------------------------ the captured scenario
 
@@ -626,27 +579,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
             return true;
         }
 
-        public static string InRoot(string fileName)
-        {
-            return Path.Combine(Input.RootFolder, fileName);
-        }
-
-        /// <summary>
-        /// Where a step's output actually is: the folder it writes to now, or wherever the file has since
-        /// been moved to among the scenario's own subfolders - including the scenario root, which is where
-        /// every one of these lived before the steps started using subfolders.
-        /// </summary>
-        public static string FindInRoot(string fileName)
-        {
-            if (PREACT.Utility.ScenarioFileLocator.TryResolve(Input.RootFolder, fileName, out string resolved, out string _))
-            {
-                return Path.IsPathRooted(resolved) ? resolved : InRoot(resolved);
-            }
-
-            //The path it would be written to, so a caller reporting "not found" names where it should be.
-            return InRoot(fileName);
-        }
-
         /// <summary>
         /// The area of interest's north-east corner. A scenario stores the domain as a south-west
         /// corner plus a size in metres, while every downloader wants a lat/lon bounding box, so the
@@ -659,59 +591,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
             //SizeToDegrees returns (lonDegrees, latDegrees) for a size given as (east, north)
             Vector2d deg = PREACT.Population.LocalGPWData.SizeToDegrees(ll, input.Simulation.DomainSize);
             return new Vector2d(ll.x + deg.y, ll.y + deg.x);
-        }
-
-        /// <summary>
-        /// A step button with a completion marker. Completion is judged by the output file existing
-        /// rather than by a flag set when the button was pressed, so it stays correct across a restart,
-        /// and after a step is re-run or its file deleted outside the editor.
-        /// </summary>
-        public static bool StepButton(string label, string producedFile)
-        {
-            string path = Input != null && !string.IsNullOrEmpty(Input.Simulation.Name) ? CachedFindInRoot(producedFile) : null;
-            bool done = path != null && GuiFiles.Exists(path);
-
-            bool pressed = ImGui.Button(done ? label + " (redo)###" + label : label + "###" + label);
-
-            ImGui.SameLine();
-            if (done)
-            {
-                //ImGui has no tick glyph in the default font, so this uses text that renders in any
-                //font rather than a symbol that might come out as a box.
-                ImGui.TextColored(Fields.Good, "[done] " + producedFile);
-                if (ImGui.IsItemHovered())
-                {
-                    long length = GuiFiles.Probe.Length(path);
-                    DateTime? written = GuiFiles.Probe.LastWriteUtc(path);
-                    ImGui.SetTooltip($"{length / (1024.0 * 1024.0):F2} MB, written "
-                        + $"{(written.HasValue ? written.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm") : "?")}."
-                        + "\nRunning the step again overwrites it.");
-                }
-            }
-            else
-            {
-                ImGui.TextDisabled("[pending]");
-            }
-
-            return pressed;
-        }
-
-        //Where each step's output was last found, for a second. FindInRoot searches the scenario's subfolders
-        //when a file is not where it is recorded, and step buttons are drawn every frame.
-        private static readonly Dictionary<string, (DateTime at, string path)> _found = new Dictionary<string, (DateTime, string)>();
-
-        private static string CachedFindInRoot(string fileName)
-        {
-            string key = Input.RootFolder + "|" + fileName;
-            DateTime now = DateTime.UtcNow;
-            if (_found.TryGetValue(key, out var hit) && (now - hit.at).TotalSeconds < 1.0)
-            {
-                return hit.path;
-            }
-
-            string path = FindInRoot(fileName);
-            _found[key] = (now, path);
-            return path;
         }
 
         // ------------------------------------------------------------------ the steps
@@ -1186,19 +1065,5 @@ namespace Assets.WUInity.GUI.DearIMGUI
         {
             RunStep("Downloading Open-Meteo weather", WorkflowStepId.PlaceAndTime, DoDownloadWeather);
         }
-
-        // The single steps, for the windows that still offer them one at a time.
-        public static void DownloadWorldPop() => RunStep("Downloading WorldPop", WorkflowStepId.Population, DoDownloadWorldPop);
-        public static void DownloadOsm() => RunStep("Downloading OSM data", WorkflowStepId.Roads, DoDownloadOsm);
-        public static void BuildRouterDb() => RunStep("Building RouterDb", WorkflowStepId.Roads, DoBuildRouterDb);
-        public static void BuildSumoNetwork()
-        {
-            string sumo = PreactGUI.Engine?.SumoPath;
-            RunStep("Building SUMO network", WorkflowStepId.Roads, c => DoBuildSumoNetwork(c, sumo));
-        }
-        public static void GeneratePopulation() => RunStep("Generating population", WorkflowStepId.Population, DoGeneratePopulation);
-        public static void DownloadDem() => DownloadDemOnly();
-        public static void DownloadWeather() => DownloadWeatherOnly();
-        public static void DownloadLandfire() => DownloadLandfireFuels();
     }
 }

@@ -11,22 +11,12 @@ namespace PREACT.Population
 {
     public abstract class SimulationDomainVisualizer
     {
+        //The population density plane. The GPW plane, the population mask texture and the texture getters that
+        //were declared here had no caller left once the GUI's population editor and download window were gone.
         public abstract void SetAndDisplayPopulationMapTexture(PopulationMap data, WorkingData workingData);
-        public abstract void SetAndDisplayPopulationMapMaskTexture(PopulationMap data, WorkingData workingData);
         public abstract void SetVisibility(bool visible);
         public abstract bool ToggleVisibility();
         public abstract bool IsDataPlaneActive();
-        //textures
-        public abstract object GetPopulationTexture();
-        public abstract object GetPopulationMaskTexture();
-        
-                
-        public abstract void SetAndDisplayLocalGPW(LocalGPWData data, WorkingData workingData);
-        public abstract void SetGPWVisibility(bool visible);
-        public abstract bool ToggleGPWVisibility();
-        public abstract bool IsGPWPlaneVisible();
-        //textures
-        public abstract object GetGPWTexture();
 
         //colors from GPW website
         static PREACTColor c0 = new PREACTColor(190f / 255f, 232f / 255f, 255f / 255f);

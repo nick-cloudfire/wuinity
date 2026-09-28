@@ -1151,20 +1151,6 @@ namespace PREACT.Evacuation
             }
         }
 
-        public void TryBlockDestination(string destinationName)
-        {
-            EvacuationDestination eD;
-            if(_evacuationDestinationsDict.TryGetValue(destinationName, out eD))
-            {
-                BlockDestination(eD);
-                Engine.Message(_simulation, Engine.LogType.Event, "Goal blocked by user specified event: " + eD.Name);
-            }
-            else
-            {
-                Engine.Message(_simulation, Engine.LogType.Event, $"Could not block the destination {destinationName} as it does not exist.");
-            }
-        }
-
         public void BlockDestination(EvacuationDestination blockedEvacDest)
         {
             blockedEvacDest.BlockDestination();

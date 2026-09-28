@@ -149,7 +149,9 @@ namespace WUInity.Visualization
             {
                 if(simulation.Input.SmokeModule.Module != SmokeInput.SmokeModules.None)
                 {
-                    float[] newSoot = simulation.Hazards.Smoke.GetSootDensity();
+                    //Extinction coefficient, 1/m: what GlobalSmoke's ramp holds and what the overlay has always been
+                    //handed, now under its own name.
+                    float[] newSoot = simulation.Hazards.Smoke.GetExtinctionCoefficientData();
                     if(newSoot != null)
                     {
                         sootBuffer.SetData(newSoot);

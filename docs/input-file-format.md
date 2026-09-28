@@ -109,12 +109,11 @@ The first one defined is treated as the default. Referenced by name from
 | `MaxCarsProbability` | float | | `0.3` |
 | `Default` | bool | | – |
 
-## `[Evacuation]` — required if pedestrian or traffic is enabled
+## `[Evacuation]` — optional, holds no current keys
 
-| Key | Type | Default | Notes |
-|-----|------|---------|-------|
-| `UseTriggerBufferEvacuation` | bool | `false` | |
-| `TriggerBufferFile` | asc path | – | Required only when `UseTriggerBufferEvacuation=true`. |
+The destinations, response curves and groups below are their own sections. `UseTriggerBufferEvacuation`,
+`TriggerBufferFile` and `EvacuationOrderStart` are retired: they were never read by the engine, are ignored with a
+notice when present, and are not written when a scenario is saved.
 
 ## `[Destination]` — repeatable
 

@@ -197,9 +197,6 @@ namespace PREACT
             asc.FirelineIntensityFile = fire.FirelineIntensityFile;
             asc.MidflameWindSpeedFile = fire.MidflameWindSpeedFile;
 
-            //Display only: the output window's fuel model mode draws the fuel the fire was computed against.
-            asc.FuelModelFile = fire.FuelModelFile;
-
             //The weather the fire was actually computed against. ELMFIRE's weather comes from a historical peak
             //fire-weather day drawn out of the ERA5 record, while the scenario is dated whenever the evacuation is
             //being modelled - so the reported temperature, humidity and fire-danger indices would otherwise be

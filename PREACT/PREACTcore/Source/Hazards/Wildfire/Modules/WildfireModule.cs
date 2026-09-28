@@ -48,7 +48,6 @@ namespace PREACT.Wildfire
         public abstract float GetCellSizeX();
         public abstract float GetCellSizeY();
         public abstract float[] GetFireLineIntensityData();
-        public abstract float[] GetFuelModelNumberData();
         public abstract float[] GetSootProduction();
         public abstract int GetActiveCellCount();
         public abstract List<Vector2int> GetIgnitedFireCells();

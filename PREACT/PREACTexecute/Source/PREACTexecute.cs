@@ -12,16 +12,12 @@ namespace PREACT
     {
         Engine _engine;
         PREACTInput? _input;
-        bool _isDone;
 
         public Engine Engine { get => _engine; }
-        public bool IsDone { get => _isDone; }
-
 
         public PREACTexecute()
         {
             _engine = new Engine(this, true);
-            _isDone = true;
         }
 
         /// <summary>Process exit codes.</summary>
@@ -69,12 +65,8 @@ namespace PREACT
                 return ExitNotRun;
             }
 
-            EngineTask engineTask = new EngineTask(EngineTask.ExecutionMode.Serial, numberOfRuns, simulationIndexOffset);
-            _isDone = false;
+            EngineTask engineTask = new EngineTask(numberOfRuns, simulationIndexOffset);
             await _engine.RunSimulations(engineTask);
-            //belt and braces: SimulationsFinished() normally sets this, but it only fires
-            //when an external manager is registered, and the process must exit regardless.
-            _isDone = true;
 
             if (!_engine.LastRunSucceeded)
             {
@@ -89,20 +81,7 @@ namespace PREACT
             Console.WriteLine(message);
         }
 
-        public void PauseSimulations()
-        {
-        }
-
-        public void SimulationStarted()
-        {
-        }
-
         public void SimulationsFinished()
-        {
-            _isDone = true;
-        }
-
-        public void StopSimulations()
         {
         }
 

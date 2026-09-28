@@ -1151,19 +1151,10 @@ namespace WUInity
             }
             _wuiGUI.NewMessage(message);
         }
-        //Required by IExternalManager. The engine never calls SimulationStarted (nor PauseSimulations or
-        //StopSimulations below, which the GUI calls itself); SimulationsFinished runs on the main thread
-        //after the run's task completes, and the GUI follows that task directly instead.
-        public void SimulationStarted()
-        {
-        }
+        //Required by IExternalManager. It is called on the run's thread as the run ends; the GUI follows the
+        //run's task from Update instead (WatchRunTask), on the main thread.
         public void SimulationsFinished()
         {
-        }
-
-        public void PauseSimulations()
-        {
-            _engine.PauseSimulations();
         }
 
         public string WorkingFolder { get => _engine.WorkingFolder; }
@@ -1181,8 +1172,6 @@ namespace WUInity
         private System.Action _onPickCancelled;
 
         /// <summary>True while the map is waiting for a click (a position, or the corners of an area).</summary>
-        public bool IsPicking { get => _pickingPos || _pickingBoundingBox; }
-
         public void PickBoundingBoxOnMap(System.Action<PREACT.Math.Vector2d[]> clicks, System.Action cancelled = null)
         {
             _onClicks = clicks;

@@ -361,7 +361,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             _lastResult = string.Empty;
             _stopRequested = false;
 
-            var task = new EngineTask(EngineTask.ExecutionMode.Serial, _numberOfRuns, 0, 1, true,
+            var task = new EngineTask(_numberOfRuns, 0,
                 _stopAfterConverging, _convergenceMinSequence, _convergenceMaxDifference);
 
             ConsoleWindow.Open();

@@ -43,9 +43,6 @@ namespace PREACT.Utility
             /// </summary>
             public string MidflameWindSpeedFile = string.Empty;
 
-            /// <summary>The case's fuel raster (the namelist's FBFM_FILENAME), for display. Empty if none.</summary>
-            public string FuelModelFile = string.Empty;
-
             /// <summary>
             /// The historical moment the case's weather was written from, and the ERA5 record it came out of, so
             /// the simulation can report the same weather the fire was computed against. Both default when the
@@ -348,13 +345,6 @@ namespace PREACT.Utility
             if (File.Exists(wuiArea))
             {
                 result.WuiAreaFile = Relative(input.RootFolder, wuiArea);
-            }
-
-            //The fuel the fire was actually computed against, for the output window's fuel model display mode.
-            string fuelStem = ElmfireStems.FuelStem(runLines, inputs);
-            if (fuelStem != null)
-            {
-                result.FuelModelFile = Relative(input.RootFolder, ElmfireStems.Tif(inputs, fuelStem));
             }
 
             result.Ok = true;

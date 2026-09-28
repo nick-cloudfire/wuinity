@@ -365,11 +365,6 @@ namespace PREACT
             Engine.Message(this, Engine.LogType.Log, "All requested sub-modules initiated successfully.");
         }
 
-        public void SetPause(bool pause)
-        {
-            _isPaused = pause;
-        }
-
         public void TogglePause()
         {
             _isPaused = !_isPaused;

@@ -140,7 +140,7 @@ namespace PREACT.Tests
             PREACTInput probe = s.Load(FormatTests.Scenario.Lines, out bool _);
             PREACTInput input = Load(s, FireLines(s, probe, react));
             TheEngine.SetInput(input, Path.Combine(s.Folder, "scenario.wui"));
-            TheEngine.RunSimulations(new EngineTask(EngineTask.ExecutionMode.Serial, 1)).GetAwaiter().GetResult();
+            TheEngine.RunSimulations(new EngineTask(1)).GetAwaiter().GetResult();
             Simulation simulation = TheEngine.Simulation;
             Assert.True(simulation.State == Simulation.SimulationState.Completed, "run completed, state " + simulation.State);
             Assert.True(!simulation.IsRunning, "not running after the run");
@@ -163,7 +163,7 @@ namespace PREACT.Tests
             lines.Insert(lines.IndexOf("StopWhenEvacuated=true") + 1, "RandomSeed=" + seed);
             PREACTInput input = Load(s, lines);
             TheEngine.SetInput(input, Path.Combine(s.Folder, "scenario.wui"));
-            TheEngine.RunSimulations(new EngineTask(EngineTask.ExecutionMode.Serial, 1)).GetAwaiter().GetResult();
+            TheEngine.RunSimulations(new EngineTask(1)).GetAwaiter().GetResult();
             return string.Join("\n", File.ReadAllLines(Path.Combine(s.Folder, "_output", "synthetic_pedestrian_output_0.csv")));
         }
 
@@ -205,7 +205,7 @@ namespace PREACT.Tests
             TheEngine.SetInput(input, Path.Combine(s.Folder, "scenario.wui"));
             var log = Program.Log;
             log.Take();
-            TheEngine.RunSimulations(new EngineTask(EngineTask.ExecutionMode.Serial, 1)).GetAwaiter().GetResult();
+            TheEngine.RunSimulations(new EngineTask(1)).GetAwaiter().GetResult();
             Assert.True(!TheEngine.LastRunSucceeded, "the run did not succeed");
             Assert.True(log.Take().Any(m => m.Contains("not complete enough to run")), "and said why");
             Assert.True(log.FinishedCount > 0, "SimulationsFinished was still called");

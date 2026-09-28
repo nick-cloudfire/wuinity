@@ -274,7 +274,7 @@ namespace PREACT
         /// instance per process, and the batch count had an operator-precedence bug), and the campaign tools
         /// already run realizations in parallel as separate PREACT processes.
         /// </remarks>
-        public async Task RunSimulations(EngineTask engineTask, int startIndexOffset = 0)
+        public async Task RunSimulations(EngineTask engineTask)
         {
             _runErrors = 0;
             _lastRunSucceeded = false;
@@ -614,30 +614,6 @@ namespace PREACT
             if (logType == LogType.SimulationError && owner != null)
             {
                 owner.Stop("Critical error in simulation, aborting.", true);
-            }
-        }
-
-        public void PauseSimulations()
-        {
-            SetPause(true);
-        }
-
-        public void UnpauseSimulations()
-        {
-            SetPause(false);
-        }
-
-        private void SetPause(bool pause)
-        {
-            //Before the first run there is nothing to pause; this used to throw.
-            Simulation[] simulations = _simulations;
-            if (simulations == null)
-            {
-                return;
-            }
-            for (int i = 0; i < simulations.Length; ++i)
-            {
-                simulations[i]?.SetPause(pause);
             }
         }
 

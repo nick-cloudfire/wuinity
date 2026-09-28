@@ -24,14 +24,12 @@ namespace Assets.WUInity.GUI.DearIMGUI
         //The scenario check's findings, copied when they were produced, and the edit generation they are for.
         private static readonly List<PREACTInput.InputRequirement> _requirements = new List<PREACTInput.InputRequirement>();
         private static int _requirementsGeneration = -1;
-        private static DateTime _requirementsAt;
 
         public static ScenarioWorkflow Model { get => _model; }
 
         public static WorkflowStep Step(WorkflowStepId id) => _model[id];
 
         public static IReadOnlyList<PREACTInput.InputRequirement> Requirements { get => _requirements; }
-        public static DateTime RequirementsCheckedAt { get => _requirementsAt; }
         public static bool RequirementsFresh { get => _requirementsGeneration == ScenarioSession.EditGeneration; }
 
         /// <summary>Recompute at the next opportunity.</summary>
@@ -52,7 +50,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
             _requirements.Clear();
             if (requirements != null) _requirements.AddRange(requirements);
             _requirementsGeneration = generation;
-            _requirementsAt = DateTime.Now;
             Invalidate();
         }
 
@@ -339,16 +336,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
                     //the .wui on disk, so that is when unsaved edits matter.
                     ProbabilisticTriggerWindow.Open();
                     break;
-            }
-        }
-
-        /// <summary>A step's primary action.</summary>
-        public static void PerformPrimary(WorkflowStepId id)
-        {
-            WorkflowStep s = Step(id);
-            if (s?.Primary != null && s.Primary.Enabled)
-            {
-                Perform(s.Primary.Id);
             }
         }
     }

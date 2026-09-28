@@ -21,16 +21,8 @@ namespace WUInity.Visualization
         MeshRenderer _simulationDomainMeshRenderer;
         //textures
         private Texture2D _populationMapTexture;
-        private Texture2D _populationMapMaskTexture;
-
-        //TODO: worth moving to its own visualizer?
-        private GameObject _gpwDomainPlane;
-        MeshRenderer _gpwDomainMeshRenderer;
-        //textures
-        private Texture2D _localGPWTexture;
 
         private Vector2d _simulationDomainSize, _simulationDomainLatLon;
-        private Vector2d _gpwDomanSize, _gpwDomainLatLon;
 
         //markers
         GameObject[] _goalMarkers;
@@ -42,21 +34,6 @@ namespace WUInity.Visualization
             _simulationDomainPlane.transform.parent = parent;
             _simulationDomainPlane.transform.position += Vector3.up;
             _simulationDomainPlane.isStatic = true;
-
-            _gpwDomainPlane = new GameObject("GPWDomain");            
-            _gpwDomainPlane.transform.parent = parent;
-            _gpwDomainPlane.transform.position += Vector3.up;
-            _gpwDomainPlane.isStatic = true;            
-        }
-
-        public void SetSimulationPlaneTexture(Texture2D tex)
-        {
-            if (_simulationDomainMeshRenderer == null)
-            {
-                Engine.Message(null, Engine.LogType.Warning, "Cannot show simulation domain data as no domain has been set.");
-                return;
-            }
-            _simulationDomainMeshRenderer.material.mainTexture = tex;
         }
 
         private void CheckIfNeedNewSimulationDomainPlane(PopulationMap data)
@@ -67,15 +44,6 @@ namespace WUInity.Visualization
             }
             _simulationDomainSize = data._size;
             _simulationDomainLatLon = data._lowerLeftLatLong;
-        }
-        private void CheckIfNeedNewGPWDomainPlane(LocalGPWData data)
-        {
-            if (DomainVisualizerUnity.NeedNewPlane(_gpwDomanSize, data.RealWorldSize, _gpwDomainLatLon, data.ActualOriginLatLon))
-            {
-                _gpwDomainMeshRenderer = DomainVisualizerUnity.CreateDomainPlane(_gpwDomainPlane, _gpwDomainMeshRenderer, data.RealWorldSize, data.OriginOffset);
-            }
-            _gpwDomanSize = data.RealWorldSize;
-            _gpwDomainLatLon = data.ActualOriginLatLon;
         }
 
         public override void SetAndDisplayPopulationMapTexture(PopulationMap data, WorkingData workingData)
@@ -110,56 +78,15 @@ namespace WUInity.Visualization
             SetVisibility(true);
         }
 
-        public override void SetAndDisplayPopulationMapMaskTexture(PopulationMap data, WorkingData workingData)
-        {      
-            if (DomainVisualizerUnity.NeedNewTexture(data._cells, _populationMapMaskTexture))
-            {
-                _populationMapMaskTexture = new Texture2D(data._cells.x, data._cells.y);
-                _populationMapMaskTexture.filterMode = FilterMode.Point;                
-            }
-
-            //update cached data
-            workingData.PopulationMap = data;
-
-            CheckIfNeedNewSimulationDomainPlane(data);            
-
-            for (int y = 0; y < data._cells.y; y++)
-            {
-                for (int x = 0; x < data._cells.x; x++)
-                {
-                    if (data.GetMaskValue(x, y))
-                    {
-                        Color color = Color.red;
-                        color.a = 0.5f;
-                        _populationMapMaskTexture.SetPixel(x, y, color);
-                    }
-                }
-            }
-            _populationMapMaskTexture.Apply();
-            _simulationDomainMeshRenderer.material.mainTexture = _populationMapMaskTexture;
-            SetVisibility(true);
-        }
-
         public override bool IsDataPlaneActive()
         {
             return _simulationDomainPlane.activeSelf;
         }
 
-        public override object GetPopulationTexture()
-        {
-            return _populationMapTexture;
-        }
-
-        public override object GetPopulationMaskTexture()
-        {
-            return _populationMapMaskTexture;
-        }
-
-        //The simulation domain plane, which is what this class's other members are about. These three used
-        //to act on the GPW plane instead - a separate plane, in a separate frame, with its own
-        //SetGPWVisibility below - so showing the population density switched something else on and left
-        //the plane holding the texture untouched, while hiding "the domain data" before painting hid
-        //nothing. IsDataPlaneActive already reported the simulation plane, so the pair disagreed.
+        //The simulation domain plane, which is what this class's other members are about. These used to act
+        //on a separate GPW plane instead, in a separate frame, so showing the population density switched
+        //something else on and left the plane holding the texture untouched, while hiding "the domain data"
+        //before painting hid nothing. The GPW plane itself is gone: nothing drew on it any more.
         public override void SetVisibility(bool activeSelf)
         {
             _simulationDomainPlane.SetActive(activeSelf);
@@ -170,58 +97,6 @@ namespace WUInity.Visualization
             _simulationDomainPlane.SetActive(!_simulationDomainPlane.activeSelf);
 
             return _simulationDomainPlane.activeSelf;
-        }
-
-
-        //GPW below here
-        public override void SetAndDisplayLocalGPW(LocalGPWData data, WorkingData workingData)
-        {
-            if (DomainVisualizerUnity.NeedNewTexture(data.CellCount, _localGPWTexture))
-            {
-                _localGPWTexture = new Texture2D(data.CellCount.x, data.CellCount.y);
-                _localGPWTexture.filterMode = FilterMode.Point;
-            }
-            
-            //set data
-            workingData.LocalGPWData = data;
-
-            CheckIfNeedNewGPWDomainPlane(data);
-
-            //update texture
-            for (int y = 0; y < data.CellCount.y; y++)
-            {
-                for (int x = 0; x < data.CellCount.x; x++)
-                {
-                    double density = data.GetDensity(x, y);
-                    PREACTColor color = GetGPWColor((float)density);
-
-                    _localGPWTexture.SetPixel(x, y, color.UnityColor());
-                }
-            }
-            _localGPWTexture.Apply();
-            _gpwDomainMeshRenderer.material.mainTexture = _localGPWTexture;
-            SetGPWVisibility(true);
-        }
-
-        public override void SetGPWVisibility(bool visible)
-        {
-            _gpwDomainPlane.SetActive(visible);
-        }
-        public override bool ToggleGPWVisibility()
-        {
-            _gpwDomainPlane.SetActive(!_gpwDomainPlane.activeSelf);
-
-            return _gpwDomainPlane.activeSelf;
-        }
-
-        public override bool IsGPWPlaneVisible()
-        {
-            return _gpwDomainPlane.activeSelf;
-        }
-
-        public override object GetGPWTexture()
-        {
-            return _localGPWTexture;
         }
 
         public void SpawnEvacuationGoalMarkers(PREACTInput input, GameObject markerPrefab)

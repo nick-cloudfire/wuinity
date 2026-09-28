@@ -16,14 +16,12 @@ Examples/NFDRS4_Behave/Roxborough/
 ├── Roxborough_global_smoke.wui    # same scenario + global smoke
 ├── roxborough_weather.csv         # hourly weather for 2001
 ├── population/                    # worldpop_population.csv (households and road access points)
-├── fire/                          # rox_big_burning_city.lcp ([Landscape]), trigger_buffer.asc
+├── fire/                          # rox_big_burning_city.lcp ([Landscape])
 ├── flammap/output/                # TOA.asc, ROS.asc, SD.asc, FI.asc (AscImport inputs, on the .lcp's grid)
 ├── globalSmoke/                   # extCoeffRamp.exc (GlobalSmoke extinction)
 ├── groups/                        # groupA/B/C .shp (one shapefile per evacuation group)
 └── sumo/                          # rox.sumocfg + rox_big.net.xml
 ```
-
-`fire/trigger_buffer.asc` is only read when `[Evacuation] UseTriggerBufferEvacuation=true`.
 
 Run it:
 

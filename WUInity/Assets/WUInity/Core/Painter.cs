@@ -84,9 +84,6 @@ namespace WUInity
         /// <summary>Evacuation-group strokes made since the group masks were last saved or loaded.</summary>
         public bool UnsavedGroupStrokes { get; private set; }
 
-        /// <summary>The raster the paint grid comes from, relative to the scenario, or null before one is resolved.</summary>
-        public string GridReference { get => _haveFireGrid ? _gridReference : null; }
-
         /// <summary>A one-line description of the paint grid, or of why there is none.</summary>
         public string GridDescription
         {
@@ -634,18 +631,6 @@ namespace WUInity
             {
                 _manager.FireDomainVisualizer.SetVisibility(false);
             }
-        }
-
-        /// <summary>Called once the fire areas have been written to disk.</summary>
-        public void MarkFireAreasSaved()
-        {
-            UnsavedFireStrokes = false;
-        }
-
-        /// <summary>Called once the group masks have been written to disk.</summary>
-        public void MarkGroupMasksSaved()
-        {
-            UnsavedGroupStrokes = false;
         }
 
         private static void DestroyTexture(ref Texture2D texture)

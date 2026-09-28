@@ -25,10 +25,6 @@ AllowMoreThanOneCar=false
 MaxCars=1
 MaxCarsProbability=0.3
 
-[Evacuation]
-UseTriggerBufferEvacuation=false
-TriggerBufferFile=fire/trigger_buffer.asc
-
 [Destination]
 Name=goal_highway
 LatLon=39.5071781907873, -105.02231033756013

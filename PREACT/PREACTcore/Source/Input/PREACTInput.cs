@@ -70,24 +70,6 @@ namespace PREACT.Input
             TriggerBufferModule = new TriggerBufferModuleInput();
         }
 
-        public static void SaveToDisk(PREACTInput input, string saveFilePath)
-        {
-            try
-            {
-                string folder = Path.GetDirectoryName(Path.GetFullPath(saveFilePath));
-                if (!string.IsNullOrEmpty(folder)) Directory.CreateDirectory(folder);
-
-                File.WriteAllLines(saveFilePath, PREACTInputWriter.Write(input));
-                Engine.Message(null, Engine.LogType.Log, " Saved input file " + saveFilePath + ".");
-            }
-            catch (System.Exception e)
-            {
-                //An input error, not a simulation error: a failed save has nothing to do with any run, and a
-                //SimulationError would stop whichever simulation happens to be running.
-                Engine.Message(null, Engine.LogType.InputError, " Could not save " + saveFilePath + ": " + e.Message);
-            }
-        }
-
         public static PREACTInput LoadFromDisk(string filePath, out bool success)
         {
             success = false;
@@ -141,27 +123,6 @@ namespace PREACT.Input
             {
                 return ParseInput(rootFolder, copy, out success);
             }
-        }
-
-        /// <summary>
-        /// Trims each element of a comma-separated value.
-        ///
-        /// Needed since values stopped having their spaces stripped: a list written <c>a, b</c> used to
-        /// arrive as <c>a,b</c>, and several of these lists are names looked up in a dictionary, where a
-        /// leading space means "no such destination".
-        /// </summary>
-        public static string[] TrimAll(string[] values)
-        {
-            if (values == null)
-            {
-                return values;
-            }
-
-            for (int i = 0; i < values.Length; ++i)
-            {
-                values[i] = values[i].Trim();
-            }
-            return values;
         }
 
         public const string pleaseCheckInput = " Please check your input file.";
@@ -1103,23 +1064,6 @@ namespace PREACT.Input
         {
             string copy = inputData;
             CheckIfFileExist(nameOfInput, ref copy, rootFolder, out success, critical);
-        }
-
-        public static void CheckIfFilesExists(string nameOfInput, string[] inputData, string rootFolder, out bool success)
-        {
-            success = true;
-            int issues = 0;
-
-            for (int i = 0; i < inputData.Length; ++i)
-            {                
-                CheckIfFileExist(nameOfInput, inputData[i], rootFolder, out bool found);
-                issues += found ? 0 : 1;
-            }
-
-            if (issues > 0)
-            {
-                success = false;
-            }
         }
     }
 }

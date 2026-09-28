@@ -174,15 +174,6 @@ namespace PREACT.Population
             return _density[x + y * CellCount.x];
         }
 
-        public double GetDensitySimulationSpace(Vector2d pos)
-        {
-            Vector2d positiveSize = RealWorldSize + OriginOffset; //since offset is always negative we add it here
-            int xInt = (int)((pos.x / positiveSize.x) * CellCount.x);
-            int yInt = (int)((pos.y / positiveSize.y) * CellCount.y);
-            double dens = GetDensity(xInt, yInt);
-            return dens;
-        }
-
         public  double GetDensitySimulationSpaceBilinear(Vector2d pos)
         {
             Vector2d positiveSize = RealWorldSize + OriginOffset; //since offset is always negative we add it here

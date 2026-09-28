@@ -25,7 +25,6 @@ namespace PREACT.Traffic
         private int totalVehiclesInjected, totalSumoVehiclesInjected;
         private List<string> output;
 
-        double _maxUsage;
         private double[,] _usageMap;
         private uint[,] _carCount;
         private float[,] _accumulatedLevelOfService;
@@ -114,7 +113,6 @@ namespace PREACT.Traffic
                 int xDim = Mathd.CeilToInt(_simulation.Input.Simulation.DomainSize.x / _simulation.Input.TrafficModule.SumoInput.OutputRasterSize);
                 int yDim = Mathd.CeilToInt(_simulation.Input.Simulation.DomainSize.y / _simulation.Input.TrafficModule.SumoInput.OutputRasterSize);
 
-                _maxUsage = 0f;
                 _usageMap = new double[xDim, yDim];
                 _carCount = new uint[xDim, yDim];
                 _accumulatedLevelOfService = new float[xDim, yDim];
@@ -346,25 +344,11 @@ namespace PREACT.Traffic
             if (xIndex >= 0 && xIndex < _usageMap.GetLength(0) && yIndex >= 0 && yIndex < _usageMap.GetLength(1))
             {
                 _usageMap[xIndex, yIndex] += deltaTime;
-                if (_usageMap[xIndex, yIndex] > _maxUsage)
-                {
-                    _maxUsage = _usageMap[xIndex, yIndex];
-                }
 
                 _accumulatedLevelOfService[xIndex, yIndex] += vehicle.SpeedRatio;
                 _accumulatedWatingTime[xIndex, yIndex] += (float)LIBSUMO.Vehicle.getWaitingTime(vehicle.GetSumoVehicleID());
                 _carCount[xIndex, yIndex] += 1;
             }
-        }
-
-        public double[,] GetUsageMap()
-        {
-            return _usageMap;
-        }
-
-        public double GetMaxUsage()
-        {
-            return _maxUsage;
         }
 
         public override void HandleNewCars()

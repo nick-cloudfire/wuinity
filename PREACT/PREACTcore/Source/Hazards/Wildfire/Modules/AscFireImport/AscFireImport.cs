@@ -110,11 +110,6 @@ namespace PREACT.Wildfire
             return Path.Combine(_simulation.Engine.WorkingFolder, relativePath);
         }
 
-        //Loaded on first request and kept, with a flag so a raster that cannot be used is not retried every
-        //frame the renderer is in that mode.
-        private float[] _fuelModelData;
-        private bool _fuelModelUnavailable;
-
         bool _first = true;
 
         /// <summary>
@@ -498,74 +493,6 @@ namespace PREACT.Wildfire
         /// the rest of the session, and it fired from the render loop rather than from the click that
         /// caused it. The renderer already skips a null.
         /// </remarks>
-        /// <summary>
-        /// The fuel model raster flattened for the renderer, or null when the scenario has none.
-        /// </summary>
-        /// <remarks>
-        /// Display only — nothing about the fire depends on it, because an imported fire arrives with its
-        /// behaviour already computed. This returned null unconditionally, so the output window's "Fuel model"
-        /// display mode selected a buffer that was never filled and drew whatever the previous mode had left
-        /// there. An ELMFIRE fire now has <c>[AscImport] FuelModelFile</c> pointed at the case's own fuel
-        /// layer, which is the raster the fire was actually computed against.
-        ///
-        /// Read once and kept: the fuel does not change during a run, and the renderer asks every frame it is
-        /// in this mode.
-        /// </remarks>
-        public override float[] GetFuelModelNumberData()
-        {
-            if (_fuelModelData != null || _fuelModelUnavailable)
-            {
-                return _fuelModelData;
-            }
-
-            string relative = _fire.FuelModelFile;
-            if (string.IsNullOrWhiteSpace(relative))
-            {
-                _fuelModelUnavailable = true;
-                return null;
-            }
-
-            string path = Path.Combine(_simulation.Engine.WorkingFolder, relative);
-            float[,] fuel = Utility.AscRaster.Read(path, out Utility.AscRaster.Header header, out bool ok);
-
-            if (!ok || fuel == null)
-            {
-                _fuelModelUnavailable = true;
-                Engine.Message(_simulation, Engine.LogType.Warning,
-                    "The fuel model raster could not be read, so that display mode stays empty: " + path);
-                return null;
-            }
-
-            //Refused rather than sampled: the renderer indexes this array by fire cell, so a raster of another
-            //size would be read at the wrong offsets and draw a plausible-looking picture of nothing.
-            if (header.Ncols != ncols || header.Nrows != nrows)
-            {
-                _fuelModelUnavailable = true;
-                Engine.Message(_simulation, Engine.LogType.Warning,
-                    $"The fuel model raster is {header.Ncols}x{header.Nrows} but the fire grid is {ncols}x{nrows}, "
-                    + "so it cannot be displayed against it.");
-                return null;
-            }
-
-            //Same flattening as _firelineIntensityData: index = y * ncols + x, y from the south.
-            _fuelModelData = new float[ncols * nrows];
-            int index = 0;
-            for (int y = 0; y < nrows; ++y)
-            {
-                for (int x = 0; x < ncols; ++x)
-                {
-                    float value = fuel[x, y];
-                    //NoData drawn as no fuel rather than as -9999, which would take the whole colour scale
-                    //with it and leave every real fuel model the same shade.
-                    _fuelModelData[index] = value <= -9000f || float.IsNaN(value) ? 0f : value;
-                    ++index;
-                }
-            }
-
-            Engine.Message(_simulation, Engine.LogType.Log, "Fuel model raster loaded for display: " + relative);
-            return _fuelModelData;
-        }
-
         public override float[] GetSootProduction()
         {
             return _sootInjection;
