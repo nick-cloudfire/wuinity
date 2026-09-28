@@ -1802,6 +1802,17 @@ namespace WUInity.Workflow
                     WorkflowAction.OpenCampaign, "Campaign");
             }
 
+            //A campaign from before per-realization evacuation seeds came with boundaries from before the k-PERIL fix,
+            //and cannot be resumed: said here, since the campaign window then simply starts a new one.
+            string manifest = Path.Combine(folder, PREACT.Utility.CampaignLayout.ManifestFile);
+            bool earlier = _files.Exists(manifest)
+                ? _files.Read(manifest, "predates-seeds", _ => PREACT.Utility.CampaignLayout.PredatesEvacuationSeeds(folder), false)
+                : (done || _files.Exists(live) || _files.Exists(csv)) && PREACT.Utility.CampaignLayout.PredatesEvacuationSeeds(folder);
+            if (earlier && !_ctx.CampaignActive)
+            {
+                s.Warn(PREACT.Utility.CampaignLayout.DescribeEarlierCampaign(folder), WorkflowAction.OpenCampaign, "Campaign...");
+            }
+
             s.Status = done ? StepStatus.Done : StepStatus.ToDo;
             string where = SameFolder(folder, OutputFolder) ? "trigger_convergence.csv" : Path.GetFileName(folder);
             s.Summary = conv != null && conv.Rows > 0

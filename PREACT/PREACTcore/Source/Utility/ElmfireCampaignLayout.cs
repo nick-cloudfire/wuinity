@@ -172,6 +172,59 @@ namespace PREACT.Utility
         public const string LockFile = "campaign.lock";
 
         /// <summary>
+        /// The manifest setting that says how each realization's evacuation is seeded (FIX-A's MA-5). A campaign whose
+        /// manifest lacks it was made before that - and before the k-PERIL wrapper read its grids the right way round
+        /// (BL-1), which came with it - so its boundaries are not comparable with a new campaign's, and since the
+        /// setting is part of the hash, it cannot be resumed.
+        /// </summary>
+        public const string EvacuationSeedSetting = "evacuation.seed";
+
+        /// <summary>
+        /// Whether the campaign in <paramref name="campaignFolder"/> - a campaign folder, or <c>_output</c> for a campaign
+        /// from before campaigns had folders - was made by a version before <see cref="EvacuationSeedSetting"/>: its
+        /// manifest does not have it, or it has results and no manifest at all. False when it cannot tell (no results yet,
+        /// or nothing readable), so a campaign that is just starting is never called old.
+        /// </summary>
+        public static bool PredatesEvacuationSeeds(string campaignFolder)
+        {
+            if (string.IsNullOrEmpty(campaignFolder) || !Directory.Exists(campaignFolder)) return false;
+
+            try
+            {
+                string manifest = Path.Combine(campaignFolder, ManifestFile);
+                if (File.Exists(manifest))
+                {
+                    return File.ReadAllText(manifest).IndexOf("\"" + EvacuationSeedSetting + "\"", StringComparison.Ordinal) < 0;
+                }
+
+                return File.Exists(Path.Combine(campaignFolder, ConvergenceCsv))
+                       || File.Exists(Path.Combine(campaignFolder, ProbabilityRaster))
+                       || File.Exists(Path.Combine(campaignFolder, LiveProbabilityRaster));
+            }
+            catch (IOException)
+            {
+                return false;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>What to tell someone looking at a campaign that <see cref="PredatesEvacuationSeeds"/>.</summary>
+        public static string DescribeEarlierCampaign(string campaignFolder)
+        {
+            string name = Path.GetFileName((campaignFolder ?? string.Empty).TrimEnd('/', '\\'));
+            string what = string.Equals(name, OutputFolder, StringComparison.OrdinalIgnoreCase)
+                ? "The campaign whose results are in " + OutputFolder
+                : name;
+            return $"{what} was made by an earlier version of the campaign: its trigger boundaries were "
+                   + "computed before k-PERIL read the fire's grids the right way round, so its probability raster is not "
+                   + "comparable with a new one, and it cannot be resumed (each realization's evacuation now has its own seed, "
+                   + "which changes the settings). Run the campaign again: it starts in a folder of its own, and the old one is kept.";
+        }
+
+        /// <summary>
         /// Whether a campaign process holds <paramref name="campaignFolder"/>'s <see cref="LockFile"/> now: it keeps
         /// the file open with no sharing for as long as it runs, so the operating system releases it however the
         /// process ends, and a file left behind is not a lock.

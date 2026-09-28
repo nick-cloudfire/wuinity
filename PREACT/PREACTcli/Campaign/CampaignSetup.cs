@@ -256,7 +256,7 @@ namespace PREACTcli.Campaigns
 
             //How each realization's evacuation is seeded. Recorded because realizations computed before it existed ran
             //on a clock seed, and reusing them beside reproducible ones would mix the two.
-            s["evacuation.seed"] = "seed + " + RealizationRunner.EvacuationSeedOffset.ToString(CultureInfo.InvariantCulture) + " + index";
+            s[CampaignLayout.EvacuationSeedSetting] = "seed + " + RealizationRunner.EvacuationSeedOffset.ToString(CultureInfo.InvariantCulture) + " + index";
 
             c.SettingsHash = ElmfireFingerprint.Hash(string.Join("\n", s.Select(kv => kv.Key + "=" + kv.Value)));
             c.Folder = Path.Combine(c.ScenarioDir, CampaignLayout.OutputFolder,

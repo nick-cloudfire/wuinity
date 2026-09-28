@@ -34,6 +34,12 @@ namespace Assets.WUInity.GUI.DearIMGUI
             public long Bytes;
             public DateTime Written;
             public bool IsRaster;
+
+            /// <summary>
+            /// A trigger boundary with no .prj beside it: every boundary since the k-PERIL fix has one, so this one was
+            /// written before it, by a wrapper that read the fire's grids the wrong way round.
+            /// </summary>
+            public bool Earlier;
         }
 
         private static readonly List<Entry> _entries = new List<Entry>();
@@ -44,6 +50,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
         private static string _legend = string.Empty;
         private static volatile bool _loading;
         private static string _status = string.Empty;
+
+        //Why the listed campaign's results are not to be trusted, when it was made by an earlier version; else null.
+        private static string _campaignNote;
 
         public static void Open()
         {
@@ -59,6 +68,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
         public static void Rescan()
         {
             _entries.Clear();
+            _campaignNote = null;
             _scannedRoot = ScenarioSession.RootFolder;
             _nextScan = UnityEngine.Time.realtimeSinceStartup + 5f;
 
@@ -115,6 +125,12 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
                 string wui = GuiFiles.Resolve(input.RootFolder, ScenarioFiles.CaseInput(input, "wui_area.tif"));
                 if (File.Exists(wui)) Add(wui, Kind.WuiArea);
+
+                string listed = legacyCampaign ? output : campaign;
+                if (PREACT.Utility.CampaignLayout.PredatesEvacuationSeeds(listed) && !ProbabilisticTriggerWindow.IsRunning)
+                {
+                    _campaignNote = PREACT.Utility.CampaignLayout.DescribeEarlierCampaign(listed);
+                }
             }
             catch (Exception e)
             {
@@ -168,6 +184,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 Written = info.LastWriteTime,
                 IsRaster = kind == Kind.TriggerBoundary || kind == Kind.TriggerProbability || kind == Kind.BurnProbability
                            || kind == Kind.ArrivalStatistic || kind == Kind.FireArrival || kind == Kind.WuiArea,
+                Earlier = kind == Kind.TriggerBoundary && !File.Exists(System.IO.Path.ChangeExtension(path, ".prj")),
             });
         }
 
@@ -374,6 +391,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             if (_loading) ImGui.TextDisabled("Reading...");
             if (!string.IsNullOrEmpty(_status)) Fields.Warn(_status);
+            if (!string.IsNullOrEmpty(_campaignNote)) Fields.Warn(_campaignNote);
             if (!string.IsNullOrEmpty(_legend))
             {
                 ImGui.TextWrapped("On the map: " + Path.GetFileName(_shown ?? string.Empty) + ". " + _legend);
@@ -415,6 +433,16 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 }
                 ImGui.SameLine();
                 ImGui.TextDisabled($"{e.Written:MM-dd HH:mm}");
+                if (e.Earlier)
+                {
+                    ImGui.SameLine();
+                    ImGui.TextDisabled("(earlier version)");
+                    if (ImGui.IsItemHovered())
+                    {
+                        ImGui.SetTooltip("No .prj beside it: written before the k-PERIL fix, when boundaries came out rotated by "
+                            + "90 degrees. Run the simulation again for one to use.");
+                    }
+                }
                 if (e.IsRaster)
                 {
                     ImGui.SameLine();

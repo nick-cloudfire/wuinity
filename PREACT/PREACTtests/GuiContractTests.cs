@@ -13,6 +13,57 @@ namespace PREACT.Tests
             runner.Add("painting: the grid the painter records is the one the case build and the resampler accept, and only it", PaintingRecordAgrees);
             runner.Add("painting: a read-only .gfi loads, with its grid record; one without the record still loads", ReadOnlyPainting);
             runner.Add("results: a boundary or campaign raster is a result, the .prj/.aux.xml/.ovr beside it is not", ResultNames);
+            runner.Add("campaign: one made before per-realization evacuation seeds is told apart, one made now is not", EarlierCampaign);
+        }
+
+        private static void EarlierCampaign()
+        {
+            string root = Directory.CreateTempSubdirectory("preact-campaigns-").FullName;
+            try
+            {
+                string output = Path.Combine(root, CampaignLayout.OutputFolder);
+                string now = Path.Combine(output, CampaignLayout.CampaignFolderName("mati", "0123abcd"));
+                string before = Path.Combine(output, CampaignLayout.CampaignFolderName("mati", "8a356e1e"));
+                Directory.CreateDirectory(now);
+                Directory.CreateDirectory(before);
+
+                //The manifest as the campaign CLI writes it, with the setting and (an older campaign's) without it.
+                var campaign = new PREACTcli.Campaigns.Campaign { Folder = now, SettingsHash = new string('0', 64) };
+                campaign.Settings["seed"] = "12345";
+                campaign.Settings[CampaignLayout.EvacuationSeedSetting] = "seed + 2000000 + index";
+                PREACTcli.Campaigns.CampaignManifest.Write(campaign);
+                campaign.Settings.Remove(CampaignLayout.EvacuationSeedSetting);
+                campaign.Folder = before;
+                PREACTcli.Campaigns.CampaignManifest.Write(campaign);
+
+                Assert.True(!CampaignLayout.PredatesEvacuationSeeds(now), "a campaign made now is not an earlier one");
+                Assert.True(CampaignLayout.PredatesEvacuationSeeds(before), "one whose manifest has no evacuation seed rule is");
+                Assert.True(CampaignLayout.DescribeEarlierCampaign(before).StartsWith("campaign_mati_8a356e1e was made by an earlier version"),
+                    "and it is named: " + CampaignLayout.DescribeEarlierCampaign(before));
+
+                //A campaign from before campaigns had folders: its results in _output, and no manifest at all.
+                Assert.True(!CampaignLayout.PredatesEvacuationSeeds(output), "an _output with no campaign results is not a campaign");
+                File.WriteAllText(Path.Combine(output, CampaignLayout.ConvergenceCsv), "run,realization_id,nSuccess,streak\n");
+                Assert.True(CampaignLayout.PredatesEvacuationSeeds(output), "_output holding an old campaign's results is an earlier one");
+                Assert.True(CampaignLayout.DescribeEarlierCampaign(output).StartsWith("The campaign whose results are in _output"),
+                    CampaignLayout.DescribeEarlierCampaign(output));
+
+                //A campaign folder that has just been made (no manifest, no results yet) is not called old.
+                string starting = Path.Combine(output, CampaignLayout.CampaignFolderName("mati", "fedcba98"));
+                Directory.CreateDirectory(starting);
+                Assert.True(!CampaignLayout.PredatesEvacuationSeeds(starting), "a campaign that is only starting is not an earlier one");
+                Assert.True(!CampaignLayout.PredatesEvacuationSeeds(Path.Combine(output, "missing")), "nor a folder that is not there");
+
+                //The real ones, data permitting: WP1's campaign (before the rule) and FIX-A's (after it).
+                string wp1 = "/home/claude/runs/wp1/mati/_output/campaign_mati_8a356e1e";
+                string fixA = "/home/claude/runs/fix-a/mati/_output/campaign_mati_f05199c1";
+                if (Directory.Exists(wp1)) Assert.True(CampaignLayout.PredatesEvacuationSeeds(wp1), "WP1's Mati campaign is an earlier one");
+                if (Directory.Exists(fixA)) Assert.True(!CampaignLayout.PredatesEvacuationSeeds(fixA), "FIX-A's Mati campaign is not");
+            }
+            finally
+            {
+                try { Directory.Delete(root, true); } catch { }
+            }
         }
 
         private static void ResultNames()
