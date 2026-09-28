@@ -20,6 +20,7 @@ namespace PREACT.Tests
     internal static class Program
     {
         internal static readonly TestLog Log = new TestLog();
+        internal static Engine Engine;
 
         private static int Main(string[] args)
         {
@@ -43,7 +44,7 @@ namespace PREACT.Tests
             }
 
             //The engine registers GDAL and the native resolver; its messages are collected per test.
-            Engine engine = new Engine(Log, true);
+            Engine = new Engine(Log, true);
 
             var runner = new Runner(filter);
             FormatTests.Register(runner);
@@ -110,7 +111,8 @@ namespace PREACT.Tests
 
         public void UpdateInput(PREACTInput input) { }
         public void SimulationStarted() { }
-        public void SimulationsFinished() { }
+        public int FinishedCount;
+        public void SimulationsFinished() { ++FinishedCount; }
         public void StopSimulations() { }
         public void PauseSimulations() { }
         public void UpdateDestinations(List<Evacuation.EvacuationDestination> destinations) { }
