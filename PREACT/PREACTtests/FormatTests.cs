@@ -453,6 +453,13 @@ namespace PREACT.Tests
             Assert.Near(3.0, data[2, 1], 1e-9, "north-east cell (the first row)");
             Utility.AscRaster.Header h2 = Utility.AscRaster.ReadHeader(a, out bool ok2);
             Assert.True(ok2 && h2.Nrows == 2 && h2.CellSizeY == 10.0, "ReadHeader agrees");
+
+            //A first data row that starts with NaN is data, not a header line.
+            string b = Path.Combine(s.Folder, "b.asc");
+            File.WriteAllLines(b, new[] { "ncols 2", "nrows 2", "xllcorner 0", "yllcorner 0", "cellsize 1", "nan 2", "3 4" });
+            float[,] withNan = Utility.AscRaster.Read(b, out Utility.AscRaster.Header hb, out bool okb);
+            Assert.True(okb && hb.Nrows == 2, "a NaN-led first row does not end the read");
+            Assert.True(float.IsNaN(withNan[0, 1]) && withNan[1, 1] == 2f && withNan[0, 0] == 3f, "and is read as the north row");
         }
 
         private static void CdfValidation()
