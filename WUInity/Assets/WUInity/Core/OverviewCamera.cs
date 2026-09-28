@@ -259,7 +259,10 @@ namespace WUInity
                         }
                     }
                 }
-                else if (Input.GetMouseButtonDown(0) && GUIUtility.hotControl == 0)
+                //ImGui's own answer to "is the pointer on the GUI". GUIUtility.hotControl is legacy IMGUI, which
+                //this application does not draw with, so it was always 0: pressing "Cont. simulation" in a
+                //paused run also started a selection box, and the next click redirected vehicles.
+                else if (Input.GetMouseButtonDown(0) && !ImGui.GetIO().WantCaptureMouse)
                 {
                     if (haveBoundingBox)
                     {

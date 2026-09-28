@@ -63,7 +63,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             if (changed)
             {
-                // Clamp values to valid ranges
+                // Clamp values to valid ranges. The year as well: DateTime.DaysInMonth throws outside
+                // 1-9999, and stepping the year field below 1 took the whole window down with it.
+                year = Math.Clamp(year, 1, 9999);
                 month = Math.Clamp(month, 1, 12);
                 day = Math.Clamp(day, 1, DateTime.DaysInMonth(year, month));
                 hour = Math.Clamp(hour, 0, 23);

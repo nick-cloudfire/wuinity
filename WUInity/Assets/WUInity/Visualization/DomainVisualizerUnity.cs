@@ -45,9 +45,18 @@ namespace WUInity.Visualization
             return mR;
         }
 
+        /// <summary>
+        /// Whether a plane covering one rectangle has to be rebuilt to cover another: when either its size
+        /// or its corner differs.
+        /// </summary>
+        /// <remarks>
+        /// This was an AND, so a plane was only rebuilt when both had changed. A painted texture on a grid of
+        /// the same size at a new corner - or the same corner and a new size, which is what switching from the
+        /// landscape's grid to the fire case's does - was stretched onto the old rectangle.
+        /// </remarks>
         public static bool NeedNewPlane(Vector2d oldSize, Vector2d newSize, Vector2d oldLatLon, Vector2d newLatLon)
         {
-            return Vector2d.SqrMagnitude(oldSize - newSize) > double.Epsilon && Vector2d.SqrMagnitude(oldLatLon - newLatLon) > double.Epsilon;
+            return Vector2d.SqrMagnitude(oldSize - newSize) > double.Epsilon || Vector2d.SqrMagnitude(oldLatLon - newLatLon) > double.Epsilon;
         }
 
         public static bool NeedNewTexture(Vector2int newDim, Texture2D oldTexture)

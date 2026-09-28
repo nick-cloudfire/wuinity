@@ -42,7 +42,7 @@ namespace WUInity.Visualization
 
         public bool ToggleFire(PREACTInput input)
         {
-            if(input.WildfireModule.Enabled)
+            if(input.WildfireModule.Enabled && fireMeshRenderer != null)
             {
                 fireMeshRenderer.gameObject.SetActive(!fireMeshRenderer.gameObject.activeSelf);
                 return fireMeshRenderer.gameObject.activeSelf;
@@ -55,7 +55,7 @@ namespace WUInity.Visualization
 
         public bool ToggleSoot(PREACTInput input)
         {
-            if(input.SmokeModule.Enabled)
+            if(input.SmokeModule.Enabled && sootMeshRenderer != null)
             {
                 sootMeshRenderer.gameObject.SetActive(!sootMeshRenderer.gameObject.activeSelf);
                 return sootMeshRenderer.gameObject.activeSelf;
@@ -69,6 +69,12 @@ namespace WUInity.Visualization
         public void CreateBuffers(Simulation simulation)
         {
             Release(simulation, true);
+
+            //The previous run's planes. Each run used to add a new FireSpread and SootSpread object and mesh
+            //without removing the last, so every earlier run's fire stayed in the scene, still active, under
+            //the new one - and the toggles only ever reached the newest.
+            DestroyPlane(ref fireMeshRenderer);
+            DestroyPlane(ref sootMeshRenderer);
 
             if (simulation.Input.WildfireModule.Enabled)
             {
@@ -206,6 +212,22 @@ namespace WUInity.Visualization
                     Engine.Message(null, Engine.LogType.Warning, "Unsupported smoke module, fire/smoke renderer failed to initialize.");
                 }
             }
+        }
+
+        private static void DestroyPlane(ref MeshRenderer plane)
+        {
+            if (plane == null)
+            {
+                return;
+            }
+
+            MeshFilter filter = plane.GetComponent<MeshFilter>();
+            if (filter != null && filter.sharedMesh != null)
+            {
+                Destroy(filter.sharedMesh);
+            }
+            Destroy(plane.gameObject);
+            plane = null;
         }
 
         MeshRenderer CreateDataPlane(Material material, string name, bool setActive, Simulation simulation)
