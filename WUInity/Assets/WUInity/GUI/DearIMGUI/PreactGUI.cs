@@ -157,6 +157,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
             ImGui.Begin("MainDockspaceHost", mainDockspace);
 
             uint dockspaceId = ImGui.GetID("MainDockspace");
+            //The first time (and on View > Reset window layout): the workflow panel left, the console below.
+            DockLayout.ApplyIfNeeded(dockspaceId, viewport.WorkSize);
             //PassthruCentralNode is what makes the map usable. This host window covers the whole
             //viewport, and without the flag the dockspace's empty central node is a solid, hoverable
             //node across all of it - so ImGui reported WantCaptureMouse everywhere, at all times, and

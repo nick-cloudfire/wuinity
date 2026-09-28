@@ -189,7 +189,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
         public static void RequestNew()
         {
             if (!CheckNotBusy("create a scenario")) return;
-            ConfirmPrompt.AskToSave("creating a new scenario", () => NewScenarioWindow.Open(true));
+            ConfirmPrompt.AskToSave("creating a new scenario", () => NewScenarioDialog.Open());
         }
 
         public static void RequestClose()
