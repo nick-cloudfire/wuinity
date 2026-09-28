@@ -66,6 +66,30 @@ namespace PREACTcli
             return result.ToArray();
         }
 
+        /// <summary>The value of <paramref name="key"/> in the first <paramref name="section"/>, trimmed, or null when it is not set there.</summary>
+        public static string Get(IReadOnlyList<string> lines, string section, string key)
+        {
+            bool inSection = false;
+            foreach (string raw in lines)
+            {
+                string line = raw.Trim();
+                if (IsHeader(line))
+                {
+                    if (inSection) return null;
+                    inSection = string.Equals(line.Substring(1, line.Length - 2).Trim(), section, StringComparison.OrdinalIgnoreCase);
+                    continue;
+                }
+                if (!inSection || line.StartsWith("#")) continue;
+
+                int eq = line.IndexOf('=');
+                if (eq > 0 && string.Equals(line.Substring(0, eq).Trim(), key, StringComparison.OrdinalIgnoreCase))
+                {
+                    return line.Substring(eq + 1).Trim();
+                }
+            }
+            return null;
+        }
+
         private static bool IsHeader(string trimmed)
         {
             return trimmed.Length >= 2 && trimmed[0] == '[' && trimmed[trimmed.Length - 1] == ']';

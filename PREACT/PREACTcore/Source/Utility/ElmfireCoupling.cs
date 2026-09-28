@@ -65,6 +65,12 @@ namespace PREACT.Utility
             /// <summary>The case's painted WUI area on the fire grid, relative to the root; empty when it has none.</summary>
             public string WuiAreaFile = string.Empty;
 
+            /// <summary>
+            /// The terrain the fire burned on - the run namelist's DEM, slope and aspect rasters, on the fire grid - relative
+            /// to the root; empty when one of them is not there.
+            /// </summary>
+            public string ElevationFile = string.Empty, SlopeFile = string.Empty, AspectFile = string.Empty;
+
             /// <summary>The namelist ELMFIRE actually ran, <c>outputs/run.data</c>.</summary>
             public string RunNamelistFile = string.Empty;
 
@@ -141,42 +147,93 @@ namespace PREACT.Utility
                             + "would have left elmfire.data behind the rasters it describes.");
             }
 
-            string inputs = built.InputsDirectory;
-            if (input.Landscape != null)
+            foreach (ScenarioKey key in CaseKeysForScenario(input.RootFolder, caseDir, input.Simulation.Name, built))
             {
-                input.Landscape.ElevationFile = Relative(input.RootFolder, ElmfireStems.Tif(inputs, ElmfireStems.Dem));
-                input.Landscape.SlopeFile = Relative(input.RootFolder, ElmfireStems.Tif(inputs, ElmfireStems.Slope));
-                input.Landscape.AspectFile = Relative(input.RootFolder, ElmfireStems.Tif(inputs, ElmfireStems.Aspect));
-                log?.Invoke($"  landscape: the scenario's elevation, slope and aspect are now the case's own "
-                            + $"({input.Landscape.ElevationFile}), the grid everything is painted and computed on.");
-            }
-
-            if (!string.IsNullOrEmpty(built.WuiAreaFile) && input.TriggerBufferModule?.kPERILInput != null)
-            {
-                input.TriggerBufferModule.kPERILInput.WuiAreaFile = Relative(input.RootFolder, built.WuiAreaFile);
-                log?.Invoke("  trigger boundary: [kPERIL] WuiAreaFile is now " + input.TriggerBufferModule.kPERILInput.WuiAreaFile + ".");
-            }
-
-            //Written onto the scenario, like every other data step writes the path it produced. Building from
-            //the data steps happens long before any run, so without recording the day here the connection between
-            //the fire's weather and the reported weather would have to be rediscovered - or lost.
-            DateTime anchor = built.Weather != null ? built.Weather.BandAnchor : default;
-            if (anchor != default && input.Weather != null)
-            {
-                input.Weather.WeatherAnchorDateTime = anchor;
-
-                string archive = ElmfireCaseBuilder.ArchivePath(caseDir, input.Simulation.Name);
-                if (File.Exists(archive))
+                switch (key.Section + "|" + key.Key)
                 {
-                    input.Weather.WeatherFile = Relative(input.RootFolder, archive);
+                    case "Landscape|ElevationFile":
+                        if (input.Landscape == null) break;
+                        input.Landscape.ElevationFile = key.Value;
+                        log?.Invoke($"  landscape: the scenario's elevation, slope and aspect are now the case's own "
+                                    + $"({key.Value}), the grid everything is painted and computed on.");
+                        break;
+                    case "Landscape|SlopeFile":
+                        if (input.Landscape != null) input.Landscape.SlopeFile = key.Value;
+                        break;
+                    case "Landscape|AspectFile":
+                        if (input.Landscape != null) input.Landscape.AspectFile = key.Value;
+                        break;
+                    case "kPERIL|WuiAreaFile":
+                        if (input.TriggerBufferModule?.kPERILInput == null) break;
+                        input.TriggerBufferModule.kPERILInput.WuiAreaFile = key.Value;
+                        log?.Invoke("  trigger boundary: [kPERIL] WuiAreaFile is now " + key.Value + ".");
+                        break;
+                    case "Weather|WeatherAnchorDateTime":
+                        if (input.Weather == null) break;
+                        input.Weather.WeatherAnchorDateTime = built.Weather.BandAnchor;
+                        log?.Invoke($"  weather: the scenario now reads its weather from {built.Weather.BandAnchor:yyyy-MM-dd HH:mm}, the "
+                            + "day the fire was computed against.");
+                        break;
+                    case "Weather|WeatherFile":
+                        if (input.Weather != null) input.Weather.WeatherFile = key.Value;
+                        break;
                 }
-
-                log?.Invoke($"  weather: the scenario now reads its weather from {anchor:yyyy-MM-dd HH:mm}, the "
-                    + "day the fire was computed against.");
             }
 
             log?.Invoke("  Save the scenario to keep these.");
             return true;
+        }
+
+        /// <summary>One <c>[Section] Key=Value</c> of a scenario, as a case build records it.</summary>
+        public sealed class ScenarioKey
+        {
+            public string Section, Key, Value;
+
+            public override string ToString() => "[" + Section + "] " + Key + "=" + Value;
+        }
+
+        /// <summary>
+        /// What a case build records in the scenario it was built for (contract C1): <c>[Landscape]
+        /// ElevationFile/SlopeFile/AspectFile</c> = the case's <c>dem/slp/asp.tif</c>, <c>[kPERIL] WuiAreaFile</c> = its
+        /// <c>wui_area.tif</c> when it wrote one, and <c>[Weather] WeatherAnchorDateTime</c> (and <c>WeatherFile</c>, the
+        /// case's ERA5 archive) when its weather was drawn from a historical day. Paths relative to
+        /// <paramref name="rootFolder"/>, with forward slashes, in section order.
+        /// </summary>
+        /// <remarks>
+        /// One list for the GUI's Build fire case, which sets them on the scenario it holds (<see cref="BuildCaseOnly"/>),
+        /// and <c>PREACTcli build-case</c>, which prints them and, with <c>--update-wui</c>, writes them into the .wui.
+        /// </remarks>
+        public static List<ScenarioKey> CaseKeysForScenario(string rootFolder, string caseDir, string scenarioName,
+            ElmfireCaseBuilder.Result built)
+        {
+            var keys = new List<ScenarioKey>();
+            void Add(string section, string key, string value) => keys.Add(new ScenarioKey { Section = section, Key = key, Value = value });
+
+            string inputs = built.InputsDirectory;
+            Add("Landscape", "ElevationFile", Relative(rootFolder, ElmfireStems.Tif(inputs, ElmfireStems.Dem)));
+            Add("Landscape", "SlopeFile", Relative(rootFolder, ElmfireStems.Tif(inputs, ElmfireStems.Slope)));
+            Add("Landscape", "AspectFile", Relative(rootFolder, ElmfireStems.Tif(inputs, ElmfireStems.Aspect)));
+
+            if (!string.IsNullOrEmpty(built.WuiAreaFile))
+            {
+                Add("kPERIL", "WuiAreaFile", Relative(rootFolder, built.WuiAreaFile));
+            }
+
+            //Recorded like every other data step records the path it produced. Building happens long before any
+            //run, so without the day here the connection between the fire's weather and the reported weather would
+            //have to be rediscovered - or lost.
+            DateTime anchor = built.Weather != null ? built.Weather.BandAnchor : default;
+            if (anchor != default)
+            {
+                Add("Weather", "WeatherAnchorDateTime", anchor.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture));
+                string archive = ElmfireCaseBuilder.ArchivePath(caseDir, scenarioName);
+                if (File.Exists(archive))
+                {
+                    Add("Weather", "WeatherFile", Relative(rootFolder, archive));
+                }
+            }
+
+            return keys;
         }
 
         /// <summary>
@@ -396,6 +453,23 @@ namespace PREACT.Utility
             if (File.Exists(wuiArea))
             {
                 result.WuiAreaFile = Relative(input.RootFolder, wuiArea);
+            }
+
+            //The terrain the fire ran on, for k-PERIL's slope term: the case's own dem/slp/asp, on the fire grid by
+            //construction, where the scenario's [Landscape] may still be the DEM it was drawn on (mati.wui's 616x590
+            //covers 64 % of the padded fire grid) - which a campaign realization never used (e2e N7).
+            string dem = null, slope = null, aspect = null;
+            foreach (ElmfireStems.NamelistRaster r in ElmfireStems.ReferencedRasters(runLines, caseDir))
+            {
+                if (r.Key == "DEM_FILENAME") dem = r.Path;
+                else if (r.Key == "SLP_FILENAME") slope = r.Path;
+                else if (r.Key == "ASP_FILENAME") aspect = r.Path;
+            }
+            if (File.Exists(dem) && File.Exists(slope) && File.Exists(aspect))
+            {
+                result.ElevationFile = Relative(input.RootFolder, dem);
+                result.SlopeFile = Relative(input.RootFolder, slope);
+                result.AspectFile = Relative(input.RootFolder, aspect);
             }
 
             result.Ok = true;

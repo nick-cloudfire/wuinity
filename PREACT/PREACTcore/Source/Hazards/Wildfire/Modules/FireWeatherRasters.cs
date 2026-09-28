@@ -43,6 +43,13 @@ namespace PREACT.Wildfire
         public string WuiAreaFile;
 
         /// <summary>
+        /// The terrain the fire burned on - elevation, slope and aspect rasters on the fire grid (an ELMFIRE case's
+        /// dem/slp/asp) - for k-PERIL's slope term; null when the fire module does not know it, and the trigger
+        /// boundary then samples the scenario's <c>[Landscape]</c>.
+        /// </summary>
+        public string ElevationFile, SlopeFile, AspectFile;
+
+        /// <summary>
         /// Whether the fire module computed the fire against exactly these rasters (ELMFIRE run by this
         /// simulation). Then they win over anything the scenario's <c>[kPERIL]</c> section names, because two wind
         /// fields for one fire change the boundary without changing anything visible.

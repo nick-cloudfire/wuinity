@@ -279,6 +279,14 @@ namespace PREACT.Utility
             /// <summary>The exported painted WUI area, for k-PERIL's WuiAreaFile; null if none was painted.</summary>
             public string WuiAreaFile;
 
+            /// <summary>
+            /// Where the scenario's painting was placed from when that was not the case grid - "the landscape raster
+            /// mati_dem.tif (painted before the case grid existed)" - or null (no painting, or painted on the case grid).
+            /// A scenario whose landscape is pointed at the case loses the grid such a painting was placed via, so the
+            /// next build cannot place it until it is moved onto the case grid.
+            /// </summary>
+            public string PaintingOffCaseGrid;
+
             /// <summary>What the history-based weather chain actually managed to use, and where it fell back.</summary>
             public WeatherRasterPipeline.Result Weather;
 
@@ -1603,6 +1611,7 @@ namespace PREACT.Utility
                     + "ignition and WUI areas on it, then build again.");
             }
 
+            if (!ReferenceEquals(painted, grid)) result.PaintingOffCaseGrid = paintedOn;
             log($"  painted: {masks.Ncols}x{masks.Nrows} painting placed via {paintedOn}"
                 + (masks.Grid == null
                     ? " - matched by its size alone, since the file does not record where its grid lies."

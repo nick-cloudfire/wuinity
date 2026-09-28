@@ -220,6 +220,9 @@ namespace PREACT
                 SecondsPerBand = fire.SecondsPerBand,
                 StartBand = fire.StartBand,
                 WuiAreaFile = Absolute(input.RootFolder, fire.WuiAreaFile),
+                ElevationFile = Absolute(input.RootFolder, fire.ElevationFile),
+                SlopeFile = Absolute(input.RootFolder, fire.SlopeFile),
+                AspectFile = Absolute(input.RootFolder, fire.AspectFile),
                 Authoritative = true,
                 Origin = "the ELMFIRE run (" + fire.RunNamelistFile + ")",
             };

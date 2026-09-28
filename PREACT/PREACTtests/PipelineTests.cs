@@ -26,6 +26,142 @@ namespace PREACT.Tests
             runner.Add("builder: a grid set aside by a build that then failed is carried by the next build", FailedRecutIsResumed);
             runner.Add("coupling: a template's weather band keys are fitted to the case's ws.tif; a fire longer than it is refused naming both", TemplateBandsFitted);
             runner.Add("builder: the building spread model gets ELMFIRE's building fuel table, or the build and the run are refused", BuildingFuelTable);
+            runner.Add("coupling: a single ELMFIRE run gives k-PERIL the case's own dem/slp/asp, which cover the whole fire grid", FireTerrainForKperil);
+            runner.Add("cli: build-case prints the keys to put in the .wui; --update-wui writes exactly those and nothing else", BuildCaseUpdatesWui);
+        }
+
+        /// <summary>
+        /// e2e N7's other half: the CLI printed the C1 keys as "[Landscape] ElevationFile=..." lines and left the .wui alone,
+        /// so a scenario built from the command line kept its old landscape. It now prints them as they go into the file,
+        /// and <c>--update-wui</c> writes them - only them - as the GUI's Build fire case does.
+        /// </summary>
+        private static void BuildCaseUpdatesWui()
+        {
+            using (var c = new SyntheticCase())
+            {
+                string wui = c.WriteScenario("case", 150.0, "", "# the landscape the scenario was drawn on",
+                    "[Landscape]", "ElevationFile=source_dem.tif", "AKeyNobodyReads=kept", "", "[kPERIL]", "WuiAreaSource=Raster");
+                File.WriteAllText(wui, string.Join("\r\n", File.ReadAllLines(wui)) + "\r\n"); //written on Windows
+                string before = File.ReadAllText(wui);
+                string[] args = { "build-case", "--wui", wui, "--dem", c.DemPath, "--no-climatology", "--windninja", Path.Combine(c.Folder, "no-windninja-here") };
+
+                (int exit, string output) = RunCli(c.Folder, args);
+                Assert.Equal(0, exit, "build-case (" + Tail(output) + ")");
+                string printed = output.Replace("\r", "");
+                Assert.True(printed.Contains("[Landscape]\nElevationFile=case/inputs/dem.tif\nSlopeFile=case/inputs/slp.tif\nAspectFile=case/inputs/asp.tif\n"),
+                    "the keys, as they go into the file: " + Tail(output, 14));
+                Assert.True(printed.Contains("--update-wui"), "and the flag that writes them");
+                Assert.Equal(before, File.ReadAllText(wui), "without the flag the .wui is not touched");
+
+                (exit, output) = RunCli(c.Folder, args.Concat(new[] { "--update-wui" }).ToArray());
+                Assert.Equal(0, exit, "build-case --update-wui (" + Tail(output) + ")");
+                string[] after = File.ReadAllLines(wui);
+                Assert.True(after.Contains("ElevationFile=case/inputs/dem.tif") && after.Contains("SlopeFile=case/inputs/slp.tif")
+                            && after.Contains("AspectFile=case/inputs/asp.tif") && !after.Contains("ElevationFile=source_dem.tif"),
+                    "the landscape is the case's: " + string.Join(" | ", after.Where(l => l.EndsWith(".tif", StringComparison.Ordinal))));
+                Assert.True(after.Contains("# the landscape the scenario was drawn on") && after.Contains("AKeyNobodyReads=kept")
+                            && after.Contains("WuiAreaSource=Raster"), "every other line stays as it was");
+                string[] was = before.Replace("\r", "").Split('\n').Where(l => l.Length > 0).ToArray();
+                Assert.Equal(was.Length + 2, after.Count(l => l.Length > 0), "two keys added (slope, aspect), one replaced");
+
+                Assert.True(!File.ReadAllText(wui).Replace("\r\n", "").Contains('\n'), "with the file's own CRLF line endings");
+
+                Input.PREACTInput input = Input.PREACTInput.LoadFromDisk(wui, out bool _);
+                Assert.Equal("case/inputs/dem.tif", input.Landscape.ElevationFile, "and the scenario reads it");
+
+                (exit, output) = RunCli(c.Folder, args);
+                Assert.True(exit == 0 && output.Contains("already points at this case"), "built again, nothing is left to record: " + Tail(output));
+            }
+        }
+
+        /// <summary>
+        /// A stand-in ELMFIRE that "burns" by copying <paramref name="fixture"/>'s rasters into outputs/ and printing the
+        /// lines ELMFIRE ends a good run with.
+        /// </summary>
+        [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
+        private static string SucceedingElmfire(string folder, string fixture)
+        {
+            string path = Path.Combine(folder, "elmfire_that_copies.sh");
+            File.WriteAllText(path, "#!/bin/sh\ncp '" + fixture + "'/*.tif outputs/\n"
+                                    + "echo '[1] Meteorology band      1: Case #       1 complete.  Fire area:   5.0 acres.'\n"
+                                    + "echo ' End of simulation reached successfully. Shutting down.'\n");
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            return path;
+        }
+
+        /// <summary>
+        /// e2e N7: Nick's mati.wui built through the CLI kept [Landscape] at the 616x590 mati_dem.tif, so a single run
+        /// sampled k-PERIL's topography over 63.9 % of the fire grid and treated the rest as flat, while every campaign
+        /// realization used the case's dem/slp/asp. A single ELMFIRE run now hands k-PERIL the terrain its fire burned on.
+        /// </summary>
+        private static void FireTerrainForKperil()
+        {
+            if (OperatingSystem.IsWindows()) return;
+
+            using (var c = new SyntheticCase())
+            {
+                string caseDir = Path.Combine(c.Folder, "case");
+                string inputs = Path.Combine(caseDir, "inputs");
+                ElmfireCaseBuilder.Build(c.Options(caseDir, 150.0, new List<string>())).GetAwaiter().GetResult();
+                MasterGrid grid = MasterGrid.FromRasterFile(ElmfireStems.Tif(inputs, ElmfireStems.Dem));
+
+                string fixture = Path.Combine(c.Folder, "fire");
+                Directory.CreateDirectory(fixture);
+                foreach (string stem in new[] { ElmfireStems.TimeOfArrival, ElmfireStems.SpreadRate, ElmfireStems.SpreadDirection, ElmfireStems.MidflameWindSpeed })
+                {
+                    File.Copy(ElmfireStems.Tif(inputs, ElmfireStems.Dem), Path.Combine(fixture, stem + "_0000001_0003600.tif"));
+                }
+                string fake = SucceedingElmfire(c.Folder, fixture);
+
+                //The scenario's own landscape: a small DEM over one corner of the domain, as mati_dem.tif covers part of Mati's.
+                string small = Path.Combine(c.Folder, "small_dem.tif");
+                var corner = new MasterGrid
+                {
+                    Header = new AscRaster.Header { Ncols = 20, Nrows = 20, CellSize = 30, CellSizeY = 30, XllCorner = grid.XMin, YllCorner = grid.YMin, NoDataValue = -9999 },
+                    Epsg = grid.Epsg,
+                };
+                var heights = new float[20, 20];
+                for (int x = 0; x < 20; ++x) for (int y = 0; y < 20; ++y) heights[x, y] = 150f;
+                GeoTiffRasterWriter.WriteBand(corner, heights, small);
+
+                string wui = c.WriteScenario("case", 150.0, "", "[Landscape]", "ElevationFile=small_dem.tif");
+                File.WriteAllLines(wui, File.ReadAllLines(wui)
+                    .Select(l => l == "BuildCase=true" ? "BuildCase=false\nReuseExistingOutput=false\nElmfireExe=" + fake : l)
+                    .SelectMany(l => l.Split('\n')));
+                Input.PREACTInput input = Input.PREACTInput.LoadFromDisk(wui, out bool _);
+
+                ElmfireCoupling.Result run = ElmfireCoupling.Prepare(input, input.WildfireModule.ElmfireInput, null);
+                Assert.True(run.Ok, "the stand-in ELMFIRE's fire is read: " + run.Message);
+                Assert.Equal("case/inputs/dem.tif", run.ElevationFile, "the fire's own DEM");
+                Assert.Equal("case/inputs/slp.tif", run.SlopeFile, "slope");
+                Assert.Equal("case/inputs/asp.tif", run.AspectFile, "aspect");
+
+                //Sampled onto the fire grid (the case grid, in simulation coordinates) the way k-PERIL's are.
+                Math.Vector2d origin = input.Simulation.Data.UTMOrigin;
+                var offset = new Math.Vector2d(grid.XMin - origin.x, grid.YMin - origin.y);
+                var size = new Math.Vector2d(grid.Header.Ncols * grid.Header.CellSize, grid.Header.Nrows * grid.Header.CellSize);
+                string Coverage(Wildfire.LandscapeData landscape)
+                {
+                    Program.Log.Take();
+                    Assert.True(Evacuation.EvacuationManager.TrySampleTopographyOntoGrid(landscape, offset, size, grid.Header.Ncols, grid.Header.Nrows,
+                        out float[,] _, out float[,] _, out float[,] _), "topography sampled");
+                    string line = Program.Log.Take().FirstOrDefault(m => m.Contains("% covered"));
+                    return line ?? "(no coverage line)";
+                }
+
+                var fire = new Wildfire.FireWeatherRasters
+                {
+                    ElevationFile = Path.Combine(c.Folder, run.ElevationFile),
+                    SlopeFile = Path.Combine(c.Folder, run.SlopeFile),
+                    AspectFile = Path.Combine(c.Folder, run.AspectFile),
+                };
+                Wildfire.LandscapeData terrain = Evacuation.EvacuationManager.LoadFireTerrain(fire, origin);
+                Assert.True(terrain != null, "the fire's terrain loads as a landscape");
+                string own = Coverage(terrain);
+                Assert.True(own.Contains("(100.0% covered)"), "the fire's own terrain covers the whole fire grid: " + own);
+                string scenario = Coverage(input.WildfireModule.Data.LandscapeData);
+                Assert.True(!scenario.Contains("(100.0% covered)"), "which the scenario's small landscape did not: " + scenario);
+            }
         }
 
         /// <summary>
