@@ -1,9 +1,24 @@
-# Root-level ignores. Each subproject (WUInity/, PREACT/, QGIS_plugin/) also
-# has its own .gitignore for language/tool-specific artifacts.
+# Root-level ignores. WUInity/ and PREACT/ also have their own .gitignore for Unity and .NET.
 
-# WUInity simulation output
+# Simulation output, wherever a scenario is run from
 _output/
 *_output/
+# Probabilistic campaigns: per-realization ELMFIRE folders and generated scenario variants
+_elmfire/
+__prob_*.wui
+# ELMFIRE products when a case is run in place (namelist OUTPUTS_DIRECTORY / SCRATCH, log).
+# Superproject rules do not reach into submodules, so this cannot hide anything in the elmfire one.
+**/elmfire/outputs/
+**/elmfire/scratch/
+elmfire.log
+
+# Per-user settings and secrets - never commit. The Mapbox token and the OpenTopography API key
+# live in WUInity/Assets/Resources/*/...Configuration.txt (copy the ...Template.txt beside them).
+[Mm]apbox[Cc]onfiguration.txt
+[Oo]pen[Tt]opography[Cc]onfiguration.txt
+.claude/settings.local.json
+elmfire_keys.json
+*.env
 
 # OS cruft
 .DS_Store
@@ -13,6 +28,8 @@ desktop.ini
 # Editor / IDE
 .vscode/
 .idea/
+.vs/
+*.user
 *.swp
 *~
 
@@ -21,7 +38,7 @@ desktop.ini
 *.slnx.bak
 *.bak
 
-# Python (QGIS plugin dev)
+# Python caches (helper scripts)
 __pycache__/
 *.pyc
 *.pyo

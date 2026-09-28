@@ -86,6 +86,10 @@ crashlytics-build.properties
 
 # Unity 6 writes a .slnx beside the (already ignored) generated .csproj files
 *.slnx
+# The .meta Unity writes beside each ignored secret configuration file. Nothing references their
+# GUIDs, and tracking them only made Unity delete them as noise wherever the secret is absent.
+[Mm]apbox[Cc]onfiguration.txt.meta
+[Oo]pen[Tt]opography[Cc]onfiguration.txt.meta
 
 # PREACTcore's Release build lands here (BaseOutputPath in PREACTcore.csproj) and build.ps1 /
 # build.sh regenerate it, so the binaries are not committed. Their .meta files are, so Unity keeps
