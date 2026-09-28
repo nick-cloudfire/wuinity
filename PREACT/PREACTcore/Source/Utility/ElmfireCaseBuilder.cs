@@ -85,9 +85,12 @@ namespace PREACT.Utility
             /// <summary>Stems in <see cref="UserRasters"/> that are categorical and must be
             /// resampled nearest-neighbour rather than bilinear (fuel model codes, mostly).
             /// The ignition mask is in here because interpolating it would invent fractional
-            /// "partly ignitable" cells along the edge of an otherwise binary mask.</summary>
-            public HashSet<string> CategoricalStems = new HashSet<string>
-                { "fbfm13", "fbfm40", "bldg_fuel_model", "ignition_mask" };
+            /// "partly ignitable" cells along the edge of an otherwise binary mask. The same list decides
+            /// how layers carried over from a previous grid are re-cut, so the building fuel model and the
+            /// WUI area are here too: re-cut bilinearly, either grows a fringe of fractional values that are
+            /// not a class at all.</summary>
+            public HashSet<string> CategoricalStems = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                { "fbfm13", "fbfm40", "bldg_fuel_model", "bfm_h", "ignition_mask", "wui_area", "barriers", "pyromes" };
 
             /// <summary>
             /// Baseline weather (ws/wd/m1/m10/m100) comes from the history-based chain in

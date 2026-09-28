@@ -15,14 +15,15 @@ namespace PREACT.Utility
     /// Reuse used to be "there is a time-of-arrival raster in outputs/", which reused a stale fire after the
     /// ignition, the stop time, the fuel or the namelist had changed, with a log line as the only signal. The
     /// fingerprint covers the namelist text, the executable, and every file in the directories the namelist
-    /// reads from - by name, size and modification time rather than content, which is what a build system
-    /// would do: touching a file invalidates, copying a case to another disk usually does too, and neither
-    /// failure mode is dangerous (it only costs a rerun).
+    /// reads from - by content. Not by modification time: the case builder writes the painted masks and the
+    /// namelist again on every build, so a scenario with BuildCase on would never have reused anything, and a
+    /// campaign's identity would change whenever its case was rebuilt unchanged. Hashing a case's inputs costs
+    /// well under a second next to the minutes an ELMFIRE run takes.
     /// </remarks>
     public static class ElmfireFingerprint
     {
         /// <summary>Bumped whenever what goes into the fingerprint changes, so old ones never match.</summary>
-        private const string Version = "elmfire-run-v1";
+        private const string Version = "elmfire-run-v2";
 
         /// <summary>Intermediates GDAL and ELMFIRE leave beside inputs, which change without the data changing.</summary>
         private static readonly string[] IgnoredExtensions = { ".aux.xml", ".bsq", ".hdr", ".bil", ".ovr", ".xml" };
@@ -41,7 +42,7 @@ namespace PREACT.Utility
                 sb.AppendLine(line.TrimEnd());
             }
 
-            sb.AppendLine("exe " + DescribeFile(elmfireExe));
+            sb.AppendLine("exe " + HashFile(elmfireExe));
 
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach ((string group, string key) in new[]
@@ -60,7 +61,7 @@ namespace PREACT.Utility
         }
 
         /// <summary>
-        /// Appends every relevant file of <paramref name="directory"/> (not recursive) as name, size and time.
+        /// Appends every relevant file of <paramref name="directory"/> (not recursive) as its name and content hash.
         /// </summary>
         /// <param name="excludeStems">Stems (file names without extension) to leave out, or null.</param>
         public static void AppendDirectory(StringBuilder sb, string label, string directory, ICollection<string> excludeStems)
@@ -80,7 +81,7 @@ namespace PREACT.Utility
                 string name = Path.GetFileName(path);
                 if (IsIgnored(name)) continue;
                 if (excludeStems != null && excludeStems.Contains(Path.GetFileNameWithoutExtension(name))) continue;
-                sb.AppendLine("  " + name + " " + DescribeFile(path));
+                sb.AppendLine("  " + name + " " + HashFile(path));
             }
         }
 

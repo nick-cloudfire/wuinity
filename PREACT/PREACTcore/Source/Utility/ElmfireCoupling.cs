@@ -700,7 +700,7 @@ namespace PREACT.Utility
             }
 
             string full = Path.GetFullPath(path);
-            string root = Path.GetFullPath(rootFolder);
+            string root = Path.GetFullPath(string.IsNullOrEmpty(rootFolder) ? "." : rootFolder);
             if (!root.EndsWith(Path.DirectorySeparatorChar.ToString()))
             {
                 root += Path.DirectorySeparatorChar;
