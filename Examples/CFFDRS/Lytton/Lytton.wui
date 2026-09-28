@@ -12,7 +12,7 @@ MapProvider=Mapbox
 ZoomLevel=13
 
 [Weather]
-WeatherFile=lytton_weather.csv
+WeatherFile=Lytton_weather.csv
 DesiredLatLon=50.228701345102586, -121.54306201686576
 
 [Population]
@@ -33,9 +33,7 @@ MaxCars=2
 MaxCarsProbability=1.0
 
 [Evacuation]
-EvacuationOrderStart=0.0
 UseTriggerBufferEvacuation=false
-TriggerBufferFile=fire/trigger_buffer.asc
 
 [Destination]
 Name=Highway12
@@ -59,9 +57,10 @@ Color=1.0,0.0,0.0
 
 [EvacuationGroup]
 Name=lytton
+EvacuationOrderDateTime=2021-06-29T12:00:00
 Default=true
 Demographics=one_car
-DestinationChoice=EvacGroupCDF 
+DestinationChoice=EvacGroupCDF
 ShapeFile=groups/lytton_all.shp
 ResponseCurves=made_up
 ResponseCurvesCDF=1.0
@@ -86,32 +85,17 @@ WalkingDistanceModifier=1.0
 
 [TrafficModule]
 Enabled=true
-Module=SUMO      
-VisibilityAffectsSpeed=false  
+Module=SUMO
+VisibilityAffectsSpeed=false
 
 [SUMO]
 ConfigurationFile=sumo/osm.sumocfg
-UTMoffset=-591146.13,-5556903.75
 SmokeAlpha=0.4967
 SmokeBeta=-0.02910
 
 [WildfireModule]
 Enabled=true
-Module=SimpleWildfireCA #AscImport
-GraphicalFireInputFile=fire/example.gfi
-
-[SimpleWildfireCA]
-LandscapeFile=wildfire/lytton_edited2.tif
-IgnitionPointsFile=lytton.ign
-UseRandomIgnitionMap=false
-RandomIgnitionPoints=0
-UseInitialIgnitionMap=false
-SpreadRateModel=CanadianFBP
-FBPLookupTableFile=wildfire/fbp_lookup_table.csv
-StartDC=482
-StartDMC=58
-StartFFMC=96
-StartHourlyFFMC=96
+Module=AscImport
 
 [AscImport]
 StartDateTime=2021-06-30T16:30:00
@@ -121,31 +105,14 @@ RateOfSpreadFile=wildfire/ROS.asc
 SpreadDirectionFile=wildfire/SD.asc
 FirelineIntensityFile=wildfire/FI.asc
 
+[Landscape]
+ElevationFile=wildfire/elevation.asc
+SlopeFile=wildfire/slope.asc
+AspectFile=wildfire/aspect.asc
+
 [TriggerBufferModule]
 Enabled=false
 Module=kPERIL
 
 [kPERIL]
-MidflameWindspeed=10.0
-CalculateROSFromBehave=true
-InitialFuelMoistureFile=fireCell/default.fmc
 OutputName=trigger_buffer.asc
-
-[SmokeModule]
-Enabled=false
-Module=AdvectDiffuse3D
-
-[GlobalSmoke]
-ExtinctionFile=globalSmoke/extCoeffRamp.exc
-
-[AdvectDiffuse3D]
-MixingLayerHeight=250.0
-
-[AdvectDiffuseMixingLayer]
-MixingLayerHeight=250.0
-
-[WUIShow]
-SendDataToWUIShow=false
-WuiShowServerIP=127.0.0.1
-WuiShowServerPort=9023
-WuiShowDeltaTime=1.0
