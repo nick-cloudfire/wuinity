@@ -13,9 +13,6 @@ namespace PREACT.Input
     [System.Serializable]
     public class EvacuationInput
     {
-        private EvacuationData _data;
-
-        public EvacuationData Data { get => _data; }
         public Dictionary<string, EvacuationDestinationInput> EvacuationDestinationInputs = new Dictionary<string, EvacuationDestinationInput>(5);
         public Dictionary<string, ResponseCurve> ResponseCurves = new Dictionary<string, ResponseCurve>(5);        
         public Dictionary<string, EvacuationGroupInput> EvacuationGroupInputs = new Dictionary<string, EvacuationGroupInput>(5);
@@ -30,7 +27,6 @@ namespace PREACT.Input
 
         public EvacuationInput()
         {
-            _data = new EvacuationData();
         }
 
         /// <summary>
@@ -95,8 +91,6 @@ namespace PREACT.Input
                     success = false;
                 }
             }
-
-            _data.LoadAll(rootFolder, out bool _);
         }
     }
 }

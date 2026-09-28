@@ -36,8 +36,6 @@ namespace PREACT.Pedestrian
         int totalPeopleReachedCar = 0;
         int totalPeopleResponded = 0;
 
-        MacroHouseholdVisualizer _visualizer;
-        public MacroHouseholdVisualizer Visualizer { get { return _visualizer; } }
 
 
         public MacroHouseholdSim(Simulation simulation) : base(simulation)

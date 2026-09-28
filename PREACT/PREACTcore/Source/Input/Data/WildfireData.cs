@@ -79,30 +79,10 @@ namespace PREACT.Input
             //Neither of these needs anything further from the landscape. An imported fire brings its own
             //arrival times, rates of spread and directions; ELMFIRE computes them from its own case, whose
             //rasters are on its own grid and are not WUInity's to assemble. Whatever was loaded above is a
-            //bonus for both - something to paint on, a surface for the map - rather than a requirement.
-            if (wildfireInput.Module == WildfireModuleInput.WildfireModules.AscImport
-                || wildfireInput.Module == WildfireModuleInput.WildfireModules.ELMFIRE)
-            {
-                success = true;
-                return;
-            }
-
-            if (_lcpData == null)
-            {
-                Engine.Message(null, Engine.LogType.InputError,
-                    "This wildfire module spreads fire itself, so it needs a landscape: either a LandscapeFile, or "
-                    + "at least an ElevationFile and a FuelModelFile in the Landscape section.");
-                return;
-            }
-
-            if (!_lcpData.HaveFuel)
-            {
-                Engine.Message(null, Engine.LogType.InputError,
-                    "The landscape has no fuel model band, so this wildfire module has nothing to spread fire through.");
-                return;
-            }
-
-            success = true;
+            //bonus for both - something to paint on, a surface for the map - rather than a requirement. With no
+            //module chosen there is no fire to load; the wildfire section reports that.
+            success = wildfireInput.Module == WildfireModuleInput.WildfireModules.AscImport
+                      || wildfireInput.Module == WildfireModuleInput.WildfireModules.ELMFIRE;
         }
 
         /// <summary>

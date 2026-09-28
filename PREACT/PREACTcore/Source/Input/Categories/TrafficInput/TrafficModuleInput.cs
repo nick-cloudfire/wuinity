@@ -14,17 +14,14 @@ namespace PREACT.Input
     {
         public enum TrafficModules { None, SUMO }
 
-        private TrafficData _data;
         private SUMOInput _sumoInput;
 
         public bool Enabled = false;
-        public TrafficData Data { get => _data; }
         public SUMOInput SumoInput { get { return _sumoInput; } }
         public TrafficModules Module = TrafficModules.SUMO;
 
         public TrafficModuleInput()
         {
-            _data = new TrafficData();
             _sumoInput = new SUMOInput();
         }
 

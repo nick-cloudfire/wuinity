@@ -18,38 +18,6 @@ namespace PREACT.Tools
     public static class PopulationTools
     {
 
-        public static async Task CreateBaseScenario(string path, string scenarioId, int minHouseholdSize, int maxHouseholdSize, Vector2d lowerLeftLatLon, Vector2d upperRightLatLon, int year)
-        {
-            string osmFilePath = Path.Combine(path, scenarioId + "_osm.xml");
-            await OSMDownloader.Download(lowerLeftLatLon, upperRightLatLon, osmFilePath);
-
-            if(osmFilePath != null)
-            {
-                string sumoNetFilePath = Path.Combine(path, scenarioId + "_net.net.xml");
-                Process.Start("netconvert", $"--osm {osmFilePath} -o {sumoNetFilePath}"); //this needs no callback
-            }
-            else
-            {
-                return;
-            }
-
-            string routerDbFilePath = Path.Combine(path, scenarioId + ".routerdb");
-            RoutingData.CreateAndSaveRouterDb(osmFilePath, routerDbFilePath, out bool success);
-            if (success)
-            {
-                Itinero.RouterDb routerDb = RoutingData.LoadRouterDb(routerDbFilePath, out success);
-                if (success)
-                {
-                    string worldPopFilePath = await WorldPopDownloader.DownloadRegionUTM(year, lowerLeftLatLon, upperRightLatLon, path, null);
-
-                    if(worldPopFilePath != null)
-                    {
-                        string populationFilePath = Path.Combine(path, scenarioId + "_population.csv");
-                        PopulationMap.CreatePopulation(worldPopFilePath, populationFilePath, routerDb, minHouseholdSize, maxHouseholdSize, out success);
-                    }                        
-                }
-            }
-        }
 
 
         public static void ScaleTotalPopulation(PopulationMap populationMap, int desiredPopulation, out bool success)
