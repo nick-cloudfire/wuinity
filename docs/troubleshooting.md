@@ -112,7 +112,7 @@ each needs, are in [Trigger campaigns](trigger-campaigns.md#before-you-start). T
 
 | Message | Fix |
 |---|---|
-| `Unable to load shared library 'gdal_wrap' or one of its dependencies` | GDAL 3.10 (`libgdal.so.36`) is not on `LD_LIBRARY_PATH`. |
+| `The type initializer for 'OSGeo.OSR.OsrPINVOKE' threw an exception.` (or `…GdalPINVOKE…`), with `Unable to load shared library '…_wrap' or one of its dependencies` beneath it | GDAL 3.10 (`libgdal.so.36`) is not on `LD_LIBRARY_PATH`. |
 | `Unable to find an entry point named '?' in shared library 'libsumocs'` | The committed SUMO bindings are for Windows. [Regenerate them](building.md#regenerating-the-sumo-c-glue-on-linux) in a local copy. |
 | No WindNinja found although it is installed | The search on `PATH` looks for `WindNinja_cli.exe`. Set `WINDNINJA_CLI` to the executable, or pass `--windninja`. |
 
