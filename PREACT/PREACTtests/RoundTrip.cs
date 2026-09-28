@@ -24,7 +24,8 @@ namespace PREACT.Tests
             "Weather|DesiredLatLon", "Weather|HasWeatherAnchor",
             "TrafficModule|VisibilityAffectsSpeed",
             "SUMO|UTMoffset",
-            "kPERIL|MidflameWindspeed", "kPERIL|CalculateROSFromBehave", "kPERIL|InitialFuelMoistureFile",
+            "kPERIL|MidflameWindspeed", "kPERIL|CalculateROSFromBehave", "kPERIL|InitialFuelMoistureFile", "kPERIL|FuelModelsFile",
+            "kPERIL|WindBand",
             "ELMFIRE|SimulationTstopSeconds",
         };
 
@@ -35,9 +36,6 @@ namespace PREACT.Tests
             "SimpleWildfireCA", "ElmClone", "CellParticleHybrid", "Behave", "Rothermel", "AdvectDiffuse3D", "AdvectDiffuseMixingLayer",
             "CityFlow", "MacroTrafficSim", "FireCell",
         };
-
-        //Sections whose parsers belong to the fire / k-PERIL package: differences there are warnings.
-        private static readonly HashSet<string> ForeignSections = new HashSet<string> { "WildfireModule", "AscImport", "ELMFIRE", "ElmfireNamelist", "IgnitionPoint", "kPERIL" };
 
         public static List<string> Run(string file, string outDir)
         {
@@ -86,19 +84,9 @@ namespace PREACT.Tests
                 problems.Add($"second write differs from the first at line {line + 1}: '{Get(w1, line)}' vs '{Get(w2, line)}'");
             }
 
-            //3. Every key of the original is still there, with the same value.
-            foreach (string difference in CompareKeys(original, w1, before))
-            {
-                string section = difference.Substring(1, difference.IndexOf(']') - 1);
-                if (ForeignSections.Contains(section))
-                {
-                    warnings.Add("(fire/k-PERIL parser) " + difference);
-                }
-                else
-                {
-                    problems.Add(difference);
-                }
-            }
+            //3. Every key of the original is still there, with the same value - in every section, the fire and
+            //k-PERIL ones included (their differences used to be warnings, while those parsers had other owners).
+            problems.AddRange(CompareKeys(original, w1, before));
 
             //Critical items that were already there are reported, not failed: they are the data's problem.
             foreach (PREACTInput.InputRequirement requirement in before.Where(r => r.Critical))
@@ -184,9 +172,9 @@ namespace PREACT.Tests
 
                 if (!writtenSections.Contains(section))
                 {
-                    //A module sub-section is written only for the module that is selected (by design): the
-                    //[ELMFIRE] of a realization that runs AscImport, say. Said once per section.
-                    if (originalKeys.First(k => k.section == section).key == key && !IsInactiveModuleSection(baseSection, original))
+                    //Every section with something in it is written, a module option that is not selected included
+                    //(the [ELMFIRE] of a realization that runs AscImport, say). Said once per section.
+                    if (originalKeys.First(k => k.section == section).key == key)
                     {
                         yield return $"[{section}] was dropped by the writer";
                     }
@@ -203,24 +191,6 @@ namespace PREACT.Tests
                 {
                     yield return $"[{section}] {key} changed: '{value}' -> '{written2}'";
                 }
-            }
-        }
-
-        private static bool IsInactiveModuleSection(string section, string[] original)
-        {
-            var keys = Keys(original).ToDictionary(k => k.section + "|" + k.key, k => k.value);
-            string Module(string s) => keys.TryGetValue(s + "|Module", out string m) ? m : "";
-            switch (section)
-            {
-                case "AscImport":
-                case "ELMFIRE":
-                case "ElmfireNamelist":
-                    return !(Module("WildfireModule") == section || (section == "ElmfireNamelist" && Module("WildfireModule") == "ELMFIRE"));
-                case "GlobalSmoke": return Module("SmokeModule") != "GlobalSmoke";
-                case "kPERIL": return Module("TriggerBufferModule") != "kPERIL";
-                case "SUMO": return Module("TrafficModule") != "SUMO";
-                case "MacroHouseholdSim": return Module("PedestrianModule") != "MacroHouseholdSim";
-                default: return false;
             }
         }
 

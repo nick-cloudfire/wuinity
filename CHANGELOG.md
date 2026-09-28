@@ -134,6 +134,12 @@ longer downloads a year of weather on every run.
 - The `[ELMFIRE]` source layers `SuppressionDifficultyFile`, `LandValueFile`, `PopulationDensityFile`,
   `RealEstateValueFile`, `EnergyReleaseComponentFile` and `PyromesFile` are read back when a scenario is opened.
   They used to be saved and then lost, so the next save dropped them.
+- A `[WildfireModule]` without an `Enabled` line, or with `Enabled=false`, keeps its ignition points, its
+  painted-areas reference, its `Module` and its `[ELMFIRE]` settings through a load and a save (a missing `Enabled`
+  means off, with a note); they used to be lost. A save also keeps the section of a module option that is not
+  selected (the `[ELMFIRE]` of a scenario switched to `AscImport`, a `[GlobalSmoke]` with smoke set to `None`), and a
+  module's sections are read even when its own header is missing. `[ELMFIRE]` is read whatever the fire module,
+  so `build-case` and a campaign use the scenario's case settings, not the defaults, when the fire is off.
 - A run stops on its first error, with the modules closed, instead of carrying on and logging every step.
 - A run whose cars mostly cannot be put into SUMO stops with an error instead of evacuating nobody.
 - A case build is refused while a campaign of the same scenario runs.
@@ -162,9 +168,6 @@ longer downloads a year of weather on every run.
 The Windows GUI's acceptance check is the [manual test](docs/manual-test-v1.md); the head-less paths were run
 end to end on Linux.
 
-- **A `[WildfireModule]` section without an `Enabled` line** loses its ignition points, its painted-areas reference
-  and its `[ELMFIRE]` settings when read, and a save then drops them. The GUI always writes `Enabled`; a
-  hand-written file should too.
 - **Case weather is anchored in UTC.** A case's historical-day weather walks the ERA5 archive, which is on UTC,
   from the scenario's start hour, which is local time; v1 does not convert between them. In the western US a
   13:00 start reads the drawn day's early-morning hours.

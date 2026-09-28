@@ -47,10 +47,14 @@ switched off are still read in full and kept when the scenario is saved, but not
 The GUI writes the file back from what it read (`PREACTInputWriter`):
 
 - a section that only restates its defaults is left out, unless a module sub-section follows it;
-- only the sub-section of the **selected** module is written: `[AscImport]` or `[ELMFIRE]` for the fire,
-  `[GlobalSmoke]` for smoke, `[kPERIL]` for the trigger boundary — a section for the module not chosen is dropped;
-- `[ElmfireNamelist]` is written only when the fire module is `ELMFIRE`;
+- the sub-section of the **selected** module is always written — `[AscImport]` or `[ELMFIRE]` for the fire,
+  `[GlobalSmoke]` for smoke, `[kPERIL]` for the trigger boundary — and the section of a module option that is
+  not selected is written too when it holds anything but defaults, so switching modules loses no setting;
+- `[ElmfireNamelist]` is written when the fire module is `ELMFIRE`, or when it holds anything but defaults;
 - paths are written with `/`; retired keys and sections are not written.
+
+A module's sections are read whether or not it is enabled, whichever option it selects, and even when its own
+header (`[WildfireModule]`, `[TrafficModule]`, ...) is missing: without the header the module is off.
 
 ---
 
@@ -250,7 +254,7 @@ Every key is optional; an unreadable value keeps the default and says so.
 
 | Key | Type | Default | Critical | Notes |
 |---|---|---|---|---|
-| `Enabled` | bool | – | – | Always write it. Without it v1 does not read the rest of the section, the `[IgnitionPoint]`s or `[ELMFIRE]`, and a save drops them — a [known issue](../CHANGELOG.md#known-issues). |
+| `Enabled` | bool | `false` | – | Missing or unreadable means off, with a note. The rest of the section, the `[IgnitionPoint]`s and the module's sections are read (and kept) either way. |
 | `Module` | `ELMFIRE` \| `AscImport` | – | yes, when enabled | `ELMFIRE` runs ELMFIRE on the scenario's case; `AscImport` reads a fire computed elsewhere. `None` with the module enabled is critical. `ElmClone`/`CellSpread` (the removed cell-based model) are reported as removed. |
 | `GraphicalFireInputFile` | `.gfi` path | – | – | The painted WUI area, ignition area and initial ignition ([below](#painted-areas-gfi)). Kept even when the file is missing, so a save does not lose the reference. |
 
@@ -289,6 +293,8 @@ all on one grid. A campaign writes this section into every realization's scenari
 How ELMFIRE is run. Every key is optional: a scenario that only says `Module=ELMFIRE` runs the ELMFIRE build in
 the repository on a case in an `elmfire/` folder beside the `.wui`. What has to exist (the executable, the case,
 its rasters) is checked when the run starts. [ELMFIRE cases](elmfire-cases.md) describes the case this builds.
+The section is read whatever the fire module is, because it also describes the case that Data > Build fire case,
+`PREACTcli build-case` and a campaign build.
 
 | Key | Type | Default | Notes |
 |---|---|---|---|

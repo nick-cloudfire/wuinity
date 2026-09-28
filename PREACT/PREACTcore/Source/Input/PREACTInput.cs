@@ -333,7 +333,8 @@ namespace PREACT.Input
                 //pedestrian module
                 ReadSection(nameof(PedestrianModule), false, () =>
                 {
-                    if (headerLineIndices.TryGetValue(nameof(PedestrianModule), out int lineindex))
+                    if (ModuleHeader(headerLineIndices, nameof(PedestrianModule), out int lineindex,
+                        nameof(PedestrianModuleInput.PedestrianModules.MacroHouseholdSim)))
                     {
                         newInput.PedestrianModule.Parse(inputLines, lineindex, headerLineIndices, out bool ok);
                         return ok;
@@ -345,7 +346,8 @@ namespace PREACT.Input
                 //traffic module
                 ReadSection(nameof(TrafficModule), false, () =>
                 {
-                    if (headerLineIndices.TryGetValue(nameof(TrafficModule), out int lineindex))
+                    if (ModuleHeader(headerLineIndices, nameof(TrafficModule), out int lineindex,
+                        nameof(TrafficModuleInput.TrafficModules.SUMO)))
                     {
                         newInput.TrafficModule.Parse(inputLines, lineindex, headerLineIndices, rootFolder, out bool ok);
                         return ok;
@@ -357,7 +359,10 @@ namespace PREACT.Input
                 //wildfire module
                 ReadSection(nameof(WildfireModule), false, () =>
                 {
-                    if (headerLineIndices.TryGetValue(nameof(WildfireModule), out int lineindex))
+                    if (ModuleHeader(headerLineIndices, nameof(WildfireModule), out int lineindex,
+                            nameof(WildfireModuleInput.WildfireModules.AscImport), nameof(WildfireModuleInput.WildfireModules.ELMFIRE),
+                            ElmfireInput.NamelistSection)
+                        || ignitionPointLineIndices.Count > 0)
                     {
                         //A switched-off fire module cannot make the run fail, so nothing it reports is critical.
                         using (SoftRequirements(!PeekBool(inputLines, lineindex, nameof(WildfireModuleInput.Enabled))))
@@ -373,7 +378,8 @@ namespace PREACT.Input
                 //smoke module
                 ReadSection(nameof(SmokeModule), false, () =>
                 {
-                    if (headerLineIndices.TryGetValue(nameof(SmokeModule), out int lineindex))
+                    if (ModuleHeader(headerLineIndices, nameof(SmokeModule), out int lineindex,
+                        nameof(SmokeInput.SmokeModules.GlobalSmoke)))
                     {
                         newInput.SmokeModule.Parse(inputLines, lineindex, headerLineIndices, newInput.Weather, rootFolder, out bool ok);
                         return ok;
@@ -385,7 +391,8 @@ namespace PREACT.Input
                 //trigger buffer
                 ReadSection(nameof(TriggerBufferModule), false, () =>
                 {
-                    if (headerLineIndices.TryGetValue(nameof(TriggerBufferModule), out int lineindex))
+                    if (ModuleHeader(headerLineIndices, nameof(TriggerBufferModule), out int lineindex,
+                        nameof(TriggerBufferModuleInput.TriggerBufferModules.kPERIL)))
                     {
                         newInput.TriggerBufferModule.Parse(inputLines, lineindex, headerLineIndices, newInput.Simulation, rootFolder, out bool ok);
                         return ok;
@@ -482,6 +489,34 @@ namespace PREACT.Input
         }
 
         /// <summary>
+        /// Whether a module has anything in the file: its own header (<paramref name="headerIndex"/> is its line) or,
+        /// without one, any of its <paramref name="subSections"/> (<paramref name="headerIndex"/> is -1, and the module
+        /// reads as switched off).
+        /// </summary>
+        /// <remarks>
+        /// A <c>[SUMO]</c> or an <c>[ELMFIRE]</c> under no module header used to be skipped, and the next save
+        /// dropped it without a word. It is now read as the settings of a module that is off, and kept.
+        /// </remarks>
+        private static bool ModuleHeader(Dictionary<string, int> headerLineIndices, string module, out int headerIndex,
+            params string[] subSections)
+        {
+            if (headerLineIndices.TryGetValue(module, out headerIndex))
+            {
+                return true;
+            }
+
+            headerIndex = -1;
+            foreach (string sub in subSections)
+            {
+                if (headerLineIndices.ContainsKey(sub))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
         /// Whether <paramref name="key"/> in the section starting at <paramref name="headerIndex"/> reads as true.
         /// For deciding, before a parser runs, whether what it reports can stop the run.
         /// </summary>
@@ -570,8 +605,19 @@ namespace PREACT.Input
         /// The imported fire's arrival time raster, read straight from the lines rather than from the
         /// parsed input because the wildfire section has not been read yet at the point this is needed.
         /// </summary>
+        /// <remarks>
+        /// Only when the fire module is <c>AscImport</c>: a scenario that switched to ELMFIRE keeps its old
+        /// <c>[AscImport]</c> section, and that raster says nothing about the grid the scenario is on now.
+        /// </remarks>
         private static string FireDataReferenceFile(string[] inputLines, Dictionary<string, int> headerLineIndices)
         {
+            if (!headerLineIndices.TryGetValue(nameof(WildfireModule), out int moduleIndex)
+                || !GetHeaderInput(inputLines, moduleIndex, false, false).TryGetValue(nameof(WildfireModuleInput.Module), out string module)
+                || module != nameof(WildfireModuleInput.WildfireModules.AscImport))
+            {
+                return string.Empty;
+            }
+
             if (!headerLineIndices.TryGetValue("AscImport", out int lineIndex))
             {
                 return string.Empty;

@@ -72,27 +72,31 @@ namespace PREACT.Input
 
             Section(lines, nameof(PREACTInput.Weather), input.Weather, omit);
 
-            //Each module is followed by the sub-section named after the module it selected, which
-            //is how the parsers locate it (headerLineIndex[nameof(TrafficModules.SUMO)] and so on). The module
-            //section is only ever left out when nothing follows it, since its sub-sections are read through it.
+            //Each module is followed by the sub-sections named after its module options, which is how the parsers
+            //locate them (headerLineIndex[nameof(TrafficModules.SUMO)] and so on). The selected one is always
+            //written; the others when they hold anything, so switching the fire from ELMFIRE to AscImport and back,
+            //or smoke off to None, loses no setting. They used to be dropped, and with them the ELMFIRE settings the
+            //case build reads whichever module is selected. The module section is only ever left out when nothing
+            //follows it, since its sub-sections are read through it.
             var sub = new List<string>();
-            ModuleSubSection(sub, input.PedestrianModule, "Module", input.PedestrianModule?.MacroHouseholdSimInput, omit);
+            ModuleSubSections(sub, input.PedestrianModule, omit);
             ModuleWithSubSections(lines, nameof(PREACTInput.PedestrianModule), input.PedestrianModule, sub, omit);
 
             sub = new List<string>();
-            ModuleSubSection(sub, input.TrafficModule, "Module", input.TrafficModule?.SumoInput, omit);
+            ModuleSubSections(sub, input.TrafficModule, omit);
             ModuleWithSubSections(lines, nameof(PREACTInput.TrafficModule), input.TrafficModule, sub, omit);
 
             sub = new List<string>();
-            ModuleSubSection(sub, input.WildfireModule, "Module", WildfireSubInput(input), omit);
+            ModuleSubSections(sub, input.WildfireModule, omit);
 
-            //The ELMFIRE namelist settings, which Section cannot reach: they hang off ElmfireInput as a
-            //nested object and IsWritable refuses those, deliberately - the format has no nesting. Written
-            //only for a scenario whose fire is ELMFIRE, since for any other module they configure nothing.
-            if (input.WildfireModule?.Module == WildfireModuleInput.WildfireModules.ELMFIRE
-                && input.WildfireModule.ElmfireInput?.Namelist != null)
+            //The ELMFIRE namelist settings, which Section cannot reach: they hang off ElmfireInput as a nested object
+            //and IsWritable refuses those, deliberately - the format has no nesting. Written with the ELMFIRE module,
+            //or whenever they are not the defaults.
+            ElmfireNamelistInput namelist = input.WildfireModule?.ElmfireInput?.Namelist;
+            if (namelist != null && (input.WildfireModule.Module == WildfireModuleInput.WildfireModules.ELMFIRE
+                                     || !omit || !IsDefault(namelist)))
             {
-                Section(sub, ElmfireInput.NamelistSection, input.WildfireModule.ElmfireInput.Namelist, omit);
+                Section(sub, ElmfireInput.NamelistSection, namelist, omit);
             }
 
             //Ignition points live on WildfireData, which Section skips along with every other "Data"
@@ -108,11 +112,11 @@ namespace PREACT.Input
             ModuleWithSubSections(lines, nameof(PREACTInput.WildfireModule), input.WildfireModule, sub, omit);
 
             sub = new List<string>();
-            ModuleSubSection(sub, input.SmokeModule, "Module", SmokeSubInput(input), omit);
+            ModuleSubSections(sub, input.SmokeModule, omit);
             ModuleWithSubSections(lines, nameof(PREACTInput.SmokeModule), input.SmokeModule, sub, omit);
 
             sub = new List<string>();
-            ModuleSubSection(sub, input.TriggerBufferModule, "Module", TriggerBufferSubInput(input), omit);
+            ModuleSubSections(sub, input.TriggerBufferModule, omit);
             ModuleWithSubSections(lines, nameof(PREACTInput.TriggerBufferModule), input.TriggerBufferModule, sub, omit);
 
             return lines.ToArray();
@@ -125,31 +129,32 @@ namespace PREACT.Input
         }
 
         /// <summary>
-        /// Resolves the sub-input a module selected. Done by name so a module gaining another
-        /// option does not silently write the wrong section: the accessor is looked up from the
-        /// module's own <c>Module</c> enum value.
+        /// The sub-sections of one module, one per option of its <c>Module</c> enum (<c>None</c> has none): the
+        /// selected option's always, the others' when they are not what a fresh instance holds (every one of them
+        /// when <paramref name="omit"/> is false). Found by name, so a module gaining an option writes its section
+        /// without a change here: the accessor is looked up from the enum value (<c>ELMFIRE</c> -&gt;
+        /// <c>ElmfireInput</c>).
         /// </summary>
-        private static object WildfireSubInput(PREACTInput input)
+        private static void ModuleSubSections(List<string> lines, object module, bool omit)
         {
-            if (input.WildfireModule == null) return null;
+            if (module == null) return;
 
-            //Both fire modules' sub-inputs follow the naming this matches on - ElmfireInput and
-            //AscImportInput - so neither needs a special case. The one that did was the cell-based model,
-            //configured by a FireCellInput whose name matched nothing, which is why its section was silently
-            //never written; it has since been removed.
-            return FindSubInput(input.WildfireModule, input.WildfireModule.Module.ToString());
-        }
+            object selected = ReadMember(module, "Module");
+            if (selected == null || !selected.GetType().IsEnum) return;
 
-        private static object SmokeSubInput(PREACTInput input)
-        {
-            if (input.SmokeModule == null) return null;
-            return FindSubInput(input.SmokeModule, input.SmokeModule.Module.ToString());
-        }
+            foreach (object option in Enum.GetValues(selected.GetType()))
+            {
+                string name = option.ToString();
+                if (name == "None") continue;
 
-        private static object TriggerBufferSubInput(PREACTInput input)
-        {
-            if (input.TriggerBufferModule == null) return null;
-            return FindSubInput(input.TriggerBufferModule, input.TriggerBufferModule.Module.ToString());
+                object subInput = FindSubInput(module, name);
+                if (subInput == null) continue;
+
+                if (option.Equals(selected) || !omit || !IsDefault(subInput))
+                {
+                    Section(lines, name, subInput, omit);
+                }
+            }
         }
 
         /// <summary>
@@ -168,16 +173,6 @@ namespace PREACT.Input
                 try { return p.GetValue(module); } catch { return null; }
             }
             return null;
-        }
-
-        private static void ModuleSubSection(List<string> lines, object module, string moduleFieldName, object subInput, bool omit)
-        {
-            if (module == null || subInput == null) return;
-
-            object moduleValue = ReadMember(module, moduleFieldName);
-            if (moduleValue == null) return;
-
-            Section(lines, moduleValue.ToString(), subInput, omit);
         }
 
         private static object ReadMember(object target, string name)
@@ -299,6 +294,19 @@ namespace PREACT.Input
             nameof(PREACTInput.PedestrianModule), nameof(PREACTInput.TrafficModule), nameof(PREACTInput.WildfireModule),
             nameof(PREACTInput.SmokeModule), nameof(PREACTInput.TriggerBufferModule),
         };
+
+        /// <summary>Whether <paramref name="source"/> writes what a freshly constructed instance of its type writes.</summary>
+        private static bool IsDefault(object source)
+        {
+            var body = new List<string>();
+            Section(body, "probe", source, false);
+            if (body.Count > 0)
+            {
+                body.RemoveAt(0);
+                body.RemoveAt(body.Count - 1);
+            }
+            return IsDefault(source, body);
+        }
 
         /// <summary>Whether <paramref name="body"/> is what a freshly constructed instance of the same type writes.</summary>
         private static bool IsDefault(object source, List<string> body)

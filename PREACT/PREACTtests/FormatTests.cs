@@ -30,6 +30,144 @@ namespace PREACT.Tests
             runner.Add("format: a missing landscape file keeps the ignition points, through load and save", MissingLandscapeKeepsIgnitions);
             runner.Add("format: the shipped examples load without a single warning", ExamplesLoadQuietly);
             runner.Add("format: every [ELMFIRE] key is read back, through a save and from a case's source manifest", ElmfireKeysRoundTrip);
+            runner.Add("format: a [WildfireModule] without Enabled keeps its ignition points, painting and [ELMFIRE]", MissingEnabledKeepsFire);
+            runner.Add("format: a module's sections survive a save when it is off, another option is chosen, or its header is missing", ModuleSectionsKept);
+            runner.Add("format: only a selected imported fire decides the simulation's UTM zone", StaleAscImportDoesNotPin);
+        }
+
+        private static List<string> FireSections(params string[] wildfireModuleKeys)
+        {
+            var lines = new List<string>(Scenario.Lines) { "", "[WildfireModule]" };
+            lines.AddRange(wildfireModuleKeys);
+            lines.AddRange(new[]
+            {
+                "GraphicalFireInputFile=painted_fire_areas.gfi",
+                "",
+                "[ELMFIRE]",
+                "CaseDirectory=mycase",
+                "SimulationTstopHours=12",
+                "",
+                "[ElmfireNamelist]",
+                "SEED=77",
+                "",
+                "[IgnitionPoint]",
+                "LatLon=38.0141,23.9012",
+                "IgnitionTime=0",
+                "",
+                "[IgnitionPoint]",
+                "LatLon=38.0150,23.9030",
+                "IgnitionTime=1800",
+            });
+            return lines;
+        }
+
+        private static void AssertFireKept(PREACTInput input, string when)
+        {
+            WildfireModuleInput fire = input.WildfireModule;
+            Assert.Equal(2, fire.Data.IgnitionPoints.Count, when + ": ignition points");
+            Assert.Near(1800.0, fire.Data.IgnitionPoints[1].IgnitionTime, 1e-6, when + ": the second point's time");
+            Assert.Equal("painted_fire_areas.gfi", fire.GraphicalFireInputFile, when + ": painted areas");
+            Assert.Equal(WildfireModuleInput.WildfireModules.ELMFIRE, fire.Module, when + ": module");
+            Assert.Equal("mycase", fire.ElmfireInput.CaseDirectory, when + ": [ELMFIRE] CaseDirectory");
+            Assert.Near(12.0, fire.ElmfireInput.SimulationTstopHours, 1e-9, when + ": [ELMFIRE] SimulationTstopHours");
+            Assert.Equal(77, fire.ElmfireInput.Namelist.SEED, when + ": [ElmfireNamelist] SEED");
+        }
+
+        /// <summary>
+        /// docs.md 3.2: without an Enabled line the parser returned before reading GraphicalFireInputFile, Module, the
+        /// [IgnitionPoint]s and [ELMFIRE], and the next save deleted them. And Enabled=false skipped Module and
+        /// [ELMFIRE], so a switched-off ELMFIRE fire lost its settings on the first save.
+        /// </summary>
+        private static void MissingEnabledKeepsFire()
+        {
+            using var s = new Scenario();
+            foreach (string[] header in new[] { new[] { "Module=ELMFIRE" }, new[] { "Enabled=false", "Module=ELMFIRE" }, new[] { "Enabled=maybe", "Module=ELMFIRE" } })
+            {
+                string when = string.Join(" ", header);
+                PREACTInput input = s.Load(FireSections(header), out bool runnable);
+                Assert.True(runnable, when + ": the fire is off, so nothing in it stops the run; critical: " + Critical());
+                Assert.True(!input.WildfireModule.Enabled, when + ": read as off");
+                if (!header[0].StartsWith("Enabled=false"))
+                {
+                    Assert.True(PREACTInput.Requirements.Any(r => r.Key == "Enabled" && !r.Critical), when + ": and said so");
+                }
+                AssertFireKept(input, when);
+
+                string[] saved = PREACTInputWriter.Write(input);
+                Assert.True(saved.Contains("Enabled=false") && saved.Contains("Module=ELMFIRE"), when + ": written as an ELMFIRE fire that is off");
+                PREACTInput again = PREACTInput.LoadFromLines(saved, s.Folder, out bool _);
+                AssertFireKept(again, when + ", after a save");
+                Assert.True(PREACTInputWriter.Write(again).SequenceEqual(saved), when + ": a second save writes the same");
+            }
+        }
+
+        /// <summary>
+        /// The writer used to write only the selected module's sub-section, and a parser read nothing under a missing
+        /// module header: an imported fire's [AscImport] went with a switch to ELMFIRE, a [GlobalSmoke] with smoke set
+        /// to None, and a [SUMO] without its [TrafficModule].
+        /// </summary>
+        private static void ModuleSectionsKept()
+        {
+            using var s = new Scenario();
+            var lines = FormatTests.Replace("Enabled", null, "TrafficModule");
+            lines.Remove("[TrafficModule]");
+            lines.Remove("Module=SUMO");
+            lines.AddRange(new[]
+            {
+                "", "[WildfireModule]", "Enabled=true", "Module=ELMFIRE",
+                "", "[AscImport]", "StartDateTime=2026-06-28T12:00:00", "TimeOfArrivalFile=old/toa.asc", "TimeOfArrivalUnits=Minutes",
+                "", "[GlobalSmoke]", "ExtinctionFile=smoke/ramp.exc",
+                "", "[TriggerBufferModule]", "Enabled=false", "Module=None",
+                "", "[kPERIL]", "OutputName=kept_boundary",
+            });
+            Assert.True(!lines.Contains("[TrafficModule]") && lines.Contains("[SUMO]"), "test setup: [SUMO] without its module");
+
+            PREACTInput input = s.Load(lines, out bool runnable);
+            Assert.True(runnable, "nothing unselected or switched off is critical: " + Critical());
+            Assert.True(!input.TrafficModule.Enabled, "traffic is off without its header");
+            Assert.Equal("sumo/osm.sumocfg", input.TrafficModule.SumoInput.ConfigurationFile, "[SUMO] is read without its header");
+            Assert.Equal("old/toa.asc", input.WildfireModule.AscImportInput.TimeOfArrivalFile, "[AscImport] is read beside ELMFIRE");
+            Assert.Equal("smoke/ramp.exc", input.SmokeModule.GlobalSmokeInput.ExtinctionFile, "[GlobalSmoke] is read with no smoke module");
+            Assert.Equal("kept_boundary", input.TriggerBufferModule.kPERILInput.OutputName, "[kPERIL] is read with Module=None");
+
+            string[] saved = PREACTInputWriter.Write(input);
+            foreach (string kept in new[] { "ConfigurationFile=sumo/osm.sumocfg", "TimeOfArrivalFile=old/toa.asc", "TimeOfArrivalUnits=Minutes",
+                                            "ExtinctionFile=smoke/ramp.exc", "OutputName=kept_boundary" })
+            {
+                Assert.True(saved.Contains(kept), kept + " is saved");
+            }
+            PREACTInput again = PREACTInput.LoadFromLines(saved, s.Folder, out bool runnableAgain);
+            Assert.True(runnableAgain, "and reloads runnable: " + Critical());
+            Assert.Equal(AscImportInput.TimeUnits.Minutes, again.WildfireModule.AscImportInput.TimeOfArrivalUnits, "the imported fire's units, reloaded");
+            Assert.True(PREACTInputWriter.Write(again).SequenceEqual(saved), "a second save writes the same");
+
+            //A fresh scenario writes no sub-section for a module option nobody configured.
+            string[] fresh = PREACTInputWriter.Write(new PREACTInput(s.Folder));
+            Assert.True(!fresh.Contains("[AscImport]") && !fresh.Contains("[ELMFIRE]") && !fresh.Contains("[GlobalSmoke]") && !fresh.Contains("[kPERIL]"),
+                "defaults are not written: " + string.Join(" ", fresh.Where(l => l.StartsWith("["))));
+        }
+
+        /// <summary>
+        /// Now that a switch to ELMFIRE keeps the old [AscImport], its arrival raster must not go on deciding the
+        /// simulation's UTM zone: that is only the selected imported fire's to decide.
+        /// </summary>
+        private static void StaleAscImportDoesNotPin()
+        {
+            using var s = new Scenario();
+            File.WriteAllLines(Path.Combine(s.Folder, "toa.asc"), new[] { "ncols 2", "nrows 2", "xllcorner 200000", "yllcorner 4200000", "cellsize 1000", "1 1", "1 1" });
+            Utility.AscRaster.WriteCompanionPrj(Path.Combine(s.Folder, "toa.asc"), 32635);
+            Assert.True(File.Exists(Path.Combine(s.Folder, "toa.prj")), "test setup: the .prj was written");
+
+            foreach (string module in new[] { "AscImport", "ELMFIRE" })
+            {
+                var lines = new List<string>(Scenario.Lines)
+                {
+                    "", "[WildfireModule]", "Enabled=false", "Module=" + module,
+                    "", "[AscImport]", "StartDateTime=2026-06-28T12:00:00", "TimeOfArrivalFile=toa.asc",
+                };
+                PREACTInput input = s.Load(lines, out bool _);
+                Assert.Equal(module == "AscImport" ? 32635 : 32634, input.Simulation.Data.UtmEpsgCode, "zone with Module=" + module);
+            }
         }
 
         /// <summary>
