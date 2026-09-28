@@ -30,7 +30,13 @@ namespace PREACTcli.Campaigns
         {
             string path = Path.Combine(c.Folder, CampaignLayout.ManifestFile);
             using (var stream = File.Create(path))
-            using (var json = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true }))
+            //Relaxed escaping: the file is read by people and by this class, not embedded in HTML, and the default
+            //encoder wrote "seed + 2000000" as "seed \u002B 2000000".
+            using (var json = new Utf8JsonWriter(stream, new JsonWriterOptions
+                   {
+                       Indented = true,
+                       Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+                   }))
             {
                 json.WriteStartObject();
                 json.WriteString("format", "wuinity-campaign-manifest-1");
