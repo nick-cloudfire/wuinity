@@ -335,16 +335,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 case WorkflowAction.OpenRun: RunSimulationWindow.Open(); break;
                 case WorkflowAction.OpenResults: ResultsWindow.Open(); break;
                 case WorkflowAction.OpenCampaign:
-                    if (ScenarioSession.CampaignActive)
-                    {
-                        //Running already: only to watch it.
-                        ProbabilisticTriggerWindow.Open();
-                        break;
-                    }
-                    //The campaign reads the .wui on disk, so unsaved edits would silently not be in it.
-                    // V1-INTEGRATION: WP1 - once the campaign window reseeds from ScenarioSession and saves before a
-                    // run itself, this prompt can go.
-                    ConfirmPrompt.AskToSave("opening the campaign (it reads the scenario from its file)", ProbabilisticTriggerWindow.Open);
+                    //The window reseeds from the session and asks to save when Run is pressed: the campaign reads
+                    //the .wui on disk, so that is when unsaved edits matter.
+                    ProbabilisticTriggerWindow.Open();
                     break;
             }
         }

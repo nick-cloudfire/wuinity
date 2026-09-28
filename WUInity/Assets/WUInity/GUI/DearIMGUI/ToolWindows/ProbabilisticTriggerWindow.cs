@@ -24,22 +24,16 @@ namespace Assets.WUInity.GUI.DearIMGUI
     /// and reuses realizations only when every setting matches. So Run first asks it (<c>--inspect</c>) whether
     /// such a campaign exists, and only reuses one after the question "reuse N realizations?" has been answered
     /// here: reusing was the default, and a changed stop time or seed silently aggregated the old fires.
+    ///
+    /// The CLI reads the .wui from disk, and the campaign's identity is the hash of that file, so Run asks to
+    /// save the open scenario first when it has unsaved changes. The fields follow the scenario session: a
+    /// different scenario opened reseeds them.
     /// </remarks>
     public static class ProbabilisticTriggerWindow
     {
-        /// <summary>
-        /// Called when Run is pressed, before anything else. Returns null to go on, or a message to stop with.
-        /// </summary>
-        /// <remarks>
-        /// For the scenario session to save the scenario: the CLI reads the .wui from disk, so edits that are
-        /// only in the GUI are not in the campaign - and the campaign's identity is the hash of the saved file.
-        /// Not wired here (the session and its dirty flag are not this window's); until it is, the window says
-        /// that it runs the saved file.
-        /// </remarks>
-        public static Func<string> BeforeRun;
-
         private static bool _isOpen;
         private static bool _quitHooked;
+        private static bool _sessionHooked;
 
         private static string _cliExe = string.Empty;
         private static string _baseWui = string.Empty;
@@ -83,6 +77,19 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
         private enum Phase { Idle, Inspecting, Confirm, Running, Cancelling }
 
+        /// <summary>
+        /// A campaign process is running: the settings check, the campaign itself, or one being cancelled. While
+        /// it is, the GUI starts no run or data step and opens no other scenario (<see cref="ScenarioSession.IsBusy"/>).
+        /// </summary>
+        public static bool IsRunning
+        {
+            get
+            {
+                Phase phase = _phase;
+                return phase == Phase.Inspecting || phase == Phase.Running || phase == Phase.Cancelling;
+            }
+        }
+
         // ---- run state (written from the process reader threads, read on the UI thread) ----
         private static readonly object _sync = new object();
         private static readonly List<string> _log = new List<string>();
@@ -107,6 +114,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
             _isOpen = true;
             HookQuit();
+            HookSession();
             GuessCli();
 
             //Every time the window opens: a campaign set up for one scenario and then run on another is the
@@ -124,11 +132,24 @@ namespace Assets.WUInity.GUI.DearIMGUI
         }
 
         /// <summary>
-        /// For the scenario session's "scenario changed" event: refills everything that came from the scenario.
+        /// The scenario session's "scenario changed" event: refills everything that came from the scenario. A
+        /// "reuse the existing campaign?" question still open was asked about the previous scenario, so it is
+        /// dropped.
         /// </summary>
         public static void OnScenarioChanged()
         {
+            if (_phase == Phase.Confirm)
+            {
+                _phase = Phase.Idle;
+                _status = "Idle (the scenario changed).";
+            }
             SeedFromScenario(true);
+        }
+
+        /// <summary>Stops the running campaign and everything it started, as the Cancel button does.</summary>
+        public static void Stop()
+        {
+            CancelRun();
         }
 
         /// <summary>
@@ -140,7 +161,40 @@ namespace Assets.WUInity.GUI.DearIMGUI
         {
             if (_quitHooked) return;
             _quitHooked = true;
-            Application.quitting += () => CancelRun();
+            Application.quitting += StopForQuit;
+        }
+
+        private static void HookSession()
+        {
+            if (_sessionHooked) return;
+            _sessionHooked = true;
+            ScenarioSession.ScenarioChanged += OnScenarioChanged;
+        }
+
+        /// <summary>
+        /// For quitting: closes the CLI's stdin so it kills every ELMFIRE, WindNinja and PREACT tree it started,
+        /// waits a few seconds for it to do so, then kills the CLI's own tree. Blocks, because once the
+        /// application has gone nothing would be left to finish a cancel running in the background.
+        /// </summary>
+        public static void StopForQuit()
+        {
+            Process process = _process;
+            if (process == null) return;
+
+            try
+            {
+                if (process.HasExited) return;
+                _phase = Phase.Cancelling;
+                try { process.StandardInput.Close(); } catch { }
+                if (!process.WaitForExit(5000))
+                {
+                    ElmfireProcesses.KillTree(process);
+                }
+            }
+            catch
+            {
+                //Quitting goes ahead whatever happens here.
+            }
         }
 
         private static void GuessCli()
@@ -172,7 +226,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
         /// </summary>
         private static void SeedFromScenario(bool force)
         {
-            string current = PreactGUI.Engine != null ? PreactGUI.Engine.WorkingFile : null;
+            string current = ScenarioSession.FilePath;
             if (!string.IsNullOrEmpty(current) && (force || !SamePath(current, _seededFrom)))
             {
                 _baseWui = current;
@@ -182,7 +236,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 _seededFrom = current;
             }
 
-            PREACT.Input.PREACTInput input = ScenarioEditorWindow.Input;
+            PREACT.Input.PREACTInput input = ScenarioSession.Input;
             PREACT.Input.ElmfireInput elmfire = input?.WildfireModule?.ElmfireInput;
 
             _elmfireExe = ElmfireCoupling.ResolveExecutable(input?.RootFolder, elmfire?.ElmfireExe) ?? string.Empty;
@@ -239,7 +293,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 return;
             }
 
-            ImGui.Begin("Probabilistic trigger boundary", ref _isOpen, PreactGUI.NoDockingNoCollapse);
+            ImGui.Begin("Trigger campaign###TriggerCampaign", ref _isOpen, PreactGUI.NoDockingNoCollapse);
 
             ImGui.TextWrapped("Runs ELMFIRE fires from ignitions drawn over the case, each under its own weather, then an "
                               + "evacuation and a k-PERIL trigger boundary for every fire that reaches the WUI area, and "
@@ -251,7 +305,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             FileRow("PREACTcli", () => _cliExe, v => _cliExe = v, false);
             FileRow("Base .wui", () => _baseWui, v => _baseWui = v, false);
-            Fields.Hint("The campaign runs this scenario as it is saved on disk; save it first if it has changes.");
+            Fields.Hint("The campaign runs this scenario as it is saved on disk. Run asks to save the open scenario",
+                        "first when it has unsaved changes.");
 
             ImGui.SeparatorText("Convergence");
             ImGui.InputInt("Maximum realizations", ref _max);
@@ -406,11 +461,22 @@ namespace Assets.WUInity.GUI.DearIMGUI
             switch (phase)
             {
                 case Phase.Idle:
+                {
+                    string gate = Gate();
+                    ImGui.BeginDisabled(gate != null);
                     if (ImGui.Button("Run"))
                     {
-                        StartInspect();
+                        RequestRun();
+                    }
+                    ImGui.EndDisabled();
+                    if (gate != null)
+                    {
+                        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled)) ImGui.SetTooltip(gate);
+                        ImGui.SameLine();
+                        ImGui.TextDisabled(gate);
                     }
                     break;
+                }
 
                 case Phase.Inspecting:
                     ImGui.TextDisabled("Checking for an earlier campaign with these settings...");
@@ -743,6 +809,47 @@ namespace Assets.WUInity.GUI.DearIMGUI
             return result;
         }
 
+        /// <summary>
+        /// Why a campaign cannot start now because of what the GUI is doing, or null. A GUI run computes its fire
+        /// in the same case, and a data step may be rebuilding the case every realization reads; the GUI in turn
+        /// starts neither while a campaign runs (<see cref="IsRunning"/> is part of its busy state).
+        /// </summary>
+        private static string Gate()
+        {
+            if (ScenarioSession.SimulationActive)
+            {
+                return "Not while a simulation is running in the GUI: it computes its fire on the same case.";
+            }
+            if (ScenarioSession.StepActive)
+            {
+                return "Not while " + ScenarioSession.BusyReason + ": it may be rewriting the files every realization reads.";
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Run: asks to save the open scenario when the campaign is about to read it from disk with changes
+        /// that are only in the GUI, then goes on to <see cref="StartInspect"/>.
+        /// </summary>
+        private static void RequestRun()
+        {
+            string stop = Gate() ?? Preflight();
+            if (stop != null)
+            {
+                _status = stop;
+                return;
+            }
+
+            if (ScenarioSession.HasInput && SamePath(_baseWui, ScenarioSession.FilePath) && ScenarioSession.IsDirty)
+            {
+                ConfirmPrompt.AskToSave("starting the campaign (it runs the scenario as saved on disk; without saving, "
+                                        + "the changes are not in it)", StartInspect);
+                return;
+            }
+
+            StartInspect();
+        }
+
         /// <summary>Why a campaign cannot start with the fields as they are, or null.</summary>
         private static string Preflight()
         {
@@ -824,8 +931,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
         /// <summary>Run, first half: asks the CLI whether a campaign with these settings exists.</summary>
         private static void StartInspect()
         {
-            string stop = BeforeRun != null ? BeforeRun() : null;
-            if (stop == null) stop = Preflight();
+            //Again: the save question may have been answered frames after Run was pressed.
+            string stop = Gate() ?? Preflight();
             if (stop != null)
             {
                 _status = stop;
@@ -874,6 +981,14 @@ namespace Assets.WUInity.GUI.DearIMGUI
         /// <summary>Run, second half: the campaign itself.</summary>
         private static void StartRun(bool resume)
         {
+            string stop = Gate();
+            if (stop != null)
+            {
+                _phase = Phase.Idle;
+                _status = stop;
+                return;
+            }
+
             _phase = Phase.Running;
             _totalCount = _max;
             _status = resume ? "Resuming..." : "Starting...";

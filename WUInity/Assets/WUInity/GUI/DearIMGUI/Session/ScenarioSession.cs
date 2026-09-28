@@ -525,16 +525,15 @@ namespace Assets.WUInity.GUI.DearIMGUI
             quit();
         }
 
+        /// <summary>
+        /// Stops everything that would otherwise outlive the GUI: the run (and the ELMFIRE or WindNinja process
+        /// trees this process started, which the engine's close kills whether or not a run is going - a data
+        /// step's WindNinja included), and a campaign process with everything it started.
+        /// </summary>
         private static void StopRunningWork()
         {
-            if (SimulationActive)
-            {
-                // V1-INTEGRATION: C3 - Engine.CloseSimulations is wired to ElmfireRunner.CancelAll by the lead, which
-                // also stops an ELMFIRE computation; until then a run inside ELMFIRE finishes that step first.
-                PreactGUI.Engine?.CloseSimulations(false);
-            }
-            // V1-INTEGRATION: the campaign process (ProbabilisticTriggerWindow, WP1) has no public stop; it keeps
-            // running after the GUI quits until it gains one this can call.
+            PreactGUI.Engine?.CloseSimulations(false);
+            ProbabilisticTriggerWindow.StopForQuit();
         }
 
         // ------------------------------------------------------------------ per frame
@@ -589,8 +588,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
         /// <summary>A data-preparation step or chain is running on its worker.</summary>
         public static bool StepActive { get => ScenarioDataSteps.Busy; }
 
-        /// <summary>A probabilistic trigger campaign process is running.</summary>
-        public static bool CampaignActive { get => CampaignProbe.IsRunning; }
+        /// <summary>A trigger campaign process (or its settings check) is running.</summary>
+        public static bool CampaignActive { get => ProbabilisticTriggerWindow.IsRunning; }
 
         /// <summary>Anything at all is running: no other scenario may be opened, created or closed.</summary>
         public static bool IsBusy { get => SimulationActive || StepActive || CampaignActive || ScenarioCheckWindow.Checking; }
