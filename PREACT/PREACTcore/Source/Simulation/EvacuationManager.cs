@@ -218,7 +218,7 @@ namespace PREACT.Evacuation
                 return null;
             }
 
-            string path = System.IO.Path.Combine(rootFolder, wuiAreaFile);
+            string path = PREACTInput.ResolvePath(rootFolder, wuiAreaFile);
             float[,] mask = Utility.AscRaster.Read(path, out Utility.AscRaster.Header header, out bool ok);
             if (!ok || mask == null)
             {
@@ -238,16 +238,16 @@ namespace PREACT.Evacuation
             Math.Vector2d fireOrigin = _simulation.Hazards.Wildfire.GetGridOriginUtm();
             if (fireOrigin.x != 0.0 || fireOrigin.y != 0.0)
             {
-                double tolerance = 0.1 * header.CellSize;
+                double cellY = header.CellSizeY > 0.0 ? header.CellSizeY : header.CellSize;
                 double dx = header.XllCorner - fireOrigin.x;
                 double dy = header.YllCorner - fireOrigin.y;
 
-                if (System.Math.Abs(dx) > tolerance || System.Math.Abs(dy) > tolerance)
+                if (System.Math.Abs(dx) > 0.1 * header.CellSize || System.Math.Abs(dy) > 0.1 * cellY)
                 {
                     Engine.Message(null, Engine.LogType.Warning,
                         $"The WUI mask starts at ({header.XllCorner:F1}, {header.YllCorner:F1}) but the fire grid "
                         + $"starts at ({fireOrigin.x:F1}, {fireOrigin.y:F1}) - offset by ({dx:F1}, {dy:F1}) m, about "
-                        + $"({dx / header.CellSize:F1}, {dy / header.CellSize:F1}) cells. It describes different "
+                        + $"({dx / header.CellSize:F1}, {dy / cellY:F1}) cells. It describes different "
                         + "ground; ignoring it.");
                     return null;
                 }
@@ -616,11 +616,14 @@ namespace PREACT.Evacuation
             return wind;
         }
 
-        /// <summary>A scenario-relative path made absolute, or null when unset.</summary>
+        /// <summary>
+        /// A scenario path made absolute the way the scenario check resolves it (either slash, a file since
+        /// moved within the scenario's folders), or null when unset.
+        /// </summary>
         private string ResolveScenarioFile(string file)
         {
             if (string.IsNullOrWhiteSpace(file)) return null;
-            return System.IO.Path.IsPathRooted(file) ? file : System.IO.Path.Combine(_input.RootFolder, file);
+            return PREACTInput.ResolvePath(_input.RootFolder, file);
         }
 
         private static bool SamePath(string a, string b)

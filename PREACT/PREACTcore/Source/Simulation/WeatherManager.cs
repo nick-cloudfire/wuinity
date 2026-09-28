@@ -9,9 +9,6 @@ namespace PREACT
     public class WeatherManager
     {
         private Simulation _simulation;
-        private Wildfire.FireWeatherIndex _fwi;
-        private bool _fwiNeedsUpdate = true;
-        private Wildfire.HourlyFFMC _ffmcHourly;
         private DateTime _lastDateTime;
         private WeatherStream _weatherData;
 
@@ -40,8 +37,20 @@ namespace PREACT
         readonly OpenMeteo.HourlyOptionsParameter[] _parameters = { OpenMeteo.HourlyOptionsParameter.temperature_2m, OpenMeteo.HourlyOptionsParameter.relativehumidity_2m, OpenMeteo.HourlyOptionsParameter.precipitation,
             OpenMeteo.HourlyOptionsParameter.windspeed_10m, OpenMeteo.HourlyOptionsParameter.winddirection_10m, OpenMeteo.HourlyOptionsParameter.cloudcover, OpenMeteo.HourlyOptionsParameter.direct_radiation, OpenMeteo.HourlyOptionsParameter.boundary_layer_height};
 
-        public Wildfire.FireWeatherIndex FWI { get => _fwi; }
-        public double FFMCHourly { get => _ffmcHourly.Value; }
+        /// <summary>
+        /// The fire weather codes (FFMC, DMC, DC, ISI, BUI, FWI and the hourly FFMC) at the current hour, derived by
+        /// <see cref="Utility.ClimatologySampler.DeriveFireWeatherCodes"/> - the one derivation the weather archive
+        /// and the campaign's candidate days use too (km/h wind, the 24 h rain, noon local standard time) - over the
+        /// hours of the record this run reads, seeded with the scenario's <c>[Weather]</c> start codes. Only
+        /// meaningful when <see cref="HasFireWeatherCodes"/>.
+        /// </summary>
+        /// <remarks>
+        /// The run used to march its own copy of the equations: at 12:00 of the simulation's clock, with that one
+        /// hour's rain - another noon and another rain than the archive's columns, so the two disagreed.
+        /// </remarks>
+        public Utility.ClimatologySampler.DerivedCodes FireWeatherCodes { get => _currentCodes; }
+        public bool HasFireWeatherCodes { get => _codes != null; }
+        public double FFMCHourly { get => _currentCodes.FfmcHourly; }
         public int HoursSinceRain { get => _hoursSinceRain; }
         public double KBDI { get => _DailyKBDI.KBDI; }
 
@@ -56,8 +65,6 @@ namespace PREACT
             //module and silently took their defaults for every other one - including the mean annual
             //precipitation, which was not read at all and hardcoded to 1500 here.
             Input.WeatherInput weatherInput = simulation.Input.Weather;
-            _fwi = new Wildfire.FireWeatherIndex(weatherInput.StartFFMC, weatherInput.StartDMC, weatherInput.StartDC);
-            _ffmcHourly = new Wildfire.HourlyFFMC(weatherInput.StartHourlyFFMC);
             _DailyKBDI = new DailyKBDI(weatherInput.StartKBDI, weatherInput.MeanAnnualPrcp);
 
             //Runtime copies: a run must not change the scenario the GUI edits and saves (the ELMFIRE rebase used
@@ -70,11 +77,61 @@ namespace PREACT
             SetAnchor(_anchor, time.StartDateTime);
 
             LoadOrDownloadWeather(time);
+            DeriveFireWeatherCodes(time);
             Update(time.StartDateTime, true);
         }
 
         private string _weatherFile;
         private DateTime _anchor;
+
+        private Utility.ClimatologySampler.DerivedCodes[] _codes;
+        private int _codesFirstRow;
+        private Utility.ClimatologySampler.DerivedCodes _currentCodes;
+
+        /// <summary>The record row holding <paramref name="weatherTime"/>, clamped to the record.</summary>
+        private int RowOf(DateTime weatherTime)
+        {
+            int count = _weatherData.HourlyData.Length;
+            double hours = (weatherTime - _weatherData.FirstEntry).TotalHours;
+            return hours <= 0 ? 0 : hours >= count - 1 ? count - 1 : (int)hours;
+        }
+
+        /// <summary>
+        /// The fire weather codes for every hour of the record the run reads, from its first to its last, seeded
+        /// with <c>[Weather] StartFFMC/StartDMC/StartDC/StartHourlyFFMC</c> at the first.
+        /// </summary>
+        private void DeriveFireWeatherCodes(TimeManager time)
+        {
+            _codes = null;
+            _currentCodes = default;
+            if (_weatherData == null || _weatherData.HourlyData == null || _weatherData.HourlyData.Length == 0)
+            {
+                return;
+            }
+
+            int first = RowOf(WeatherTime(time.StartDateTime));
+            int last = RowOf(WeatherTime(time.EndDateTime));
+            var hours = new List<Utility.ClimatologySampler.RawHour>(last - first + 1);
+            for (int row = first; row <= last; ++row)
+            {
+                HourlyWeather h = _weatherData.HourlyData[row];
+                hours.Add(new Utility.ClimatologySampler.RawHour
+                {
+                    Time = _weatherData.FirstEntry.AddHours(row),
+                    Temperature = h._temp,
+                    RelativeHumidity = h._rh,
+                    Precipitation = h._precip,
+                    WindSpeedMps = h._windSpeed,
+                });
+            }
+
+            Input.WeatherInput seeds = _simulation.Input.Weather;
+            _codes = Utility.ClimatologySampler.DeriveFireWeatherCodes(hours, _weatherData.Longitude,
+                new Wildfire.FireWeatherIndex(seeds.StartFFMC, seeds.StartDMC, seeds.StartDC),
+                new Wildfire.HourlyFFMC(seeds.StartHourlyFFMC));
+            _codesFirstRow = first;
+            _currentCodes = _codes.Length > 0 ? _codes[0] : default;
+        }
 
         /// <summary>Whether any weather was loaded. Without it every reported value is 0 and the indices stay at their seeds.</summary>
         public bool HasWeather { get => _weatherData != null; }
@@ -152,9 +209,11 @@ namespace PREACT
             }
 
             //Re-read the current hour through the new offset, so the first reported values are already the
-            //sampled day's rather than the previous anchor's. Only the hour: a forced Update would step the
-            //daily drought code a second time for the same day.
+            //sampled day's rather than the previous anchor's, and derive the fire weather codes over the
+            //sampled span. Only the hour: a forced Update would step the daily KBDI a second time for the day.
             ReadHour(time.StartDateTime);
+            DeriveFireWeatherCodes(time);
+            ReadCodes(time.StartDateTime);
 
             Engine.Message(_simulation, Engine.LogType.Log,
                 $"Weather rebased onto {anchor:yyyy-MM-dd HH:mm} from the record ("
@@ -200,8 +259,6 @@ namespace PREACT
 
             if (newDay)
             {
-                _fwiNeedsUpdate = true;
-
                 _maxTemperatureYesterday = _maxTemperatureToday;
                 _maxTemperatureToday = -300.0;
 
@@ -217,10 +274,8 @@ namespace PREACT
                 //read new values from weather input stream, at the moment in the record this simulation time
                 //corresponds to - the same instant the fire's own weather rasters were written from.
                 ReadHour(currentDateTime);
+                ReadCodes(currentDateTime);
 
-                //now update hourly values
-                _ffmcHourly.Calculate(_currentHourlyData._temp, _currentHourlyData._rh, _currentHourlyData._windSpeed * 3.6, _currentHourlyData._precip);                          
-                
                 if(_currentHourlyData._temp > _maxTemperatureToday)
                 {
                     _maxTemperatureToday = _currentHourlyData._temp;
@@ -242,17 +297,19 @@ namespace PREACT
 
             }
 
-            //The record's date, not the scenario's: the FWI's day-length factor is seasonal, so a fire computed
-            //against an August day must be indexed as August even when the scenario is dated in July.
-            if (_fwiNeedsUpdate && currentDateTime.Hour == 12)
-            {
-                _fwiNeedsUpdate = false;
-                _fwi.CalculateDay(WeatherTime(currentDateTime), _currentHourlyData._temp, _currentHourlyData._rh,
-                    _currentHourlyData._windSpeed * 3.6, _currentHourlyData._precip);
-            }
-
             //lastly just update DateTime
             _lastDateTime = currentDateTime;
+        }
+
+        /// <summary>The derived codes of the hour of the record <paramref name="currentDateTime"/> reads.</summary>
+        private void ReadCodes(DateTime currentDateTime)
+        {
+            if (_codes == null || _codes.Length == 0 || _weatherData == null)
+            {
+                return;
+            }
+            int index = RowOf(WeatherTime(currentDateTime)) - _codesFirstRow;
+            _currentCodes = _codes[index < 0 ? 0 : index >= _codes.Length ? _codes.Length - 1 : index];
         }
 
         private void ReadHour(DateTime currentDateTime)
@@ -399,7 +456,8 @@ namespace PREACT
                             //header
                             file.WriteLine($"{nameof(hourly.Time)},{nameof(hourly.Temperature_2m)} [{weatherStream.HourlyUnits.Temperature_2m}],{nameof(hourly.Relativehumidity_2m)} [{weatherStream.HourlyUnits.Relativehumidity_2m}],{nameof(hourly.Precipitation)} [{weatherStream.HourlyUnits.Precipitation}]," +
                                 $"{nameof(hourly.Windspeed_10m)} [{weatherStream.HourlyUnits.Windspeed_10m}],{nameof(hourly.Winddirection_10m)} [{weatherStream.HourlyUnits.Winddirection_10m}],{nameof(hourly.Cloudcover)} [{weatherStream.HourlyUnits.Cloudcover}]," +
-                                $"{nameof(hourly.Direct_radiation)} [{weatherStream.HourlyUnits.Direct_radiation}],{nameof(hourly.Boundary_layer_height)} [{weatherStream.HourlyUnits.Boundary_layer_height}],FFMC hourly [-],FFMC [-],DMC [-],DC [-],ISI [-],BUI [-],FWI [-]");
+                                $"{nameof(hourly.Direct_radiation)} [{weatherStream.HourlyUnits.Direct_radiation}],{nameof(hourly.Boundary_layer_height)} [{weatherStream.HourlyUnits.Boundary_layer_height}],FFMC hourly [-],FFMC [-],DMC [-],DC [-],ISI [-],BUI [-],FWI [-]"
+                                + Utility.ClimatologySampler.FormatHeaderSuffix(weatherStream.Longitude));
 
                             //save actual data to usable format in memory
                             HourlyWeather[] hourlyArray = new HourlyWeather[hourly.Time.Length];
@@ -408,24 +466,30 @@ namespace PREACT
                             DateTime.TryParse(hourly.Time[hourly.Time.Length - 1], System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out endDateTime);
                             _weatherData = new WeatherStream(weatherStream.Latitude, weatherStream.Longitude, weatherStream.Elevation, startDateTime, endDateTime, hourlyArray);
 
-                            Wildfire.FireWeatherIndex fwi = new Wildfire.FireWeatherIndex();
-                            Wildfire.HourlyFFMC ffmcHourly = new Wildfire.HourlyFFMC();
-
-                            //loop through all data
+                            //The fire weather columns by the one derivation the archive and the downloader use
+                            //(km/h wind, 24 h rain, noon local standard time). They used to be marched here with a
+                            //copy of the equations at 12:00 UTC on one hour's rain, so the cache and the archive
+                            //disagreed for the same weather.
+                            var raw = new List<Utility.ClimatologySampler.RawHour>(hourly.Time.Length);
                             for (int i = 0; i < hourly.Time.Length; i++)
                             {
-                                bool timeParsed = DateTime.TryParse(hourly.Time[i], System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out DateTime dateTime);
-                                //The indices take wind in km/h; the download is in m/s. The cache's FFMC/FWI columns
-                                //used to be computed with m/s (3.6 times too little wind) while Update, reading the same
-                                //functions, converted - so the file and the run disagreed.
-                                double windKmh = (hourly.Windspeed_10m[i] ?? 0) * 3.6;
-                                if(timeParsed && dateTime.Hour == 12)
+                                DateTime.TryParse(hourly.Time[i], System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out DateTime dateTime);
+                                raw.Add(new Utility.ClimatologySampler.RawHour
                                 {
-                                    fwi.CalculateDay(dateTime, hourly.Temperature_2m[i] ?? 0, hourly.Relativehumidity_2m[i] ?? 0, windKmh, hourly.Precipitation[i] ?? 0);
-                                }
-                                ffmcHourly.Calculate(hourly.Temperature_2m[i] ?? 0, hourly.Relativehumidity_2m[i] ?? 0, windKmh, hourly.Precipitation[i] ?? 0);
+                                    Time = dateTime,
+                                    Temperature = hourly.Temperature_2m[i] ?? 0,
+                                    RelativeHumidity = hourly.Relativehumidity_2m[i] ?? 0,
+                                    Precipitation = hourly.Precipitation[i] ?? 0,
+                                    WindSpeedMps = hourly.Windspeed_10m[i] ?? 0,
+                                });
+                            }
+                            Utility.ClimatologySampler.DerivedCodes[] codes =
+                                Utility.ClimatologySampler.DeriveFireWeatherCodes(raw, weatherStream.Longitude);
 
-                                file.WriteLine(FormattableString.Invariant($"{hourly.Time[i]},{hourly.Temperature_2m[i]},{hourly.Relativehumidity_2m[i]},{hourly.Precipitation[i]},{hourly.Windspeed_10m[i]},{hourly.Winddirection_10m[i]},{hourly.Cloudcover[i]},{hourly.Direct_radiation[i]},{hourly.Boundary_layer_height[i]},{ffmcHourly.Value},{fwi.FFMC},{fwi.DMC},{fwi.DC},{fwi.ISI},{fwi.BUI},{fwi.FWI}"));
+                            for (int i = 0; i < hourly.Time.Length; i++)
+                            {
+                                file.WriteLine(FormattableString.Invariant($"{hourly.Time[i]},{hourly.Temperature_2m[i]},{hourly.Relativehumidity_2m[i]},{hourly.Precipitation[i]},{hourly.Windspeed_10m[i]},{hourly.Winddirection_10m[i]},{hourly.Cloudcover[i]},{hourly.Direct_radiation[i]},{hourly.Boundary_layer_height[i]}")
+                                    + "," + Utility.ClimatologySampler.FormatCodes(codes[i]));
 
                                 _weatherData.HourlyData[i] = new HourlyWeather(hourly.Temperature_2m[i] ?? 0, hourly.Relativehumidity_2m[i] ?? 0,hourly.Precipitation[i] ?? 0, hourly.Windspeed_10m[i] ?? 0, hourly.Winddirection_10m[i] ?? 0, hourly.Cloudcover[i] ?? 0, hourly.Direct_radiation[i] ?? 0, hourly.Boundary_layer_height[i] ?? 0);
                             }

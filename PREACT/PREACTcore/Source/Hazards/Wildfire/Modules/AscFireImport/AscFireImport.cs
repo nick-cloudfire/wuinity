@@ -29,7 +29,9 @@ namespace PREACT.Wildfire
         private float _startTime;
         private float _maxTimeOfArrival = float.MinValue;
         private int ncols, nrows, _activeCells;
-        private double _xllcorner, _yllcorner, _cellsize, _NODATA_VALUE;
+        //The cell width and height. A GeoTIFF's pixels need not be square (the Mati DEM's are 27.592 x 27.616 m);
+        //taking the height to be the width misplaced the northern edge by the difference times the row count.
+        private double _xllcorner, _yllcorner, _cellsize, _cellsizeY, _NODATA_VALUE;
         private FireRasterData[,] _data;
         private Vector2d _landscapeSize;
         private bool _ignited = false;
@@ -58,20 +60,23 @@ namespace PREACT.Wildfire
             _fire = fire ?? _simulation.Input.WildfireModule.AscImportInput;
 
             _startTime = (float)_simulation.Time.GetSimulationTime(_fire.StartDateTime);
-            string TOAFile = Path.Combine(_simulation.Engine.WorkingFolder, _fire.TimeOfArrivalFile);
-            string ROSFile = Path.Combine(_simulation.Engine.WorkingFolder, _fire.RateOfSpreadFile);
+            //Resolved the way the scenario check resolves them (forward or back slashes, a file since moved within
+            //the scenario's folders, an absolute path as it is), so a scenario that passed the check reads the
+            //same files here.
+            string TOAFile = PREACTInput.ResolvePath(_simulation.Input.RootFolder, _fire.TimeOfArrivalFile);
+            string ROSFile = PREACTInput.ResolvePath(_simulation.Input.RootFolder, _fire.RateOfSpreadFile);
             //Left null when no raster is named, rather than combined unconditionally. Path.Combine with an
             //empty second argument returns the folder, so an absent fireline intensity produced the scenario
             //directory as a path - which ReadOutput then found non-empty, tried to read as a raster, and
             //warned about on every single run. The raster is genuinely optional, and this is what says so.
             string FIFile = NullIfNotNamed(_fire.FirelineIntensityFile);
-            string SDFile = Path.Combine(_simulation.Engine.WorkingFolder, _fire.SpreadDirectionFile);
+            string SDFile = PREACTInput.ResolvePath(_simulation.Input.RootFolder, _fire.SpreadDirectionFile);
             ReadOutput(TOAFile, ROSFile, FIFile, SDFile);
 
             Vector2d ascUTM = new Vector2d(_xllcorner, _yllcorner);
             _originOffset = ascUTM - _simulation.Input.Simulation.Data.UTMOrigin;
 
-            _landscapeSize = new Vector2d(ncols * _cellsize, nrows * _cellsize);
+            _landscapeSize = new Vector2d(ncols * _cellsize, nrows * _cellsizeY);
 
             _firelineIntensityData = new float[ncols * nrows];
             _newlyIgnitedCells = new List<Vector2int>();
@@ -107,7 +112,7 @@ namespace PREACT.Wildfire
                 return null;
             }
 
-            return Path.Combine(_simulation.Engine.WorkingFolder, relativePath);
+            return PREACTInput.ResolvePath(_simulation.Input.RootFolder, relativePath);
         }
 
         bool _first = true;
@@ -181,7 +186,7 @@ namespace PREACT.Wildfire
         public override void GetOffsetAndSize(out Vector2d offset, out Vector2d size)
         {
             offset = _originOffset;
-            size = new Vector2d(_cellsize * ncols, _cellsize * nrows);
+            size = new Vector2d(_cellsize * ncols, _cellsizeY * nrows);
         }
 
         /// <summary>
@@ -274,7 +279,7 @@ namespace PREACT.Wildfire
 
         public override float GetCellSizeY()
         {
-            return (float)_cellsize;
+            return (float)_cellsizeY;
         }
 
         /// <summary>
@@ -347,6 +352,7 @@ namespace PREACT.Wildfire
             _xllcorner = header.XllCorner;
             _yllcorner = header.YllCorner;
             _cellsize = header.CellSize;
+            _cellsizeY = header.CellSizeY > 0.0 ? header.CellSizeY : header.CellSize;
             _NODATA_VALUE = header.NoDataValue;
 
             _data = new FireRasterData[ncols, nrows];

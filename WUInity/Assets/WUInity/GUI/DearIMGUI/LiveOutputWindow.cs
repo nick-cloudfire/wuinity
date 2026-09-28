@@ -130,12 +130,13 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             //The fire-danger indices the weather manager has always computed and nothing ever displayed. They
             //are the reason the [Weather] seeds exist, so leaving them invisible made those keys look inert.
-            ImGui.BulletText($"FFMC (hourly): {sim.Weather.FFMCHourly:F1}");
             ImGui.BulletText($"KBDI: {sim.Weather.KBDI:F0}");
-            if (sim.Weather.FWI != null)
+            if (sim.Weather.HasFireWeatherCodes)
             {
-                ImGui.BulletText($"FWI: {sim.Weather.FWI.FWI:F1}   (FFMC {sim.Weather.FWI.FFMC:F1}, "
-                    + $"DMC {sim.Weather.FWI.DMC:F1}, DC {sim.Weather.FWI.DC:F0})");
+                PREACT.Utility.ClimatologySampler.DerivedCodes codes = sim.Weather.FireWeatherCodes;
+                ImGui.BulletText($"FFMC (hourly): {codes.FfmcHourly:F1}");
+                ImGui.BulletText($"FWI: {codes.Fwi:F1}   (FFMC {codes.Ffmc:F1}, DMC {codes.Dmc:F1}, DC {codes.Dc:F0}, "
+                    + $"ISI {codes.Isi:F1}, BUI {codes.Bui:F1})");
             }
             ImGui.TextDisabled("Fire danger is reported, not used: ELMFIRE computes spread from the case's own");
             ImGui.TextDisabled("moisture rasters. DMC and DC start from the [Weather] seeds - there is no");

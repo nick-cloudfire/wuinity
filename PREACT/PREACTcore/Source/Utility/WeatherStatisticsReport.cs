@@ -60,12 +60,13 @@ namespace PREACT.Utility
             var stats = new List<VariableStatistics>();
             if (pool == null || pool.Count == 0) return stats;
 
-            //The pool days' full rows, matched on the noon hour the pool was built from, so the codes
-            //belong to exactly the days the fits do.
+            //The pool days' full rows, matched on the FWI noon hour the pool was built from (12:00 local
+            //standard time, HourlyWeatherRow.IsFwiNoon - not 12:00 UTC, which for Mati is 14:00 local), so the
+            //codes belong to exactly the days and hours the fits do.
             var byDate = new Dictionary<DateTime, HourlyWeatherRow>();
             foreach (HourlyWeatherRow r in rows ?? Enumerable.Empty<HourlyWeatherRow>())
             {
-                if (r.Time.Hour == 12 && !byDate.ContainsKey(r.Time.Date)) byDate[r.Time.Date] = r;
+                if (r.IsFwiNoon && !byDate.ContainsKey(r.Time.Date)) byDate[r.Time.Date] = r;
             }
             List<HourlyWeatherRow> poolRows = pool
                 .Select(d => byDate.TryGetValue(d.Date.Date, out HourlyWeatherRow r) ? (HourlyWeatherRow?)r : null)
@@ -116,9 +117,11 @@ namespace PREACT.Utility
                 emcList.Select(v => System.Math.Max(v + lag100Percent, 1.0)),
                 $"1 h + {lag100Percent:0.#} points (field convention, no drying history)"));
 
-            stats.Add(Describe("wind_speed_20ft", "mph", "derived",
+            //Still the 10 m wind: WindNinja is run 10 m in, 10 m out, and the namelist declares WS_AT_10M, so
+            //ELMFIRE does its own reduction to 20 ft and then to midflame. It was labelled 20 ft.
+            stats.Add(Describe("wind_speed_10m", "mph", "derived",
                 pool.Select(d => d.WindSpeed * 2.2369362920544),
-                "before WindNinja; the written ws.tif is this bent by the terrain"));
+                "the 10 m wind in ELMFIRE's unit, before WindNinja; the written ws.tif is this bent by the terrain"));
 
             // ---------------------------------------------------------------- live, from the GSI march
             if (live != null && live.Count > 0)

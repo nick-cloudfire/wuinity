@@ -31,10 +31,11 @@ namespace PREACTcli.Campaigns
             c.BaseLines = File.ReadAllLines(c.BaseWuiPath);
             c.BaseFileName = Path.GetFileNameWithoutExtension(c.BaseWuiPath);
 
-            //Through the real parser, so the campaign reads the same keys the GUI and PREACT.exe do. It does not
-            //have to be complete - the SUMO network or the population may be missing on this machine - but the
-            //sections the campaign reads must have been read.
-            PREACTInput input = PREACTInput.LoadFromDisk(c.BaseWuiPath, out bool _);
+            //Through the real parser, so the campaign reads the same keys the GUI and PREACT.exe do - and on the
+            //very lines the campaign hashes and copies into every realization, rather than a second read of the
+            //file that could differ from them. It does not have to be complete - the SUMO network or the
+            //population may be missing on this machine - but the sections the campaign reads must have been read.
+            PREACTInput input = PREACTInput.LoadFromLines(c.BaseLines, c.ScenarioDir, out bool _);
             if (input?.Simulation == null || input.WildfireModule?.ElmfireInput == null)
             {
                 string why = PREACTInput.Requirements.Where(r => r.Critical).Select(r => r + ": " + r.Message).FirstOrDefault();

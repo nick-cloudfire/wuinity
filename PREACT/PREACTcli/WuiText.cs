@@ -4,43 +4,16 @@ using System.Collections.Generic;
 namespace PREACTcli
 {
     /// <summary>
-    /// Reads and sets <c>Key=Value</c> lines in the <c>[Section]</c>s of a <c>.wui</c>, as text.
+    /// Sets <c>Key=Value</c> lines in the <c>[Section]</c>s of a <c>.wui</c>, as text.
     /// </summary>
     /// <remarks>
     /// Text rather than a parse-and-write round trip on purpose: a realization's scenario has to be the base
-    /// scenario with a handful of keys changed, and the writer's round trip is not faithful (it drops sections of
-    /// modules not in use and rewrites others). This replaces four hand parsers that lived in the CLI and had
-    /// started to disagree about comments and whitespace.
+    /// scenario with a handful of keys changed, and the writer omits sections that only restate their defaults.
+    /// Reading a scenario is the engine parser's job (<c>PREACTInput.LoadFromLines</c>); the CLI's hand parsers,
+    /// which had started to disagree with it about comments and whitespace, are gone.
     /// </remarks>
     internal static class WuiText
     {
-        /// <summary>The value of <paramref name="key"/> in the first <paramref name="section"/>, or null.</summary>
-        public static string Get(IReadOnlyList<string> lines, string section, string key)
-        {
-            bool inSection = false;
-            foreach (string raw in lines)
-            {
-                string line = raw.Trim();
-                if (IsHeader(line))
-                {
-                    inSection = string.Equals(line.Substring(1, line.Length - 2).Trim(), section, StringComparison.OrdinalIgnoreCase);
-                    continue;
-                }
-
-                if (!inSection || line.Length == 0 || line.StartsWith("#") || line.StartsWith("//")) continue;
-
-                int eq = line.IndexOf('=');
-                if (eq <= 0) continue;
-                if (!string.Equals(line.Substring(0, eq).Trim(), key, StringComparison.OrdinalIgnoreCase)) continue;
-
-                string value = line.Substring(eq + 1);
-                int comment = value.IndexOf(" #", StringComparison.Ordinal);
-                if (comment >= 0) value = value.Substring(0, comment);
-                return value.Trim();
-            }
-            return null;
-        }
-
         /// <summary>
         /// Sets <paramref name="key"/> in the first <paramref name="section"/>, inserting the key at the end of the
         /// section, or the section at the end of the file, when absent.

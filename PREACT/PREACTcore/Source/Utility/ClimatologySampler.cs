@@ -170,13 +170,19 @@ namespace PREACT.Utility
         /// <remarks>
         /// Van Wagner's equations take wind in km/h (the archive stores m/s) and, for the daily codes, the rain of
         /// the 24 hours ending at noon; the daily codes advance once a day at 12:00 local standard time and the
-        /// other hours carry the last value, as before. The hourly FFMC takes each hour's own rain.
+        /// other hours carry the last value, as before. The hourly FFMC takes each hour's own rain. The hours are
+        /// UTC, as Open-Meteo delivers them.
+        ///
+        /// Also the run's own fire-danger report (WeatherManager), seeded with the scenario's <c>[Weather]</c>
+        /// start codes through <paramref name="daily"/> and <paramref name="hourly"/>; without them the
+        /// equations' standard start values are used. The state objects are advanced in place.
         /// </remarks>
-        public static DerivedCodes[] DeriveFireWeatherCodes(IList<RawHour> hours, double longitude)
+        public static DerivedCodes[] DeriveFireWeatherCodes(IList<RawHour> hours, double longitude,
+            PREACT.Wildfire.FireWeatherIndex daily = null, PREACT.Wildfire.HourlyFFMC hourly = null)
         {
             var result = new DerivedCodes[hours.Count];
-            var daily = new PREACT.Wildfire.FireWeatherIndex();
-            var hourly = new PREACT.Wildfire.HourlyFFMC();
+            daily = daily ?? new PREACT.Wildfire.FireWeatherIndex();
+            hourly = hourly ?? new PREACT.Wildfire.HourlyFFMC();
             int noon = FwiNoonUtcHour(longitude);
 
             var window = new Queue<RawHour>();
