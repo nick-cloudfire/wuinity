@@ -433,8 +433,11 @@ namespace PREACT.Utility
             l.Add(bands == c.AvailableMeteorologyBands && c.AvailableMeteorologyBands > 0
                 ? $"! {bands} hourly band(s), counted from the case's own weather rasters."
                 : $"! {bands} hourly band(s), as set in the scenario.");
+            //One starting band, band 1 (the scenario's start hour): one fire. Every run fits these three to the
+            //weather it reads (ElmfireNamelist.FitWeatherBands), a single run and a campaign realization alike.
+            l.Add("! The fire starts in band 1 and only there; NUM_METEOROLOGY_TIMES is how many bands it reads.");
             l.Add(Int("METEOROLOGY_BAND_START", 1));
-            l.Add(Int("METEOROLOGY_BAND_STOP", bands));
+            l.Add(Int("METEOROLOGY_BAND_STOP", 1));
             l.Add(Int("METEOROLOGY_BAND_SKIP_INTERVAL", 1));
             l.Add(Int("NUM_METEOROLOGY_TIMES", bands));
             l.Add(Int("NUM_ENSEMBLE_MEMBERS", s.NUM_ENSEMBLE_MEMBERS));

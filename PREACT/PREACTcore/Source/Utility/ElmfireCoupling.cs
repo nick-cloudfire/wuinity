@@ -244,32 +244,6 @@ namespace PREACT.Utility
                 return result;
             }
 
-            //A case whose weather is shorter than the fire is refused by ELMFIRE ("Not enough weather bands for
-            //given SIMULATION TSTOP"), which names neither the case nor the numbers. A generated case can simply be
-            //given more weather, so it is - the builder keeps every other layer.
-            string weatherProblem = DescribeWeatherShortfall(namelist, caseDir, settings);
-            if (weatherProblem != null)
-            {
-                if (!string.IsNullOrEmpty(settings.NamelistTemplate))
-                {
-                    result.Message = "The case's weather cannot run this fire: " + weatherProblem + ". The scenario runs "
-                                     + "its own NamelistTemplate, so extend that template's weather, or lower "
-                                     + "[ELMFIRE] SimulationTstopHours.";
-                    return result;
-                }
-
-                Log("The case's weather is too short for this fire (" + weatherProblem + "); extending it - one "
-                    + "WindNinja solve per hour of fire.");
-                if (!TryBuildCase(input, settings, caseDir, generation, Log, out string extendProblem, out ElmfireCaseBuilder.Result extended))
-                {
-                    result.Cancelled = ElmfireProcesses.CancelledSince(generation);
-                    result.Message = "Could not extend the case's weather: " + extendProblem;
-                    return result;
-                }
-                if (extended.Weather != null) result.WeatherAnchor = extended.Weather.BandAnchor;
-                namelist = ResolveNamelist(caseDir, input.RootFolder, settings, Log, out namelistProblem) ?? namelist;
-            }
-
             string exe = ResolveExecutable(input.RootFolder, settings.ElmfireExe);
 
             //ELMFIRE finds GDAL itself when PATH_TO_GDAL is left at 'auto', but on Windows getting a variable into a
@@ -283,6 +257,44 @@ namespace PREACT.Utility
             }
 
             string[] runLines = PatchNamelist(namelist, caseDir, settings, gdalBin, exe, Log);
+
+            //Checked on the namelist as it will run - its band keys fitted to the case's weather, its stop time the
+            //scenario's - so what is compared is what ELMFIRE will ask for. A case whose weather is shorter than the
+            //fire is refused by ELMFIRE ("Not enough weather bands for given SIMULATION TSTOP"), which names neither
+            //the case nor the numbers. A generated case can simply be given more weather, so it is - the builder keeps
+            //every other layer. A template's case is the user's to rebuild.
+            string weatherProblem = DescribeWeatherShortfall(runLines, caseDir);
+            if (weatherProblem != null)
+            {
+                if (!string.IsNullOrEmpty(settings.NamelistTemplate))
+                {
+                    result.Message = $"The case's weather cannot run this fire: {weatherProblem}. The scenario runs its own "
+                                     + $"NamelistTemplate ({Path.GetFileName(namelist)}) on the case's weather, so lower [ELMFIRE] "
+                                     + "SimulationTstopHours to what the weather covers, or build the case again for the hours "
+                                     + "the fire needs (Data > Build fire case (ELMFIRE), or PREACTcli build-case --hours), which "
+                                     + "writes that much weather.";
+                    return result;
+                }
+
+                Log("The case's weather is too short for this fire (" + weatherProblem + "); extending it - one "
+                    + "WindNinja solve per hour of fire.");
+                if (!TryBuildCase(input, settings, caseDir, generation, Log, out string extendProblem, out ElmfireCaseBuilder.Result extended))
+                {
+                    result.Cancelled = ElmfireProcesses.CancelledSince(generation);
+                    result.Message = "Could not extend the case's weather: " + extendProblem;
+                    return result;
+                }
+                if (extended.Weather != null) result.WeatherAnchor = extended.Weather.BandAnchor;
+                namelist = ResolveNamelist(caseDir, input.RootFolder, settings, Log, out namelistProblem) ?? namelist;
+                runLines = PatchNamelist(namelist, caseDir, settings, gdalBin, exe, Log);
+
+                weatherProblem = DescribeWeatherShortfall(runLines, caseDir);
+                if (weatherProblem != null)
+                {
+                    result.Message = "The case's weather still cannot run this fire after it was extended: " + weatherProblem + ".";
+                    return result;
+                }
+            }
 
             //Every raster the namelist names, on the grid of the DEM it names, before ELMFIRE is asked: it compares
             //nothing itself, and a fuel raster left on an old grid ends in a segfault or "raster dimensions
@@ -400,35 +412,47 @@ namespace PREACT.Utility
         }
 
         /// <summary>
-        /// Why the namelist's weather cannot cover this run, or null when it can (or cannot be told).
+        /// Why the weather the patched namelist <paramref name="runLines"/> reads cannot carry its fire, naming the
+        /// bands it needs and the bands there are; null when it can, or when that cannot be told (no weather folder -
+        /// the raster check reports the rasters).
         /// </summary>
-        private static string DescribeWeatherShortfall(string namelistPath, string caseDir, ElmfireInput settings)
+        /// <remarks>
+        /// The five standard rasters are checked for presence and agreement first, as a build keeps them, so a case
+        /// that lost its weather is rebuilt rather than run; then the namelist's own demand against its wind speed
+        /// raster (<see cref="ElmfireNamelist.DescribeBandShortfall"/>): the stop time, and the band keys, which
+        /// <see cref="PatchNamelist"/> has fitted to that raster - so what is left is a fire longer than the weather.
+        /// </remarks>
+        private static string DescribeWeatherShortfall(string[] runLines, string caseDir)
         {
-            string[] lines;
-            try { lines = File.ReadAllLines(namelistPath); }
-            catch { return null; }
-
-            double tstop = settings.SimulationTstopHours > 0.0
-                ? settings.TstopSeconds()
-                : ReadDouble(lines, ElmfireNamelistKeys.TimeControlGroup, ElmfireNamelistKeys.SimulationTstop, 0.0);
-            if (tstop <= 0.0) return null;
-
-            string weatherDir = ElmfireStems.ResolveDirectory(lines, ElmfireNamelistKeys.InputsGroup,
+            string weatherDir = ElmfireStems.ResolveDirectory(runLines, ElmfireNamelistKeys.InputsGroup,
                                     ElmfireNamelistKeys.WeatherDirectory, caseDir);
             if (weatherDir == null || !Directory.Exists(weatherDir)) return null;
 
-            double dt = ReadDouble(lines, ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.DtMeteorology, 3600.0);
-            return ElmfireCaseBuilder.DescribeKeptWeather(weatherDir, tstop, dt);
+            double tstop = ReadDouble(runLines, ElmfireNamelistKeys.TimeControlGroup, ElmfireNamelistKeys.SimulationTstop, 0.0);
+            double dt = ReadDouble(runLines, ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.DtMeteorology, 3600.0);
+            bool standardStems = string.Equals(StemOr(runLines, ElmfireNamelistKeys.WsFilename, ElmfireStems.WindSpeed),
+                                     ElmfireStems.WindSpeed, StringComparison.OrdinalIgnoreCase);
+            string kept = standardStems ? ElmfireCaseBuilder.DescribeKeptWeather(weatherDir, tstop, dt) : null;
+            if (kept != null) return kept;
+
+            int bands = ElmfireNamelist.WeatherBandCount(runLines, caseDir, out string windSpeed);
+            return ElmfireNamelist.DescribeBandShortfall(runLines, bands, Path.GetFileName(windSpeed));
         }
 
         /// <summary>
         /// The namelist with the few keys the scenario and the platform own written into it, leaving the physics
-        /// alone: PATH_TO_GDAL, the stop time, the outputs every run must dump, and the fuel model table.
+        /// alone: PATH_TO_GDAL, the stop time, the weather band keys, the outputs every run must dump, and the fuel
+        /// model table.
         /// </summary>
         /// <remarks>
         /// <para>
         /// The stop time is a property of what is being simulated, and the scenario is where that is set - in
         /// hours; this is the one place it becomes seconds.
+        /// </para>
+        /// <para>
+        /// The band keys are a property of the weather the case holds, which a template or a kept namelist knows
+        /// nothing about: they are fitted to the case's <c>ws.tif</c> exactly as a campaign fits each realization's
+        /// (<see cref="ElmfireNamelist.FitWeatherBands"/>), and what changed is logged.
         /// </para>
         /// <para>
         /// FUEL_MODEL_FILE is named whenever the table exists (and made to exist from ELMFIRE's own default when
@@ -455,6 +479,15 @@ namespace PREACT.Utility
                 lines = ElmfireNamelist.SetKeyInGroup(lines, ElmfireNamelistKeys.TimeControlGroup,
                     ElmfireNamelistKeys.SimulationTstop,
                     CampaignLayout.TstopSeconds(settings.SimulationTstopHours).ToString("0.0", CultureInfo.InvariantCulture));
+            }
+
+            int bands = ElmfireNamelist.WeatherBandCount(lines, caseDir, out string windSpeed);
+            string[] unfitted = lines;
+            lines = ElmfireNamelist.FitWeatherBands(lines, bands);
+            List<string> fitted = ElmfireNamelist.DescribeDifferences(unfitted, lines);
+            if (fitted.Count > 0)
+            {
+                log($"Namelist weather bands fitted to {Path.GetFileName(windSpeed)} ({bands} band(s)): " + string.Join("; ", fitted));
             }
 
             lines = ElmfireNamelistKeys.ForceRequiredOutputs(lines);

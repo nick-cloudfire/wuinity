@@ -318,17 +318,10 @@ namespace PREACTcli.Campaigns
             Set(ElmfireNamelistKeys.InputsGroup, "M100_FILENAME", ElmfireStems.M100, quoted: true);
 
             //The realization's weather starts at the fire's start, so band 1 is time 0 and the series holds exactly
-            //what it wrote. The template's band range described the case's own series.
+            //what it wrote. The template's band range described the case's own series. The same fit a single run makes
+            //on the case's weather (ElmfireCoupling.PatchNamelist).
             int bands = System.Math.Max(1, AscRaster.GetBandCount(ElmfireStems.Tif(weatherDir, ElmfireStems.WindSpeed)));
-            Set(ElmfireNamelistKeys.MonteCarloGroup, ElmfireNamelistKeys.MeteorologyBandStart, "1");
-            Set(ElmfireNamelistKeys.MonteCarloGroup, ElmfireNamelistKeys.MeteorologyBandStop, "1");
-            Set(ElmfireNamelistKeys.MonteCarloGroup, ElmfireNamelistKeys.NumMeteorologyTimes, bands.ToString(CultureInfo.InvariantCulture));
-
-            string kept = ElmfireNamelist.GetKeyInGroup(lines, ElmfireNamelistKeys.SimulatorGroup, ElmfireNamelistKeys.WxBandsKeptInMem);
-            if (!int.TryParse(kept, NumberStyles.Integer, CultureInfo.InvariantCulture, out int keptBands) || keptBands < 2)
-            {
-                Set(ElmfireNamelistKeys.SimulatorGroup, ElmfireNamelistKeys.WxBandsKeptInMem, "30");
-            }
+            lines = ElmfireNamelist.FitWeatherBands(lines, bands);
 
             //Live fuel moisture is a namelist scalar: the NFDRS4 GSI model has no terrain, so there is no per-cell
             //answer to write. USE_CONSTANT_LH/LW are forced so the value set here is the one used.

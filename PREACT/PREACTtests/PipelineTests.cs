@@ -24,6 +24,89 @@ namespace PREACT.Tests
             runner.Add("builder: a stopped build kills WindNinja, starts no other and writes no wind (no uniform field)", StoppedBuildWritesNoWind);
             runner.Add("coupling: BuildCaseOnly stopped during WindNinja reports it stopped and leaves the scenario alone", StoppedBuildCaseOnly);
             runner.Add("builder: a grid set aside by a build that then failed is carried by the next build", FailedRecutIsResumed);
+            runner.Add("coupling: a template's weather band keys are fitted to the case's ws.tif; a fire longer than it is refused naming both", TemplateBandsFitted);
+        }
+
+        /// <summary>A stand-in for ELMFIRE that fails at once, so the namelist a run would hand it can be read in outputs/run.data.</summary>
+        [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
+        private static string FailingElmfire(string folder)
+        {
+            string path = Path.Combine(folder, "elmfire_that_fails.sh");
+            File.WriteAllText(path, "#!/bin/sh\necho '[ERROR] fake ELMFIRE'\nexit 1\n");
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            return path;
+        }
+
+        /// <summary>
+        /// RC-MA-1 / e2e N1: Nick's kept hand-edited namelist says NUM_METEOROLOGY_TIMES = METEOROLOGY_BAND_STOP = 72, and a
+        /// single run of it on a case whose weather had 8 or 24 bands (the scenario's hours) aborted ELMFIRE at start-up:
+        /// "slice band end (72) is outside the bounds of (1, 8)". The run now fits the band keys to the case's ws.tif as a
+        /// campaign does per realization, and checks the namelist's demand against it before ELMFIRE starts.
+        /// </summary>
+        private static void TemplateBandsFitted()
+        {
+            if (OperatingSystem.IsWindows()) return;
+
+            using (var c = new SyntheticCase())
+            {
+                string caseDir = Path.Combine(c.Folder, "case");
+                ElmfireCaseBuilder.Options o = c.Options(caseDir, 150.0, new List<string>());
+                o.SimulationTstopSeconds = 3 * 3600.0;
+                ElmfireCaseBuilder.Build(o).GetAwaiter().GetResult();
+                Assert.Equal(3, AscRaster.GetBandCount(ElmfireStems.Tif(Path.Combine(caseDir, "inputs"), ElmfireStems.WindSpeed)),
+                    "the case holds 3 hours of weather");
+
+                //As Nick's kept namelist: written for a 72-band case.
+                string[] hand = File.ReadAllLines(Path.Combine(caseDir, "elmfire.data"));
+                foreach (string key in new[] { ElmfireNamelistKeys.NumMeteorologyTimes, ElmfireNamelistKeys.MeteorologyBandStop })
+                {
+                    hand = ElmfireNamelist.SetKeyInGroup(hand, ElmfireNamelistKeys.MonteCarloGroup, key, "72");
+                }
+                File.WriteAllLines(Path.Combine(caseDir, "hand.data"), hand);
+
+                string fake = FailingElmfire(c.Folder);
+                string wui = c.WriteScenario("case", 150.0);
+                File.WriteAllLines(wui, File.ReadAllLines(wui)
+                    .Select(l => l == "BuildCase=true"
+                        ? "BuildCase=false\nNamelistTemplate=hand.data\nReuseExistingOutput=false\nElmfireExe=" + fake
+                        : l == "SimulationTstopHours=1" ? "SimulationTstopHours=2" : l)
+                    .SelectMany(l => l.Split('\n')));
+                Input.PREACTInput input = Input.PREACTInput.LoadFromDisk(wui, out bool _);
+                Assert.True(input?.WildfireModule?.ElmfireInput != null, "the scenario loads");
+
+                var log = new List<string>();
+                ElmfireCoupling.Result run = ElmfireCoupling.Prepare(input, input.WildfireModule.ElmfireInput, m => log.Add(m));
+                string runData = Path.Combine(caseDir, "outputs", ElmfireRunner.RunNamelistName);
+                Assert.True(!run.Ok && File.Exists(runData) && run.Message.Contains("fake ELMFIRE"),
+                    "the 2 h fire on 3 bands reaches ELMFIRE (the fake one, which fails): " + run.Message);
+
+                string[] ran = File.ReadAllLines(runData);
+                string Key(string key) => ElmfireNamelist.GetKeyInGroup(ran, ElmfireNamelistKeys.MonteCarloGroup, key);
+                Assert.Equal("3", Key(ElmfireNamelistKeys.NumMeteorologyTimes), "NUM_METEOROLOGY_TIMES = the bands ws.tif has");
+                Assert.Equal("1", Key(ElmfireNamelistKeys.MeteorologyBandStart), "METEOROLOGY_BAND_START");
+                Assert.Equal("1", Key(ElmfireNamelistKeys.MeteorologyBandStop), "METEOROLOGY_BAND_STOP: one starting band");
+                Assert.True(log.Any(l => l.Contains("fitted to ws.tif (3 band(s))") && l.Contains("NUM_METEOROLOGY_TIMES: '72' -> '3'")),
+                    "and the run says what it changed: " + string.Join(" | ", log.Where(l => l.Contains("band"))));
+                Assert.True(ElmfireNamelist.DescribeBandShortfall(ran, 3) == null, "the fitted namelist asks for no more than there is");
+
+                //A fire longer than the weather: refused before ELMFIRE starts, with both numbers.
+                File.Delete(runData);
+                input.WildfireModule.ElmfireInput.SimulationTstopHours = 5;
+                run = ElmfireCoupling.Prepare(input, input.WildfireModule.ElmfireInput, null);
+                Assert.True(!run.Ok && run.Message.Contains("3 bands") && run.Message.Contains("5 h") && run.Message.Contains("NamelistTemplate"),
+                    "5 h on 3 bands is refused, naming both: " + run.Message);
+                Assert.True(!File.Exists(runData), "before ELMFIRE was asked");
+
+                //The demand, as the check words it: the stop time, or a band key a namelist was not fitted to.
+                string[] fiveHours = ElmfireNamelist.SetKeyInGroup(ran, ElmfireNamelistKeys.TimeControlGroup,
+                    ElmfireNamelistKeys.SimulationTstop, "18000.0");
+                string shortfall = ElmfireNamelist.DescribeBandShortfall(fiveHours, 3);
+                Assert.True(shortfall != null && shortfall.Contains("needs 5 weather band(s)") && shortfall.Contains("ws.tif has 3"),
+                    "the stop time's demand: " + shortfall);
+                string unfitted = ElmfireNamelist.DescribeBandShortfall(hand, 3);
+                Assert.True(unfitted != null && unfitted.Contains("needs 72") && unfitted.Contains("= 72"), "an unfitted band key's: " + unfitted);
+                Assert.True(ElmfireNamelist.DescribeBandShortfall(hand, 1) == null, "one band is constant weather, enough for any fire");
+            }
         }
 
         /// <summary>

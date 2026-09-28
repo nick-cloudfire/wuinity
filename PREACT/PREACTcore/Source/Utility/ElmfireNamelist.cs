@@ -328,6 +328,129 @@ namespace PREACT.Utility
         }
 
         /// <summary>
+        /// Fits the namelist's weather band keys to the weather it will read: <c>NUM_METEOROLOGY_TIMES</c> becomes
+        /// the <paramref name="bands"/> the rasters carry, and the fire starts in band 1 and only there
+        /// (<c>METEOROLOGY_BAND_START = METEOROLOGY_BAND_STOP = 1</c>). <c>WX_BANDS_KEPT_IN_MEM</c> below ELMFIRE's
+        /// floor of 2 becomes its default, 30.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// One rule for every ELMFIRE run WUInity starts - a campaign realization, on the weather drawn for it, and a
+        /// single run, on the case's <c>ws.tif</c> - because a namelist's band keys describe the weather its case was
+        /// built with, not the weather that is there now. Nick's kept hand-edited namelist says 72 while the case
+        /// holds 8 or 24 bands, and ELMFIRE does not stop at the end of a raster: a <c>METEOROLOGY_BAND_STOP</c> past
+        /// the last band aborts at start-up ("slice band end (72) is outside the bounds of (1, 8)"), and a
+        /// <c>NUM_METEOROLOGY_TIMES</c> past it makes ELMFIRE skip the case ("CYCLING BECAUSE ..."), so no fire at all.
+        /// </para>
+        /// <para>
+        /// Band 1 is the run's time 0 in both: the case weather starts at the scenario's start hour, a realization's at
+        /// its fire's start. One starting band is one fire: with random ignitions ELMFIRE runs NUM_ENSEMBLE_MEMBERS
+        /// cases per starting band, and without them it pins the stop to the start itself. How far the fire runs is
+        /// not a band key but <c>SIMULATION_TSTOP</c>; whether the weather covers it is
+        /// <see cref="DescribeBandShortfall"/>. With <paramref name="bands"/> below 1 (the raster cannot be read) the
+        /// band keys are left as they are, and the raster check reports the raster.
+        /// </para>
+        /// </remarks>
+        public static string[] FitWeatherBands(string[] lines, int bands)
+        {
+            if (bands >= 1)
+            {
+                lines = SetKeyInGroup(lines, ElmfireNamelistKeys.MonteCarloGroup, ElmfireNamelistKeys.MeteorologyBandStart, "1");
+                lines = SetKeyInGroup(lines, ElmfireNamelistKeys.MonteCarloGroup, ElmfireNamelistKeys.MeteorologyBandStop, "1");
+                lines = SetKeyInGroup(lines, ElmfireNamelistKeys.MonteCarloGroup, ElmfireNamelistKeys.NumMeteorologyTimes,
+                            bands.ToString(CultureInfo.InvariantCulture));
+            }
+
+            string kept = GetKeyInGroup(lines, ElmfireNamelistKeys.SimulatorGroup, ElmfireNamelistKeys.WxBandsKeptInMem);
+            if (!int.TryParse(kept, NumberStyles.Integer, CultureInfo.InvariantCulture, out int keptBands) || keptBands < 2)
+            {
+                lines = SetKeyInGroup(lines, ElmfireNamelistKeys.SimulatorGroup, ElmfireNamelistKeys.WxBandsKeptInMem, "30");
+            }
+            return lines;
+        }
+
+        /// <summary>
+        /// The wind speed raster the namelist's run reads - <c>WS_FILENAME</c> (default <c>ws</c>) in its
+        /// <c>WEATHER_DIRECTORY</c>, resolved for a run in <paramref name="runDirectory"/> - and its band count, 0 when
+        /// it is not there or cannot be read. ELMFIRE takes the band count of all five weather rasters from this one.
+        /// </summary>
+        public static int WeatherBandCount(string[] lines, string runDirectory, out string windSpeedRaster)
+        {
+            windSpeedRaster = null;
+            foreach (ElmfireStems.NamelistRaster r in ElmfireStems.ReferencedRasters(lines, runDirectory))
+            {
+                if (r.Key == ElmfireNamelistKeys.WsFilename) windSpeedRaster = r.Path;
+            }
+
+            if (windSpeedRaster == null)
+            {
+                string inputs = ElmfireStems.ResolveDirectory(lines, ElmfireNamelistKeys.InputsGroup,
+                                    ElmfireNamelistKeys.FuelsAndTopographyDirectory, runDirectory) ?? runDirectory;
+                string weather = ElmfireStems.ResolveDirectory(lines, ElmfireNamelistKeys.InputsGroup,
+                                     ElmfireNamelistKeys.WeatherDirectory, runDirectory) ?? inputs;
+                windSpeedRaster = ElmfireStems.Tif(weather, ElmfireStems.WindSpeed);
+            }
+
+            return AscRaster.GetBandCount(windSpeedRaster);
+        }
+
+        /// <summary>
+        /// Why the weather cannot carry the fire the namelist runs - naming how many bands the namelist asks for, what
+        /// for, and how many <paramref name="rasterName"/> has - or null when it can, or when that cannot be told.
+        /// </summary>
+        /// <remarks>
+        /// The demand is what ELMFIRE will read: from <c>METEOROLOGY_BAND_START</c>, enough bands of
+        /// <c>DT_METEOROLOGY</c> to cover <c>SIMULATION_TSTOP</c> (its own check, "Not enough weather bands for given
+        /// SIMULATION TSTOP", names neither number), and every band up to <c>NUM_METEOROLOGY_TIMES</c> and
+        /// <c>METEOROLOGY_BAND_STOP</c>, which it reads whatever the stop time. A single band is constant weather,
+        /// which ELMFIRE holds for any duration.
+        /// </remarks>
+        public static string DescribeBandShortfall(string[] lines, int availableBands, string rasterName = "ws.tif")
+        {
+            if (availableBands <= 1) return null;
+
+            double tstop = ReadPositive(lines, ElmfireNamelistKeys.TimeControlGroup, ElmfireNamelistKeys.SimulationTstop, 0.0);
+            double dt = ReadPositive(lines, ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.DtMeteorology, 3600.0);
+            int start = System.Math.Max(1, (int)ReadPositive(lines, ElmfireNamelistKeys.MonteCarloGroup, ElmfireNamelistKeys.MeteorologyBandStart, 1.0));
+            int stop = (int)ReadPositive(lines, ElmfireNamelistKeys.MonteCarloGroup, ElmfireNamelistKeys.MeteorologyBandStop, 0.0);
+            int times = (int)ReadPositive(lines, ElmfireNamelistKeys.MonteCarloGroup, ElmfireNamelistKeys.NumMeteorologyTimes, 0.0);
+
+            int demand = 0;
+            string why = null;
+            if (tstop > 0.0)
+            {
+                demand = start - 1 + (int)System.Math.Ceiling(tstop / dt - 1e-9);
+                why = $"{tstop / 3600.0:0.##} h of fire (SIMULATION_TSTOP = {tstop:0}) in bands of {dt:0} s"
+                      + (start > 1 ? $" from band {start}" : "");
+            }
+            if (times > demand)
+            {
+                demand = times;
+                why = $"NUM_METEOROLOGY_TIMES = {times}";
+            }
+            if (stop > demand)
+            {
+                demand = stop;
+                why = $"METEOROLOGY_BAND_STOP = {stop}";
+            }
+
+            if (demand <= availableBands) return null;
+            return $"the namelist needs {demand} weather band(s) ({why}) and {rasterName} has {availableBands} "
+                   + $"({availableBands * dt / 3600.0:0.##} h)";
+        }
+
+        /// <summary>A number the namelist sets in <paramref name="group"/>, when it is positive; otherwise <paramref name="fallback"/>.</summary>
+        private static double ReadPositive(string[] lines, string group, string key, double fallback)
+        {
+            string value = GetKeyInGroup(lines, group, key);
+            return !string.IsNullOrEmpty(value)
+                   && double.TryParse(value.Replace('d', 'e').Replace('D', 'E'), NumberStyles.Float,
+                       CultureInfo.InvariantCulture, out double parsed) && parsed > 0
+                ? parsed
+                : fallback;
+        }
+
+        /// <summary>
         /// Gives a realization one ignition point that the caller drew, instead of letting ELMFIRE draw it.
         /// </summary>
         /// <remarks>
