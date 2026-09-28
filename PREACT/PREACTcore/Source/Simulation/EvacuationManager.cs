@@ -868,12 +868,59 @@ namespace PREACT.Evacuation
         /// nodata rather than the nearest edge value, so a landscape that does not cover the fire grid is
         /// visible as a gap instead of a smear.
         /// </summary>
+        /// <remarks>
+        /// The terrain the fire burned on comes first when the fire module knows it - an ELMFIRE run's own
+        /// dem/slp/asp, which are the fire grid - and the scenario's <c>[Landscape]</c> otherwise. A single run of a
+        /// scenario whose landscape was still the DEM it was drawn on sampled that one, which on Nick's Mati covered
+        /// 63.9 % of the fire grid and left the rest flat, while every campaign realization used the case's (e2e N7).
+        /// </remarks>
         private bool TrySampleTopographyOntoFireGrid(Simulation simulation, int xCount, int yCount,
             out float[,] elevation, out float[,] slope, out float[,] aspect)
         {
             simulation.Hazards.Wildfire.GetOffsetAndSize(out Vector2d fireOffset, out Vector2d fireSize);
+
+            Wildfire.LandscapeData terrain = LoadFireTerrain(simulation.Hazards.Wildfire.FireWeather, _input.Simulation.Data.UTMOrigin);
+            if (terrain != null)
+            {
+                Engine.Message(simulation, Engine.LogType.Log, "k-PERIL topography: the fire's own terrain ("
+                    + System.IO.Path.GetFileName(simulation.Hazards.Wildfire.FireWeather.ElevationFile) + ", "
+                    + System.IO.Path.GetFileName(simulation.Hazards.Wildfire.FireWeather.SlopeFile) + ", "
+                    + System.IO.Path.GetFileName(simulation.Hazards.Wildfire.FireWeather.AspectFile) + "), not the scenario's landscape.");
+                if (TrySampleTopographyOntoGrid(terrain, fireOffset, fireSize, xCount, yCount, out elevation, out slope, out aspect))
+                {
+                    return true;
+                }
+            }
+
             return TrySampleTopographyOntoGrid(_input.WildfireModule.Data.LandscapeData,
                 fireOffset, fireSize, xCount, yCount, out elevation, out slope, out aspect);
+        }
+
+        /// <summary>The fire module's own terrain rasters as a landscape, or null when it has none or they cannot be read.</summary>
+        internal static Wildfire.LandscapeData LoadFireTerrain(Wildfire.FireWeatherRasters fire, Vector2d utmOrigin)
+        {
+            if (fire == null || string.IsNullOrEmpty(fire.ElevationFile) || !System.IO.File.Exists(fire.ElevationFile))
+            {
+                return null;
+            }
+
+            try
+            {
+                var bands = new string[8];
+                for (int i = 0; i < bands.Length; ++i) bands[i] = string.Empty;
+                bands[(int)Wildfire.LandscapeData.Band.Elevation] = fire.ElevationFile;
+                if (!string.IsNullOrEmpty(fire.SlopeFile) && System.IO.File.Exists(fire.SlopeFile)) bands[(int)Wildfire.LandscapeData.Band.Slope] = fire.SlopeFile;
+                if (!string.IsNullOrEmpty(fire.AspectFile) && System.IO.File.Exists(fire.AspectFile)) bands[(int)Wildfire.LandscapeData.Band.Aspect] = fire.AspectFile;
+
+                var terrain = new Wildfire.LandscapeData(bands, utmOrigin);
+                return terrain.CantAllocLCP ? null : terrain;
+            }
+            catch (System.Exception e)
+            {
+                Engine.Message(null, Engine.LogType.Warning, "The fire's own terrain could not be read (" + e.Message
+                    + "); k-PERIL samples the scenario's landscape instead.");
+                return null;
+            }
         }
 
         /// <summary>

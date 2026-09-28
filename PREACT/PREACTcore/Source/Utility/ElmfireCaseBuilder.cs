@@ -188,6 +188,12 @@ namespace PREACT.Utility
             /// </summary>
             public List<string> CandidateDemPaths = new List<string>();
 
+            /// <summary>
+            /// Every file the scenario names (its <c>...File</c> keys, resolved), which the build must never rewrite: a
+            /// raster a namelist names that is also one of these is re-cut into a copy, not in place (review RC-MI-2).
+            /// </summary>
+            public List<string> ScenarioFiles = new List<string>();
+
             /// <summary>Copied into &amp;MISCELLANEOUS PATH_TO_GDAL so ELMFIRE's own shell-outs
             /// resolve to a known-good GDAL rather than whatever is first on PATH.</summary>
             public string PathToGdal;
@@ -279,6 +285,14 @@ namespace PREACT.Utility
             /// <summary>The exported painted WUI area, for k-PERIL's WuiAreaFile; null if none was painted.</summary>
             public string WuiAreaFile;
 
+            /// <summary>
+            /// Where the scenario's painting was placed from when that was not the case grid - "the landscape raster
+            /// mati_dem.tif (painted before the case grid existed)" - or null (no painting, or painted on the case grid).
+            /// A scenario whose landscape is pointed at the case loses the grid such a painting was placed via, so the
+            /// next build cannot place it until it is moved onto the case grid.
+            /// </summary>
+            public string PaintingOffCaseGrid;
+
             /// <summary>What the history-based weather chain actually managed to use, and where it fell back.</summary>
             public WeatherRasterPipeline.Result Weather;
 
@@ -298,6 +312,11 @@ namespace PREACT.Utility
 
             string inputs = Path.Combine(o.OutputDirectory, InputsFolder);
             PrepareOutputDirectory(o, inputs);
+
+            //Refused before anything is made: a case without it passes its own validation and then stops ELMFIRE at
+            //start-up, on the first run (e2e N2).
+            string noBuildingTable = DescribeMissingBuildingTable(o, inputs);
+            if (noBuildingTable != null) throw new InvalidDataException(char.ToUpperInvariant(noBuildingTable[0]) + noBuildingTable.Substring(1) + ".");
 
             //---------------------------------------------------------------- 1. DEM
             //Padded so the fire can grow past the evacuation domain's edge; ELMFIRE reads the
@@ -614,6 +633,10 @@ namespace PREACT.Utility
             //ELMFIRE writes its built-in table into the inputs folder at startup and reads it back - so every run
             //rewrote a shared file (concurrently, in a campaign) and a hand-edited table was silently replaced.
             EnsureFuelModelTable(inputs, o.ElmfireExe, Log);
+            if (o.Namelist != null && o.Namelist.USE_BLDG_SPREAD_MODEL)
+            {
+                EnsureBuildingFuelModelTable(inputs, ElmfireStems.BuildingFuelModelTable, o.ElmfireExe, Log);
+            }
 
             //---------------------------------------------------------------- 9. Namelist
             //Regenerated on every build, so the scenario's [ElmfireNamelist] settings, its stop time and the case's
@@ -913,6 +936,8 @@ namespace PREACT.Utility
             {
                 string stem = Path.GetFileNameWithoutExtension(path);
                 if (derived.Contains(stem) || result.Written.Contains(stem)) continue;
+                //What a build that died while re-cutting a namelist's raster left half-written; the original is beside it.
+                if (path.EndsWith(RecutSuffix, StringComparison.OrdinalIgnoreCase)) continue;
                 if (File.Exists(ElmfireStems.Tif(inputs, stem))) continue;
 
                 WarpLayer(o, result, grid, stem, path, ElmfireStems.Tif(inputs, stem), log);
@@ -983,18 +1008,78 @@ namespace PREACT.Utility
         /// <summary>ELMFIRE's shipped fuel model table for an executable in <c>build/&lt;os&gt;/bin</c>, or null.</summary>
         public static string DefaultFuelModelTable(string elmfireExe)
         {
+            return DefaultElmfireTable(elmfireExe, ElmfireStems.FuelModelTable);
+        }
+
+        /// <summary>ELMFIRE's shipped building fuel model table for an executable in <c>build/&lt;os&gt;/bin</c>, or null.</summary>
+        public static string DefaultBuildingFuelModelTable(string elmfireExe)
+        {
+            return DefaultElmfireTable(elmfireExe, ElmfireStems.BuildingFuelModelTable);
+        }
+
+        /// <summary><c>build/source/&lt;fileName&gt;</c> of the ELMFIRE tree an executable in <c>build/&lt;os&gt;/bin</c> belongs to, or null.</summary>
+        private static string DefaultElmfireTable(string elmfireExe, string fileName)
+        {
             if (string.IsNullOrEmpty(elmfireExe)) return null;
 
             try
             {
                 string bin = Path.GetDirectoryName(Path.GetFullPath(elmfireExe));
-                string candidate = Path.GetFullPath(Path.Combine(bin, "..", "..", "source", ElmfireStems.FuelModelTable));
+                string candidate = Path.GetFullPath(Path.Combine(bin, "..", "..", "source", fileName));
                 return File.Exists(candidate) ? candidate : null;
             }
             catch
             {
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Makes sure the building fuel model table <paramref name="tableName"/> exists in <paramref name="directory"/>,
+        /// copying ELMFIRE's own <c>building_fuel_models.csv</c> when it is that name and not there. Returns whether it
+        /// exists afterwards.
+        /// </summary>
+        /// <remarks>
+        /// ELMFIRE reads it whenever <c>USE_BLDG_SPREAD_MODEL</c> is on - <c>BUILDING_FUEL_MODEL_FILE</c>, default
+        /// <c>building_fuel_models.csv</c>, in <c>MISCELLANEOUS_INPUTS_DIRECTORY</c> - and stops at start-up without it
+        /// ("Problem opening building fuel model table file ./inputs/building_fuel_models.csv"). A table under another
+        /// name is the user's own and is not made up; one already there is never replaced (e2e N2).
+        /// </remarks>
+        public static bool EnsureBuildingFuelModelTable(string directory, string tableName, string elmfireExe, Action<string> log)
+        {
+            string name = string.IsNullOrWhiteSpace(tableName) ? ElmfireStems.BuildingFuelModelTable : tableName;
+            string table = Path.Combine(directory, name);
+            if (File.Exists(table)) return true;
+            if (!string.Equals(name, ElmfireStems.BuildingFuelModelTable, StringComparison.OrdinalIgnoreCase)) return false;
+
+            string source = DefaultBuildingFuelModelTable(elmfireExe ?? ElmfireCoupling.ResolveExecutable(null, null));
+            if (source == null) return false;
+
+            File.Copy(source, table);
+            log?.Invoke($"  building fuel table: {name} copied from ELMFIRE's default ({source}), for the building spread model.");
+            return true;
+        }
+
+        /// <summary>
+        /// Why a build that switches the building spread model on could not give the case its building fuel table, or
+        /// null when it can: the table is already in the inputs, is among the files to copy, or ELMFIRE's default is there.
+        /// </summary>
+        private static string DescribeMissingBuildingTable(Options o, string inputs)
+        {
+            if (o.Namelist == null || !o.Namelist.USE_BLDG_SPREAD_MODEL) return null;
+            if (File.Exists(Path.Combine(inputs, ElmfireStems.BuildingFuelModelTable))) return null;
+            foreach (string f in o.CopyFiles)
+            {
+                if (string.Equals(Path.GetFileName(f ?? string.Empty), ElmfireStems.BuildingFuelModelTable, StringComparison.OrdinalIgnoreCase)
+                    && File.Exists(f)) return null;
+            }
+            if (DefaultBuildingFuelModelTable(o.ElmfireExe ?? ElmfireCoupling.ResolveExecutable(null, null)) != null) return null;
+
+            return $"the building spread model is on ([ElmfireNamelist] USE_BLDG_SPREAD_MODEL) and ELMFIRE reads "
+                   + $"{ElmfireStems.BuildingFuelModelTable} from the case's inputs whenever it is, but the case has none and "
+                   + "ELMFIRE's default (build/source/building_fuel_models.csv beside the executable) was not found. Put the "
+                   + $"table into {inputs} (PREACTcli build-case --copy <file>), set [ELMFIRE] ElmfireExe to an ELMFIRE "
+                   + "build that has its source tree, or switch the building spread model off";
         }
 
         private static bool IsSameFile(string a, string b)
@@ -1150,10 +1235,12 @@ namespace PREACT.Utility
             if (rasters == null || rasters.Count == 0) return;
 
             var scenarioFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (string f in o.CandidateDemPaths.Concat(o.UserRasters.Values)
+            foreach (string f in o.CandidateDemPaths.Concat(o.UserRasters.Values).Concat(o.ScenarioFiles)
                          .Concat(new[] { o.PaintedMasksGridPath, o.LocalDemPath }))
             {
-                if (!string.IsNullOrEmpty(f)) scenarioFiles.Add(Path.GetFullPath(f));
+                if (string.IsNullOrEmpty(f)) continue;
+                try { scenarioFiles.Add(Path.GetFullPath(f)); }
+                catch { }
             }
 
             foreach (ElmfireStems.NamelistRaster r in rasters)
@@ -1161,14 +1248,34 @@ namespace PREACT.Utility
                 string path = ElmfireStems.Tif(inputs, r.Stem);
                 if (!File.Exists(path) || IsOnGrid(path, grid)) continue;
 
+                //A file the scenario itself reads - its landscape's slope, a source layer - is never rewritten: the
+                //scenario would read a different raster than it names (review RC-MI-2). The namelist gets a re-cut copy
+                //beside it instead, under a name that says which grid it is on, and is told to use it.
                 if (scenarioFiles.Contains(Path.GetFullPath(path)))
                 {
-                    string why = $"{r.Key} = '{r.Stem}' is not on the case grid, but the scenario also reads {path}, so it "
-                                 + "was not re-cut; point the namelist at a copy";
+                    string copyStem = r.Stem + "_" + grid.Header.Ncols.ToString(CultureInfo.InvariantCulture) + "x"
+                                      + grid.Header.Nrows.ToString(CultureInfo.InvariantCulture);
+                    string copy = ElmfireStems.Tif(inputs, copyStem);
+                    if (!File.Exists(copy) || !IsOnGrid(copy, grid))
+                    {
+                        if (r.Categorical) o.CategoricalStems.Add(copyStem);
+                        RecutInto(o, result, grid, copyStem, path, copy, log);
+                    }
+                    string why = $"{r.Key} = '{r.Stem}' is not on the case grid, and the scenario itself reads {path}, so that "
+                                 + $"file was left as it is; its copy on the case grid is inputs/{copyStem}.tif. Set {r.Key} = "
+                                 + $"'{copyStem}' in the namelist that names '{r.Stem}' to run it";
                     result.Fallbacks.Add(why);
                     log("  WARNING " + why + ".");
                     continue;
                 }
+
+                if (r.Categorical) o.CategoricalStems.Add(r.Stem);
+
+                //Re-cut into a file of its own first, and only then the original moved aside and the copy put in its
+                //place: moving it aside first meant a warp that failed (a GDAL error, a full disk) left inputs/ without
+                //the raster, and the next build - finding nothing to carry - left it at that (review RC-MI-1).
+                string recut = Path.Combine(inputs, r.Stem + RecutSuffix);
+                RecutInto(o, result, grid, r.Stem, path, recut, log);
 
                 string previous = Path.Combine(inputs, PreviousGridFolder);
                 Directory.CreateDirectory(previous);
@@ -1181,13 +1288,43 @@ namespace PREACT.Utility
                 File.Move(path, aside);
                 string aux = path + ".aux.xml";
                 if (File.Exists(aux)) { try { File.Delete(aux); } catch { } }
+                File.Move(recut, path);
 
-                if (r.Categorical) o.CategoricalStems.Add(r.Stem);
                 log($"  {r.Stem}: named by the namelist ({r.Key}) and not on the case grid; re-cut onto it, the original "
                     + $"kept as inputs/{PreviousGridFolder}/{Path.GetFileName(aside)}.");
-                WarpLayer(o, result, grid, r.Stem, aside, path, log);
                 if (!result.Carried.Contains(r.Stem)) result.Carried.Add(r.Stem);
             }
+        }
+
+        /// <summary>The temporary name a raster is re-cut under before it replaces the original (never a stem a namelist names).</summary>
+        private const string RecutSuffix = ".recut-in-progress.tif";
+
+        /// <summary>
+        /// Warps <paramref name="source"/> onto the grid as <paramref name="destination"/>, leaving nothing at the
+        /// destination if the warp fails - and the source untouched either way.
+        /// </summary>
+        private static void RecutInto(Options o, Result result, MasterGrid grid, string stem, string source,
+            string destination, Action<string> log)
+        {
+            void Remove()
+            {
+                foreach (string f in new[] { destination, destination + ".aux.xml" })
+                {
+                    try { if (File.Exists(f)) File.Delete(f); } catch { }
+                }
+            }
+
+            Remove();
+            try
+            {
+                WarpLayer(o, result, grid, stem, source, destination, log);
+            }
+            catch
+            {
+                Remove();
+                throw;
+            }
+            try { if (File.Exists(destination + ".aux.xml")) File.Delete(destination + ".aux.xml"); } catch { }
         }
 
         /// <summary>Whether a raster has the grid's size, origin and cell size (to a tenth of a cell).</summary>
@@ -1534,6 +1671,7 @@ namespace PREACT.Utility
                     + "ignition and WUI areas on it, then build again.");
             }
 
+            if (!ReferenceEquals(painted, grid)) result.PaintingOffCaseGrid = paintedOn;
             log($"  painted: {masks.Ncols}x{masks.Nrows} painting placed via {paintedOn}"
                 + (masks.Grid == null
                     ? " - matched by its size alone, since the file does not record where its grid lies."

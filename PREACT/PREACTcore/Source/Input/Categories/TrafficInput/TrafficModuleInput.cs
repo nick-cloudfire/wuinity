@@ -42,7 +42,7 @@ namespace PREACT.Input
             }
             else
             {
-                PREACTInput.InputNotFoundMessage(nameOfInput, false, "false");
+                PREACTInput.ModuleOffForWantOfEnabled("traffic", "nobody drives out: no car is simulated, and a trigger boundary gets no evacuation time");
             }
 
             //Read whether or not traffic is on, so a save keeps the SUMO settings (this used to return when it

@@ -45,6 +45,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
         private static volatile bool _busy;
         private static volatile bool _lastFailed;
         private static volatile bool _stopRequested;
+        //A utility (copying the scenario) is running rather than a data step: it cannot be stopped part-way.
+        private static volatile bool _utility;
         public static string Status { get => _status; }
         public static bool Busy { get => _busy; }
         /// <summary>The step or chain running now, or last run.</summary>
@@ -348,6 +350,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
 
             _busy = true;
+            _utility = false;
             _lastFailed = false;
             _stopRequested = false;
             Owner = owner;
@@ -479,6 +482,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
 
             _busy = true;
+            _utility = true;
             _lastFailed = false;
             _stopRequested = false;
             Owner = WorkflowStepId.None;
@@ -500,14 +504,22 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
                 PreactGUI.Post(() =>
                 {
+                    //A stop asked for meanwhile (File > Quit, Play-stop) cannot stop the copy, but it is not a go-ahead
+                    //to switch to the copy either (review R5).
+                    bool stopped = _stopRequested;
                     _busy = false;
+                    _utility = false;
                     _stopRequested = false;
                     _lastFailed = failure != null;
                     _progressFraction = 1f;
-                    _status = failure ?? title + ": done.";
-                    if (failure == null)
+                    _status = failure ?? title + (stopped ? ": done, and not opened (a stop was asked for)." : ": done.");
+                    if (failure == null && !stopped)
                     {
                         done?.Invoke(result);
+                    }
+                    else if (failure == null)
+                    {
+                        LogStep(title + " finished while stopping, so it was not opened: " + result);
                     }
                 });
             });
@@ -583,7 +595,13 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
             ImGui.EndChild();
 
-            if (_busy)
+            if (_busy && _utility)
+            {
+                //No Stop for a copy: it has no point to stop at, and one offered did nothing (review R5).
+                ImGui.TextDisabled("This cannot be stopped; it finishes by itself.");
+                ImGui.SameLine();
+            }
+            else if (_busy)
             {
                 ImGui.BeginDisabled(_stopRequested);
                 if (ImGui.Button(_stopRequested ? "Stopping..." : "Stop"))

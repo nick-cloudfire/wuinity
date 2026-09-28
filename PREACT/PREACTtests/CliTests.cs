@@ -20,6 +20,8 @@ namespace PREACT.Tests
             runner.Add("cli: a realization's archived scenario opens where it is kept", ArchivedScenarioOpensInPlace);
             runner.Add("cli: an unexpected exception ends a command with a message and exit 1", UnhandledExceptionExit);
             runner.Add("cli: realizations stopped by the wall-clock limit are called out, not just counted", TruncatedCalledOut);
+            runner.Add("cli: --help, -h and help print the usage with exit 0; PREACT says it ran only when it did", HelpAndUsage);
+            runner.Add("cli: a realization's scenario shows its own fire's rasters, none of the base scenario's [AscImport] ones", NoStaleAscImportDisplay);
         }
 
         private static void TruncatedCalledOut()
@@ -28,6 +30,91 @@ namespace PREACT.Tests
             string said = ConvergenceAggregator.DescribeTruncated(3, 40, 8640);
             Assert.True(said != null && said.Contains("3 of 40") && said.Contains("144 min") && said.Contains("--max-runtime-minutes"),
                 "how many, the limit, and what to do: " + said);
+        }
+
+        /// <summary>e2e N6: PREACTcli --help was "Unknown command" (exit 2), and PREACT printed "Simulation run executed" after a usage line.</summary>
+        private static void HelpAndUsage()
+        {
+            string dir = Directory.CreateTempSubdirectory("preact-help-").FullName;
+            try
+            {
+                foreach (string[] args in new[] { new[] { "--help" }, new[] { "-h" }, new[] { "help" }, new[] { "build-case", "--help" } })
+                {
+                    (int exit, string output) = PipelineTests.RunCli(dir, args);
+                    Assert.True(exit == 0 && output.Contains("Usage:") && output.Contains("converge-trigger"),
+                        "PREACTcli " + string.Join(" ", args) + " prints the usage, exit 0: " + exit + " " + PipelineTests.Tail(output));
+                }
+                (int unknown, string said) = PipelineTests.RunCli(dir, "frobnicate");
+                Assert.True(unknown == 2 && said.Contains("Unknown command"), "an unknown command is still one");
+
+                string preact = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "PREACTexecute", "bin", "Debug", "net8.0", "PREACT.dll"));
+                Assert.True(File.Exists(preact), "PREACT's build output is there: " + preact);
+                (int help, string usage) = RunDotnet(dir, preact, "--help");
+                Assert.True(help == 0 && usage.Contains("Usage: PREACT"), "PREACT --help: usage, exit 0: " + help);
+                (int none, string noArgs) = RunDotnet(dir, preact);
+                Assert.True(none == 1 && noArgs.Contains("Usage: PREACT") && !noArgs.Contains("Simulation run executed"),
+                    "PREACT without a scenario: usage, exit 1, and no word of a run: " + noArgs);
+                (int missing, string noFile) = RunDotnet(dir, preact, Path.Combine(dir, "nothing.wui"));
+                Assert.True(missing == 1 && !noFile.Contains("Simulation run executed"), "nor for a missing file: " + noFile);
+            }
+            finally
+            {
+                try { Directory.Delete(dir, true); } catch { }
+            }
+        }
+
+        /// <summary>
+        /// Review NIT: FIX-D keeps [AscImport] beside ELMFIRE through saves, and a realization overwrote its
+        /// FirelineIntensityFile only when the fire wrote one and never its FuelModelFile, so a base scenario's stale
+        /// display rasters reached the realization.
+        /// </summary>
+        private static void NoStaleAscImportDisplay()
+        {
+            using var s = new FormatTests.Scenario();
+            var baseLines = new List<string>(FormatTests.Scenario.Lines)
+            {
+                "", "[AscImport]", "StartDateTime=2026-06-28T12:00:00", "FirelineIntensityFile=old/flin.asc", "FuelModelFile=old/fbfm.asc",
+            };
+            Campaign c = MinimalCampaign(s.Folder, 12345, baseLines.ToArray());
+            string id = CampaignLayout.RealizationId(2);
+            string dir = c.RealizationDir(id);
+            Directory.CreateDirectory(dir);
+
+            var record = new RealizationRecord { Toa = "outputs/toa.tif", Ros = "outputs/vs.tif", Sd = "outputs/sd.tif", Mfws = "outputs/mfws.tif" };
+            string[] noFuel = RealizationRunner.ScenarioLines(c, 2, id, dir, record);
+            Assert.True(noFuel.Contains("FirelineIntensityFile=") && noFuel.Contains("FuelModelFile="),
+                "without a fireline intensity from the fire or a fuel raster in the case, both are cleared: "
+                + string.Join(" | ", noFuel.Where(l => l.StartsWith("Fireline") || l.StartsWith("FuelModel"))));
+
+            Directory.CreateDirectory(c.InputsDir);
+            File.WriteAllText(Path.Combine(c.InputsDir, "fbfm40.tif"), "raster");
+            c.FuelStem = "fbfm40";
+            record.Fi = "outputs/flin.tif";
+            string[] withFuel = RealizationRunner.ScenarioLines(c, 2, id, dir, record);
+            Assert.True(withFuel.Any(l => l.StartsWith("FirelineIntensityFile=_output/") && l.EndsWith("/outputs/flin.tif", StringComparison.Ordinal))
+                        && withFuel.Contains("FuelModelFile=case/inputs/fbfm40.tif"),
+                "otherwise the realization's own: " + string.Join(" | ", withFuel.Where(l => l.StartsWith("Fireline") || l.StartsWith("FuelModel"))));
+            Assert.True(!withFuel.Any(l => l.Contains("old/")), "and nothing of the base scenario's");
+        }
+
+        private static (int Exit, string Output) RunDotnet(string workingDirectory, string dll, params string[] args)
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo("dotnet")
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                WorkingDirectory = workingDirectory,
+            };
+            psi.ArgumentList.Add(dll);
+            foreach (string a in args) psi.ArgumentList.Add(a);
+            using (System.Diagnostics.Process p = System.Diagnostics.Process.Start(psi))
+            {
+                Task<string> stdout = p.StandardOutput.ReadToEndAsync();
+                Task<string> stderr = p.StandardError.ReadToEndAsync();
+                Assert.True(p.WaitForExit(120000), "finished within two minutes");
+                return (p.ExitCode, stdout.Result + stderr.Result);
+            }
         }
 
         private static void UnhandledExceptionExit()

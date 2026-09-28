@@ -297,7 +297,20 @@ namespace PREACT
                 }
 
                 Message(null, LogType.Log, "Will try to run a max total of " + engineTask.NumberOfRuns + " simulations unless aborted early (convergence met, user stoppage or simulation error)." );
-                await Task.Run(() => RunSimulationsSerial(engineTask));
+                //Set here, on the caller's thread, so there is no moment between the call and the worker starting
+                //in which a run is under way and the flag says otherwise; cleared by the worker itself.
+                _workerRunning = true;
+                await Task.Run(() =>
+                {
+                    try
+                    {
+                        RunSimulationsSerial(engineTask);
+                    }
+                    finally
+                    {
+                        _workerRunning = false;
+                    }
+                });
                 _lastRunSucceeded = _runErrors == 0;
             }
             catch (Exception e)
@@ -322,8 +335,23 @@ namespace PREACT
         }
 
         private volatile bool _stopSimulations = false;
+        private volatile bool _workerRunning;
         private int _runErrors;
         private bool _lastRunSucceeded;
+
+        /// <summary>
+        /// The simulations of a <see cref="RunSimulations"/> are being run: true from the moment it hands them to its
+        /// worker until that worker has returned, set and cleared without the awaiting context.
+        /// </summary>
+        /// <remarks>
+        /// What to wait on when the task <see cref="RunSimulations"/> returned cannot be waited on. Its completion is a
+        /// continuation posted to the caller's synchronization context, and Unity's runs that only in the player loop:
+        /// a main thread that blocks until the task completes - as leaving Play mode must, since no further frame is
+        /// drawn - waits for something that cannot happen until it stops waiting (review R1: a 20 s editor freeze, and
+        /// then "Unsaved changes are lost"). Once this is false nothing of the run touches the scenario any more; all
+        /// that is left of the task is recording the outcome and <see cref="IExternalManager.SimulationsFinished"/>.
+        /// </remarks>
+        public bool IsRunningSimulations { get => _workerRunning; }
 
         /// <summary>
         /// Whether the last <see cref="RunSimulations"/> ran and completed without any simulation stopping on an

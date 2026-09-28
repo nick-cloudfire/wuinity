@@ -737,7 +737,8 @@ namespace PREACT.Utility
             if (day.HasValue && rows != null)
             {
                 DateTime local = LocalTime.FromUtc(times[0], zone);
-                TimeSpan offset = zone.GetUtcOffset(local);
+                //Of the instant, not of the local time, which in the repeated DST hour has two offsets.
+                TimeSpan offset = zone.GetUtcOffset(DateTime.SpecifyKind(times[0], DateTimeKind.Utc));
                 string utcOffset = (offset < TimeSpan.Zero ? "-" : "+") + offset.Duration().ToString(@"hh\:mm", System.Globalization.CultureInfo.InvariantCulture);
                 log($"  weather: {count} band{(count == 1 ? "" : "s")} of {seconds / 3600.0:F0} h from {times[0]:yyyy-MM-dd HH:mm} UTC "
                     + $"({local:HH:mm} local, UTC{utcOffset})"

@@ -46,7 +46,7 @@ namespace PREACT.Input
             }
             else
             {
-                PREACTInput.InputNotFoundMessage(nameOfInput, false, "false");
+                PREACTInput.ModuleOffForWantOfEnabled("smoke", "the run has no smoke");
             }
 
             //Read in full whether or not smoke is on, so a save keeps the settings; nothing is critical when off.

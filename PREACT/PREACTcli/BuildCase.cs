@@ -38,7 +38,7 @@ namespace PREACTcli
             double? cellSize = null, padding = null, hours = null;
             int? fromYear = null, toYear = null, conditioning = null, burnFrom = null, burnTo = null, seed = null;
             DateTime? weatherDate = null;
-            bool noClimatology = false, rebuild = false;
+            bool noClimatology = false, rebuild = false, updateWui = false;
             double? wind = null, windDir = null, m1 = null, m10 = null, m100 = null;
             var copies = new List<string>();
             var rasters = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -87,6 +87,7 @@ namespace PREACTcli
                 .Value("--painted", v => painted = v)
                 .Value("--painted-grid", v => paintedGrid = v)
                 .Switch("--rebuild", () => rebuild = true)
+                .Switch("--update-wui", () => updateWui = true)
                 .Retired("--tstop", "the fire duration is --hours now, in hours (default: the scenario's "
                                     + "[ELMFIRE] SimulationTstopHours).")
                 .Retired("--force", "a case folder is always built into; --rebuild replaces the layers it keeps.");
@@ -139,14 +140,13 @@ namespace PREACTcli
                 return 1;
             }
 
-            string campaign = CampaignLayout.DescribeRunningCampaign(input.RootFolder);
+            string caseDir = output != null ? Path.GetFullPath(output) : ElmfireCoupling.CaseDirectoryPath(input.RootFolder, settings);
+            string campaign = CampaignLayout.DescribeRunningCampaign(input.RootFolder, caseDir);
             if (campaign != null)
             {
                 Console.Error.WriteLine("ERROR: " + campaign);
                 return 1;
             }
-
-            string caseDir = output != null ? Path.GetFullPath(output) : ElmfireCoupling.CaseDirectoryPath(input.RootFolder, settings);
             ElmfireCaseBuilder.Options o = ElmfireCoupling.CreateBuildOptions(input, settings, caseDir, Console.WriteLine);
 
             o.PathToGdal ??= GdalTools.FindBinDirectory();
@@ -190,10 +190,10 @@ namespace PREACTcli
             try
             {
                 ElmfireCaseBuilder.Result r = ElmfireCaseBuilder.Build(o).GetAwaiter().GetResult();
-                PrintResult(wuiPath, input.RootFolder, r);
+                PrintResult(wuiPath, r);
 
                 //A non-zero exit for a case that cannot legitimately be run, so a script that builds and then runs
-                //stops here. The rasters stay on disk to inspect.
+                //stops here. The rasters stay on disk to inspect, and the scenario is not pointed at them.
                 if (r.Validation != null && !r.Validation.Ok)
                 {
                     Console.Error.WriteLine();
@@ -201,6 +201,44 @@ namespace PREACTcli
                     foreach (ElmfireCaseValidator.Problem p in r.Validation.Fatal) Console.Error.WriteLine("  " + p);
                     return 1;
                 }
+
+                //Only the keys the scenario does not already say: a scenario that points at its case is told so.
+                string[] scenarioLines = File.ReadAllLines(wuiPath);
+                List<ElmfireCoupling.ScenarioKey> keys = ElmfireCoupling.CaseKeysForScenario(input.RootFolder, caseDir, input.Simulation.Name, r)
+                    .Where(k => !string.Equals(PREACTInput.NormalisePath(WuiText.Get(scenarioLines, k.Section, k.Key) ?? string.Empty),
+                                    k.Value, StringComparison.Ordinal))
+                    .ToList();
+
+                //A painting placed via the old landscape raster needs that raster as long as it is not on the case grid:
+                //with [Landscape] pointed at the case, the next build could not place it. So the landscape is not moved
+                //then - k-PERIL takes the fire's own terrain in any case - and the reason is said.
+                string heldLandscape = null;
+                if (r.PaintingOffCaseGrid != null && keys.Any(k => k.Section == "Landscape"))
+                {
+                    heldLandscape = $"[Landscape] stays as it is: the painted areas ({input.WildfireModule.GraphicalFireInputFile}) are "
+                                    + $"not on the fire-case grid and were placed via {r.PaintingOffCaseGrid}, which the next build "
+                                    + "needs to place them again. Move the painting onto the fire-case grid (the GUI's workflow "
+                                    + "step 6) or repaint it, then build again to point the landscape at the case. A run's "
+                                    + "trigger boundary takes the fire's own terrain either way.";
+                    keys = keys.Where(k => k.Section != "Landscape").ToList();
+                }
+
+                if (keys.Count == 0)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine($"{Path.GetFileName(wuiPath)} already points at this case: nothing to record.");
+                }
+                else if (updateWui) UpdateScenario(wuiPath, keys);
+                else PrintScenarioKeys(wuiPath, keys);
+                if (heldLandscape != null)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine(heldLandscape);
+                }
+
+                Console.WriteLine();
+                Console.WriteLine("Run a campaign against it with:");
+                Console.WriteLine($"  PREACTcli converge-trigger --wui {wuiPath} --max 200");
                 return 0;
             }
             catch (Exception e)
@@ -210,7 +248,7 @@ namespace PREACTcli
             }
         }
 
-        private static void PrintResult(string wuiPath, string root, ElmfireCaseBuilder.Result r)
+        private static void PrintResult(string wuiPath, ElmfireCaseBuilder.Result r)
         {
             Console.WriteLine();
             Console.WriteLine($"Case built in {Path.GetDirectoryName(r.NamelistPath)}");
@@ -249,21 +287,54 @@ namespace PREACTcli
                 foreach (string f in r.Weather.Fallbacks) Console.WriteLine($"            ! {f}");
             }
 
-            //The CLI does not rewrite the scenario (a round trip through the writer is not faithful). The GUI's
-            //Build fire case records these itself; from here they are said.
-            string inputs = r.InputsDirectory;
+        }
+
+        /// <summary>
+        /// The keys the GUI's Build fire case records in the scenario (contract C1), laid out as they go into the .wui:
+        /// one block per section, each key replacing the one of that name in that section.
+        /// </summary>
+        private static void PrintScenarioKeys(string wuiPath, List<ElmfireCoupling.ScenarioKey> keys)
+        {
             Console.WriteLine();
-            Console.WriteLine("For the scenario (the GUI's Build fire case sets these itself):");
-            Console.WriteLine($"  [Landscape] ElevationFile={CampaignLayout.RelativeForWui(root, ElmfireStems.Tif(inputs, ElmfireStems.Dem))}");
-            Console.WriteLine($"  [Landscape] SlopeFile={CampaignLayout.RelativeForWui(root, ElmfireStems.Tif(inputs, ElmfireStems.Slope))}");
-            Console.WriteLine($"  [Landscape] AspectFile={CampaignLayout.RelativeForWui(root, ElmfireStems.Tif(inputs, ElmfireStems.Aspect))}");
-            if (r.WuiAreaFile != null)
+            Console.WriteLine($"The scenario does not point at this case yet. Put these keys into {Path.GetFileName(wuiPath)}, each in its");
+            Console.WriteLine("section and replacing the key of that name there (the GUI's Build fire case sets them itself), or");
+            Console.WriteLine("run build-case again with --update-wui, which writes exactly these and changes nothing else:");
+            string section = null;
+            foreach (ElmfireCoupling.ScenarioKey key in keys)
             {
-                Console.WriteLine($"  [kPERIL] WuiAreaFile={CampaignLayout.RelativeForWui(root, r.WuiAreaFile)}");
+                if (key.Section != section)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine("[" + key.Section + "]");
+                    section = key.Section;
+                }
+                Console.WriteLine(key.Key + "=" + key.Value);
             }
+        }
+
+        /// <summary>
+        /// <c>--update-wui</c>: writes <paramref name="keys"/> into the scenario file as text - each replaces the key of
+        /// that name in its section, or is added to the section (or the section to the file) - and leaves every other
+        /// line as it was, comments and unknown keys included.
+        /// </summary>
+        private static void UpdateScenario(string wuiPath, List<ElmfireCoupling.ScenarioKey> keys)
+        {
+            //Written with the file's own line ending: a scenario from Windows keeps its CRLF, one from here its LF.
+            string text = File.ReadAllText(wuiPath);
+            string newline = text.Contains("\r\n") ? "\r\n" : "\n";
+            string[] lines = text.Replace("\r\n", "\n").Split('\n');
+            bool finalNewline = lines.Length > 0 && lines[lines.Length - 1].Length == 0;
+            if (finalNewline) lines = lines.Take(lines.Length - 1).ToArray();
+
+            foreach (ElmfireCoupling.ScenarioKey key in keys)
+            {
+                lines = WuiText.Set(lines, key.Section, key.Key, key.Value);
+            }
+            File.WriteAllText(wuiPath, string.Join(newline, lines) + (finalNewline ? newline : string.Empty));
+
             Console.WriteLine();
-            Console.WriteLine("Run a campaign against it with:");
-            Console.WriteLine($"  PREACTcli converge-trigger --wui {wuiPath} --max 200");
+            Console.WriteLine($"Recorded in {wuiPath} (--update-wui; nothing else in it changed):");
+            foreach (ElmfireCoupling.ScenarioKey key in keys) Console.WriteLine("  " + key);
         }
 
         public static void PrintUsage()
@@ -281,6 +352,9 @@ namespace PREACTcli
             Console.WriteLine("      --copy <file>      copy a loose file (e.g. building_fuel_models.csv) into inputs/");
             Console.WriteLine("      --painted <file>   --painted-grid <raster>   override the scenario's painted areas / legacy paint grid");
             Console.WriteLine("      --rebuild          replace every layer the case already has");
+            Console.WriteLine("      --update-wui       point the scenario at the case, as the GUI's build does: write [Landscape] Elevation/");
+            Console.WriteLine("                         Slope/AspectFile, [kPERIL] WuiAreaFile and the [Weather] anchor into the .wui");
+            Console.WriteLine("                         (only those keys; without it they are printed)");
             Console.WriteLine("      baseline weather (ERA5 climatology -> WindNinja -> Nelson):");
             Console.WriteLine("      --weather-archive <csv>        the ERA5 archive (default <case>/climatology/<Name>_era5_hourly.csv)");
             Console.WriteLine("      --climatology-from/-to <year>  archive range (default 2000 to the archive's own last year)");

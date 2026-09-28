@@ -76,15 +76,20 @@ Realization *i* (7-digit id, `0000001` for the first) runs in `realizations/<id>
 4. **Weather**, into `weather/` — [below](#weather-per-realization).
 5. **Namelist.** The campaign's snapshot of the template (`template.data`) with: `SEED` = seed + *i*, one
    ensemble member, the ignition, every directory relative to the realization folder, the realization's own
-   weather and band count, the drawn live fuel moisture, `SIMULATION_TSTOP` = hours × 3600, `MAX_RUNTIME` = the
-   wall-clock limit, and the five required outputs. The fuel tables are the campaign's own copies.
+   weather and band count (`NUM_METEOROLOGY_TIMES` = its bands, `METEOROLOGY_BAND_START` = `STOP` = 1 - the same
+   fit a single run makes on the case's weather), the drawn live fuel moisture, `SIMULATION_TSTOP` = hours × 3600,
+   `MAX_RUNTIME` = the wall-clock limit, and the five required outputs. The fuel tables are the campaign's own
+   copies; a template that runs the building spread model without a building fuel table gets ELMFIRE's own
+   `building_fuel_models.csv`, or the campaign is refused up front.
 6. **ELMFIRE** runs. 0 acres burned → *not-threatened*. Stopped by the wall-clock limit → *failed* (truncated).
    No midflame raster → *failed* (the ELMFIRE build is too old).
 7. **Does the fire reach the WUI area?** If no cell of `wui_area.tif` has an arrival time, the realization is
    *not-threatened* and no evacuation is run (three to five minutes of SUMO saved on Mati).
 8. **Evacuation and boundary.** `PREACT.exe` runs the base scenario with the realization's fire written into it:
    `Module=AscImport` on the realization's rasters (arrival times in seconds), `[AscImport]
-   MidflameWindSpeedFile` = its `mfws`, `[kPERIL] WindDirectionFile` = its own `wd.tif`, `WindSpeedFile` cleared,
+   MidflameWindSpeedFile` = its `mfws`, `FirelineIntensityFile` = its `flin` (or cleared) and `FuelModelFile` = the
+   case fuel it burned (or cleared) - never the base scenario's own - `[kPERIL] WindDirectionFile` = its own
+   `wd.tif`, `WindSpeedFile` cleared,
    `WindBandSeconds` = the template's `DT_METEOROLOGY`, `WuiAreaFile` = the case's, `[Landscape]` = the case's
    dem/slp/asp (k-PERIL's slope and aspect then cover the whole fire grid), and `[Simulation] RandomSeed` = seed +
    2 000 000 + *i*. Its outputs are moved into `preact/`, and a copy of the scenario it ran, with paths
@@ -198,9 +203,11 @@ format), conditioning days, WindNinja and its mesh, the scenario start, and the 
 - **`--resume-only`** folds in the finished realizations without running any (it does not need PREACT).
 - **`--inspect`** reports, without running anything, whether a folder for these settings exists, how many
   realizations it would reuse, whether it is running, and how the others differ.
-- **The lock.** A running campaign holds `campaign.lock` open without sharing; the operating system releases it
-  however the process ends. A second campaign on the same folder is refused, and a case build — GUI or CLI — is
-  refused while any campaign of the scenario holds its lock, because every realization reads the case.
+- **The locks.** A running campaign holds `campaign.lock` in its folder open without sharing; the operating system
+  releases it however the process ends. A second campaign on the same folder is refused. It also holds the case's
+  `campaign.lock` (in the case folder whose inputs it reads) shared, so campaigns of several scenarios can run on one
+  case; a case build — GUI or CLI, from any scenario — is refused while any campaign holds either lock, because
+  every realization reads the case.
 - **Snapshots.** The template and the fuel tables are copied into the folder once and every realization reads
   those, so editing the case's own files mid-campaign cannot reach half of it.
 - **Campaigns from before v1** (`_output/trigger_convergence.csv`, `_output/0_trigger_<n>.asc`,

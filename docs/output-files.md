@@ -66,7 +66,7 @@ added to `_output/` itself.
 | `ensemble_arrival_earliest.asc` | Earliest arrival seen, seconds. |
 | `ensemble_arrival_mean.asc` | Mean arrival, seconds, over the fires that burned the cell. |
 | `ensemble_arrival_p10.asc`, `_p50`, `_p90` | Arrival-time percentiles, seconds, over the fires that burned the cell, at the lower edge of hourly bins (coarser above 96 h of fire). |
-| `*.prj` | Beside every `.asc`, the fire grid's CRS. |
+| `*.prj` | Beside every `.asc`, the fire grid's CRS. A WGS 84 / UTM grid's is written from the zone's definition when GDAL cannot find PROJ's database; any other CRS it cannot describe is left without one, with a warning in the log. |
 | `realizations/<id>/` | One folder per realization (below). |
 
 How to read the probability rasters is in [Trigger campaigns](trigger-campaigns.md#reading-the-results).

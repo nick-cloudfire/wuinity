@@ -195,7 +195,12 @@ namespace PREACTcli.Campaigns
             Set("AscImport", "TimeOfArrivalFile", R(record.Toa));
             Set("AscImport", "RateOfSpreadFile", R(record.Ros));
             Set("AscImport", "SpreadDirectionFile", R(record.Sd));
-            if (!string.IsNullOrEmpty(record.Fi)) Set("AscImport", "FirelineIntensityFile", R(record.Fi));
+            //Set or cleared, never left as the base scenario had it: [AscImport] is kept beside ELMFIRE through saves, so a
+            //base scenario's own fireline intensity or fuel raster would otherwise be shown as this realization's (review
+            //NIT). The fuel is the case's the realization burned.
+            Set("AscImport", "FirelineIntensityFile", string.IsNullOrEmpty(record.Fi) ? string.Empty : R(record.Fi));
+            string fuel = string.IsNullOrEmpty(c.FuelStem) ? null : ElmfireStems.Tif(c.InputsDir, c.FuelStem);
+            Set("AscImport", "FuelModelFile", fuel != null && File.Exists(fuel) ? CampaignLayout.RelativeForWui(c.ScenarioDir, fuel) : string.Empty);
             Set("AscImport", "MidflameWindSpeedFile", R(record.Mfws));
             //ELMFIRE writes arrival times in seconds; a base scenario that once imported a FARSITE .asc may say Minutes.
             Set("AscImport", "TimeOfArrivalUnits", "Seconds");

@@ -65,6 +65,12 @@ namespace PREACT.Utility
             /// <summary>The case's painted WUI area on the fire grid, relative to the root; empty when it has none.</summary>
             public string WuiAreaFile = string.Empty;
 
+            /// <summary>
+            /// The terrain the fire burned on - the run namelist's DEM, slope and aspect rasters, on the fire grid - relative
+            /// to the root; empty when one of them is not there.
+            /// </summary>
+            public string ElevationFile = string.Empty, SlopeFile = string.Empty, AspectFile = string.Empty;
+
             /// <summary>The namelist ELMFIRE actually ran, <c>outputs/run.data</c>.</summary>
             public string RunNamelistFile = string.Empty;
 
@@ -141,42 +147,93 @@ namespace PREACT.Utility
                             + "would have left elmfire.data behind the rasters it describes.");
             }
 
-            string inputs = built.InputsDirectory;
-            if (input.Landscape != null)
+            foreach (ScenarioKey key in CaseKeysForScenario(input.RootFolder, caseDir, input.Simulation.Name, built))
             {
-                input.Landscape.ElevationFile = Relative(input.RootFolder, ElmfireStems.Tif(inputs, ElmfireStems.Dem));
-                input.Landscape.SlopeFile = Relative(input.RootFolder, ElmfireStems.Tif(inputs, ElmfireStems.Slope));
-                input.Landscape.AspectFile = Relative(input.RootFolder, ElmfireStems.Tif(inputs, ElmfireStems.Aspect));
-                log?.Invoke($"  landscape: the scenario's elevation, slope and aspect are now the case's own "
-                            + $"({input.Landscape.ElevationFile}), the grid everything is painted and computed on.");
-            }
-
-            if (!string.IsNullOrEmpty(built.WuiAreaFile) && input.TriggerBufferModule?.kPERILInput != null)
-            {
-                input.TriggerBufferModule.kPERILInput.WuiAreaFile = Relative(input.RootFolder, built.WuiAreaFile);
-                log?.Invoke("  trigger boundary: [kPERIL] WuiAreaFile is now " + input.TriggerBufferModule.kPERILInput.WuiAreaFile + ".");
-            }
-
-            //Written onto the scenario, like every other data step writes the path it produced. Building from
-            //the data steps happens long before any run, so without recording the day here the connection between
-            //the fire's weather and the reported weather would have to be rediscovered - or lost.
-            DateTime anchor = built.Weather != null ? built.Weather.BandAnchor : default;
-            if (anchor != default && input.Weather != null)
-            {
-                input.Weather.WeatherAnchorDateTime = anchor;
-
-                string archive = ElmfireCaseBuilder.ArchivePath(caseDir, input.Simulation.Name);
-                if (File.Exists(archive))
+                switch (key.Section + "|" + key.Key)
                 {
-                    input.Weather.WeatherFile = Relative(input.RootFolder, archive);
+                    case "Landscape|ElevationFile":
+                        if (input.Landscape == null) break;
+                        input.Landscape.ElevationFile = key.Value;
+                        log?.Invoke($"  landscape: the scenario's elevation, slope and aspect are now the case's own "
+                                    + $"({key.Value}), the grid everything is painted and computed on.");
+                        break;
+                    case "Landscape|SlopeFile":
+                        if (input.Landscape != null) input.Landscape.SlopeFile = key.Value;
+                        break;
+                    case "Landscape|AspectFile":
+                        if (input.Landscape != null) input.Landscape.AspectFile = key.Value;
+                        break;
+                    case "kPERIL|WuiAreaFile":
+                        if (input.TriggerBufferModule?.kPERILInput == null) break;
+                        input.TriggerBufferModule.kPERILInput.WuiAreaFile = key.Value;
+                        log?.Invoke("  trigger boundary: [kPERIL] WuiAreaFile is now " + key.Value + ".");
+                        break;
+                    case "Weather|WeatherAnchorDateTime":
+                        if (input.Weather == null) break;
+                        input.Weather.WeatherAnchorDateTime = built.Weather.BandAnchor;
+                        log?.Invoke($"  weather: the scenario now reads its weather from {built.Weather.BandAnchor:yyyy-MM-dd HH:mm}, the "
+                            + "day the fire was computed against.");
+                        break;
+                    case "Weather|WeatherFile":
+                        if (input.Weather != null) input.Weather.WeatherFile = key.Value;
+                        break;
                 }
-
-                log?.Invoke($"  weather: the scenario now reads its weather from {anchor:yyyy-MM-dd HH:mm}, the "
-                    + "day the fire was computed against.");
             }
 
             log?.Invoke("  Save the scenario to keep these.");
             return true;
+        }
+
+        /// <summary>One <c>[Section] Key=Value</c> of a scenario, as a case build records it.</summary>
+        public sealed class ScenarioKey
+        {
+            public string Section, Key, Value;
+
+            public override string ToString() => "[" + Section + "] " + Key + "=" + Value;
+        }
+
+        /// <summary>
+        /// What a case build records in the scenario it was built for (contract C1): <c>[Landscape]
+        /// ElevationFile/SlopeFile/AspectFile</c> = the case's <c>dem/slp/asp.tif</c>, <c>[kPERIL] WuiAreaFile</c> = its
+        /// <c>wui_area.tif</c> when it wrote one, and <c>[Weather] WeatherAnchorDateTime</c> (and <c>WeatherFile</c>, the
+        /// case's ERA5 archive) when its weather was drawn from a historical day. Paths relative to
+        /// <paramref name="rootFolder"/>, with forward slashes, in section order.
+        /// </summary>
+        /// <remarks>
+        /// One list for the GUI's Build fire case, which sets them on the scenario it holds (<see cref="BuildCaseOnly"/>),
+        /// and <c>PREACTcli build-case</c>, which prints them and, with <c>--update-wui</c>, writes them into the .wui.
+        /// </remarks>
+        public static List<ScenarioKey> CaseKeysForScenario(string rootFolder, string caseDir, string scenarioName,
+            ElmfireCaseBuilder.Result built)
+        {
+            var keys = new List<ScenarioKey>();
+            void Add(string section, string key, string value) => keys.Add(new ScenarioKey { Section = section, Key = key, Value = value });
+
+            string inputs = built.InputsDirectory;
+            Add("Landscape", "ElevationFile", Relative(rootFolder, ElmfireStems.Tif(inputs, ElmfireStems.Dem)));
+            Add("Landscape", "SlopeFile", Relative(rootFolder, ElmfireStems.Tif(inputs, ElmfireStems.Slope)));
+            Add("Landscape", "AspectFile", Relative(rootFolder, ElmfireStems.Tif(inputs, ElmfireStems.Aspect)));
+
+            if (!string.IsNullOrEmpty(built.WuiAreaFile))
+            {
+                Add("kPERIL", "WuiAreaFile", Relative(rootFolder, built.WuiAreaFile));
+            }
+
+            //Recorded like every other data step records the path it produced. Building happens long before any
+            //run, so without the day here the connection between the fire's weather and the reported weather would
+            //have to be rediscovered - or lost.
+            DateTime anchor = built.Weather != null ? built.Weather.BandAnchor : default;
+            if (anchor != default)
+            {
+                Add("Weather", "WeatherAnchorDateTime", anchor.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture));
+                string archive = ElmfireCaseBuilder.ArchivePath(caseDir, scenarioName);
+                if (File.Exists(archive))
+                {
+                    Add("Weather", "WeatherFile", Relative(rootFolder, archive));
+                }
+            }
+
+            return keys;
         }
 
         /// <summary>
@@ -244,32 +301,6 @@ namespace PREACT.Utility
                 return result;
             }
 
-            //A case whose weather is shorter than the fire is refused by ELMFIRE ("Not enough weather bands for
-            //given SIMULATION TSTOP"), which names neither the case nor the numbers. A generated case can simply be
-            //given more weather, so it is - the builder keeps every other layer.
-            string weatherProblem = DescribeWeatherShortfall(namelist, caseDir, settings);
-            if (weatherProblem != null)
-            {
-                if (!string.IsNullOrEmpty(settings.NamelistTemplate))
-                {
-                    result.Message = "The case's weather cannot run this fire: " + weatherProblem + ". The scenario runs "
-                                     + "its own NamelistTemplate, so extend that template's weather, or lower "
-                                     + "[ELMFIRE] SimulationTstopHours.";
-                    return result;
-                }
-
-                Log("The case's weather is too short for this fire (" + weatherProblem + "); extending it - one "
-                    + "WindNinja solve per hour of fire.");
-                if (!TryBuildCase(input, settings, caseDir, generation, Log, out string extendProblem, out ElmfireCaseBuilder.Result extended))
-                {
-                    result.Cancelled = ElmfireProcesses.CancelledSince(generation);
-                    result.Message = "Could not extend the case's weather: " + extendProblem;
-                    return result;
-                }
-                if (extended.Weather != null) result.WeatherAnchor = extended.Weather.BandAnchor;
-                namelist = ResolveNamelist(caseDir, input.RootFolder, settings, Log, out namelistProblem) ?? namelist;
-            }
-
             string exe = ResolveExecutable(input.RootFolder, settings.ElmfireExe);
 
             //ELMFIRE finds GDAL itself when PATH_TO_GDAL is left at 'auto', but on Windows getting a variable into a
@@ -283,6 +314,51 @@ namespace PREACT.Utility
             }
 
             string[] runLines = PatchNamelist(namelist, caseDir, settings, gdalBin, exe, Log);
+
+            //Checked on the namelist as it will run - its band keys fitted to the case's weather, its stop time the
+            //scenario's - so what is compared is what ELMFIRE will ask for. A case whose weather is shorter than the
+            //fire is refused by ELMFIRE ("Not enough weather bands for given SIMULATION TSTOP"), which names neither
+            //the case nor the numbers. A generated case can simply be given more weather, so it is - the builder keeps
+            //every other layer. A template's case is the user's to rebuild.
+            string weatherProblem = DescribeWeatherShortfall(runLines, caseDir);
+            if (weatherProblem != null)
+            {
+                if (!string.IsNullOrEmpty(settings.NamelistTemplate))
+                {
+                    result.Message = $"The case's weather cannot run this fire: {weatherProblem}. The scenario runs its own "
+                                     + $"NamelistTemplate ({Path.GetFileName(namelist)}) on the case's weather, so lower [ELMFIRE] "
+                                     + "SimulationTstopHours to what the weather covers, or build the case again for the hours "
+                                     + "the fire needs (Data > Build fire case (ELMFIRE), or PREACTcli build-case --hours), which "
+                                     + "writes that much weather.";
+                    return result;
+                }
+
+                Log("The case's weather is too short for this fire (" + weatherProblem + "); extending it - one "
+                    + "WindNinja solve per hour of fire.");
+                if (!TryBuildCase(input, settings, caseDir, generation, Log, out string extendProblem, out ElmfireCaseBuilder.Result extended))
+                {
+                    result.Cancelled = ElmfireProcesses.CancelledSince(generation);
+                    result.Message = "Could not extend the case's weather: " + extendProblem;
+                    return result;
+                }
+                if (extended.Weather != null) result.WeatherAnchor = extended.Weather.BandAnchor;
+                namelist = ResolveNamelist(caseDir, input.RootFolder, settings, Log, out namelistProblem) ?? namelist;
+                runLines = PatchNamelist(namelist, caseDir, settings, gdalBin, exe, Log);
+
+                weatherProblem = DescribeWeatherShortfall(runLines, caseDir);
+                if (weatherProblem != null)
+                {
+                    result.Message = "The case's weather still cannot run this fire after it was extended: " + weatherProblem + ".";
+                    return result;
+                }
+            }
+
+            string noBuildingTable = DescribeMissingBuildingTable(runLines, caseDir, exe, Log);
+            if (noBuildingTable != null)
+            {
+                result.Message = $"The namelist {Path.GetFileName(namelist)} cannot run: {noBuildingTable}.";
+                return result;
+            }
 
             //Every raster the namelist names, on the grid of the DEM it names, before ELMFIRE is asked: it compares
             //nothing itself, and a fuel raster left on an old grid ends in a segfault or "raster dimensions
@@ -379,8 +455,53 @@ namespace PREACT.Utility
                 result.WuiAreaFile = Relative(input.RootFolder, wuiArea);
             }
 
+            //The terrain the fire ran on, for k-PERIL's slope term: the case's own dem/slp/asp, on the fire grid by
+            //construction, where the scenario's [Landscape] may still be the DEM it was drawn on (mati.wui's 616x590
+            //covers 64 % of the padded fire grid) - which a campaign realization never used (e2e N7).
+            string dem = null, slope = null, aspect = null;
+            foreach (ElmfireStems.NamelistRaster r in ElmfireStems.ReferencedRasters(runLines, caseDir))
+            {
+                if (r.Key == "DEM_FILENAME") dem = r.Path;
+                else if (r.Key == "SLP_FILENAME") slope = r.Path;
+                else if (r.Key == "ASP_FILENAME") aspect = r.Path;
+            }
+            if (File.Exists(dem) && File.Exists(slope) && File.Exists(aspect))
+            {
+                result.ElevationFile = Relative(input.RootFolder, dem);
+                result.SlopeFile = Relative(input.RootFolder, slope);
+                result.AspectFile = Relative(input.RootFolder, aspect);
+            }
+
             result.Ok = true;
             return result;
+        }
+
+        /// <summary>
+        /// Why ELMFIRE would stop at start-up for want of its building fuel table, or null. With &amp;WUI
+        /// USE_BLDG_SPREAD_MODEL on it reads BUILDING_FUEL_MODEL_FILE (default building_fuel_models.csv) from
+        /// MISCELLANEOUS_INPUTS_DIRECTORY (default the fuels directory) and stops with "Problem opening building fuel
+        /// model table file" when it is not there; ELMFIRE's own table is copied there when that is the name (e2e N2).
+        /// </summary>
+        private static string DescribeMissingBuildingTable(string[] runLines, string caseDir, string exe, Action<string> log)
+        {
+            string on = ElmfireNamelist.GetKeyInGroup(runLines, ElmfireNamelistKeys.WuiGroup, ElmfireNamelistKeys.UseBuildingSpreadModel);
+            if (!ElmfireNamelist.IsTrue(on)) return null;
+
+            string misc = ElmfireStems.ResolveDirectory(runLines, ElmfireNamelistKeys.MiscellaneousGroup,
+                              ElmfireNamelistKeys.MiscellaneousInputsDirectory, caseDir)
+                          ?? ElmfireStems.ResolveDirectory(runLines, ElmfireNamelistKeys.InputsGroup,
+                              ElmfireNamelistKeys.FuelsAndTopographyDirectory, caseDir)
+                          ?? caseDir;
+            string named = ElmfireNamelist.GetKeyInGroup(runLines, ElmfireNamelistKeys.MiscellaneousGroup,
+                               ElmfireNamelistKeys.BuildingFuelModelFile);
+            string name = string.IsNullOrWhiteSpace(named) ? ElmfireStems.BuildingFuelModelTable : named;
+            if (ElmfireCaseBuilder.EnsureBuildingFuelModelTable(misc, name, exe, log)) return null;
+
+            bool standard = string.Equals(name, ElmfireStems.BuildingFuelModelTable, StringComparison.OrdinalIgnoreCase);
+            return $"it switches the building spread model on (&WUI USE_BLDG_SPREAD_MODEL) and ELMFIRE would read "
+                   + $"{Path.Combine(misc, name)}, which is not there"
+                   + (standard ? " (and ELMFIRE's default, build/source/building_fuel_models.csv beside the executable, was not found)" : "")
+                   + ". Put the table there, or switch the building spread model off";
         }
 
         private static string StemOr(string[] lines, string key, string fallback)
@@ -400,35 +521,47 @@ namespace PREACT.Utility
         }
 
         /// <summary>
-        /// Why the namelist's weather cannot cover this run, or null when it can (or cannot be told).
+        /// Why the weather the patched namelist <paramref name="runLines"/> reads cannot carry its fire, naming the
+        /// bands it needs and the bands there are; null when it can, or when that cannot be told (no weather folder -
+        /// the raster check reports the rasters).
         /// </summary>
-        private static string DescribeWeatherShortfall(string namelistPath, string caseDir, ElmfireInput settings)
+        /// <remarks>
+        /// The five standard rasters are checked for presence and agreement first, as a build keeps them, so a case
+        /// that lost its weather is rebuilt rather than run; then the namelist's own demand against its wind speed
+        /// raster (<see cref="ElmfireNamelist.DescribeBandShortfall"/>): the stop time, and the band keys, which
+        /// <see cref="PatchNamelist"/> has fitted to that raster - so what is left is a fire longer than the weather.
+        /// </remarks>
+        private static string DescribeWeatherShortfall(string[] runLines, string caseDir)
         {
-            string[] lines;
-            try { lines = File.ReadAllLines(namelistPath); }
-            catch { return null; }
-
-            double tstop = settings.SimulationTstopHours > 0.0
-                ? settings.TstopSeconds()
-                : ReadDouble(lines, ElmfireNamelistKeys.TimeControlGroup, ElmfireNamelistKeys.SimulationTstop, 0.0);
-            if (tstop <= 0.0) return null;
-
-            string weatherDir = ElmfireStems.ResolveDirectory(lines, ElmfireNamelistKeys.InputsGroup,
+            string weatherDir = ElmfireStems.ResolveDirectory(runLines, ElmfireNamelistKeys.InputsGroup,
                                     ElmfireNamelistKeys.WeatherDirectory, caseDir);
             if (weatherDir == null || !Directory.Exists(weatherDir)) return null;
 
-            double dt = ReadDouble(lines, ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.DtMeteorology, 3600.0);
-            return ElmfireCaseBuilder.DescribeKeptWeather(weatherDir, tstop, dt);
+            double tstop = ReadDouble(runLines, ElmfireNamelistKeys.TimeControlGroup, ElmfireNamelistKeys.SimulationTstop, 0.0);
+            double dt = ReadDouble(runLines, ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.DtMeteorology, 3600.0);
+            bool standardStems = string.Equals(StemOr(runLines, ElmfireNamelistKeys.WsFilename, ElmfireStems.WindSpeed),
+                                     ElmfireStems.WindSpeed, StringComparison.OrdinalIgnoreCase);
+            string kept = standardStems ? ElmfireCaseBuilder.DescribeKeptWeather(weatherDir, tstop, dt) : null;
+            if (kept != null) return kept;
+
+            int bands = ElmfireNamelist.WeatherBandCount(runLines, caseDir, out string windSpeed);
+            return ElmfireNamelist.DescribeBandShortfall(runLines, bands, Path.GetFileName(windSpeed));
         }
 
         /// <summary>
         /// The namelist with the few keys the scenario and the platform own written into it, leaving the physics
-        /// alone: PATH_TO_GDAL, the stop time, the outputs every run must dump, and the fuel model table.
+        /// alone: PATH_TO_GDAL, the stop time, the weather band keys, the outputs every run must dump, and the fuel
+        /// model table.
         /// </summary>
         /// <remarks>
         /// <para>
         /// The stop time is a property of what is being simulated, and the scenario is where that is set - in
         /// hours; this is the one place it becomes seconds.
+        /// </para>
+        /// <para>
+        /// The band keys are a property of the weather the case holds, which a template or a kept namelist knows
+        /// nothing about: they are fitted to the case's <c>ws.tif</c> exactly as a campaign fits each realization's
+        /// (<see cref="ElmfireNamelist.FitWeatherBands"/>), and what changed is logged.
         /// </para>
         /// <para>
         /// FUEL_MODEL_FILE is named whenever the table exists (and made to exist from ELMFIRE's own default when
@@ -455,6 +588,15 @@ namespace PREACT.Utility
                 lines = ElmfireNamelist.SetKeyInGroup(lines, ElmfireNamelistKeys.TimeControlGroup,
                     ElmfireNamelistKeys.SimulationTstop,
                     CampaignLayout.TstopSeconds(settings.SimulationTstopHours).ToString("0.0", CultureInfo.InvariantCulture));
+            }
+
+            int bands = ElmfireNamelist.WeatherBandCount(lines, caseDir, out string windSpeed);
+            string[] unfitted = lines;
+            lines = ElmfireNamelist.FitWeatherBands(lines, bands);
+            List<string> fitted = ElmfireNamelist.DescribeDifferences(unfitted, lines);
+            if (fitted.Count > 0)
+            {
+                log($"Namelist weather bands fitted to {Path.GetFileName(windSpeed)} ({bands} band(s)): " + string.Join("; ", fitted));
             }
 
             lines = ElmfireNamelistKeys.ForceRequiredOutputs(lines);
@@ -549,6 +691,18 @@ namespace PREACT.Utility
                 });
             }
 
+            //Every file the scenario names, so the build never rewrites one in place (review RC-MI-2): a kept namelist
+            //that names SLP_FILENAME = 'mati_slope' would otherwise re-cut the scenario's own [Landscape] SlopeFile.
+            foreach (string line in PREACTInputWriter.Write(input))
+            {
+                int eq = line.IndexOf('=');
+                if (eq <= 0 || !line.Substring(0, eq).EndsWith("File", StringComparison.Ordinal)) continue;
+                string named = line.Substring(eq + 1).Trim();
+                if (named.Length == 0) continue;
+                string resolved = ResolveFile(input.RootFolder, named);
+                if (resolved != null) options.ScenarioFiles.Add(resolved);
+            }
+
             //The scenario's own DEM, when it has one: used for the grid if it covers the padded domain, so the
             //case needs no second download. Not the case's own dem.tif, which is the grid being checked.
             string landscapeDem = input.Landscape == null ? null : ResolveFile(input.RootFolder, input.Landscape.ElevationFile);
@@ -592,7 +746,7 @@ namespace PREACT.Utility
                 return false;
             }
 
-            string campaign = CampaignLayout.DescribeRunningCampaign(input.RootFolder);
+            string campaign = CampaignLayout.DescribeRunningCampaign(input.RootFolder, caseDir);
             if (campaign != null)
             {
                 problem = "The case was not built: " + campaign;
@@ -749,8 +903,9 @@ namespace PREACT.Utility
             if (!string.IsNullOrWhiteSpace(named))
             {
                 string path = string.IsNullOrEmpty(rootFolder) ? PREACTInput.NormalisePath(named) : PREACTInput.ResolvePath(rootFolder, named);
-                return $"[ELMFIRE] ElmfireExe names {path}, which is not there. Correct the path in the scenario (Hazards "
-                       + "tab), or clear it to use the build in WUInity/Assets/ThirdParty/elmfire.";
+                return $"[ELMFIRE] ElmfireExe names {path}, which is not there. Correct that key in the scenario file (Help > "
+                       + "External tools and keys shows which ELMFIRE is used), or remove it to use the build in "
+                       + "WUInity/Assets/ThirdParty/elmfire.";
             }
 
             string relative = windows ? "ThirdParty/elmfire/build/windows/bin/elmfire.exe" : "ThirdParty/elmfire/build/linux/bin/elmfire";

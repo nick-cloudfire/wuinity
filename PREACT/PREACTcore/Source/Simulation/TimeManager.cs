@@ -42,17 +42,19 @@ namespace PREACT
             //report look it up too (Utility.LocalTime), so all three agree on which UTC hour a local time is.
             TimeZoneInfo tz = Utility.LocalTime.ZoneAt(simulation.Input.Simulation.LowerLeftLatLon.x, simulation.Input.Simulation.LowerLeftLatLon.y);
             _timeZone = tz;
-            DateTimeOffset dto = new DateTimeOffset(input.Simulation.StartDateTime, tz.GetUtcOffset(input.Simulation.StartDateTime));
 
-            _startDateTime = dto.DateTime;
+            //Local civil time to UTC by LocalTime.ToUtc, the one conversion the case weather's band clock uses too. It
+            //takes a time in the repeated hour at the end of daylight saving as its first (daylight) occurrence, where
+            //GetUtcOffset takes the standard one - so a scenario starting at 03:30 on Athens' last Sunday in October had
+            //its weather band 1 an hour away from its run clock (review NIT). A gap time is the same either way.
+            _startDateTime = DateTime.SpecifyKind(input.Simulation.StartDateTime, DateTimeKind.Unspecified);
             _currentDateTime = _startDateTime;
-            _currentUTCDateTime = dto.UtcDateTime;
+            _currentUTCDateTime = DateTime.SpecifyKind(Utility.LocalTime.ToUtc(_startDateTime, tz), DateTimeKind.Utc);
             _startUTCDateTime = _currentUTCDateTime;
             //Interpret the end time in the simulation location's timezone too, so the
             //run duration is (End - Start) as entered and does not depend on the host
             //machine's timezone (ToLocalTime() shifted it by the host UTC offset).
-            DateTimeOffset endDto = new DateTimeOffset(input.Simulation.EndDateTime, tz.GetUtcOffset(input.Simulation.EndDateTime));
-            _endDateTime = endDto.DateTime;
+            _endDateTime = DateTime.SpecifyKind(input.Simulation.EndDateTime, DateTimeKind.Unspecified);
             _simulationEndTime = (_endDateTime - _startDateTime).TotalSeconds;
 
             Engine.Message(simulation, Engine.LogType.Log, $"Simulation will run between {_startDateTime:yyyy-MM-dd HH:mm:ss} and {_endDateTime:yyyy-MM-dd HH:mm:ss} for a total of {_simulationEndTime:F0} seconds (unless user has specified to exit early once evacuated.)");

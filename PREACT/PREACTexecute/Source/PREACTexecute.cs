@@ -30,12 +30,24 @@ namespace PREACT
         /// stopped on an error or an error was reported during the run - such as k-PERIL refusing to compute a
         /// boundary. The run used to count as a success in that last case.
         /// </summary>
+        /// <summary>Whether <see cref="Execute"/> got as far as running the scenario.</summary>
+        public bool Ran { get; private set; }
+
+        private const string Usage = "Usage: PREACT <file.wui> [<numberOfRuns> [<ignored batchSize> [<indexOffset>]]]";
+
         public async Task<int> Execute(string[] args)
         {
             if (args.Length == 0)
             {
-                Console.WriteLine("Usage: PREACT <file.wui> [<numberOfRuns> [<ignored batchSize> [<indexOffset>]]]");
+                Console.WriteLine(Usage);
                 return ExitNotRun;
+            }
+            if (args.Length == 1 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help" || args[0] == "/?"))
+            {
+                Console.WriteLine(Usage);
+                Console.WriteLine("  Runs the scenario's simulations and writes their results into <scenario folder>/_output.");
+                Console.WriteLine("  Exit code: 0 every run succeeded, 1 nothing was run, 2 a run reported errors.");
+                return ExitSuccess;
             }
             else if(!File.Exists(args[0]))
             {
@@ -66,6 +78,7 @@ namespace PREACT
             }
 
             EngineTask engineTask = new EngineTask(numberOfRuns, simulationIndexOffset);
+            Ran = true;
             await _engine.RunSimulations(engineTask);
 
             if (!_engine.LastRunSucceeded)

@@ -24,6 +24,398 @@ namespace PREACT.Tests
             runner.Add("builder: a stopped build kills WindNinja, starts no other and writes no wind (no uniform field)", StoppedBuildWritesNoWind);
             runner.Add("coupling: BuildCaseOnly stopped during WindNinja reports it stopped and leaves the scenario alone", StoppedBuildCaseOnly);
             runner.Add("builder: a grid set aside by a build that then failed is carried by the next build", FailedRecutIsResumed);
+            runner.Add("coupling: a template's weather band keys are fitted to the case's ws.tif; a fire longer than it is refused naming both", TemplateBandsFitted);
+            runner.Add("builder: the building spread model gets ELMFIRE's building fuel table, or the build and the run are refused", BuildingFuelTable);
+            runner.Add("coupling: a single ELMFIRE run gives k-PERIL the case's own dem/slp/asp, which cover the whole fire grid", FireTerrainForKperil);
+            runner.Add("cli: build-case prints the keys to put in the .wui; --update-wui writes exactly those and nothing else", BuildCaseUpdatesWui);
+            runner.Add("builder: a namelist's raster whose re-cut fails is still in inputs, as it was", FailedRecutKeepsOriginal);
+            runner.Add("builder: a raster both a namelist and the scenario name is re-cut into a copy, never in place", ScenarioRasterNotRecutInPlace);
+        }
+
+        /// <summary>
+        /// Review RC-MI-1: the carry moved an off-grid raster a namelist names into _previous_grid before warping the re-cut
+        /// copy, so a warp that failed (a GDAL error, a full disk) left inputs/ without it, and the next build had nothing to
+        /// carry. The warp is made into a file of its own first.
+        /// </summary>
+        private static void FailedRecutKeepsOriginal()
+        {
+            using (var c = new SyntheticCase())
+            {
+                string caseDir = Path.Combine(c.Folder, "case");
+                string inputs = Path.Combine(caseDir, "inputs");
+                ElmfireCaseBuilder.Build(c.Options(caseDir, 150.0, new List<string>())).GetAwaiter().GetResult();
+
+                //A raster the namelist names that GDAL cannot warp: the re-cut fails every time.
+                string bad = ElmfireStems.Tif(inputs, "fbfm40_bad");
+                File.WriteAllText(bad, "not a GeoTIFF");
+                string namelist = Path.Combine(caseDir, "elmfire.data");
+                File.WriteAllLines(namelist, ElmfireNamelist.SetKeyInGroup(File.ReadAllLines(namelist),
+                    ElmfireNamelistKeys.InputsGroup, "FBFM_FILENAME", "fbfm40_bad", quoted: true));
+
+                var log = new List<string>();
+                Exception failed = null;
+                try { ElmfireCaseBuilder.Build(c.Options(caseDir, 150.0, log)).GetAwaiter().GetResult(); }
+                catch (Exception e) { failed = e; }
+                Assert.True(failed != null && log.Any(l => l.Contains("fbfm40_bad: warping onto the master grid")),
+                    "the build tried to re-cut it and failed: " + failed?.Message);
+                Assert.True(File.Exists(bad) && File.ReadAllText(bad) == "not a GeoTIFF", "the raster is still in inputs/, as it was");
+                Assert.True(!Directory.GetFiles(inputs).Any(f => f.Contains("recut")), "and no half-written re-cut is left beside it");
+                Assert.True(!File.Exists(ElmfireStems.Tif(Path.Combine(inputs, ElmfireCaseBuilder.PreviousGridFolder), "fbfm40_bad")),
+                    "nor was it moved aside");
+            }
+        }
+
+        /// <summary>
+        /// Review RC-MI-2: a kept or template namelist naming SLP_FILENAME = 'mati_slope', where the scenario's [Landscape]
+        /// SlopeFile is elmfire/inputs/mati_slope.tif, would have moved the scenario's raster aside and replaced it with a
+        /// re-cut copy, so the scenario read another raster than the one it names.
+        /// </summary>
+        private static void ScenarioRasterNotRecutInPlace()
+        {
+            using (var c = new SyntheticCase())
+            {
+                string caseDir = Path.Combine(c.Folder, "case");
+                string inputs = Path.Combine(caseDir, "inputs");
+                ElmfireCaseBuilder.Build(c.Options(caseDir, 150.0, new List<string>())).GetAwaiter().GetResult();
+                MasterGrid grid = MasterGrid.FromRasterFile(ElmfireStems.Tif(inputs, ElmfireStems.Dem));
+
+                //The scenario's own slope, in the case's inputs and on another grid (Nick's mati_slope.tif is 616x590).
+                var other = new MasterGrid
+                {
+                    Header = new AscRaster.Header { Ncols = 10, Nrows = 10, CellSize = 30, CellSizeY = 30, XllCorner = grid.XMin + 300, YllCorner = grid.YMin + 300, NoDataValue = -9999 },
+                    Epsg = grid.Epsg,
+                };
+                var values = new float[10, 10];
+                for (int x = 0; x < 10; ++x) for (int y = 0; y < 10; ++y) values[x, y] = 7f;
+                string slope = ElmfireStems.Tif(inputs, "mati_slope");
+                GeoTiffRasterWriter.WriteBand(other, values, slope);
+                string before = ElmfireFingerprint.HashFile(slope);
+
+                File.WriteAllLines(Path.Combine(caseDir, "hand.data"), ElmfireNamelist.SetKeyInGroup(File.ReadAllLines(Path.Combine(caseDir, "elmfire.data")),
+                    ElmfireNamelistKeys.InputsGroup, "SLP_FILENAME", "mati_slope", quoted: true));
+                string wui = c.WriteScenario("case", 150.0, "NamelistTemplate=hand.data", "", "[Landscape]", "ElevationFile=source_dem.tif",
+                    "SlopeFile=case/inputs/mati_slope.tif");
+                Input.PREACTInput input = Input.PREACTInput.LoadFromDisk(wui, out bool _);
+
+                var log = new List<string>();
+                ElmfireCaseBuilder.Options o = ElmfireCoupling.CreateBuildOptions(input, input.WildfireModule.ElmfireInput, caseDir, m => log.Add(m));
+                o.LocalDemPath = c.DemPath;
+                o.Weather.UseClimatology = false;
+                o.Weather.WindNinjaExe = Path.Combine(c.Folder, "no-windninja-here");
+                Assert.True(o.ScenarioFiles.Any(f => f.EndsWith("mati_slope.tif", StringComparison.Ordinal)), "the scenario's files are known to the build");
+                ElmfireCaseBuilder.Result r = ElmfireCaseBuilder.Build(o).GetAwaiter().GetResult();
+
+                string copyStem = $"mati_slope_{grid.Header.Ncols}x{grid.Header.Nrows}";
+                Assert.Equal(before, ElmfireFingerprint.HashFile(slope), "the scenario's mati_slope.tif is byte for byte what it was");
+                MasterGrid copy = MasterGrid.FromRasterFile(ElmfireStems.Tif(inputs, copyStem));
+                Assert.True(copy.Header.Ncols == grid.Header.Ncols && copy.Header.Nrows == grid.Header.Nrows, "its copy is on the case grid");
+                Assert.True(r.Fallbacks.Any(f => f.Contains($"Set SLP_FILENAME = '{copyStem}'")) && log.Any(l => l.Contains("WARNING") && l.Contains(copyStem)),
+                    "and the build says which key to point at it: " + string.Join(" | ", r.Fallbacks));
+            }
+        }
+
+        /// <summary>
+        /// e2e N7's other half: the CLI printed the C1 keys as "[Landscape] ElevationFile=..." lines and left the .wui alone,
+        /// so a scenario built from the command line kept its old landscape. It now prints them as they go into the file,
+        /// and <c>--update-wui</c> writes them - only them - as the GUI's Build fire case does.
+        /// </summary>
+        private static void BuildCaseUpdatesWui()
+        {
+            using (var c = new SyntheticCase())
+            {
+                string wui = c.WriteScenario("case", 150.0, "", "# the landscape the scenario was drawn on",
+                    "[Landscape]", "ElevationFile=source_dem.tif", "AKeyNobodyReads=kept", "", "[kPERIL]", "WuiAreaSource=Raster");
+                File.WriteAllText(wui, string.Join("\r\n", File.ReadAllLines(wui)) + "\r\n"); //written on Windows
+                string before = File.ReadAllText(wui);
+                string[] args = { "build-case", "--wui", wui, "--dem", c.DemPath, "--no-climatology", "--windninja", Path.Combine(c.Folder, "no-windninja-here") };
+
+                (int exit, string output) = RunCli(c.Folder, args);
+                Assert.Equal(0, exit, "build-case (" + Tail(output) + ")");
+                string printed = output.Replace("\r", "");
+                Assert.True(printed.Contains("[Landscape]\nElevationFile=case/inputs/dem.tif\nSlopeFile=case/inputs/slp.tif\nAspectFile=case/inputs/asp.tif\n"),
+                    "the keys, as they go into the file: " + Tail(output, 14));
+                Assert.True(printed.Contains("--update-wui"), "and the flag that writes them");
+                Assert.Equal(before, File.ReadAllText(wui), "without the flag the .wui is not touched");
+
+                (exit, output) = RunCli(c.Folder, args.Concat(new[] { "--update-wui" }).ToArray());
+                Assert.Equal(0, exit, "build-case --update-wui (" + Tail(output) + ")");
+                string[] after = File.ReadAllLines(wui);
+                Assert.True(after.Contains("ElevationFile=case/inputs/dem.tif") && after.Contains("SlopeFile=case/inputs/slp.tif")
+                            && after.Contains("AspectFile=case/inputs/asp.tif") && !after.Contains("ElevationFile=source_dem.tif"),
+                    "the landscape is the case's: " + string.Join(" | ", after.Where(l => l.EndsWith(".tif", StringComparison.Ordinal))));
+                Assert.True(after.Contains("# the landscape the scenario was drawn on") && after.Contains("AKeyNobodyReads=kept")
+                            && after.Contains("WuiAreaSource=Raster"), "every other line stays as it was");
+                string[] was = before.Replace("\r", "").Split('\n').Where(l => l.Length > 0).ToArray();
+                Assert.Equal(was.Length + 2, after.Count(l => l.Length > 0), "two keys added (slope, aspect), one replaced");
+
+                Assert.True(!File.ReadAllText(wui).Replace("\r\n", "").Contains('\n'), "with the file's own CRLF line endings");
+
+                Input.PREACTInput input = Input.PREACTInput.LoadFromDisk(wui, out bool _);
+                Assert.Equal("case/inputs/dem.tif", input.Landscape.ElevationFile, "and the scenario reads it");
+
+                (exit, output) = RunCli(c.Folder, args);
+                Assert.True(exit == 0 && output.Contains("already points at this case"), "built again, nothing is left to record: " + Tail(output));
+            }
+        }
+
+        /// <summary>
+        /// A stand-in ELMFIRE that "burns" by copying <paramref name="fixture"/>'s rasters into outputs/ and printing the
+        /// lines ELMFIRE ends a good run with.
+        /// </summary>
+        [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
+        private static string SucceedingElmfire(string folder, string fixture)
+        {
+            string path = Path.Combine(folder, "elmfire_that_copies.sh");
+            File.WriteAllText(path, "#!/bin/sh\ncp '" + fixture + "'/*.tif outputs/\n"
+                                    + "echo '[1] Meteorology band      1: Case #       1 complete.  Fire area:   5.0 acres.'\n"
+                                    + "echo ' End of simulation reached successfully. Shutting down.'\n");
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            return path;
+        }
+
+        /// <summary>
+        /// e2e N7: Nick's mati.wui built through the CLI kept [Landscape] at the 616x590 mati_dem.tif, so a single run
+        /// sampled k-PERIL's topography over 63.9 % of the fire grid and treated the rest as flat, while every campaign
+        /// realization used the case's dem/slp/asp. A single ELMFIRE run now hands k-PERIL the terrain its fire burned on.
+        /// </summary>
+        private static void FireTerrainForKperil()
+        {
+            if (OperatingSystem.IsWindows()) return;
+
+            using (var c = new SyntheticCase())
+            {
+                string caseDir = Path.Combine(c.Folder, "case");
+                string inputs = Path.Combine(caseDir, "inputs");
+                ElmfireCaseBuilder.Build(c.Options(caseDir, 150.0, new List<string>())).GetAwaiter().GetResult();
+                MasterGrid grid = MasterGrid.FromRasterFile(ElmfireStems.Tif(inputs, ElmfireStems.Dem));
+
+                string fixture = Path.Combine(c.Folder, "fire");
+                Directory.CreateDirectory(fixture);
+                foreach (string stem in new[] { ElmfireStems.TimeOfArrival, ElmfireStems.SpreadRate, ElmfireStems.SpreadDirection, ElmfireStems.MidflameWindSpeed })
+                {
+                    File.Copy(ElmfireStems.Tif(inputs, ElmfireStems.Dem), Path.Combine(fixture, stem + "_0000001_0003600.tif"));
+                }
+                string fake = SucceedingElmfire(c.Folder, fixture);
+
+                //The scenario's own landscape: a small DEM over one corner of the domain, as mati_dem.tif covers part of Mati's.
+                string small = Path.Combine(c.Folder, "small_dem.tif");
+                var corner = new MasterGrid
+                {
+                    Header = new AscRaster.Header { Ncols = 20, Nrows = 20, CellSize = 30, CellSizeY = 30, XllCorner = grid.XMin, YllCorner = grid.YMin, NoDataValue = -9999 },
+                    Epsg = grid.Epsg,
+                };
+                var heights = new float[20, 20];
+                for (int x = 0; x < 20; ++x) for (int y = 0; y < 20; ++y) heights[x, y] = 150f;
+                GeoTiffRasterWriter.WriteBand(corner, heights, small);
+
+                string wui = c.WriteScenario("case", 150.0, "", "[Landscape]", "ElevationFile=small_dem.tif");
+                File.WriteAllLines(wui, File.ReadAllLines(wui)
+                    .Select(l => l == "BuildCase=true" ? "BuildCase=false\nReuseExistingOutput=false\nElmfireExe=" + fake : l)
+                    .SelectMany(l => l.Split('\n')));
+                Input.PREACTInput input = Input.PREACTInput.LoadFromDisk(wui, out bool _);
+
+                ElmfireCoupling.Result run = ElmfireCoupling.Prepare(input, input.WildfireModule.ElmfireInput, null);
+                Assert.True(run.Ok, "the stand-in ELMFIRE's fire is read: " + run.Message);
+                Assert.Equal("case/inputs/dem.tif", run.ElevationFile, "the fire's own DEM");
+                Assert.Equal("case/inputs/slp.tif", run.SlopeFile, "slope");
+                Assert.Equal("case/inputs/asp.tif", run.AspectFile, "aspect");
+
+                //Sampled onto the fire grid (the case grid, in simulation coordinates) the way k-PERIL's are.
+                Math.Vector2d origin = input.Simulation.Data.UTMOrigin;
+                var offset = new Math.Vector2d(grid.XMin - origin.x, grid.YMin - origin.y);
+                var size = new Math.Vector2d(grid.Header.Ncols * grid.Header.CellSize, grid.Header.Nrows * grid.Header.CellSize);
+                string Coverage(Wildfire.LandscapeData landscape)
+                {
+                    Program.Log.Take();
+                    Assert.True(Evacuation.EvacuationManager.TrySampleTopographyOntoGrid(landscape, offset, size, grid.Header.Ncols, grid.Header.Nrows,
+                        out float[,] _, out float[,] _, out float[,] _), "topography sampled");
+                    string line = Program.Log.Take().FirstOrDefault(m => m.Contains("% covered"));
+                    return line ?? "(no coverage line)";
+                }
+
+                var fire = new Wildfire.FireWeatherRasters
+                {
+                    ElevationFile = Path.Combine(c.Folder, run.ElevationFile),
+                    SlopeFile = Path.Combine(c.Folder, run.SlopeFile),
+                    AspectFile = Path.Combine(c.Folder, run.AspectFile),
+                };
+                Wildfire.LandscapeData terrain = Evacuation.EvacuationManager.LoadFireTerrain(fire, origin);
+                Assert.True(terrain != null, "the fire's terrain loads as a landscape");
+                string own = Coverage(terrain);
+                Assert.True(own.Contains("(100.0% covered)"), "the fire's own terrain covers the whole fire grid: " + own);
+                string scenario = Coverage(input.WildfireModule.Data.LandscapeData);
+                Assert.True(!scenario.Contains("(100.0% covered)"), "which the scenario's small landscape did not: " + scenario);
+            }
+        }
+
+        /// <summary>
+        /// A stand-in ELMFIRE tree, <c>build/linux/bin/&lt;exe&gt;</c> beside <c>build/source/</c>, whose executable fails at once;
+        /// with <paramref name="tables"/> the source folder holds ELMFIRE's two default tables.
+        /// </summary>
+        [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
+        private static string FakeElmfireTree(string folder, bool tables)
+        {
+            string bin = Path.Combine(folder, "build", "linux", "bin");
+            string source = Path.Combine(folder, "build", "source");
+            Directory.CreateDirectory(bin);
+            Directory.CreateDirectory(source);
+            if (tables)
+            {
+                File.WriteAllText(Path.Combine(source, ElmfireStems.FuelModelTable), "1,GR1,0.1,0,0,0.3,0,1,15,2000,1800,1800,0.4,8000,8000,0\n");
+                File.WriteAllText(Path.Combine(source, ElmfireStems.BuildingFuelModelTable), "1,ST01,300,400,10080,14400,360,25,10500,9,0.89,8,0.5,100,0.0,20\n");
+            }
+            return FailingElmfire(bin);
+        }
+
+        /// <summary>
+        /// e2e N2: with the building spread model on (Mati's setting), a case without building_fuel_models.csv passed its
+        /// build and its own validation, and ELMFIRE then stopped at start-up: "Problem opening building fuel model table
+        /// file ./inputs/building_fuel_models.csv". The builder copies ELMFIRE's shipped table like fuel_models.csv, or
+        /// refuses before it makes anything; a run of a namelist that needs it gets it or is refused before ELMFIRE.
+        /// </summary>
+        private static void BuildingFuelTable()
+        {
+            if (OperatingSystem.IsWindows()) return;
+
+            using (var c = new SyntheticCase())
+            {
+                string withTables = FakeElmfireTree(Path.Combine(c.Folder, "elmfire_full"), true);
+                string withoutTables = FakeElmfireTree(Path.Combine(c.Folder, "elmfire_bare"), false);
+                string caseDir = Path.Combine(c.Folder, "case");
+                string inputs = Path.Combine(caseDir, "inputs");
+                string table = Path.Combine(inputs, ElmfireStems.BuildingFuelModelTable);
+
+                ElmfireCaseBuilder.Options Buildings(string exe)
+                {
+                    ElmfireCaseBuilder.Options o = c.Options(caseDir, 150.0, new List<string>());
+                    o.ElmfireExe = exe;
+                    o.Namelist.USE_BLDG_SPREAD_MODEL = true;
+                    o.Namelist.USE_CONSTANT_BLDG_SPREAD_MODEL_PARAMS = true;
+                    return o;
+                }
+
+                // ---- no table anywhere: refused before anything is made
+                Exception refused = null;
+                try { ElmfireCaseBuilder.Build(Buildings(withoutTables)).GetAwaiter().GetResult(); }
+                catch (InvalidDataException e) { refused = e; }
+                Assert.True(refused != null && refused.Message.Contains("USE_BLDG_SPREAD_MODEL") && refused.Message.Contains("--copy"),
+                    "the build is refused, saying what to do: " + refused?.Message);
+                Assert.True(!File.Exists(ElmfireStems.Tif(inputs, ElmfireStems.Dem)), "before it made the grid");
+
+                // ---- ELMFIRE's table beside the executable: copied, and named in the namelist
+                ElmfireCaseBuilder.Build(Buildings(withTables)).GetAwaiter().GetResult();
+                Assert.True(File.Exists(table), "building_fuel_models.csv is in the case's inputs");
+                string[] namelist = File.ReadAllLines(Path.Combine(caseDir, "elmfire.data"));
+                Assert.True(ElmfireNamelist.IsTrue(ElmfireNamelist.GetKeyInGroup(namelist, ElmfireNamelistKeys.WuiGroup, ElmfireNamelistKeys.UseBuildingSpreadModel)),
+                    "the namelist runs the building spread model");
+                Assert.Equal(ElmfireStems.BuildingFuelModelTable, ElmfireNamelist.GetKeyInGroup(namelist, ElmfireNamelistKeys.MiscellaneousGroup,
+                    ElmfireNamelistKeys.BuildingFuelModelFile), "and names the table");
+
+                // ---- a run whose namelist needs it, after the table went missing
+                File.Delete(table);
+                string wui = c.WriteScenario("case", 150.0);
+                string[] scenario = File.ReadAllLines(wui);
+                Input.PREACTInput RunWith(string exe)
+                {
+                    File.WriteAllLines(wui, scenario
+                        .Select(l => l == "BuildCase=true" ? "BuildCase=false\nReuseExistingOutput=false\nElmfireExe=" + exe : l)
+                        .SelectMany(l => l.Split('\n')));
+                    return Input.PREACTInput.LoadFromDisk(wui, out bool _);
+                }
+
+                Input.PREACTInput bare = RunWith(withoutTables);
+                ElmfireCoupling.Result run = ElmfireCoupling.Prepare(bare, bare.WildfireModule.ElmfireInput, null);
+                Assert.True(!run.Ok && run.Message.Contains("building spread model") && run.Message.Contains(ElmfireStems.BuildingFuelModelTable),
+                    "without ELMFIRE's table the run is refused before ELMFIRE: " + run.Message);
+                Assert.True(!File.Exists(Path.Combine(caseDir, "outputs", ElmfireRunner.RunNamelistName)), "which was not started");
+
+                Input.PREACTInput full = RunWith(withTables);
+                run = ElmfireCoupling.Prepare(full, full.WildfireModule.ElmfireInput, null);
+                Assert.True(!run.Ok && run.Message.Contains("fake ELMFIRE"), "with it, the run reaches ELMFIRE: " + run.Message);
+                Assert.True(File.Exists(table), "having copied the table in again");
+            }
+        }
+
+        /// <summary>A stand-in for ELMFIRE that fails at once, so the namelist a run would hand it can be read in outputs/run.data.</summary>
+        [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
+        private static string FailingElmfire(string folder)
+        {
+            string path = Path.Combine(folder, "elmfire_that_fails.sh");
+            File.WriteAllText(path, "#!/bin/sh\necho '[ERROR] fake ELMFIRE'\nexit 1\n");
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            return path;
+        }
+
+        /// <summary>
+        /// RC-MA-1 / e2e N1: Nick's kept hand-edited namelist says NUM_METEOROLOGY_TIMES = METEOROLOGY_BAND_STOP = 72, and a
+        /// single run of it on a case whose weather had 8 or 24 bands (the scenario's hours) aborted ELMFIRE at start-up:
+        /// "slice band end (72) is outside the bounds of (1, 8)". The run now fits the band keys to the case's ws.tif as a
+        /// campaign does per realization, and checks the namelist's demand against it before ELMFIRE starts.
+        /// </summary>
+        private static void TemplateBandsFitted()
+        {
+            if (OperatingSystem.IsWindows()) return;
+
+            using (var c = new SyntheticCase())
+            {
+                string caseDir = Path.Combine(c.Folder, "case");
+                ElmfireCaseBuilder.Options o = c.Options(caseDir, 150.0, new List<string>());
+                o.SimulationTstopSeconds = 3 * 3600.0;
+                ElmfireCaseBuilder.Build(o).GetAwaiter().GetResult();
+                Assert.Equal(3, AscRaster.GetBandCount(ElmfireStems.Tif(Path.Combine(caseDir, "inputs"), ElmfireStems.WindSpeed)),
+                    "the case holds 3 hours of weather");
+
+                //As Nick's kept namelist: written for a 72-band case.
+                string[] hand = File.ReadAllLines(Path.Combine(caseDir, "elmfire.data"));
+                foreach (string key in new[] { ElmfireNamelistKeys.NumMeteorologyTimes, ElmfireNamelistKeys.MeteorologyBandStop })
+                {
+                    hand = ElmfireNamelist.SetKeyInGroup(hand, ElmfireNamelistKeys.MonteCarloGroup, key, "72");
+                }
+                File.WriteAllLines(Path.Combine(caseDir, "hand.data"), hand);
+
+                string fake = FailingElmfire(c.Folder);
+                string wui = c.WriteScenario("case", 150.0);
+                File.WriteAllLines(wui, File.ReadAllLines(wui)
+                    .Select(l => l == "BuildCase=true"
+                        ? "BuildCase=false\nNamelistTemplate=hand.data\nReuseExistingOutput=false\nElmfireExe=" + fake
+                        : l == "SimulationTstopHours=1" ? "SimulationTstopHours=2" : l)
+                    .SelectMany(l => l.Split('\n')));
+                Input.PREACTInput input = Input.PREACTInput.LoadFromDisk(wui, out bool _);
+                Assert.True(input?.WildfireModule?.ElmfireInput != null, "the scenario loads");
+
+                var log = new List<string>();
+                ElmfireCoupling.Result run = ElmfireCoupling.Prepare(input, input.WildfireModule.ElmfireInput, m => log.Add(m));
+                string runData = Path.Combine(caseDir, "outputs", ElmfireRunner.RunNamelistName);
+                Assert.True(!run.Ok && File.Exists(runData) && run.Message.Contains("fake ELMFIRE"),
+                    "the 2 h fire on 3 bands reaches ELMFIRE (the fake one, which fails): " + run.Message);
+
+                string[] ran = File.ReadAllLines(runData);
+                string Key(string key) => ElmfireNamelist.GetKeyInGroup(ran, ElmfireNamelistKeys.MonteCarloGroup, key);
+                Assert.Equal("3", Key(ElmfireNamelistKeys.NumMeteorologyTimes), "NUM_METEOROLOGY_TIMES = the bands ws.tif has");
+                Assert.Equal("1", Key(ElmfireNamelistKeys.MeteorologyBandStart), "METEOROLOGY_BAND_START");
+                Assert.Equal("1", Key(ElmfireNamelistKeys.MeteorologyBandStop), "METEOROLOGY_BAND_STOP: one starting band");
+                Assert.True(log.Any(l => l.Contains("fitted to ws.tif (3 band(s))") && l.Contains("NUM_METEOROLOGY_TIMES: '72' -> '3'")),
+                    "and the run says what it changed: " + string.Join(" | ", log.Where(l => l.Contains("band"))));
+                Assert.True(ElmfireNamelist.DescribeBandShortfall(ran, 3) == null, "the fitted namelist asks for no more than there is");
+
+                //A fire longer than the weather: refused before ELMFIRE starts, with both numbers.
+                File.Delete(runData);
+                input.WildfireModule.ElmfireInput.SimulationTstopHours = 5;
+                run = ElmfireCoupling.Prepare(input, input.WildfireModule.ElmfireInput, null);
+                Assert.True(!run.Ok && run.Message.Contains("3 bands") && run.Message.Contains("5 h") && run.Message.Contains("NamelistTemplate"),
+                    "5 h on 3 bands is refused, naming both: " + run.Message);
+                Assert.True(!File.Exists(runData), "before ELMFIRE was asked");
+
+                //The demand, as the check words it: the stop time, or a band key a namelist was not fitted to.
+                string[] fiveHours = ElmfireNamelist.SetKeyInGroup(ran, ElmfireNamelistKeys.TimeControlGroup,
+                    ElmfireNamelistKeys.SimulationTstop, "18000.0");
+                string shortfall = ElmfireNamelist.DescribeBandShortfall(fiveHours, 3);
+                Assert.True(shortfall != null && shortfall.Contains("needs 5 weather band(s)") && shortfall.Contains("ws.tif has 3"),
+                    "the stop time's demand: " + shortfall);
+                string unfitted = ElmfireNamelist.DescribeBandShortfall(hand, 3);
+                Assert.True(unfitted != null && unfitted.Contains("needs 72") && unfitted.Contains("= 72"), "an unfitted band key's: " + unfitted);
+                Assert.True(ElmfireNamelist.DescribeBandShortfall(hand, 1) == null, "one band is constant weather, enough for any fire");
+            }
         }
 
         /// <summary>
@@ -213,6 +605,23 @@ namespace PREACT.Tests
 
                 Assert.True(!CampaignLayout.IsLockHeld(campaign), "released with the campaign");
                 Assert.True(File.Exists(Path.Combine(campaign, CampaignLayout.LockFile)), "the file stays, and is no lock");
+
+                //A campaign of another scenario, in another folder, on the same case: seen through the case's own lock, which
+                //two campaigns can hold at once (review NIT: the refusal looked only under this scenario's _output).
+                string caseDir = Path.Combine(c.Folder, "case");
+                Directory.CreateDirectory(caseDir);
+                using (PREACTcli.Campaigns.CampaignLock one = PREACTcli.Campaigns.CampaignLock.AcquireCase(caseDir))
+                using (PREACTcli.Campaigns.CampaignLock two = PREACTcli.Campaigns.CampaignLock.AcquireCase(caseDir))
+                {
+                    Assert.True(one != null && two != null, "two campaigns share the case's lock");
+                    Assert.True(CampaignLayout.IsLockHeld(caseDir), "and it reads as held");
+
+                    bool built = ElmfireCoupling.BuildCaseOnly(input, null, out string problem);
+                    Assert.True(!built && problem != null && problem.Contains("running on this case"), "the GUI's build is refused: " + problem);
+                    (int exit, string output) = RunCli(c.Folder, "build-case", "--wui", wui, "--dem", c.DemPath, "--no-climatology");
+                    Assert.True(exit == 1 && output.Contains("running on this case"), "and build-case: " + Tail(output));
+                }
+                Assert.True(!CampaignLayout.IsLockHeld(caseDir), "released when both have finished");
                 (int after, string said) = RunCli(c.Folder, "build-case", "--wui", wui, "--dem", c.DemPath, "--no-climatology",
                     "--windninja", Path.Combine(c.Folder, "no-windninja-here"));
                 Assert.Equal(0, after, "once it has finished the case builds (" + Tail(said) + ")");

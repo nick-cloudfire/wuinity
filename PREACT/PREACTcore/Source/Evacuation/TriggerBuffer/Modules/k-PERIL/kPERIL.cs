@@ -220,7 +220,14 @@ namespace PREACT
 
                 if (epsgCode > 0)
                 {
-                    Utility.AscRaster.WriteCompanionPrj(outputFilePath, epsgCode);
+                    //Said, not swallowed: without it GIS places the boundary nowhere, and the GUI's Results list marks
+                    //a boundary with no .prj as one from before the k-PERIL fix (review R6).
+                    string noPrj = Utility.AscRaster.WriteCompanionPrj(outputFilePath, epsgCode);
+                    if (noPrj != null)
+                    {
+                        Engine.Message(null, Engine.LogType.Warning, noPrj + ". The GUI's Results list will call this boundary "
+                            + "an \"earlier version\"; it is not.");
+                    }
                 }
             }
             catch (System.Exception e)

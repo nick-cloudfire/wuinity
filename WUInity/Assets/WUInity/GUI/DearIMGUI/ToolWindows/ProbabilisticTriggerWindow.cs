@@ -95,6 +95,10 @@ namespace Assets.WUInity.GUI.DearIMGUI
         private static readonly List<string> _log = new List<string>();
         private static Process _process;
         private static volatile Phase _phase = Phase.Idle;
+
+        //A stop was asked for (Cancel, File > Quit, Play-stop) since the user last pressed Run. Kept apart from _phase
+        //because the settings check cannot be cancelled half-way: its answer still arrives, and must not start a campaign.
+        private static volatile bool _stopAsked;
         private static volatile float _progress;   // 0..1
         private static volatile int _doneCount;
         private static volatile int _totalCount;
@@ -178,6 +182,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
         /// </summary>
         public static void StopForQuit()
         {
+            _stopAsked = true;
             Process process = _process;
             if (process == null) return;
 
@@ -909,6 +914,11 @@ namespace Assets.WUInity.GUI.DearIMGUI
             if (!string.IsNullOrEmpty(_templateOverride)) { a.Add("--elmfire-template"); a.Add(_templateOverride); }
             if (!string.IsNullOrEmpty(_inputsOverride)) { a.Add("--elmfire-inputs"); a.Add(_inputsOverride); }
 
+            //Closing the CLI's stdin is how Cancel stops it, and it also stops by itself when this process ends
+            //and the pipe closes - so no campaign outlives the window that started it. The settings check too: it
+            //hashes the case's inputs, which is not instant, and a quit waits for it.
+            a.Add("--cancel-on-stdin-close");
+
             if (inspect)
             {
                 a.Add("--inspect");
@@ -922,10 +932,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
             if (_parallel > 0) { a.Add("--parallel"); a.Add(I(_parallel)); }
             if (resume) a.Add("--resume");
             if (!string.IsNullOrEmpty(_outPath)) { a.Add("--out"); a.Add(_outPath); }
-
-            //Closing the CLI's stdin is how Cancel stops it, and it also stops by itself when this process ends
-            //and the pipe closes - so no campaign outlives the window that started it.
-            a.Add("--cancel-on-stdin-close");
             return a;
         }
 
@@ -967,11 +973,23 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             SeedFromScenario(false);
             ResetRunState();
+            _stopAsked = false;
             _phase = Phase.Inspecting;
             _status = "Checking for an earlier campaign with these settings...";
 
             Launch(Arguments(true, false), code =>
             {
+                //Cancel, File > Quit or Play-stop while the check ran: its answer is not a go-ahead. Launching the
+                //campaign here is what made a quit wait for a campaign nobody asked for, and a Play-stop leave one
+                //running in the editor (review R2).
+                if (_stopAsked || _phase == Phase.Cancelling)
+                {
+                    _phase = Phase.Idle;
+                    _status = "Stopped before the campaign started.";
+                    AppendLog(_status);
+                    return;
+                }
+
                 bool match, running;
                 int finished, failed;
                 lock (_sync)
@@ -1029,6 +1047,12 @@ namespace Assets.WUInity.GUI.DearIMGUI
             {
                 _phase = Phase.Idle;
                 _status = stop;
+                return;
+            }
+            if (_stopAsked)
+            {
+                _phase = Phase.Idle;
+                _status = "Stopped before the campaign started.";
                 return;
             }
 
@@ -1094,7 +1118,11 @@ namespace Assets.WUInity.GUI.DearIMGUI
                     catch { }
 
                     if (ReferenceEquals(_process, process)) _process = null;
-                    exited(code);
+
+                    //On the main thread: the callbacks read the workflow model, which the main thread rebuilds every
+                    //second, and start the next process. From this pool thread a collision threw there and left the
+                    //phase at Inspecting - the GUI busy for the rest of the session (review R2).
+                    PreactGUI.Post(() => Finished(exited, code));
                 };
 
                 _process = process;
@@ -1113,12 +1141,32 @@ namespace Assets.WUInity.GUI.DearIMGUI
         }
 
         /// <summary>
+        /// A launched process's exit, on the main thread. Whatever the callback does, the window is never left busy
+        /// by it: an exception ends in Idle, with the reason in the log.
+        /// </summary>
+        private static void Finished(Action<int> exited, int code)
+        {
+            try
+            {
+                exited(code);
+            }
+            catch (Exception e)
+            {
+                _phase = Phase.Idle;
+                _status = "The campaign window stopped on an error: " + e.Message;
+                AppendLog(_status);
+            }
+        }
+
+        /// <summary>
         /// Stops the campaign and everything it started. Closing the CLI's stdin makes it kill every ELMFIRE,
         /// WindNinja and PREACT process tree it launched and exit; if it has not gone within 15 s its own tree is
         /// killed (taskkill /T on Windows). Killing only the CLI, as this did, left the fires running.
         /// </summary>
         private static void CancelRun()
         {
+            //Before anything else: the settings check may have exited already, with its answer still on its way.
+            _stopAsked = true;
             Process process = _process;
             if (process == null) return;
 

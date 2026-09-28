@@ -172,6 +172,13 @@ namespace PREACT.Utility
         public const string LockFile = "campaign.lock";
 
         /// <summary>
+        /// The lock every running campaign holds in the case folder whose inputs its realizations read - shared, so
+        /// campaigns of several scenarios can run on one case, and seen by a build of the case from any scenario (a
+        /// campaign's own folder lock is under its scenario's _output, where a build from another folder does not look).
+        /// </summary>
+        public const string CaseLockFile = "campaign.lock";
+
+        /// <summary>
         /// The manifest setting that says how each realization's evacuation is seeded (FIX-A's MA-5). A campaign whose
         /// manifest lacks it was made before that - and before the k-PERIL wrapper read its grids the right way round
         /// (BL-1), which came with it - so its boundaries are not comparable with a new campaign's, and since the
@@ -274,13 +281,24 @@ namespace PREACT.Utility
         /// Why a scenario's case cannot be built now, or null: a campaign running from the scenario's folder reads the
         /// case's inputs in every realization, and a build re-cuts, rewrites and moves them (review MI-4).
         /// </summary>
-        public static string DescribeRunningCampaign(string scenarioFolder)
+        public static string DescribeRunningCampaign(string scenarioFolder, string caseDirectory = null)
         {
             List<string> running = RunningCampaigns(scenarioFolder);
-            if (running.Count == 0) return null;
-            return $"a trigger campaign is running ({string.Join(", ", running.Select(Path.GetFileName))}) and every one of "
-                   + "its realizations reads this case's rasters, which a build re-cuts and rewrites. Wait for it to "
-                   + "finish, or stop it, then build the case.";
+            if (running.Count > 0)
+            {
+                return $"a trigger campaign is running ({string.Join(", ", running.Select(Path.GetFileName))}) and every one of "
+                       + "its realizations reads this case's rasters, which a build re-cuts and rewrites. Wait for it to "
+                       + "finish, or stop it, then build the case.";
+            }
+
+            //A campaign of another scenario, in another folder, on the same case (review NIT).
+            if (!string.IsNullOrEmpty(caseDirectory) && Directory.Exists(caseDirectory) && IsLockHeld(caseDirectory))
+            {
+                return $"a trigger campaign is running on this case (it holds {Path.Combine(caseDirectory, CaseLockFile)}), started "
+                       + "from another scenario or folder, and every one of its realizations reads the case's rasters, which a "
+                       + "build re-cuts and rewrites. Wait for it to finish, or stop it, then build the case.";
+            }
+            return null;
         }
         public const string TemplateSnapshot = "template.data";
         public const string RealizationsFolder = "realizations";

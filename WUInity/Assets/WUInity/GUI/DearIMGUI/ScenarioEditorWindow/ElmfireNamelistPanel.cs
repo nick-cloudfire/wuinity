@@ -156,9 +156,11 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
                 Real("DT_METEOROLOGY", ref n.DT_METEOROLOGY, "Seconds between weather bands. 3600 = hourly.");
 
                 Whole("MeteorologyBands (0 = from the rasters)", ref n.MeteorologyBands,
-                    "How many hourly bands to read. Left at 0, the case's own ws.tif is counted, which is "
-                    + "what you want: too many fails the run, too few silently reuses hour one for the "
-                    + "whole fire.");
+                    "How many hourly bands the generated elmfire.data says to read. Left at 0, the case's own "
+                    + "ws.tif is counted, which is what you want. A run always reads every band the case's "
+                    + "weather has - it fits NUM_METEOROLOGY_TIMES to ws.tif, as a campaign does for each "
+                    + "realization - because too many fails the run and too few silently holds one hour's "
+                    + "weather for the rest of the fire.");
                 if (n.MeteorologyBands < 0) n.MeteorologyBands = 0;
 
                 Whole("WX_BANDS_KEPT_IN_MEM", ref n.WX_BANDS_KEPT_IN_MEM,

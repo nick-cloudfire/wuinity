@@ -124,6 +124,13 @@ Mati needs its SUMO network (row 2) and a fire; if row 11 lists blockers, fix th
    ticking **Run anyway** does not enable it (it only skips the workflow's own blockers). Should a run ever be
    refused by the engine all the same, the window says "Not run: the engine refused the scenario - it still
    needs:" with the list, never "Finished in 0.0 min". Reopen Mati afterwards.
+7. **The kept namelist.** Row 5 still offers **Run elmfire.data.kept-<time>** (B6). Press it, **Save**, and run
+   (F5). The Console says "Namelist weather bands fitted to ws.tif (N band(s)): &MONTE_CARLO METEOROLOGY_BAND_STOP:
+   '72' -> '1'; &MONTE_CARLO NUM_METEOROLOGY_TIMES: '72' -> 'N'", where N is the case's weather hours, and ELMFIRE
+   burns `fbfm40_roads101` to the end - there is no "slice band end (72) is outside the bounds of (1, N)". Set
+   `SimulationTstopHours` (**Fire > Fire model settings...**) above N hours and run again: the run is refused
+   before ELMFIRE with "The case's weather cannot run this fire: the weather covers N h (N bands) and the fire
+   runs M h ...". Afterwards set the fire duration back, clear `NamelistTemplate` (same page), and **Save**.
 
 ---
 
@@ -133,6 +140,9 @@ Mati needs its SUMO network (row 2) and a fire; if row 11 lists blockers, fix th
    arrival CSV, trigger boundary, fire arrival), **Campaign**, **Case** (wui_area.tif). No `.prj`, `.aux.xml` or
    `.ovr` file is listed as a result, although they sit beside the rasters. A boundary from before v1 (no `.prj`
    beside it) is marked *(earlier version)*, and a campaign made before v1 has a line saying so.
+   **The boundary of C5 is not marked**, and in File Explorer `mati_v1test\_output\0_trigger_boundary.prj` sits
+   beside `0_trigger_boundary.asc` (open it: it names `WGS 84 / UTM zone 34N`). If it is marked, or the `.prj` is
+   missing, the Console has a warning "... was written without a .prj: ..." - note it as a finding, with that text.
 2. **Show on map** beside the fire arrival: the raster is drawn over the domain with a legend line in the window.
    **Hide from map** removes it. **Results > Show on map > Trigger boundary** draws the boundary.
 3. **View > Map layers > Markers**: unticking hides the destination and ignition markers; ticking shows them.
@@ -208,22 +218,43 @@ Mati needs its SUMO network (row 2) and a fire; if row 11 lists blockers, fix th
 
 ## H. Quitting and leaving Play mode
 
-1. **Play-stop with unsaved changes.** Make any edit (the header says "Unsaved changes"), then press Unity's Play
+Every step starts with nothing running. Each makes its edit **first**: while a step or a run is going, every editing
+surface is read-only. A quick edit that is easy to check afterwards: **Evacuation > Evacuation groups...**, change
+the first group's colour.
+
+1. **Play-stop with unsaved changes.** Make the edit (the header says "Unsaved changes"), then press Unity's Play
    button to stop. Expected: Unity's own dialog "Unsaved changes ... Save them before leaving Play mode?" with
    **Save** / **Don't save**. Choose Save: the .wui on disk has the edit. Repeat and choose Don't save: it has not.
-2. **Play-stop while a data step runs.** Start row 2 **Rebuild everything**, make an edit, stop Play. Expected: a
-   short wait while the step stops (up to 20 s), then the same dialog.
-3. **File > Quit while a data step runs, with unsaved changes.** Start a long step (row 5 **Rebuild everything**),
-   make an edit, **File > Quit**. Expected:
+2. **Play-stop during a run.** Press Play, make the edit, then **Run > Run simulation...** and press **Run** (not
+   *Save and run*: the edit must stay unsaved). While the phase reads "preparing" (ELMFIRE computing) - and once
+   more, on a second try, while the evacuation itself runs - press Play to stop. Expected, each time: within a few
+   seconds (not a 20 s freeze), the dialog "Unsaved changes ... Save them before leaving Play mode?"; **Save**
+   writes the edit into the .wui. Task Manager then shows no `elmfire.exe`, `mpiexec.exe` or `sumo` process left.
+   "Unsaved changes are lost" here is a finding.
+3. **Play-stop while a data step runs.** Press Play, make the edit, then row 5 **Rebuild everything**: it asks
+   whether to rebuild (**Rebuild**), then whether to save first - answer **Don't save**, so the edit stays unsaved.
+   While the step's log shows WindNinja solving the weather, press Play to stop. Expected: a short wait (a few
+   seconds: WindNinja is killed at once, and the build stops at its next safe point), then the dialog "Unsaved
+   changes ... Save them before leaving Play mode?"; Save writes the edit. (A step inside a link that cannot be
+   interrupted - an OSM or DEM download, a RouterDb or netconvert - may run past the 20 s the editor waits: then
+   the dialog is "Unsaved changes are lost ... File > Quit, which waits for it, is the way to leave with them
+   saved." That is expected for those links, which is why this step uses WindNinja.)
+4. **File > Quit while a data step runs, with unsaved changes.** Make the edit, start row 5 **Rebuild everything**
+   (answer **Rebuild**, then **Don't save**), and while WindNinja solves press **File > Quit**. Expected:
    - "... is running. Quitting stops it first, then asks whether to save the unsaved changes." - press **Stop it
      and quit**;
    - a prompt "Stopping before quitting: ..." (with **Quit now, without saving** and **Cancel**) while the step
      stops - WindNinja is killed at once, a download under way finishes first;
    - then the save question (**Save** / **Don't save** / **Cancel**); Save writes the .wui, and Play stops.
-4. **File > Quit during a campaign**: the same, and afterwards no campaign process is left.
-5. **File > Copy scenario to...** with unsaved painted fire strokes: the copy's painted-areas file contains them
-   (open the copy and look at row 6), and nothing was written into the original folder. With unsaved *group* strokes
-   it asks **Save them here, then copy** / **Copy without them** / **Cancel**.
+5. **File > Quit during a campaign**: the same, and afterwards no campaign process is left. Do it once more right
+   after pressing the campaign window's **Run**, while it says "Checking for an earlier campaign with these
+   settings...": the quit goes ahead and no campaign starts (Task Manager shows no `PREACTcli`).
+6. **File > Copy scenario to...** with unsaved painted fire strokes: the copy's painted-areas file contains them
+   (open the copy and look at row 6), and nothing was written into the original folder. The "Data preparation"
+   window that shows the copy has no **Stop** ("This cannot be stopped; it finishes by itself"). With unsaved
+   *group* strokes it asks **Save them here, then copy** / **Copy without them** / **Cancel**, and its text says
+   that the copy is opened afterwards, that the first writes the masks into this scenario's folder without
+   rewriting its .wui, and that the second loses the strokes from both.
 
 ---
 

@@ -21,6 +21,68 @@ namespace PREACT.Tests
             runner.Add("engine: no weather file means no weather and no download", NoWeather);
             runner.Add("engine: a run on an incomplete scenario is refused and still finishes", RunGatedOnChecklist);
             runner.Add("engine: a run whose cars mostly fail to enter SUMO is stopped, a few unroutable cars are not", SumoInjectionFailure);
+            runner.Add("engine: a stopped run's worker is seen to end while its task still waits for the caller's context (R1)", WorkerEndsWithoutContext);
+        }
+
+        /// <summary>Unity's synchronization context as far as a run sees it: a post is queued, and runs only when pumped (a frame).</summary>
+        private sealed class QueueContext : SynchronizationContext
+        {
+            private readonly System.Collections.Concurrent.ConcurrentQueue<(SendOrPostCallback Callback, object State)> _queue =
+                new System.Collections.Concurrent.ConcurrentQueue<(SendOrPostCallback, object)>();
+
+            public int Count => _queue.Count;
+
+            public override void Post(SendOrPostCallback d, object state) => _queue.Enqueue((d, state));
+
+            public void Pump()
+            {
+                while (_queue.TryDequeue(out (SendOrPostCallback Callback, object State) work)) work.Callback(work.State);
+            }
+        }
+
+        /// <summary>
+        /// Review R1: leaving Play mode during a GUI run blocks the main thread while the run stops, and waited on the run's
+        /// task - whose completion is a continuation posted to Unity's context, which runs only in the player loop that the
+        /// wait blocks. So it sat out its 20 s and then refused to save. It now waits on <see cref="Engine.IsRunningSimulations"/>,
+        /// which the worker clears itself; this is that mechanism with a context nobody pumps.
+        /// </summary>
+        private static void WorkerEndsWithoutContext()
+        {
+            using var s = new FormatTests.Scenario();
+            List<string> lines = FormatTests.Scenario.Lines
+                .Select(l => l == "StopWhenEvacuated=true" ? "StopWhenEvacuated=false"
+                    : l.StartsWith("EndDateTime=", StringComparison.Ordinal) ? "EndDateTime=2026-07-28T12:00:00" : l)
+                .ToList();
+            PREACTInput input = Load(s, lines);
+            TheEngine.SetInput(input, Path.Combine(s.Folder, "scenario.wui"));
+
+            var context = new QueueContext();
+            SynchronizationContext previous = SynchronizationContext.Current;
+            Task run;
+            SynchronizationContext.SetSynchronizationContext(context);
+            try
+            {
+                run = TheEngine.RunSimulations(new EngineTask(1));
+            }
+            finally
+            {
+                SynchronizationContext.SetSynchronizationContext(previous);
+            }
+            Assert.True(TheEngine.IsRunningSimulations, "the worker runs once RunSimulations has returned (a month to simulate)");
+
+            Thread.Sleep(300);
+            TheEngine.CloseSimulations(false);
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (TheEngine.IsRunningSimulations && clock.Elapsed.TotalSeconds < 30) Thread.Sleep(20);
+            Assert.True(!TheEngine.IsRunningSimulations,
+                $"the worker ends after the stop ({clock.Elapsed.TotalSeconds:F1} s), with nothing pumping the caller's context");
+
+            Thread.Sleep(200);
+            Assert.True(!run.IsCompleted && context.Count > 0,
+                "while the run's task still waits for that context to run its completion - what the Play-stop wait used to wait on");
+            context.Pump();
+            Assert.True(run.IsCompleted, "one pump of the context (a frame) completes it");
+            Assert.True(TheEngine.Simulation.State != Simulation.SimulationState.Running, "and the simulation is no longer running");
         }
 
         private sealed class TestVehicle : TrafficModuleVehicle

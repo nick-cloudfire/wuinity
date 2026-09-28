@@ -372,6 +372,14 @@ namespace WUInity
         /// <summary>A run started from the GUI has not finished yet, however it is going to finish.</summary>
         public bool IsSimulationActive { get => _runTask != null && !_runTask.IsCompleted; }
 
+        /// <summary>
+        /// The engine's worker is still running the simulation - the part of <see cref="IsSimulationActive"/> that reads
+        /// the scenario. Set and cleared by the worker, so it also turns false while the main thread is blocked, when the
+        /// run's task cannot complete (its completion waits for Unity's player loop); see
+        /// <see cref="Engine.IsRunningSimulations"/>.
+        /// </summary>
+        public bool IsSimulationWorking { get => IsSimulationActive && _engine != null && _engine.IsRunningSimulations; }
+
         /// <summary>Whether the last GUI run ended in an error, or null when there has been none.</summary>
         public bool? LastRunFailed { get; private set; }
 
@@ -1130,8 +1138,10 @@ namespace WUInity
             _fireGridOutline = show;
             if (_fireGridBorder != null) _fireGridBorder.gameObject.SetActive(false);
             _outlineW = _outlineH = 0.0;
-            //Resolved here once, so a scenario without a paint grid says why (the painter's own message).
-            if (show && _painter != null) _painter.TryGetPaintGrid(out PREACT.Math.Vector2d _, out PREACT.Math.Vector2d _);
+            //Resolved here once, so a scenario without a paint grid says why (the painter's own message) - but not while
+            //anything runs, when a build may be writing the dem.tif it is read from (review R4); UpdateFireGridOutline
+            //resolves it once that is done.
+            if (show && _painter != null && !ScenarioSession.IsBusy) _painter.TryGetPaintGrid(out PREACT.Math.Vector2d _, out PREACT.Math.Vector2d _);
         }
 
         /// <summary>
@@ -1139,18 +1149,38 @@ namespace WUInity
         /// when its raster exists and nothing is being built, so a build that re-cut the grid moves the outline without
         /// the painter reading a raster that is being written, or saying every frame that there is none.
         /// </summary>
+        /// <remarks>
+        /// One rule for the two conditions (review R4): the world map hides it whatever is running - it is drawn in UTM
+        /// metres - and while anything runs it stays where it was last resolved, on the UTM map only. It used to skip the
+        /// hide whenever something was busy, so the outline showed on the world map during a run or a build.
+        /// </remarks>
         private void UpdateFireGridOutline()
         {
             if (!_fireGridOutline || _painter == null || _input == null) return;
 
+            if (!_utmMap.gameObject.activeSelf)
+            {
+                if (_fireGridBorder != null) _fireGridBorder.gameObject.SetActive(false);
+                return;
+            }
+
+            if (ScenarioSession.IsBusy)
+            {
+                if (_fireGridBorder != null && _outlineW > 0.0 && !_fireGridBorder.gameObject.activeSelf)
+                {
+                    _fireGridBorder.gameObject.SetActive(true);
+                }
+                return;
+            }
+
             string reference = Painter.ExpectedGridReference(_input);
             bool haveRaster = !string.IsNullOrEmpty(reference) && GuiFiles.Exists(GuiFiles.Resolve(_input.RootFolder, reference));
             PREACT.Math.Vector2d size = default, origin = default;
-            bool show = _utmMap.gameObject.activeSelf && haveRaster && !ScenarioSession.IsBusy
-                        && _painter.TryGetPaintGrid(out size, out origin);
+            bool show = haveRaster && _painter.TryGetPaintGrid(out size, out origin);
             if (!show)
             {
-                if (_fireGridBorder != null && !ScenarioSession.IsBusy) _fireGridBorder.gameObject.SetActive(false);
+                if (_fireGridBorder != null) _fireGridBorder.gameObject.SetActive(false);
+                _outlineW = _outlineH = 0.0;
                 return;
             }
 

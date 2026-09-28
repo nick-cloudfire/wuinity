@@ -43,7 +43,7 @@ namespace PREACT.Input
             }
             else
             {
-                PREACTInput.InputNotFoundMessage(nameOfInput, false, "false");
+                PREACTInput.ModuleOffForWantOfEnabled("the household module", "no household is simulated");
             }
 
             //The rest is read whether or not the module is on, so a save keeps it; nothing is critical when off.

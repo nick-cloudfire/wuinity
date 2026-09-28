@@ -104,7 +104,7 @@ namespace PREACT.Input
             }
             else
             {
-                PREACTInput.InputNotFoundMessage(nameOfInput, false, "false");
+                PREACTInput.ModuleOffForWantOfEnabled("the fire module", "the scenario runs without a fire");
             }
 
             bool moduleSectionRead = true;

@@ -24,6 +24,9 @@ PREACT <file.wui> [<numberOfRuns> [<batchSize> [<simulationIndexOffset>]]]
 | `batchSize` | – | Accepted for compatibility and ignored. For parallel runs start several processes, as the campaign does. |
 | `simulationIndexOffset` | `0` | Index of the first run, used in output file names. |
 
+`PREACT --help` (or `-h`, `help`) prints this usage and exits 0. "Simulation run executed, shutting down (exit code
+N)." is printed only after a run.
+
 Progress goes to the console; results to `_output/` beside the `.wui` — see [Output files](output-files.md).
 With `Module=ELMFIRE` the run builds the case first if `[ELMFIRE] BuildCase=true`, then runs ELMFIRE (or reuses
 an identical earlier fire) before the evacuation starts — see [ELMFIRE cases](elmfire-cases.md).
@@ -31,7 +34,7 @@ an identical earlier fire) before the evacuation starts — see [ELMFIRE cases](
 | Exit code | Meaning |
 |---|---|
 | `0` | Every run finished and nothing reported an error. |
-| `1` | Nothing was run: no arguments, a file that is not there, a scenario that did not load as runnable (`The scenario did not load as runnable; see the items listed above.`), or a run count that is not a positive integer. |
+| `1` | Nothing was run: no arguments (the usage is printed), a file that is not there, a scenario that did not load as runnable (`The scenario did not load as runnable; see the items listed above.`), or a run count that is not a positive integer. |
 | `2` | A run stopped on an error or an error was reported during it (`The run reported N error(s); see the log above.`) — k-PERIL refusing to compute a boundary for lack of evacuation arrivals among them. |
 
 On Linux, GDAL 3.10's `libgdal.so.36` must be on `LD_LIBRARY_PATH`, and `SUMO_HOME` must point at a SUMO 1.22
@@ -45,8 +48,9 @@ whose `bin` (or `lib`) holds `libsumocs` — see [Building: Linux](building.md#l
 PREACTcli <command> [options]
 ```
 
-Run without arguments it prints every command's options and exits 0. Every command parses its options
-strictly:
+Run without arguments, or with `--help`, `-h`, `help` or `/?` (alone or after a command), it prints every
+command's options and exits 0 - without loading GDAL, so it works where GDAL cannot load. Every command parses its
+options strictly:
 
 | Problem | Message | Exit |
 |---|---|---|
@@ -57,6 +61,7 @@ strictly:
 | An unknown command | `Unknown command: <name>`, then the usage | 2 |
 | `probabilistic-trigger` | `probabilistic-trigger is gone: converge-trigger generates the realizations with ELMFIRE and runs until the probability raster is stable.` | 2 |
 | Anything the command did not handle | `ERROR: <command> stopped on an unexpected error: <message and causes>`; every child process it started is killed | 1 |
+| GDAL's native libraries cannot be loaded (on Linux: no `libgdal.so.36` on `LD_LIBRARY_PATH`) | the same, naming the library that would not load (`libosr_wrap: cannot open shared object file ...`) | 1 |
 
 ### `build-case` — build a scenario's ELMFIRE case
 
@@ -84,6 +89,7 @@ PREACTcli build-case --wui <scenario.wui> [--out <case dir>] [options]
 | `--painted-grid <raster>` | the `[Landscape]` reference raster | The grid a legacy painting was made on. |
 | `--canopy-dataset <dir>` | `[ELMFIRE] CanopyDatasetFolder` | FIRE-RES pan-European canopy rasters, for any of cc/ch/cbh/cbd not named individually. |
 | `--rebuild` | off | Replace every layer the case already has (`[ELMFIRE] RebuildExistingLayers`). |
+| `--update-wui` | off | Point the scenario at the case, as the GUI's build does: write the keys listed below into the `.wui`. Only those keys change; every other line, comment and unknown key stays, and the file keeps its line endings. |
 | `--fbfm40`, `--fbfm13`, `--cc`, `--ch`, `--cbh`, `--cbd`, `--bldg_area_avg`, `--bldg_separation_distance`, `--bldg_nonburnable_frac`, `--bldg_footprint_frac`, `--bldg_fuel_model`, `--ignition_mask`, `--barriers` `<tif>` | the scenario's `[ELMFIRE]` source layers | A source raster for that stem, warped onto the grid. Overrides the scenario. |
 | **Weather** | | |
 | `--weather-archive <csv>` | `<case>/climatology/<Name>_era5_hourly.csv` | The ERA5 hourly archive. A file you name is copied into `<case>/climatology/` and the copy is used; yours is never rewritten. |
@@ -103,15 +109,41 @@ PREACTcli build-case --wui <scenario.wui> [--out <case dir>] [options]
 Retired: `--tstop` (the duration is `--hours` now, in hours) and `--force` (a case folder is always built into;
 `--rebuild` replaces layers it keeps).
 
-It refuses to build while a trigger campaign of the same scenario holds its lock (`a trigger campaign is running
-(...) and every one of its realizations reads this case's rasters ...`), and refuses a fire duration outside 1 to
-240 h (`[ELMFIRE] SimulationTstopHours: the fire duration is 500 h; it has to be between 1 and 240 hours (it is
+It refuses to build while a trigger campaign runs on the case - one of the same scenario, which holds its
+campaign folder's lock (`a trigger campaign is running (...) and every one of its realizations reads this case's
+rasters ...`), or of any scenario, which holds the case's `campaign.lock` (`a trigger campaign is running on this
+case (it holds .../campaign.lock), started from another scenario or folder ...`) - and refuses a fire duration
+outside 1 to 240 h (`[ELMFIRE] SimulationTstopHours: the fire duration is 500 h; it has to be between 1 and 240 hours (it is
 hours, not seconds). Pass --hours.`).
 
 When it finishes it prints the grid, the layers written, carried from an old grid, kept, missing or defaulted,
 the fuel stem, the ignitions, every fallback, the namelist (and any hand-edited one it set aside), and the
-weather day drawn. **It does not rewrite the `.wui`**: it prints the keys the scenario should then name —
-`[Landscape] ElevationFile/SlopeFile/AspectFile` and `[kPERIL] WuiAreaFile` — which the GUI's build sets itself.
+weather day drawn. Then the keys that point the scenario at the case, which the GUI's build sets itself -
+`[Landscape] ElevationFile/SlopeFile/AspectFile` (the case's `dem/slp/asp.tif`), `[kPERIL] WuiAreaFile` (when a
+WUI area was painted) and `[Weather] WeatherAnchorDateTime` and `WeatherFile` (when the weather was drawn from a
+historical day) - only those the `.wui` does not already say. **Without `--update-wui` the `.wui` is not touched**,
+and they are printed as they go into the file, one block per section:
+
+```
+The scenario does not point at this case yet. Put these keys into mati.wui, each in its
+section and replacing the key of that name there (the GUI's Build fire case sets them itself), or
+run build-case again with --update-wui, which writes exactly these and changes nothing else:
+
+[Landscape]
+ElevationFile=elmfire/inputs/dem.tif
+SlopeFile=elmfire/inputs/slp.tif
+AspectFile=elmfire/inputs/asp.tif
+
+[kPERIL]
+WuiAreaFile=elmfire/inputs/wui_area.tif
+```
+
+With `--update-wui` they are written and listed (`Recorded in mati.wui (--update-wui; nothing else in it
+changed): ...`); a scenario that already points at the case gets `... already points at this case: nothing to
+record.` One exception: when the painted areas were placed via the old landscape raster (a painting not on the
+case grid, such as Mati's 616 x 590 one), `[Landscape]` is left as it is and the reason printed - the next build
+needs that raster to place the painting until it is moved onto the case grid (the GUI's step 6) or repainted. A
+run's trigger boundary takes the fire's own terrain either way.
 
 | Exit code | Meaning |
 |---|---|

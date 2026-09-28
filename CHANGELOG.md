@@ -18,6 +18,7 @@ Magnitudes are from the Mati (Greece) case and the shipped examples, measured on
 | Wind speed | The 10 m open wind (`ws.tif`), where k-PERIL's length-to-breadth formula expects midflame wind. | ELMFIRE's own midflame wind (`mfws`), converted from ft/min to mi/h. | In one Mati realization the mean went from 14.4 to 2.75 mi/h. Because kPERILcore evaluates the ellipse at its parametric angle, the boundary moved by only 1–2 %. |
 | Wind in a campaign | Each realization's boundary read the case's historical 72-band wind, not the weather its own fire burned under. | Its own weather, each cell taking the band at the time the fire reached it. | Depends on how far the drawn weather differs from the case's. |
 | Slope and aspect in a campaign | The scenario's first `[Landscape]` raster. On Mati it covered 64 % of the fire grid; the rest counted as flat. | The case's `slp.tif`/`asp.tif`, covering 100 %. | Most visible where the old landscape did not reach. |
+| Slope and aspect in a single ELMFIRE run | The scenario's `[Landscape]`, which a case built with `PREACTcli build-case` did not repoint: Nick's `mati.wui` sampled its 616 × 590 DEM over 63.9 % of the fire grid. | The terrain the fire burned on, the case's `dem/slp/asp.tif`, whatever `[Landscape]` names. | Mati with the old landscape: the boundary is now cell for cell the one a scenario pointed at the case gets. |
 | No evacuation arrivals | A boundary was computed from a zero egress time: the WUI area itself, which a campaign then averaged in, pulling the probability inward. | Refused, with an error; `PREACT.exe` exits 2 and the realization counts as failed. | Campaigns with any such realization. |
 
 **Evacuation**
@@ -158,7 +159,55 @@ California.
   carry the retired `DesiredLatLon` and `VisibilityAffectsSpeed`.
 - A run stops on its first error, with the modules closed, instead of carrying on and logging every step.
 - A run whose cars mostly cannot be put into SUMO stops with an error instead of evacuating nobody.
-- A case build is refused while a campaign of the same scenario runs.
+- A case build is refused while a campaign runs on the case - of the same scenario, or of any other: every campaign
+  also holds the case folder's `campaign.lock` (shared, so several can run on one case), which a build from any
+  folder sees.
+- **A run fits a namelist's weather band keys to the case's weather**, as a campaign does per realization:
+  `NUM_METEOROLOGY_TIMES` = the bands `ws.tif` has, `METEOROLOGY_BAND_START` = `METEOROLOGY_BAND_STOP` = 1, and it
+  logs what it changed. Running a kept hand-edited namelist (`elmfire.data.kept-<time>`, whose keys say 72) on a
+  case with 8 or 24 bands aborted ELMFIRE with `slice band end (72) is outside the bounds of (1, 8)`. The weather
+  check is made on the namelist as it will run, and a template's fire longer than the case's weather is refused
+  before ELMFIRE with both numbers. The generated `elmfire.data` writes `METEOROLOGY_BAND_STOP = 1` too. The fire
+  is the same (Mati: identical boundary), but the run's namelist text changes, so the first run of an existing
+  case computes its fire again. `[ElmfireNamelist] MeteorologyBands` now only sets what the generated file says.
+- **The building fuel table.** With the building spread model on, the builder copies ELMFIRE's own
+  `build/source/building_fuel_models.csv` into the case's inputs like `fuel_models.csv` (a table already there is
+  kept), and refuses the build before it makes anything when no table can be had; a run or a campaign whose
+  namelist needs it gets ELMFIRE's, or is refused before ELMFIRE starts. A case without it used to pass its build
+  and then stop ELMFIRE at start-up (`Problem opening building fuel model table file`).
+- **Re-cutting a namelist's rasters** writes the re-cut copy before it moves the original into `_previous_grid/`, so
+  a failed warp leaves the raster where it was; and a raster the scenario itself names (its `[Landscape]` slope,
+  say) is never re-cut in place - the namelist gets `inputs/<stem>_<cols>x<rows>.tif` and the build names the key
+  to point at it.
+- **`PREACTcli build-case`** prints the keys that point the scenario at the case (`[Landscape]` dem/slp/asp,
+  `[kPERIL] WuiAreaFile`, the `[Weather]` anchor) as they go into the `.wui`, one block per section, and only those
+  it does not already say; the new `--update-wui` writes exactly those into the `.wui` and nothing else (see
+  [Command-line tools](docs/command-line-tools.md#build-case--build-a-scenarios-elmfire-case)). `--help`, `-h` and
+  `help` print the usage and exit 0 (they were "Unknown command", exit 2), without loading GDAL; with no GDAL at
+  all a command now ends with a message and exit 1 instead of an unhandled crash. `PREACT --help` prints its usage,
+  and "Simulation run executed" is printed only after a run.
+- A module section without an `Enabled` line (the module is off) is a warning in the workflow panel and a *[note]*
+  in the scenario check, saying what it means ("the fire module is off and the scenario runs without a fire") and
+  what to write; it was one more default among the notes. A line the parser does not read is quoted as written,
+  spaces included.
+- A boundary's or campaign raster's `.prj` is written from the zone's definition for a WGS 84 / UTM grid when GDAL
+  cannot find PROJ's database, and a `.prj` that cannot be written is a warning in the log; it used to be left out
+  in silence, and the Results window then marked a new boundary *(earlier version)*.
+- A realization's scenario names its own fire's fireline intensity and fuel in `[AscImport]`, or clears them,
+  never the base scenario's.
+- A scenario starting in the hour that happens twice at the end of daylight saving has its run clock on the same
+  occurrence as its case weather's band 1 (the first); the run's UTC start was an hour later.
+- **Leaving Play mode during a GUI run** waits for the engine's worker, not for the run's task, whose completion
+  needs the player loop the wait blocks: the editor froze for 20 s and then said "Unsaved changes are lost". The
+  save question now comes within seconds and saving works. The campaign window handles a process exit on the main
+  thread, and a stop during "Checking for an earlier campaign..." starts no campaign.
+- The fire grid outline hides on the world map whatever is running. *Copy scenario to...* offers no Stop it would
+  ignore, opens no copy after a quit asked it to stop, and its question about unsaved group strokes says what
+  happens to the original.
+- NuGet's own warnings (NU1xxx - a restore resolving another version, a feed that cannot be reached, the
+  vulnerability audit) stay warnings under the projects' warnings-as-errors; the compiler's warnings are still
+  errors.
+- "Households/people culled ... 0/0" is a log line, not a warning.
 - **Stopping a case build** (Stop, or quitting) kills its WindNinja and starts no other: the build writes no wind
   at all (it used to finish on a uniform field), leaves the scenario as it was, and the next build carries on. A
   stopped or converged campaign starts no further WindNinja band. A build that fails after re-cutting the grid

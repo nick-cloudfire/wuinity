@@ -212,7 +212,8 @@ A single run is the quickest check that the evacuation works before a campaign.
 ### 12. Results
 
 **Results** lists what the last run and campaign wrote — the rasters, not the `.prj`, `.aux.xml` or `.ovr` files
-beside them. A boundary without a `.prj` is marked *(earlier version)*, and a campaign made before v1's k-PERIL fix
+beside them. A boundary without a `.prj` is marked *(earlier version)* (a run that could not write one says so in
+its log), and a campaign made before v1's k-PERIL fix
 gets a line saying so. Results > Show on map draws a result raster over the map: the fire's arrival, the trigger
 boundary, and a campaign's trigger probability, burn probability and arrival percentiles. [Output
 files](output-files.md) says what each file holds.

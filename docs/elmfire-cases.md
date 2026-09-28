@@ -19,13 +19,14 @@ is refused while a trigger campaign of the same scenario is running, because eve
 | `elmfire.data` | The namelist, written by every build. |
 | `elmfire.data.kept-<yyyyMMdd_HHmmss>` | A hand-edited namelist a build set aside ([below](#the-namelist)). |
 | `case_sources.txt` | What each raster was made from, the grid settings, and the hash of the namelist the build wrote. The GUI's **Read this case into the editor** reads the source fields back from it. |
-| `inputs/` | The rasters, one per ELMFIRE stem, all on the grid of `dem.tif`; `fuel_models.csv` (and `building_fuel_models.csv` when given). |
+| `inputs/` | The rasters, one per ELMFIRE stem, all on the grid of `dem.tif`; `fuel_models.csv`, and `building_fuel_models.csv` when the building spread model is on (ELMFIRE's own tables unless you give yours). |
 | `inputs/dem_source.tif` | The DEM the grid was cut from (a download, or a copy of a local one). |
 | `inputs/_previous_grid/` | The rasters of a grid a later build replaced, and originals of rasters it re-cut. While it holds `carry_pending.txt`, a build that set the grid aside failed before carrying its layers, and the next build carries them; a second re-cut then keeps that grid and puts what the failed build left in `_previous_grid/superseded_<time>/`. |
 | `climatology/<Name>_era5_hourly.csv` | The ERA5 hourly archive the weather is drawn from, downloaded once. |
 | `outputs/` | The last single run's rasters, its namelist `run.data` and its `run.fingerprint`. |
 | `scratch/` | ELMFIRE's intermediates. |
 | `elmfire.log` | The last single run's ELMFIRE output. |
+| `campaign.lock` | Held (shared) by every trigger campaign running on the case, whichever scenario started it; a build of the case is refused while it is held. A file nobody holds is no lock. |
 
 ## Building a case, step by step
 
@@ -54,7 +55,10 @@ is refused while a trigger campaign of the same scenario is running, because eve
 5. **After a re-cut grid**, every layer the old grid had and this build had no source for is warped from
    `_previous_grid/` onto the new grid (the new padding is nodata: no fuel). So is every raster a namelist in force
    names — the case's `elmfire.data`, its `elmfire.data.kept-*` and the scenario's `NamelistTemplate` — when it
-   sits in `inputs/` and is not on the grid; the original is kept in `_previous_grid/`. Terrain and weather are
+   sits in `inputs/` and is not on the grid; the original is kept in `_previous_grid/`, and moved there only once
+   the re-cut copy is written, so a warp that fails leaves it where it was. A raster the scenario itself names (its
+   `[Landscape]` slope, a source layer) is never re-cut in place: the namelist gets a copy on the grid,
+   `inputs/<stem>_<cols>x<rows>.tif`, and the build warns with the key to point at it. Terrain and weather are
    derived again rather than carried. A build that fails after setting the old grid aside (no DEM for the new one,
    say) leaves `_previous_grid/carry_pending.txt`, and the next build carries from that grid; a finished build
    removes the marker.
@@ -164,7 +168,11 @@ The builder also writes combinations ELMFIRE handles badly in a safe form:
 
 - the ember outputs are written off when `ENABLE_SPOTTING` is off (with them on ELMFIRE dies in MPI with
   `Fatal error in internal_Reduce: Invalid buffer pointer`);
-- `USE_BLDG_SPREAD_MODEL` is written off unless all five building layers are there;
+- `USE_BLDG_SPREAD_MODEL` is written off unless all five building layers are there (or constant building
+  parameters are on); when it is on, ELMFIRE's own `build/source/building_fuel_models.csv` is copied into `inputs/`
+  unless the case has a table - ELMFIRE reads it whenever the model is on and stops at start-up without it
+  (`Problem opening building fuel model table file`) - and a case that can have no table (no ELMFIRE source tree
+  beside the executable, none given with `--copy`) is refused before anything is built;
 - a switch that needs a raster (`USE_SDI`, `USE_ERC`, `USE_PYROMES`, `USE_LAND_VALUE`, `USE_POPULATION_DENSITY`,
   `USE_REAL_ESTATE_VALUE`) is written off, with a comment, for a case without it; a `*_BY_PYROME` switch only when
   its CSV is in `inputs/` (otherwise `severe (29): file not found, unit 100`);
@@ -180,11 +188,18 @@ still run. The GUI warns before a build (step 5, with **Keep running it**) and n
 (with **Run elmfire.data.kept-...**).
 
 **To run a hand-tuned namelist**, name it in `[ELMFIRE] NamelistTemplate`. It is used as it is; only
-`PATH_TO_GDAL`, `SIMULATION_TSTOP`, the five required outputs and the fuel table are written into it at run time.
+`PATH_TO_GDAL`, `SIMULATION_TSTOP`, the weather band keys, the five required outputs and the fuel tables are
+written into it at run time. The band keys describe the weather a namelist was written for, not the weather the
+case holds now - Nick's kept namelist says 72 bands on a case with 8 or 24, which aborted ELMFIRE with `slice band
+end (72) is outside the bounds of (1, 8)` - so a run sets them from the case's `ws.tif`, as a campaign does for each
+realization: `NUM_METEOROLOGY_TIMES` = the bands `ws.tif` has, `METEOROLOGY_BAND_START` = `METEOROLOGY_BAND_STOP`
+= 1 (the fire starts in band 1, the scenario's start hour: one fire). The log says what changed (`Namelist weather
+bands fitted to ws.tif (24 band(s)): &MONTE_CARLO NUM_METEOROLOGY_TIMES: '72' -> '24'`).
 When the template is the case's own `elmfire.data` (step 5's **Keep running it**), builds leave that file alone.
 Rasters the template names in `inputs/` are re-cut with the case when the grid changes; a hand-made raster that
-lives elsewhere, or one the scenario itself reads, is not — name hand-made layers (Mati's `fbfm40_roads101`) as
-source layers under Fuels, canopy and buildings instead, so they survive any re-cut.
+lives elsewhere is not, and one the scenario itself reads gets a re-cut copy instead (see step 5 above) — name
+hand-made layers (Mati's `fbfm40_roads101`) as source layers under Fuels, canopy and buildings instead, so they
+survive any re-cut.
 
 **Which namelist a run uses**: `NamelistTemplate` if named; else the case's `elmfire.data`; else the only `*.data`
 in the case folder. Before ELMFIRE starts, every raster that namelist names is checked against the grid of the
@@ -228,8 +243,10 @@ Each stage falls back to uniform values on its own (`--wind`, `--wind-dir`, `--m
 
 The weather is **kept** by later builds when it covers the fire. A run whose fire is longer than the case's
 weather extends it by rebuilding the weather (one WindNinja solve per hour of fire); with a `NamelistTemplate`
-it stops instead, since the template's weather is the user's. A one-band series is legal at any duration —
-ELMFIRE holds it for the whole fire — but two or more bands must cover `SIMULATION_TSTOP`.
+the run is refused before ELMFIRE starts instead, naming both numbers (`the weather covers 24 h (24 bands) and the
+fire runs 30 h`), since that case is the user's to rebuild. The check is made on the namelist as it will run - its
+stop time and its band keys - so a band key a namelist was not fitted to is named too. A one-band series is legal
+at any duration — ELMFIRE holds it for the whole fire — but two or more bands must cover `SIMULATION_TSTOP`.
 
 The run's reported weather (`[Weather]`) is read from the same archive at `WeatherAnchorDateTime`, the moment
 band 1 was written from, so the temperature and humidity shown during the run are the day the fire burned.
@@ -243,14 +260,18 @@ A run of an ELMFIRE scenario, before the evacuation starts:
 
 1. checks `SimulationTstopHours` is 1 to 240;
 2. builds the case when `BuildCase=true`;
-3. resolves the namelist, and extends the case's weather if it is too short;
-4. resolves the executable and the GDAL tools;
-5. writes the run's namelist — `PATH_TO_GDAL`, `SIMULATION_TSTOP`, the required outputs, the fuel table patched
-   in — to `outputs/run.data` (the case's `elmfire.data` is never overwritten by a run);
+3. resolves the namelist, the executable and the GDAL tools;
+4. patches the run's namelist — `PATH_TO_GDAL`, `SIMULATION_TSTOP`, the weather band keys fitted to the case's
+   `ws.tif`, the required outputs, the fuel tables (ELMFIRE's building fuel table copied in when the namelist runs
+   the building spread model and the case has none);
+5. extends the case's weather if it is too short for that namelist (a template's is refused instead), and writes
+   the namelist to `outputs/run.data` (the case's `elmfire.data` is never overwritten by a run);
 6. checks every raster that namelist names is on the grid;
 7. **reuses** the outputs of an identical earlier run, or runs ELMFIRE from the case folder, as one process on the
    namelist, with the GDAL tools and their own `PROJ_DATA` first on its `PATH`;
-8. reads the outputs back through the same reader `[AscImport]` uses.
+8. reads the outputs back through the same reader `[AscImport]` uses, and hands k-PERIL the terrain the fire
+   burned on - the namelist's DEM, slope and aspect rasters, which are the fire grid - whatever the scenario's
+   `[Landscape]` names.
 
 **Reuse.** A successful run writes `outputs/run.fingerprint`: a hash of the run namelist's text, the executable
 file, and every file (by content) in the inputs, weather and miscellaneous folders the namelist reads —
@@ -319,7 +340,9 @@ takes `[kPERIL] WindSpeedFile` *as* midflame wind and warns loudly.
 | `Fatal error in internal_Reduce: Invalid buffer pointer` | An ember output on with `ENABLE_SPOTTING` off, in a hand-edited namelist. |
 | `forrtl: error (65): floating invalid` | NaN in a raster that did not come through the builder. |
 | `severe (29): file not found, unit 100` | A calibration table is named but not in `inputs/`. |
-| `[ERROR] Not enough weather bands for given SIMULATION TSTOP` | The weather series is shorter than the fire; a generated case extends it itself, a template's must be extended by hand. |
+| `[ERROR] Not enough weather bands for given SIMULATION TSTOP` | The weather series is shorter than the fire; a generated case extends it itself, a template's must be extended by hand. v1 checks this before ELMFIRE starts. |
+| `slice band end (72) is outside the bounds of (1, 8)` | A namelist's `METEOROLOGY_BAND_STOP` (or `NUM_METEOROLOGY_TIMES`) past the last weather band: a kept or template namelist written for another case's weather. v1 fits both to the case's `ws.tif` at run time. |
+| `Problem opening building fuel model table file ./inputs/building_fuel_models.csv` | The building spread model is on and the table is not there. v1 copies ELMFIRE's own when it can, and refuses the build or the run when it cannot. |
 | `Fuel Model raster dimensions mismatch (680 vs 541)`, or a segmentation fault | A raster on another grid. v1 checks this before ELMFIRE starts. |
 | `Too many command options` (from `gdal_translate`) | A space in a path ELMFIRE passes to GDAL unquoted. A campaign refuses such paths up front. |
 | `... is not specified and is a required input` | Usually canopy or fuel missing from a hand-written namelist. |

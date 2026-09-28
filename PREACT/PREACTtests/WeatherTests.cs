@@ -222,6 +222,18 @@ namespace PREACT.Tests
                                                                + California.lon.ToString("R", CultureInfo.InvariantCulture));
             var simulation = new Simulation(Program.Engine, PREACTInput.LoadFromLines(lines.ToArray(), s.Folder, out bool _), 0);
             Assert.Equal(D("2026-06-28T19:00"), simulation.Time.StartUTCDateTime, "the run's 12:00 start is 19:00 UTC in California");
+
+            //Inside the hour that happens twice, the run's clock takes the same occurrence as the case weather's band clock
+            //(review NIT: it took the standard one, an hour after band 1). Athens, 2026-10-25, 03:30 happens at 00:30 and 01:30 UTC.
+            var matiLines = FormatTests.Replace("LowerLeftLatLon", Mati.lat.ToString("R", CultureInfo.InvariantCulture) + ","
+                                                                   + Mati.lon.ToString("R", CultureInfo.InvariantCulture))
+                .Select(l => l.StartsWith("StartDateTime=", StringComparison.Ordinal) ? "StartDateTime=2026-10-25T03:30:00"
+                    : l.StartsWith("EndDateTime=", StringComparison.Ordinal) ? "EndDateTime=2026-10-25T05:30:00" : l)
+                .ToArray();
+            var repeated = new Simulation(Program.Engine, PREACTInput.LoadFromLines(matiLines, s.Folder, out bool _), 0);
+            Assert.Equal(LocalTime.ToUtc(D("2026-10-25T03:30"), athens), repeated.Time.StartUTCDateTime, "the run's UTC start is the band clock's");
+            Assert.Equal(D("2026-10-25T00:30"), repeated.Time.StartUTCDateTime, "its first (daylight) occurrence");
+            Assert.Near(7200.0, repeated.Time.SimulationEndTime, 1e-9, "and the run is as long as its local times say");
         }
 
         /// <summary>
