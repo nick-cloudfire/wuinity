@@ -29,14 +29,12 @@ namespace PREACT
         private Simulation[] _simulations;
         private Simulation _mainSimulation; //this one talks to any visualizer         
         private PREACTInput _input;
-        private DataStatus _dataStatus;
         private string _workingFile;
         private WorkingData _workingData;
 
         string _defaultWorkingDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
 
         public Simulation Simulation { get => _mainSimulation; }
-        public DataStatus DataStatus { get => _dataStatus; }        
         public string WorkingFile { get => _workingFile; }
         public string WorkingFolder
         {
@@ -75,7 +73,6 @@ namespace PREACT
             System.Threading.Thread.CurrentThread.CurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
             System.Globalization.CultureInfo.DefaultThreadCurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
             _engineOutput = new EngineOutput(this);
-            _dataStatus = new DataStatus();
             _workingData = new WorkingData();
             _externalManager = externalManager;
             if(mainEngine)
@@ -262,57 +259,85 @@ namespace PREACT
             return string.Join(separator.ToString(), result);
         }
 
-        // Returns a Task rather than being 'async void' so callers can actually wait for the run
-        // and observe its exceptions. As async void it was fire-and-forget: PREACT.exe could only
-        // poll a flag set by the SimulationsFinished callback, and any failure in here surfaced
-        // nowhere, leaving the process spinning forever on a run that had already finished or
-        // already died. Callers that genuinely want fire-and-forget (the Unity manager) can still
-        // call it without awaiting.
+        /// <summary>
+        /// Runs <paramref name="engineTask"/>'s simulations one after another, and always ends by calling the
+        /// external manager's <c>SimulationsFinished</c> - whatever happened.
+        /// </summary>
+        /// <remarks>
+        /// Returns a Task so callers can wait for the run. Callers that call it fire-and-forget (the Unity manager)
+        /// are safe too: nothing escapes it. An exception used to be rethrown out of here into an un-awaited task,
+        /// so it was lost and SimulationsFinished was never called - the GUI stayed "running" until restarted.
+        ///
+        /// Refuses to start when the scenario checklist has a critical item outstanding (see
+        /// <see cref="PREACTInput.RequirementsMet"/>; a GUI should call <see cref="PREACTInput.Revalidate"/> after
+        /// editing). Only serial execution remains: the in-process Parallel mode could not work (SUMO allows one
+        /// instance per process, and the batch count had an operator-precedence bug), and the campaign tools
+        /// already run realizations in parallel as separate PREACT processes.
+        /// </remarks>
         public async Task RunSimulations(EngineTask engineTask, int startIndexOffset = 0)
         {
-            if(_input == null)
-            {
-                Message(null, LogType.SimulationError, "No input has been set, aborting.");
-                return;
-            }
-
-            Message(null, LogType.Log, "Will try to run a max total of " + engineTask.NumberOfRuns + " simulations unless aborted early (convergence met, user stoppage or simulation error)." );
-            _consoleLog.Clear();
-
+            _runErrors = 0;
+            _lastRunSucceeded = false;
             try
-            {    
-                Task task;
-                if(engineTask.Execution == EngineTask.ExecutionMode.Parallel)
+            {
+                if(_input == null)
                 {
+                    Message(null, LogType.InputError, "No input has been set, aborting.");
+                    ++_runErrors;
+                    return;
+                }
 
-                    Message(null, LogType.Log, "Starting simulations/s in parallel mode.");
-                    task = Task.Run(() => RunSimulationsParallel(engineTask)); 
-                    
-                }
-                else if(engineTask.Execution == EngineTask.ExecutionMode.ParallelProcess)
+                if (!PREACTInput.RequirementsMet)
                 {
-                    Message(null, LogType.Log, "Starting simulations/s in parallel process mode.");
-                    task = Task.Run(() => RunSimulationsParallelProcess(engineTask));
+                    var missing = new List<string>();
+                    foreach (PREACTInput.InputRequirement requirement in PREACTInput.Requirements)
+                    {
+                        if (requirement.Critical) missing.Add(requirement.ToString());
+                    }
+                    Message(null, LogType.InputError, "The scenario is not complete enough to run; still required: "
+                        + string.Join("; ", missing) + ". See the scenario checklist.");
+                    ++_runErrors;
+                    return;
                 }
-                else
-                {
-                    Message(null, LogType.Log, "Starting simulations/s in serial mode.");
-                    task = Task.Run(() => RunSimulationsSerial(engineTask));
-                }
-                await task;
 
+                Message(null, LogType.Log, "Will try to run a max total of " + engineTask.NumberOfRuns + " simulations unless aborted early (convergence met, user stoppage or simulation error)." );
+                await Task.Run(() => RunSimulationsSerial(engineTask));
+                _lastRunSucceeded = _runErrors == 0;
+            }
+            catch (Exception e)
+            {
+                ++_runErrors;
+                Message(null, LogType.Exception, "The run stopped on an unexpected error: " + e);
+            }
+            finally
+            {
                 if(_externalManager != null)
                 {
-                    _externalManager.SimulationsFinished();
+                    try
+                    {
+                        _externalManager.SimulationsFinished();
+                    }
+                    catch (Exception e)
+                    {
+                        Message(null, LogType.Exception, "SimulationsFinished threw: " + e.Message);
+                    }
                 }
-            }
-            catch (Exception)
-            {
-                throw;
             }
         }
 
-        bool _stopSimulations = false;
+        private volatile bool _stopSimulations = false;
+        private int _runErrors;
+        private bool _lastRunSucceeded;
+
+        /// <summary>
+        /// Whether the last <see cref="RunSimulations"/> ran and completed without any simulation stopping on an
+        /// error or any error being reported. PREACT.exe turns this into its exit code.
+        /// </summary>
+        public bool LastRunSucceeded { get => _lastRunSucceeded; }
+
+        /// <summary>Errors (SimulationError/InputError/Exception) reported during the last run.</summary>
+        public int LastRunErrorCount { get => _runErrors; }
+
         private void RunSimulationsSerial(EngineTask engineTask)
         {
             PreSimulations(engineTask);
@@ -323,9 +348,12 @@ namespace PREACT
                 int simulationIndex = i + engineTask.SimulationIndexOffset;
                 _mainSimulation = new Simulation(this, _input, simulationIndex);
                 _simulations[0] = _mainSimulation; 
-                SetMainSimulation(simulationIndex);
-                //only run wui show in serial mode
                 _mainSimulation.Run();
+
+                if (_mainSimulation.StoppedDueToError)
+                {
+                    ++_runErrors;
+                }
 
                 if (_mainSimulation.Evacuation.TrafficModule != null)
                 {
@@ -337,161 +365,15 @@ namespace PREACT
                 }
             }
 
-            PostSimulations();
-        }
-
-        private void RunSimulationsParallelProcess(EngineTask engineTask)
-        {
-            PreSimulations(engineTask);
-
-            //we run them in batches as running everything at once will likely overload the CPU cores, and we might waste a lot of processing power since we could terminate early if we reach convergence
-            int batches = engineTask.NumberOfRuns / engineTask.BatchSize + (engineTask.NumberOfRuns % engineTask.BatchSize > 0 ? 1 : 0);
-            Message(null, LogType.Log, "Running a max total of " + batches +" batches with a batch size (parallel simulations) of " + engineTask.BatchSize);
-            int simulationIndex = engineTask.SimulationIndexOffset;
-            for (int i = 0; i < batches; ++i)
-            {
-                int startIndex = simulationIndex;
-                int endIndex = Mathf.Min(startIndex + engineTask.BatchSize, engineTask.NumberOfRuns);
-                int simulationCount = endIndex - startIndex;
-                Message(null, LogType.Log, "Starting batch number " + i + " which will run " + simulationCount + " simulations.");
-                Task[] tasks = new Task[simulationCount];
-                string[] outputFilePaths = new string[simulationCount - 1]; 
-
-                for (int j = 0; j < simulationCount; ++j)
-                {                    
-                    //run first one in this process
-                    if (j == 0)
-                    {
-                        _mainSimulation = new Simulation(this, _input, simulationIndex);
-                        tasks[j] = Task.Run(() => _mainSimulation.Run());
-                    }
-                    //run the rest as new processes so that SUMO works
-                    else
-                    {
-                        try
-                        {
-                            Message(null, LogType.Log, "Starting PREACT process...");
-                            ProcessStartInfo preactRun = new ProcessStartInfo();
-                            preactRun.FileName = "preact.exe";
-                            outputFilePaths[j - 1] = Path.Combine(OutputFolder, _input.Simulation.Name + "_" + simulationIndex + "_arrivalData.csv");
-                            preactRun.Arguments = WorkingFile + " " + 1 + " " + 1 + " " + simulationIndex;//filePath, number of runs, batchsize, simulation index offset
-                            preactRun.CreateNoWindow = false;
-                            preactRun.UseShellExecute = true;
-                            tasks[j] = Task.Run(() => Process.Start(preactRun).WaitForExit());
-                        }
-                        catch (Exception)
-                        {
-                            throw;
-                        }
-                        
-                    }
-                    ++simulationIndex;
-                    //TODO: ugly, but GDAL seems to grab files and give sharing violation on read
-                    System.Threading.Thread.Sleep(2000);
-                }
-
-                Task.WaitAll(tasks);
-
-                for (int j = 0; j < simulationCount; ++j)
-                {
-                    if (j == 0)
-                    {
-                        CollectSimulationStatistics(_mainSimulation.Output.GetTrafficArrivalData(), startIndex + j , engineTask);                      
-                    }
-                    else
-                    {
-                        bool success;
-                        List<double> dataFromDisk = ParseArrivalData(outputFilePaths[j - 1], out success);
-                        if (success)
-                        {
-                            CollectSimulationStatistics(dataFromDisk, startIndex + j, engineTask);
-                        }                        
-                    }
-                }
-
-                if (_stopSimulations)
-                {
-                    break;
-                }
-            }
-
-            PostSimulations();
-        }
-
-        private List<double> ParseArrivalData(string filePath, out bool success)
-        {
-            List<double> result = new List<double>(); 
-            success = false;
-
-            if(File.Exists(filePath))
-            {
-                string[] data = File.ReadAllLines(filePath);
-
-                //skip last line, empty
-                for(int i = 0; i < data.Length - 1; ++i)
-                {
-                    double value;
-                    if(double.TryParse(data[i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out value))
-                    {
-                        result.Add(value);
-                    }
-                }
-
-                success = true;
-            }
-            
-            if(!success)
-            {
-                Message(null, LogType.Warning, "Could not read arrival data from " + filePath + ", skipping data from simulation.");
-            }
-            else
-            {
-                Message(null, LogType.Log, "Success in reading arrival data from " + filePath + ".");
-            }
-
-            return result;
-        }
-                       
-        private void RunSimulationsParallel(EngineTask engineTask)
-        {
-            PreSimulations(engineTask);
-
-            //Currently this will not work as SUMO can only run one instance per process, need to find workaround
-            int batches = engineTask.NumberOfRuns / engineTask.BatchSize + engineTask.NumberOfRuns % engineTask.BatchSize > 0 ? 1 : 0;
-            int simulationIndex = engineTask.SimulationIndexOffset;
-            for (int i = 0; i < batches; ++i)
-            {
-                int startIndex = i * engineTask.BatchSize;
-                int endIndex = Mathf.Min(startIndex + engineTask.BatchSize, engineTask.NumberOfRuns);
-                Parallel.For(startIndex, endIndex, index =>
-                {
-                    try
-                    {                        
-                        _simulations[index].Run();
-                    }
-                    catch (Exception)
-                    {
-                        throw;
-                    }
-                    ++simulationIndex;
-                });
-
-                for(int j = startIndex; j < endIndex; ++j)
-                {
-                    CollectSimulationStatistics(_simulations[j].Output.GetTrafficArrivalData(), simulationIndex, engineTask);                  
-                }
-                if(_stopSimulations)
-                {
-                    break;
-                }
-            }                
-
-            PostSimulations();
+            PostSimulations(engineTask);
         }
 
         private void PreSimulations(EngineTask engineTask)
         {
             _stopSimulations = false;
+            //Per run of RunSimulations: a second run in the same session used to average across both.
+            cumulativeTotalEvacTime = 0.0;
+            convergedInSequence = 0;
 
             if (trafficArrivalDataCollection != null)
             {
@@ -503,15 +385,7 @@ namespace PREACT
             }      
         }  
         
-        public void SetMainSimulation(int simulationIndex)
-        {
-            if (simulationIndex >= 0 && simulationIndex < _simulations.Length)
-            {
-                _mainSimulation = _simulations[simulationIndex];
-            }
-        }
-        
-        private void PostSimulations()
+        private void PostSimulations(EngineTask engineTask)
         {
             //save functional analysis
             int actualRuns = trafficArrivalDataCollection.Count;
@@ -519,17 +393,8 @@ namespace PREACT
             {
                 double[] averageCurve = FunctionalAnalysis.CalculateAverageCurve(trafficArrivalDataCollection, FunctionalAnalysis.DimensionScalingMode.Average);
                 _engineOutput.SaveAverageCurve(averageCurve);
-                //plot results
-                double[] xData = new double[averageCurve.Length];
-                double[] yData = new double[averageCurve.Length];
-                for (int i = 0; i < averageCurve.Length; i++)
-                {
-                    xData[i] = averageCurve[i] / 3600.0f;
-                    yData[i] = i + 1;
-                }
-                _engineOutput.CreatePlotData(xData, yData);
 
-                if (convergedInSequence >= 10)
+                if (engineTask.StopAfterConverging && convergedInSequence >= engineTask.ConvergenceMinSequence)
                 {
                     Message(null, LogType.Log, "Average total evacuation time: " + cumulativeTotalEvacTime / actualRuns + " seconds, ran " + actualRuns + " simulations before converging according to user set criteria.");
 
@@ -544,16 +409,27 @@ namespace PREACT
                 Message(null, LogType.Log, "No completed traffic simulations were performed, cannot analyse statistics.");
             }
 
-            SimulationOutput.SaveLogToDisk(_consoleLog, Path.Combine(OutputFolder, _input.Simulation.Name + ".log"));
+            List<string> log;
+            lock (_consoleLog)
+            {
+                log = new List<string>(_consoleLog);
+            }
+            SimulationOutput.SaveLogToDisk(log, Path.Combine(OutputFolder, _input.Simulation.Name + ".log"));
         }
 
-        double cumulativeTotalEvacTime = 0.0f;
+        double cumulativeTotalEvacTime = 0.0;
         int convergedInSequence = 0;
         List<List<double>> trafficArrivalDataCollection;
         /// <summary>
-        /// Each simulation calls this function when it is done to see if evacuation time has vonverged and simulations should be stopped.
+        /// Called after each simulation to see whether the average evacuation time has converged and the
+        /// remaining runs can be skipped.
         /// </summary>
-        /// <param name="simulation"></param>
+        /// <remarks>
+        /// Converged means the running average of RSET (last arrival) moved by less than
+        /// <see cref="EngineTask.ConvergenceMaxDifference"/> (relative, either direction) for
+        /// <see cref="EngineTask.ConvergenceMinSequence"/> runs in a row. The test used to be one-sided (a falling
+        /// average always passed) and a failure reset the streak to 1 instead of 0.
+        /// </remarks>
         private void CollectSimulationStatistics(List<double> arrivalData, int simulationIndex, EngineTask engineTask)
         {
             if(arrivalData.Count < 1)
@@ -565,47 +441,39 @@ namespace PREACT
             double RSET = arrivalData[arrivalData.Count - 1];
 
             int resultCount = trafficArrivalDataCollection.Count;
+            double pastAverage = resultCount > 1 ? cumulativeTotalEvacTime / (resultCount - 1) : 0.0;
+            cumulativeTotalEvacTime += RSET;
+
             //need at least 2 simulations to have valid average
-            if (resultCount > 1)
+            if (resultCount < 2)
             {
-                Message(null, LogType.Log, "Evaluating convergence criteria...");
-                double pastAverage = cumulativeTotalEvacTime / (resultCount - 1);
-                
-                cumulativeTotalEvacTime += RSET;
-                double currentAverage = cumulativeTotalEvacTime / resultCount;
-                double convergenceCriteria = (currentAverage - pastAverage) / currentAverage;
-                //if convergence met we can stop
-                if (convergenceCriteria < engineTask.ConvergenceMaxDifference)
+                return;
+            }
+
+            Message(null, LogType.Log, "Evaluating convergence criteria...");
+            double currentAverage = cumulativeTotalEvacTime / resultCount;
+            double convergenceCriteria = currentAverage != 0.0 ? System.Math.Abs(currentAverage - pastAverage) / System.Math.Abs(currentAverage) : 0.0;
+            if (convergenceCriteria < engineTask.ConvergenceMaxDifference)
+            {
+                ++convergedInSequence;
+                Message(null, LogType.Log, "RSET for simulation " + simulationIndex + " was within convergence criteria, total runs in convergence sequence: " + convergedInSequence);
+                if (!_stopSimulations && engineTask.StopAfterConverging && convergedInSequence >= engineTask.ConvergenceMinSequence)
                 {
-                    ++convergedInSequence;
-                    Message(null, LogType.Log, "RSET for simulation " + simulationIndex + " was within convergence criteria, total runs in convergence sequence: " + convergedInSequence);
-                    //we are done
-                    if (!_stopSimulations && engineTask.StopAfterConverging && convergedInSequence >= engineTask.ConvergenceMinSequence)
-                    {
-                        Message(null, LogType.Log, "Convergence critiera has been met, shutting down after this batch finishes.");
-                        _stopSimulations = true; //needed for serial run
-                        CloseSimulations(false); //needed for parallel run
-                    }
-                }
-                else
-                {
-                    Message(null, LogType.Log, "Convergence has not been met.");
-                    convergedInSequence = 1;
+                    Message(null, LogType.Log, "Convergence criteria have been met, stopping after this simulation.");
+                    _stopSimulations = true;
                 }
             }
             else
             {
-                cumulativeTotalEvacTime += RSET;
+                Message(null, LogType.Log, "Convergence has not been met.");
+                convergedInSequence = 0;
             }
         }
 
         public void SetInput(PREACTInput input, string filePath)
         {
-            _dataStatus.HaveInput = true;
             _input = input;
             _workingFile = filePath;
-            _dataStatus.Reset();
-            _dataStatus.HaveInput = true;
             UpdateExternalManager(_input);
         }
 
@@ -617,12 +485,11 @@ namespace PREACT
         /// <summary>
         /// Loads a scenario. With <paramref name="acceptIncomplete"/> the input is taken on even when
         /// items are still outstanding, so a half-built scenario can be opened, worked on and saved -
-        /// which is the normal way one gets built. HaveInput still tracks completeness, so nothing
-        /// starts a simulation on a scenario with holes in it.
+        /// which is the normal way one gets built. <see cref="RunSimulations"/> refuses to start while the
+        /// checklist has a critical item, so nothing runs on a scenario with holes in it.
         /// </summary>
         public void LoadInputFromFile(string filePath, out bool success, bool acceptIncomplete)
         {
-            _dataStatus.HaveInput = false;
             PREACTInput input = PREACTInput.LoadFromDisk(filePath, out success);
 
             if (input == null)
@@ -634,8 +501,6 @@ namespace PREACT
             {
                 _input = input;
                 _workingFile = filePath;
-                _dataStatus.Reset();
-                _dataStatus.HaveInput = success;
                 UpdateExternalManager(_input);
             }
         }
@@ -658,27 +523,32 @@ namespace PREACT
 
 
         public enum LogType { Log, Warning, SimulationError, InputError, Event, Exception, Debug };
-        private List<string> _consoleLog = new List<string>();
+        private readonly List<string> _consoleLog = new List<string>();
+
         /// <summary>
-        /// Receives all the information from a WUINITY session, used by GUI.
+        /// Receives all the information from a WUINITY session, used by GUI. Safe to call from any thread.
         /// </summary>
-        /// <param name="message"></param>
+        /// <remarks>
+        /// A <see cref="LogType.SimulationError"/> stops the simulation it belongs to: <paramref name="simulation"/>
+        /// when given, else the simulation running on the calling thread, else nothing. It used to stop every
+        /// simulation whoever reported it, so a GUI-side problem (an invalid Mapbox token, a painter mode, a failed
+        /// save) killed a run in progress. Messages from outside a simulation should use InputError or Warning.
+        /// </remarks>
         public static void Message(Simulation? simulation, LogType logType, string message)
         {
-            if (_ENGINE == null)
+            Engine engine = _ENGINE;
+            if (engine == null)
             {
                 return;
             }
 
+            Simulation owner = simulation ?? Simulation.RunningOnThisThread;
             if (simulation != null)
             {
                 if(simulation.State == Simulation.SimulationState.Running)
                 {
                     //The simulation's own clock, not the wall clock - and stated unambiguously, because it
-                    //reads as one. It used to be CurrentDateTime.ToString() with an "s" stuck on the end, so
-                    //a simulated date came out as "06/29/2026 12:35:53s": a trailing unit that made a date
-                    //look like a duration, in a culture-dependent format sitting next to the console's own
-                    //wall-clock stamp. Anyone reading it took it for the time of day the message was logged.
+                    //reads as one.
                     message = $"[Simulation# {simulation.SimulationIndex}, sim time "
                               + simulation.Time.CurrentDateTime.ToString("yyyy-MM-dd HH:mm:ss",
                                   System.Globalization.CultureInfo.InvariantCulture)
@@ -709,59 +579,72 @@ namespace PREACT
             }
             else if(logType == LogType.Debug)
             {
-                message = "!!!DEBUG!!!: " + message;
+                message = "DEBUG: " + message;
             }
-            /*else
-            {
-                message = "LOG: " + message;
-            }*/
-            message = "[" + DateTime.Now.ToLongTimeString() + "] " + message;
+            message = "[" + DateTime.Now.ToString("HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) + "] " + message;
 
-            _ENGINE._consoleLog.Add(message);
-
-            if(_ENGINE._externalManager != null)
+            lock (engine._consoleLog)
             {
-                _ENGINE._externalManager.NewLogMessage(message);
+                engine._consoleLog.Add(message);
             }
 
-            if (logType == LogType.SimulationError)
+            if (owner != null && (logType == LogType.SimulationError || logType == LogType.Exception))
             {
-                _ENGINE.CloseSimulations(true);
-            }           
+                System.Threading.Interlocked.Increment(ref engine._runErrors);
+            }
+
+            if(engine._externalManager != null)
+            {
+                engine._externalManager.NewLogMessage(message);
+            }
+
+            if (logType == LogType.SimulationError && owner != null)
+            {
+                owner.Stop("Critical error in simulation, aborting.", true);
+            }
         }
 
         public void PauseSimulations()
         {
-            for (int i = 0; i < _simulations.Length; ++i)
-            {
-                _simulations[i].SetPause(true);
-            }
+            SetPause(true);
         }
 
         public void UnpauseSimulations()
         {
-            for (int i = 0; i < _simulations.Length; ++i)
+            SetPause(false);
+        }
+
+        private void SetPause(bool pause)
+        {
+            //Before the first run there is nothing to pause; this used to throw.
+            Simulation[] simulations = _simulations;
+            if (simulations == null)
             {
-                _simulations[i].SetPause(false);
+                return;
+            }
+            for (int i = 0; i < simulations.Length; ++i)
+            {
+                simulations[i]?.SetPause(pause);
             }
         }
 
         public void CloseSimulations(bool stoppedDueToError)
         {
             _stopSimulations = true;           
-            if(_simulations != null)
+            Simulation[] simulations = _simulations;
+            if(simulations != null)
             {
-                for (int i = 0; i < _simulations.Length; ++i)
+                for (int i = 0; i < simulations.Length; ++i)
                 {
-                    if (_simulations[i] != null)
+                    if (simulations[i] != null)
                     {
                         if (stoppedDueToError)
                         {
-                            _simulations[i].Stop("Critical error in simulation, aborting.", true);
+                            simulations[i].Stop("Critical error in simulation, aborting.", true);
                         }
                         else
                         {
-                            _simulations[i].Stop("User has requested closing.", false);
+                            simulations[i].Stop("User has requested closing.", false);
                         }
                     }
                 }

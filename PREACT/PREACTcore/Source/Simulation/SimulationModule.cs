@@ -21,6 +21,12 @@ namespace PREACT
 
         public abstract void Step(double simulationTime, double deltaTime);
         public abstract bool IsSimulationDone();
+
+        /// <summary>
+        /// Whether the module is stepped even while <see cref="IsSimulationDone"/> is true. A module with its own
+        /// clock (SUMO) has to be, or its clock falls behind the simulation's while it has nothing to do.
+        /// </summary>
+        public virtual bool StepWhenDone { get => false; }
         public abstract void Stop();
         public Vector2d GetOriginOffset()
         {

@@ -1,7 +1,18 @@
 Command line program for running PREACT (which is the core of WUInity).
-If running a single simulation the only parameter that is required is the *.wui file that should run.
-If running multiple cases the following parameters are required:
-- File to run (string)
-- Number of runs (integer): the maximum amount of simulations to run, can be lower if convergence is met (less than 2% difference in the RSET for 10 simulations in sequence by default)
-- Batch size (integer): This number determines how many parallel processes (simulations) will run at the same time, so do not set a number above your CPU thread count. Each batch is synchronized before starting the next batch and checks for convergence (if met, ends run).
-- Simulation number offset: Should basically always be set to 0, this is mainly used by the automatic runs to keep track of output data naming.
+
+    PREACT <file.wui> [<numberOfRuns> [<batchSize> [<simulationIndexOffset>]]]
+
+- file.wui: the scenario to run. It must load with nothing critical outstanding.
+- numberOfRuns (optional, default 1): the maximum number of simulations to run one after another. Fewer are run
+  when convergence is met (less than 2% change in the average RSET for 10 simulations in a row by default).
+- batchSize: accepted for compatibility and ignored. Runs in one process are always serial (SUMO allows one
+  instance per process); start several PREACT processes for parallelism, as the campaign tools do.
+- simulationIndexOffset (optional, default 0): the index of the first simulation, used in output file names.
+
+Exit code: 0 = every simulation ran to the end and no error was reported; 1 = nothing was run (bad arguments,
+a scenario that does not load or is incomplete); 2 = a simulation stopped on an error, or an error was reported
+during the run (for example k-PERIL refusing to compute a trigger boundary).
+
+Linux: libgdal.so.36 (GDAL 3.10) must be findable by the dynamic loader (LD_LIBRARY_PATH); the wrappers under
+Runtimes/Native are found by the engine itself. For traffic, SUMO_HOME must point at a SUMO 1.22 build or install
+whose bin (or lib) holds libsumocs.

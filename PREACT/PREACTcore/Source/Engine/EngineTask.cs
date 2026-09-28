@@ -2,11 +2,18 @@ namespace PREACT
 {
     public class EngineTask
     {
-        public enum ExecutionMode { Serial, Parallel, ParallelProcess };
+        /// <summary>
+        /// How the runs are executed. Only Serial remains: the in-process Parallel mode could never work (SUMO
+        /// allows one instance per process) and ParallelProcess mis-counted its batches; the campaign tools run
+        /// realizations in parallel as separate PREACT processes instead.
+        /// </summary>
+        public enum ExecutionMode { Serial };
 
         public ExecutionMode Execution = ExecutionMode.Serial;
         public int NumberOfRuns = 1;
+        /// <summary>Unused since the parallel modes were removed; kept for the GUI's run tab.</summary>
         public int BatchSize = 4;
+        /// <summary>Unused; kept for the GUI's run tab.</summary>
         public bool Visualize = true;
         public bool StopAfterConverging = true;        
         public int ConvergenceMinSequence = 10;
