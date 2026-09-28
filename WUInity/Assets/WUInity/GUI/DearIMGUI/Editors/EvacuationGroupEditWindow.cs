@@ -185,12 +185,8 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             }
             else
             {
-                if (ImGui.Button("Select shapefile"))
-                {
-                    FileBrowser.OpenSetFilePath(path => _input.ShapeFile = path, "Select evacuation group shapefile", true);
-                }
-                ImGui.SameLine();
-                ImGui.Text($"{nameof(_input.ShapeFile)}: {_input.ShapeFile}");
+                Fields.Path(nameof(_input.ShapeFile), () => _input.ShapeFile, v => _input.ShapeFile = v,
+                    filter: new[] { ".shp" });
             }
 
             //A group that is not in the dictionary yet cannot be painted: the paint window works from

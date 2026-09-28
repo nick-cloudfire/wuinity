@@ -51,11 +51,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 ImGui.Checkbox(nameof(eInput.UseTriggerBufferEvacuation), ref eInput.UseTriggerBufferEvacuation);
                 if(eInput.UseTriggerBufferEvacuation)
                 {
-                    if (ImGui.Button("Select trigger buffer file"))
-                    {
-                        FileBrowser.OpenSetFilePath(path => eInput.TriggerBufferFile = path, "Select trigger buffer file", true);
-                    }
-                    ImGui.InputText(nameof(eInput.TriggerBufferFile), ref eInput.TriggerBufferFile, 256);
+                    Fields.Path(nameof(eInput.TriggerBufferFile), () => eInput.TriggerBufferFile,
+                        v => eInput.TriggerBufferFile = v);
                 }
 
                 ImGui.EndTabItem();
@@ -101,11 +98,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             if (ImGui.BeginTabItem("Population"))
             {
-                if (ImGui.Button("Select population file"))
-                {
-                    FileBrowser.OpenSetFilePath(path => input.Population.PopulationFile = path, "Select population file", true);
-                }
-                ImGui.InputText(nameof(input.Population.PopulationFile), ref input.Population.PopulationFile, 256);
+                Fields.Path(nameof(input.Population.PopulationFile), () => input.Population.PopulationFile,
+                    v => input.Population.PopulationFile = v);
                 ImGui.Checkbox(nameof(input.Population.CullOutsideGroups), ref input.Population.CullOutsideGroups);
 
                 ImGui.EndTabItem();
@@ -273,11 +267,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 return;
             }
 
-            if (ImGui.Button("Select SUMO configuration file"))
-            {
-                FileBrowser.OpenSetFilePath(path => SetSumoConfiguration(input, path), "Select SUMO configuration file (.sumocfg)", true);
-            }
-            ImGui.InputText(nameof(input.ConfigurationFile), ref input.ConfigurationFile, 256);
+            Fields.Path(nameof(input.ConfigurationFile), () => input.ConfigurationFile,
+                v => SetSumoConfiguration(input, v));
 
             //Checked as it stands, not only as it is picked: the field is editable text and scenarios exist
             //that already hold the wrong file - which is how a run fails with "could not load configuration".
@@ -355,7 +346,10 @@ namespace Assets.WUInity.GUI.DearIMGUI
         /// </summary>
         private static void SetSumoConfiguration(SUMOInput input, string path)
         {
-            if (!LooksLikeSumoConfiguration(path))
+            //Typing goes straight through, character by character, since a half-typed name is not a verdict;
+            //a picked file that is plainly not a SUMO file is refused.
+            if (!string.IsNullOrEmpty(path) && path.Length > 4 && System.IO.Path.HasExtension(path)
+                && !LooksLikeSumoConfiguration(path) && System.IO.File.Exists(GuiFiles.Resolve(ScenarioSession.RootFolder, path)))
             {
                 Engine.Message(null, Engine.LogType.Warning,
                     System.IO.Path.GetFileName(path) + " is not a SUMO configuration. SUMO needs the .sumocfg "

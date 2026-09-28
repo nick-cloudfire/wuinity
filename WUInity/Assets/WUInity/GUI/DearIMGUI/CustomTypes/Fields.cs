@@ -35,14 +35,19 @@ namespace Assets.WUInity.GUI.DearIMGUI
         /// into the <c>.wui</c>, and a backslash is a separator on Windows only, so a scenario with
         /// backslashes in it stops resolving its own files anywhere else.
         /// </remarks>
+        /// <param name="root">
+        /// The folder the path is stored relative to. Null means the loaded scenario's, which is right for
+        /// every scenario field; the new-scenario dialog passes the folder it is about to write into.
+        /// </param>
         public static void Path(string label, Func<string> get, Action<string> set,
-            bool required = false, string[] filter = null, string tooltip = null)
+            bool required = false, string[] filter = null, string tooltip = null, string root = null)
         {
             //Labels are suffixed onto the button IDs because ImGui identifies widgets by label: two "Set"
             //buttons in one window are the same button, and clicking either drives the first.
             if (ImGui.Button("Set###set" + label))
             {
-                FileBrowser.OpenSetFilePath(path => set(Normalise(path)), "Select " + label, true, filter);
+                FileBrowser.OpenSetFilePath(path => set(Normalise(path)), "Select " + label,
+                    root ?? ScenarioSession.RootFolder, filter);
             }
             ImGui.SameLine();
             if (ImGui.Button("Clear###clear" + label))
@@ -69,11 +74,13 @@ namespace Assets.WUInity.GUI.DearIMGUI
         }
 
         /// <summary>A folder path. Same control; the picker is told to expect a directory.</summary>
-        public static void Folder(string label, Func<string> get, Action<string> set, string tooltip = null)
+        public static void Folder(string label, Func<string> get, Action<string> set, string tooltip = null,
+            string root = null)
         {
             if (ImGui.Button("Set###setf" + label))
             {
-                FileBrowser.OpenSetFolderPath(path => set(Normalise(path)), "Select " + label);
+                FileBrowser.OpenSetFolderPath(path => set(Normalise(path)), "Select " + label,
+                    root ?? ScenarioSession.RootFolder);
             }
             ImGui.SameLine();
             if (ImGui.Button("Clear###clearf" + label))
@@ -252,7 +259,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             return changed;
         }
 
-        private static string Normalise(string path)
+        public static string Normalise(string path)
         {
             return string.IsNullOrEmpty(path) ? path : path.Replace('\\', '/');
         }

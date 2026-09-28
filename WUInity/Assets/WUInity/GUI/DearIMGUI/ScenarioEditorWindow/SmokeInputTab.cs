@@ -20,10 +20,12 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
 
             if (input.SmokeModule.Module == SmokeInput.SmokeModules.GlobalSmoke)
             {
-                if (ImGui.Button("Module settings"))
-                {
-                    GlobalSmokeInputEditorWindow.Open(input.SmokeModule.GlobalSmokeInput);
-                }
+                //Inline: GlobalSmoke has one setting, and it used to take a window of its own (with a
+                //"Create global smoke file" button that was permanently disabled) to reach it.
+                GlobalSmokeInput smoke = input.SmokeModule.GlobalSmokeInput;
+                Fields.Path(nameof(smoke.ExtinctionFile), () => smoke.ExtinctionFile, v => smoke.ExtinctionFile = v);
+                Fields.Hint("The extinction coefficient ramp GlobalSmoke reads. Nothing here writes one, so it",
+                            "is a file you bring.");
             }
 
             ImGui.EndDisabled();

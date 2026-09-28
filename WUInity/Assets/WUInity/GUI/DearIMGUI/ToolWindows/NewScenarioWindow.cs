@@ -139,7 +139,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 {
                     if (ImGui.Button("Select population file"))
                     {
-                        FileBrowser.OpenSetFilePath(path => _input.Population.PopulationFile = path, "Select population file", true);
+                        FileBrowser.OpenSetFilePath(path => _input.Population.PopulationFile = path, "Select population file", _input.RootFolder);
                     }
                     ImGui.Text($"{nameof(_input.Population.PopulationFile)}: {_input.Population.PopulationFile}");
                 }
@@ -181,7 +181,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                                 return;
                             }
                             _input.TrafficModule.SumoInput.ConfigurationFile = path;
-                        }, "Select SUMO configuration file (.sumocfg)", true);
+                        }, "Select SUMO configuration file (.sumocfg)", _input.RootFolder);
                     }
                     ImGui.SameLine();
                     ImGui.TextDisabled(string.IsNullOrEmpty(_input.TrafficModule.SumoInput.ConfigurationFile)
@@ -204,7 +204,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             if (ImGui.Button("Select elevation raster"))
             {
                 FileBrowser.OpenSetFilePath(path => _input.Landscape.ElevationFile = path,
-                    "Select elevation raster (DEM)", true, FileBrowser.geoTiffFilter);
+                    "Select elevation raster (DEM)", _input.RootFolder, FileBrowser.geoTiffFilter);
             }
             ImGui.SameLine();
             ImGui.Text($"{nameof(_input.Landscape.ElevationFile)}: {_input.Landscape.ElevationFile}");
@@ -235,7 +235,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                     //picked here was invisible to everything else, including the painter.
                     if (ImGui.Button("Set landscape file"))
                     {
-                        FileBrowser.OpenSetFilePath(path => _input.Landscape.LandscapeFile = path, "Select landscape (.lcp or multiband GeoTIFF)", true, FileBrowser.lcpFilter);
+                        FileBrowser.OpenSetFilePath(path => _input.Landscape.LandscapeFile = path, "Select landscape (.lcp or multiband GeoTIFF)", _input.RootFolder, FileBrowser.lcpFilter);
                     }
                     ImGui.Text($"LandscapeFile: {_input.Landscape.LandscapeFile}");
                 }
@@ -252,7 +252,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 ImGui.Checkbox("Have weather?", ref _haveWeather);
                 if (_haveWeather)
                 {
-                    if (ImGui.Button("Select weather file")) { FileBrowser.OpenSetFilePath(path => _input.Weather.WeatherFile = path, "Select weather CSV file", true); }
+                    if (ImGui.Button("Select weather file")) { FileBrowser.OpenSetFilePath(path => _input.Weather.WeatherFile = path, "Select weather CSV file", _input.RootFolder); }
                 }
                 else
                 {
