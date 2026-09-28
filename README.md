@@ -1,7 +1,7 @@
-# PREACT / WUI-NITY
+# WUInity / PREACT
 
-PREACT/WUI-NITY is licensed under the GNU General Public License v3.0. Included
-third-party source code carries its own licenses.
+WUInity/PREACT (also written WUI-NITY) is licensed under the GNU General Public License v3.0.
+Included third-party source code carries its own licenses.
 
 > ### Important notice and disclaimer
 > By accessing, downloading and using the PREACT/WUI-NITY Modelling Platform Tool,
@@ -27,94 +27,92 @@ present. Please report any issues on GitHub.
 
 ---
 
-## What is this?
+## What it is
 
-WUI-NITY (also written WUInity / WUI-nity) began as a platform combining
-pedestrian and traffic evacuation simulation with wildfire-spread simulation,
-built in the Unity game engine. As the software matured it was decoupled from
-Unity (to enable head-less runs on HPC, and to avoid Unity licensing
-constraints) and generalised beyond wildfire. That simulation engine is
-**PREACT**; **WUI-NITY** now survives as a Unity-based *visualizer* on top of it.
+A platform for wildfire evacuation at the wildland–urban interface. For a place you choose — anywhere on
+earth, with the continental US best supported — it builds a fire case, runs a fire, evacuates the population
+through the road network, and computes an **evacuation trigger boundary**: the line a fire must not cross
+before the community is ordered out. A **trigger campaign** repeats that over many fires drawn from the
+area's fire-weather history until the probability of each cell lying inside the boundary stops changing.
 
-PREACT can run without Unity through the **command-line tools**, which also allow
-many simulations to run at once.
+| Piece | What it does |
+|---|---|
+| **PREACT** (`PREACT/PREACTcore`) | The simulation engine (C#, netstandard2.1): scenario input, time stepping, fire, evacuation, smoke, trigger boundary. |
+| **ELMFIRE** (submodule) | The fire model, run as an external Fortran program. PREACT builds its case, runs it and reads its rasters back. |
+| **Household model** (`MacroHouseholdSim`) | Households respond on a departure-time curve, or earlier when the fire front comes near their home, walk to their car and drive. |
+| **SUMO** | Traffic simulation of the cars, through libsumo. |
+| **k-PERIL** (`PREACT/kPERILcore`) | Trigger boundaries: back-propagates the fire's spread from the WUI area for the evacuation's required time. |
+| **WUInity** (`WUInity/`) | The Unity visualizer and GUI: a thirteen-step workflow panel from an empty folder to a trigger campaign. |
+| **PREACT.exe** (`PREACT/PREACTexecute`) | Runs a scenario without Unity. |
+| **PREACTcli** (`PREACT/PREACTcli`) | Builds ELMFIRE cases (`build-case`), runs trigger campaigns (`converge-trigger`), makes population files. |
 
-### Architecture at a glance
-
-| Piece | Role |
-|-------|------|
-| **PREACTcore** | The simulation engine (C# library, `netstandard2.1`). |
-| **`Engine`** | Entry point of PREACTcore. Needs an `IExternalManager` host. |
-| **`IExternalManager`** | Implemented by the host: either WUI-NITY (Unity) or the CLI. Receives messages and collects data from a running simulation for visualization. |
-| **`EngineTask`** | Describes a run (serial / batch); the engine manages one or many simulations. |
-| **WUI-NITY** | Unity project that hosts the engine and visualizes it. |
-| **PREACTexecute / PREACTcli** | Console tools that host the engine head-less. |
-
-Simulations run in **UTM coordinate space**, which matters for the traffic and
-fire-spread data. A [Mapbox](https://www.mapbox.com/) access token is needed for
-the map background in the visualizer, but is **not** required to run a
-simulation.
-
----
-
-## Documentation
-
-Full end-user documentation lives in [`docs/`](docs/):
-
-- **[Getting started](docs/getting-started.md)** – install prerequisites, build, and run your first simulation.
-- **[Building from source](docs/building.md)** – detailed build steps, output routing, and external dependencies.
-- **[The `.wui` input file format](docs/input-file-format.md)** – complete reference for every section and key.
-- **[Command-line tools](docs/command-line-tools.md)** – `PREACTexecute` (run simulations) and `PREACTcli` (generate population).
-- **[Examples](docs/examples.md)** – what ships in `Examples/` and which to start with.
-- **[Module status](docs/modules.md)** – which fire / traffic / pedestrian / smoke / trigger modules are production-ready vs experimental.
-- **[Output files](docs/output-files.md)** – what a run produces and what each file contains.
-- **[Troubleshooting](docs/troubleshooting.md)** – common problems and fixes.
-
----
+Simulations run in UTM coordinates. A scenario is a plain-text `.wui` file; everything it refers to lives in
+its folder.
 
 ## Requirements
 
-- **Windows.** The `dev` branch is Windows-only because of the native libraries
-  (GDAL, FOFEM, NFDRS4, SUMO) it links against.
-- **.NET 8 SDK** to build the engine and CLI tools
-  ([download](https://dotnet.microsoft.com/en-us/download/dotnet/8.0)).
-- **Unity** – only if you want the visualizer. Add the cloned project in Unity
-  Hub; it will report the exact editor version required.
-- **SUMO 1.22** for traffic simulation, installed **with all extras** (that is
-  where the bundled GDAL comes from). See [Module status](docs/modules.md) and
-  [Troubleshooting](docs/troubleshooting.md). Download:
-  <https://eclipse.dev/sumo/>.
-
-The logged-in account must be able to read the SUMO install directory on `PATH`
-(the linked SUMO DLLs are loaded from there). Running as a local administrator
-avoids permission issues.
-
----
+| What | Needed for | Notes |
+|---|---|---|
+| **Windows (x64)** | everything | The GUI and the full pipeline are supported on Windows. The engine and CLI also run head-less on Linux — see [Building](docs/building.md#linux). |
+| **.NET 8 SDK** | building | <https://dotnet.microsoft.com/download/dotnet/8.0> |
+| **Unity 6000.3.15f1** | the GUI | The version in `WUInity/ProjectSettings/ProjectVersion.txt`. |
+| **SUMO 1.22**, installed with extras | traffic, and the engine's native GDAL | <https://eclipse.dev/sumo/>. `SUMO_HOME` set, or its `bin` on `PATH`. |
+| **GDAL command-line tools** | ELMFIRE | `gdal_translate`, `gdalinfo`, `gdalsrsinfo`. A QGIS or OSGeo4W install provides them; they are found automatically. |
+| **ELMFIRE, built from the submodule at a7fb9d6** | every fire | That commit adds `DUMP_MIDFLAME_WINDSPEED`, which every run now asks for. An older `elmfire.exe` refuses every run. See [Building ELMFIRE](docs/building.md#building-elmfire). |
+| **WindNinja** (`WindNinja_cli`) | terrain-resolved wind | Without it the wind is one value over the whole domain; a campaign refuses to start unless told to accept that. |
+| **OpenTopography API key** | the fire case's DEM | Free from <https://opentopography.org>. |
+| **Mapbox access token** | the map background | Not needed to run anything. |
+| Internet access | data steps | OpenStreetMap, WorldPop, Open-Meteo (ERA5), LANDFIRE (US), OpenTopography. |
 
 ## Quick start
 
-```sh
-# 1. Build the engine for Unity, PREACT.exe and PREACTcli.exe (.NET 8 SDK required)
-powershell -ExecutionPolicy Bypass -File build.ps1      # Windows; ./build.sh on Linux
+```powershell
+git clone --recurse-submodules <repository url>
+cd <the cloned folder>
 
-# 2. Run the reference example head-less
-PREACT/PREACTexecute/bin/Release/net8.0/PREACT.exe \
-    Examples/NFDRS4_Behave/Roxborough/Roxborough_no_smoke.wui
+# 1. Build the engine for Unity, PREACT.exe and PREACTcli.exe. Run it again after every pull that touches PREACT/.
+powershell -ExecutionPolicy Bypass -File .\build.ps1
+
+# 2. Build ELMFIRE once (Intel oneAPI HPC Toolkit + the MSVC "Desktop development with C++" workload), from a plain cmd:
+WUInity\Assets\ThirdParty\elmfire\build\windows\make_windows.bat
 ```
 
-Outputs are written to an `_output/` folder next to the `.wui` file. For the
-Unity visualizer and a full walk-through, see
-[Getting started](docs/getting-started.md).
+3. Put your keys in place: copy `WUInity/Assets/Resources/OpenTopography/OpenTopographyConfigurationTemplate.txt`
+   to `OpenTopographyConfiguration.txt` beside it and fill in `ApiKey`; do the same for the Mapbox
+   `MapboxConfigurationTemplate.txt` (`AccessToken`). Both files are git-ignored.
+4. Open `WUInity/` in Unity 6000.3.15f1, open the scene `Assets/WUInity/Scenes/WUInityMain.unity` and press
+   **Play**. The **Scenario workflow** panel on the left takes a new scenario (File > New scenario) through
+   thirteen steps to a trigger campaign. [Getting started](docs/getting-started.md) walks through them.
 
-> The engine DLLs the Unity project uses are **not committed**: the build script
-> writes them into `WUInity/Assets/PREACT/Release/`. Run it once after cloning,
-> and again after pulling engine changes, before opening WUI-NITY in Unity. See
-> [Building](docs/building.md).
+Head-less, the shipped example needs only SUMO — no ELMFIRE, Unity or key (its fire is imported from
+FlamMap rasters):
 
----
+```powershell
+PREACT\PREACTexecute\bin\Release\net8.0\PREACT.exe Examples\NFDRS4_Behave\Roxborough\Roxborough_no_smoke.wui
+```
+
+Results go to `Examples\NFDRS4_Behave\Roxborough\_output\`. A campaign from the command line:
+
+```powershell
+PREACT\PREACTcli\bin\Release\net8.0\PREACTcli.exe converge-trigger --wui D:\cases\mati\mati.wui --max 200
+```
+
+## Documentation
+
+- [Getting started](docs/getting-started.md) — the GUI's thirteen workflow steps, end to end.
+- [Building](docs/building.md) — the build scripts, what goes where, ELMFIRE, Linux.
+- [The `.wui` input file format](docs/input-file-format.md) — every section and key.
+- [ELMFIRE cases](docs/elmfire-cases.md) — how a fire case is built and run.
+- [Trigger campaigns](docs/trigger-campaigns.md) — the probabilistic trigger boundary.
+- [Command-line tools](docs/command-line-tools.md) — `PREACT.exe` and `PREACTcli`.
+- [Output files](docs/output-files.md) — what a run and a campaign write.
+- [Modules](docs/modules.md) — what each module does and how far it is validated.
+- [Examples](docs/examples.md) — what ships in `Examples/`.
+- [Troubleshooting](docs/troubleshooting.md) — the messages you will meet and what to do.
+- [Manual test of the v1 GUI](docs/manual-test-v1.md) — a scripted check of the GUI on Windows.
+- [Changelog](CHANGELOG.md) — what v1 changed, and which results differ from earlier runs.
 
 ## Development
 
-WUI-NITY is publicly available and we welcome issues, bug reports, suggestions
-and pull requests. Please keep in mind that nobody develops the software
-full-time.
+WUInity/PREACT is publicly available and we welcome issues, bug reports, suggestions and pull requests.
+Please keep in mind that nobody develops the software full-time.
