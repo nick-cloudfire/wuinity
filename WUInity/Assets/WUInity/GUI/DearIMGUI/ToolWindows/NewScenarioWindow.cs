@@ -87,6 +87,12 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 //Begin must always be matched by End, even on the early-out path. Returning here
                 //without it left ImGui's window stack unbalanced for the rest of the frame.
                 ImGui.End();
+                //And the draw callback has to be unregistered if the title bar closed the window in this
+                //state, or reopening it registers a second copy that draws on top of the first.
+                if (!_isOpen)
+                {
+                    PreactGUI.CloseWindow(Draw);
+                }
                 return;
             }
             ImGui.Text($"{nameof(_input.RootFolder)}: {_input.RootFolder}");

@@ -143,20 +143,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
                     + "probability raster. Prefilled from the loaded scenario.");
             }
 
-            ImGui.Separator();
-
-            if (ImGui.MenuItem("Population editor...")) { PopulationEditWindow.Open(); }
-
-            if (ImGui.MenuItem("Download data...")) { DownloadDataWindow.Open(); }
-            if (ImGui.IsItemHovered())
-            {
-                //Worth saying, because the overlap is otherwise the confusing part: this and Prepare data
-                //fetch the same things from the same sources. The difference is only whether there is a
-                //scenario to name the area and receive the paths.
-                ImGui.SetTooltip("The same downloads Prepare data runs, but for an area drawn by hand into a "
-                    + "folder of your choosing, with no scenario involved. Nothing is wired into a scenario.");
-            }
-
             //The permanently-disabled "Landscape editor" that used to sit here is gone. Greying out an item
             //says "not available now"; there was never such an editor, so it said the wrong thing forever.
 
