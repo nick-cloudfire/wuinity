@@ -379,6 +379,13 @@ namespace PREACTcli.Campaigns
         {
             CampaignOptions o = c.Options;
 
+            //A --weather-archive is the user's file: the campaign reads a copy kept in its own folder, which is also
+            //the record of the archive it drew from.
+            if (!string.IsNullOrEmpty(o.WeatherArchive))
+            {
+                c.ArchivePath = ClimatologySampler.WorkingCopy(c.ArchivePath, c.Folder, Console.WriteLine);
+            }
+
             string dem = ElmfireStems.Tif(c.InputsDir, ElmfireStems.Dem);
             try
             {

@@ -17,6 +17,51 @@ namespace PREACT.Tests
             runner.Add("preflight: a raster the namelist names off the case grid is refused by key, for a run and a campaign", OffGridRasterRefused);
             runner.Add("paths: Windows backslash [ELMFIRE] paths resolve for the case, its sources and its template", BackslashElmfirePaths);
             runner.Add("preflight: a missing ELMFIRE is reported with the path that was tried", MissingElmfireNamed);
+            runner.Add("weather: a user's archive is never rewritten; the build works on a copy", ArchiveWorkingCopy);
+        }
+
+        private static void ArchiveWorkingCopy()
+        {
+            string dir = Directory.CreateTempSubdirectory("preact-archive-").FullName;
+            try
+            {
+                //An archive as the first version wrote it: no archive_format marker, fire weather codes to re-derive.
+                var lines = new List<string>
+                {
+                    "Latitide,37.996483", "Longitude,23.951612", "Elevation,274",
+                    "Time,Temperature_2m [°C],Relativehumidity_2m [%],Precipitation [mm],Windspeed_10m [m/s],Winddirection_10m [°],"
+                    + "Cloudcover [%],Direct_radiation [W/m²],Boundary_layer_height [m],FFMC hourly [-],FFMC [-],DMC [-],DC [-],ISI [-],BUI [-],FWI [-]",
+                };
+                var t = new DateTime(2020, 7, 1);
+                for (int h = 0; h < 24 * 10; ++h)
+                {
+                    lines.Add(t.AddHours(h).ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture)
+                              + ",30,20,0,6,300,0,500,1000,85,0,0,0,0,0,0");
+                }
+                string user = Path.Combine(dir, "user", "mati_era5_hourly.csv");
+                Directory.CreateDirectory(Path.GetDirectoryName(user));
+                File.WriteAllLines(user, lines);
+                string before = ElmfireFingerprint.HashFile(user);
+
+                string caseClimatology = Path.Combine(dir, "case", "climatology");
+                string copy = ClimatologySampler.WorkingCopy(user, caseClimatology, null);
+                Assert.True(copy != user && File.Exists(copy) && copy.StartsWith(caseClimatology, StringComparison.Ordinal), "a copy in the case: " + copy);
+                Assert.True(ClimatologySampler.EnsureArchiveFormat(copy, null), "the copy is brought to the current format");
+                Assert.Equal(ClimatologySampler.ArchiveFormatVersion, ClimatologySampler.ReadFormatVersion(File.ReadLines(copy).ElementAt(3)), "copy format");
+                Assert.Equal(before, ElmfireFingerprint.HashFile(user), "the user's archive is byte for byte what it was");
+                Assert.Equal(1, ClimatologySampler.ReadFormatVersion(File.ReadLines(user).ElementAt(3)), "and still in its own format");
+
+                //Asked again: the derived copy is kept, not replaced by the old one.
+                Assert.Equal(copy, ClimatologySampler.WorkingCopy(user, caseClimatology, null), "the same copy");
+                Assert.Equal(ClimatologySampler.ArchiveFormatVersion, ClimatologySampler.ReadFormatVersion(File.ReadLines(copy).ElementAt(3)), "still current");
+
+                //The case's own archive, named directly, is the case's to maintain.
+                Assert.Equal(copy, ClimatologySampler.WorkingCopy(copy, caseClimatology, null), "an archive already in the folder is used as it is");
+            }
+            finally
+            {
+                try { Directory.Delete(dir, true); } catch { }
+            }
         }
 
         private static void MissingElmfireNamed()

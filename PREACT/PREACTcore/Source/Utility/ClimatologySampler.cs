@@ -224,6 +224,34 @@ namespace PREACT.Utility
         }
 
         /// <summary>
+        /// The copy of a user-supplied archive a build or a campaign works on, in <paramref name="folder"/>, so that
+        /// bringing it to the current format (<see cref="EnsureArchiveFormat"/>) or extending it with a download never
+        /// rewrites the user's own file. Refreshed when the user's file is newer than the copy; the archive itself
+        /// when it is already in <paramref name="folder"/>, or does not exist (a download then creates it there).
+        /// </summary>
+        /// <remarks>
+        /// <c>--weather-archive</c> used to be re-derived in place on the first build or campaign that read it, so an
+        /// input file - perhaps shared with other work, or under version control - changed under its owner (e2e F10).
+        /// </remarks>
+        public static string WorkingCopy(string archive, string folder, Action<string> log)
+        {
+            if (string.IsNullOrEmpty(archive)) return archive;
+            string full = Path.GetFullPath(archive);
+            if (!File.Exists(full) || string.IsNullOrEmpty(folder)) return full;
+
+            string copy = Path.GetFullPath(Path.Combine(folder, Path.GetFileName(full)));
+            if (string.Equals(copy, full, StringComparison.OrdinalIgnoreCase)) return full;
+
+            if (!File.Exists(copy) || File.GetLastWriteTimeUtc(full) > File.GetLastWriteTimeUtc(copy))
+            {
+                Directory.CreateDirectory(folder);
+                File.Copy(full, copy, overwrite: true);
+                log?.Invoke($"  climatology: working on a copy of {full} in {folder}, so the original is never rewritten.");
+            }
+            return copy;
+        }
+
+        /// <summary>
         /// Brings a cached archive to the current format, re-deriving its fire weather columns from its own raw
         /// hourly values when it was written by an older version. No download: the raw columns are unchanged.
         /// Returns true when the file is current afterwards.
@@ -276,7 +304,9 @@ namespace PREACT.Utility
                            + "," + FormatCodes(codes[i]));
             }
 
-            string temp = path + ".rederive.tmp";
+            //A name of its own per call: a GUI build and a CLI campaign bringing the same archive up at once shared
+            //"<archive>.rederive.tmp" and could replace each other's half-written file.
+            string temp = path + "." + Guid.NewGuid().ToString("N").Substring(0, 8) + ".rederive.tmp";
             File.WriteAllLines(temp, output);
             File.Copy(temp, path, overwrite: true);
             File.Delete(temp);

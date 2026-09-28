@@ -154,7 +154,12 @@ namespace PREACTcli
 
             if (mesh != null) o.Weather.WindNinjaMesh = mesh;
             if (vegetation != null) o.Weather.WindNinjaVegetation = vegetation;
-            if (archive != null) o.Weather.ArchiveCsvPath = Path.GetFullPath(archive);
+            //The user's archive is not rewritten: the case works on its own copy in climatology/.
+            if (archive != null)
+            {
+                o.Weather.ArchiveCsvPath = ClimatologySampler.WorkingCopy(Path.GetFullPath(archive),
+                    Path.Combine(caseDir, "climatology"), Console.WriteLine);
+            }
             if (fromYear.HasValue) o.Weather.ArchiveStartYear = fromYear.Value;
             if (toYear.HasValue) o.Weather.ArchiveEndYear = toYear.Value;
             if (conditioning.HasValue) o.Weather.ConditioningDays = conditioning.Value;
