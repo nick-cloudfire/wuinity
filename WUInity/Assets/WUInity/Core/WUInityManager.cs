@@ -236,6 +236,7 @@ namespace WUInity
 
             UpdateWebMercatorMapInteraction();
             WatchRunTask();
+            UpdateFireGridOutline();
 
             //always update visuals, even when paused
             if (_engine.Simulation != null)
@@ -1114,6 +1115,65 @@ namespace WUInity
         }
 
         public bool IsRoadNetworkVisible { get => _roadNetworkVisualizer != null && _roadNetworkVisualizer.IsVisible; }
+
+        //View > Map layers > Fire grid outline: the edge of the grid the fire, the painting and k-PERIL share (an ELMFIRE
+        //case's dem.tif), drawn as a copy of the domain border in another colour. Where the case's padding reaches, and
+        //whether a painting can cover the domain, is otherwise invisible.
+        private LineRenderer _fireGridBorder;
+        private bool _fireGridOutline;
+        private double _outlineX, _outlineY, _outlineW, _outlineH;
+
+        public bool IsFireGridOutlineVisible { get => _fireGridOutline; }
+
+        public void ShowFireGridOutline(bool show)
+        {
+            _fireGridOutline = show;
+            if (_fireGridBorder != null) _fireGridBorder.gameObject.SetActive(false);
+            _outlineW = _outlineH = 0.0;
+            //Resolved here once, so a scenario without a paint grid says why (the painter's own message).
+            if (show && _painter != null) _painter.TryGetPaintGrid(out PREACT.Math.Vector2d _, out PREACT.Math.Vector2d _);
+        }
+
+        /// <summary>
+        /// Keeps the outline on the paint grid while it is shown, and off the world map. The grid is resolved again only
+        /// when its raster exists and nothing is being built, so a build that re-cut the grid moves the outline without
+        /// the painter reading a raster that is being written, or saying every frame that there is none.
+        /// </summary>
+        private void UpdateFireGridOutline()
+        {
+            if (!_fireGridOutline || _painter == null || _input == null) return;
+
+            string reference = Painter.ExpectedGridReference(_input);
+            bool haveRaster = !string.IsNullOrEmpty(reference) && GuiFiles.Exists(GuiFiles.Resolve(_input.RootFolder, reference));
+            PREACT.Math.Vector2d size = default, origin = default;
+            bool show = _utmMap.gameObject.activeSelf && haveRaster && !ScenarioSession.IsBusy
+                        && _painter.TryGetPaintGrid(out size, out origin);
+            if (!show)
+            {
+                if (_fireGridBorder != null && !ScenarioSession.IsBusy) _fireGridBorder.gameObject.SetActive(false);
+                return;
+            }
+
+            if (_fireGridBorder == null)
+            {
+                _fireGridBorder = Instantiate(_simBorder, _simBorder.transform.parent);
+                _fireGridBorder.name = "FireGridBorder";
+                _fireGridBorder.startColor = _fireGridBorder.endColor = new Color(1f, 0.55f, 0.1f, 1f);
+            }
+
+            if (_fireGridBorder.gameObject.activeSelf && origin.x == _outlineX && origin.y == _outlineY
+                && size.x == _outlineW && size.y == _outlineH) return;
+
+            _outlineX = origin.x; _outlineY = origin.y; _outlineW = size.x; _outlineH = size.y;
+            Vector3 corner = new Vector3((float)origin.x, 55f, (float)origin.y);
+            _fireGridBorder.positionCount = 5;
+            _fireGridBorder.SetPosition(0, corner);
+            _fireGridBorder.SetPosition(1, corner + Vector3.right * (float)size.x);
+            _fireGridBorder.SetPosition(2, corner + new Vector3((float)size.x, 0f, (float)size.y));
+            _fireGridBorder.SetPosition(3, corner + Vector3.forward * (float)size.y);
+            _fireGridBorder.SetPosition(4, corner);
+            _fireGridBorder.gameObject.SetActive(true);
+        }
 
         /// <summary>
         /// Shows or hides the road network. Building the mesh is deferred to the first time it is shown,
