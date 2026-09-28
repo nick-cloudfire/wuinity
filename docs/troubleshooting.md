@@ -1,59 +1,119 @@
 # Troubleshooting
 
-## Windows only
+The messages below are quoted as the platform prints them, with `…` for the parts that vary. Most appear in the
+visualizer's console (View > Console), in the workflow row of the step concerned, and in the run's log
+(`_output/<Name>.log`). Help > External tools and keys shows what was found on this machine and where it was
+looked for; start there when something external is missing.
 
-The `dev` branch links native x64 libraries (GDAL, FOFEM, NFDRS4) and
-SUMO, so it currently runs on Windows only. There is no supported Linux/macOS
-build yet.
+## Building
 
-## GeoTIFF or traffic fails to load / GDAL errors
+| Message | Fix |
+|---|---|
+| `BUILD FAILED: dotnet was not found on PATH. …` / `BUILD FAILED: no .NET SDK 8 or newer found …` | Install the .NET 8 SDK and open a new terminal. |
+| `BUILD FAILED: PREACT/PREACTcore/PREACTcore.csproj did not build (see the errors above). …`, with `MSB3021` or `MSB3027` (a file in use) | Close the Unity editor — it keeps the native GDAL and NFDRS4 plugins loaded — and run the script again. |
+| `BUILD FAILED: the Unity engine folder is incomplete: the files above have a .meta but were not built.` | The engine's output set changed without its `.meta` files. If you removed an output on purpose, delete its `.meta` too. |
+| Unity: `CS0246: The type or namespace name 'PREACT' could not be found`, or old behaviour after a pull | The engine DLLs are not committed. Close Unity, run `build.ps1`, open Unity again. A Debug build of `PREACTcore` does not update the Unity folder; only the Release build the script makes does. |
+| ELMFIRE's `make_windows.bat` fails to link with `lld-link` errors | Install the "Desktop development with C++" workload (MSVC and the Windows SDK). |
 
-The engine loads native GDAL and SUMO DLLs from your **SUMO** installation at
-run time. Check that:
+Details: [Building](building.md).
 
-- **SUMO 1.22** is installed (the pinned version — see
-  `PREACT/PREACTcore/Source/Evacuation/Traffic/Modules/SUMO/version_info.txt`),
-  **with all extras** (that package includes GDAL).
-- The SUMO `bin` directory is on `PATH`.
-- Your logged-in account can read the SUMO install directory. Running as a local
-  administrator avoids permission problems.
+## Keys and the map
 
-## Unity reports missing PREACT types, or shows old behaviour after an engine change
+| Symptom or message | Fix |
+|---|---|
+| The map is blank; External tools says `Mapbox token: not valid. The map tiles cannot be loaded.` | Put a Mapbox token in `WUInity/Assets/Resources/Mapbox/MapboxConfiguration.txt`. Only the map background needs it. |
+| `No OpenTopography API key.` (step 5, which it blocks) | Copy `OpenTopographyConfigurationTemplate.txt` to `OpenTopographyConfiguration.txt` in `WUInity/Assets/Resources/OpenTopography/` and paste your key in, or set `OPENTOPOGRAPHY_API_KEY`. Help > External tools and keys takes one for the current session. |
+| `… so one has to be downloaded - but no OpenTopography key was found, and no local DEM covering the padded domain was given. …` (case build, `build-case`) | The same key; or pass a DEM covering the coordinates it prints with `build-case --dem`. |
+| `OpenTopography DEM download failed after N attempts.` | The cause is in the lines before it (`DEM download failed: …`). A `401` or `403` status means the key was refused; anything else is the service or the network, so try again later. |
 
-The engine DLLs are not committed. Run `build.ps1` (Windows) or `build.sh` (Linux)
-before opening the Unity project, after cloning and after pulling engine changes.
-It builds PREACTcore in Release, the only configuration that writes into
-`WUInity/Assets/PREACT/Release/`; a Debug build writes to `PREACT/PREACTcore/bin/`
-and Unity keeps using whatever DLLs it had. See [Building](building.md).
+## Opening a scenario
 
-## The map background is missing in the visualizer
+| Message | Fix |
+|---|---|
+| `Could not interpret user input <value> for <key>.` | The value does not parse for that key (a comma for a decimal point, a misspelled module or unit name). The scenario check lists it as critical: fix it, see [the input format](input-file-format.md). |
+| `Could not interpret user input <value> for <key>; its default is used.` | Not critical: the default applies. Fix it if the default is not what you meant. |
+| `<key> was not found, this value is critical for the simulation to function …` | A required key is missing. |
+| `<section> gives <key> more than once; the first value (…) is used and the one on line N (…) is ignored.` | Delete one of them. A GUI save keeps the first. |
+| `[<section>] is ignored. … It will not be written when the scenario is saved.` | A retired section; see [Retired keys and sections](input-file-format.md#retired-keys-and-sections). |
+| `Refers to "<name>", which does not exist.` | A group names a destination, response curve or demographics that no section defines. Names are case-sensitive. |
+| A key you added seems to have no effect | The parser ignores keys and sections it does not know, without a message, and a GUI save drops them. Check the spelling against [the input format](input-file-format.md). |
+| `PREACT.exe`: `The scenario did not load as runnable; see the items listed above.` (exit 1) | Fix the critical items listed above it. The GUI's Scenario > Check scenario gives the same list, filed under the workflow's steps. |
+| A file named in the scenario is found in another folder | A file that has moved is looked for by name nearby; the scenario check says which copy it used, and a save records the new path. |
 
-A [Mapbox](https://www.mapbox.com/) access token is required for the map
-background (but not to run a simulation). Put your token in
-`WUInity/Assets/Resources/Mapbox/MapboxConfiguration.txt` (copy
-`MapboxConfigurationTemplate.txt` as a starting point).
+## Preparing data (workflow steps 2 to 5)
 
-## The command-line runner does nothing / crashes on start
+| Message | Fix |
+|---|---|
+| `SUMO was not found (SUMO_HOME, or a folder on PATH); building the network needs its netconvert.` / `netconvert could not be found. …` | Install SUMO 1.22 and set `SUMO_HOME`, or put its `bin` on `PATH`; then Help > External tools and keys > Look again. |
+| `WorldPop has no <country> data for <year>; using <year> instead (the closest available). …` | Information only. |
+| `Outside the US there is no fuel download here: name a fuel model raster of your own, …` | LANDFIRE covers the US only. Name your own fuel raster under Fuels, canopy and buildings > Source layers. |
+| `The LANDFIRE (LFPS) job <id> failed: …` / `… did not finish within N minutes.` | LANDFIRE's service; try again later. |
+| `No canopy: it is filled with zeros, so the fire is surface fire only - no crown fire.` | Add canopy rasters (LANDFIRE in the US), or accept a surface fire. |
+| `No WindNinja: the case gets one wind value for the whole domain, so a trigger boundary comes out circular.` | Install WindNinja, or set `WINDNINJA_CLI` to `WindNinja_cli.exe`, or `[ELMFIRE] WindNinjaExe`. Then rebuild the case's weather. |
+| `No GDAL command-line tools were found. ELMFIRE shells out to them, and fails its own DEM check without them.` | Install QGIS or OSGeo4W (found by themselves), or set `[ELMFIRE] PathToGdal` to a folder holding `gdal_translate`. |
+| `The areas were painted on a W x H grid (…); the fire grid … is …` (step 6) | The painting belongs to another grid. Use **Move painting onto the fire-case grid** in step 6; it writes a new file. |
+| `The painted areas are newer than the case's ignition_mask.tif / wui_area.tif: apply them to the case.` | Step 6 > **Apply to case**. |
+| `a trigger campaign is running (…) and every one of its realizations reads this case's rasters, …` | A case build is refused while a campaign of this scenario runs. Wait for it, or cancel it. |
 
-- Pass the `.wui` path as the first argument. With no arguments the tool prints
-  usage and exits.
-- For batch runs pass **all four** arguments:
-  `PREACT.exe <file.wui> <numberOfRuns> <batchSize> <offset>`.
-- If the file path contains spaces, quote it — and note that **values inside the
-  `.wui` file may not contain spaces** (all spaces are stripped when parsing).
+## Running a fire (ELMFIRE)
 
-## An example won't load
+A run that cannot compute its fire stops with `ELMFIRE did not produce a fire: <reason>`. The reasons:
 
-Some older examples reference [modules or keys](modules.md) that are broken or no
-longer read by the current engine (e.g. `MacroTrafficSim`, or a fire module
-value the parser rejects). Start from
-[`Examples/NFDRS4_Behave/Roxborough`](examples.md) and validate your file
-against [the input format reference](input-file-format.md).
+| Reason | Fix |
+|---|---|
+| `ELMFIRE cannot run: [ELMFIRE] ElmfireExe is not set and there is no ThirdParty/elmfire/build/windows/bin/elmfire.exe above …` | Build ELMFIRE with `make_windows.bat` ([Building ELMFIRE](building.md#building-elmfire)), or set `ElmfireExe`. |
+| `… this elmfire build predates DUMP_MIDFLAME_WINDSPEED; rebuild it from the ELMFIRE-WUINITY submodule (a7fb9d6 or later) …` | Rebuild ELMFIRE from the submodule. |
+| `There is no ELMFIRE case at <folder>. Turn BuildCase on, or build one …` | Build the case (step 5, or `PREACTcli build-case`). |
+| `The namelist … names rasters that are not on the case grid, so ELMFIRE cannot run it: …` | Build the case again: it re-cuts every raster the namelists name onto the grid. |
+| `The case's weather cannot run this fire: … The scenario runs its own NamelistTemplate, …` | A template's weather is shorter than the fire. Extend it, or lower `[ELMFIRE] SimulationTstopHours`. A generated case extends its own weather. |
+| `elmfire burned 0 acres (the ignition most likely landed on non-burnable fuel)` | Move the ignition onto burnable fuel. |
+| `ELMFIRE hit its wall-clock limit (MAX_RUNTIME) and stopped the fire early: …` | Raise `MAX_RUNTIME` (seconds) in Fire behaviour; its default, 999999, never stops a single run. |
+| `elmfire exited N: …` with ELMFIRE's own first lines | Some of ELMFIRE's messages point at the wrong thing (`DEM CRS does not appear to use metre linear units` means the GDAL tools were not found, for example): see [ELMFIRE errors that name the wrong thing](elmfire-cases.md#elmfire-errors-that-name-the-wrong-thing). ELMFIRE's full output is in the case's `elmfire.log`. |
 
-## A `.wui` key seems to be ignored
+## Running the evacuation
 
-Check the [legacy keys list](input-file-format.md#legacy-keys). Several keys that
-appear in older examples (`EvacuationOrderStart`, `UTMoffset`, `MaxSimTime`,
-`RootFolder`, `WeatherStreamFile`, `GraphicalFireInputFile`) are silently
-ignored by the current parser.
+| Message | Fix |
+|---|---|
+| `Could not start SUMO, aborting. …` mentioning `libsumocs` | SUMO's `bin` is not found: set `SUMO_HOME` or add it to `PATH`. On Linux, see [the SUMO glue](building.md#regenerating-the-sumo-c-glue-on-linux). |
+| `Could not start SUMO. …` | `[SUMO] ConfigurationFile` does not lead to a `.sumocfg`; the rest of the message says what it found. Build the network in step 2, or correct the path. |
+| `The SUMO network is projected in EPSG:A but the simulation measures in EPSG:B. …` | The network was built for another area or zone. Rebuild it from the scenario (step 2, **Rebuild everything**). |
+| `N of the first M cars could not be put into SUMO (…), so the evacuation would run without them. Stopping the run.` | If it adds `The C# bindings … do not match this SUMO's libsumocs`, use the SUMO 1.22 the bindings were made for (Windows) or regenerate them (Linux). If it says most had no route, the network does not cover the population and the destinations. |
+| `Car could not be injected as no valid route was found or cached. …` | A household's road access point or its destination is not connected to the network. Snap the destination to a road lane (step 7), or regenerate the population on the current network (step 3). |
+| `Households that left because of the fire's proximity: N (M people)` | Information: fire reaction is on by default in v1 (`[MacroHouseholdSim] ReactToFire`). |
 
+## The trigger boundary
+
+| Message | Fix |
+|---|---|
+| `The fire never reached <area>, so no trigger boundary was computed for it. …` | Not an error: the fire did not reach the WUI area within its duration. Lengthen the fire or check the ignition. |
+| `No evacuation arrivals were recorded, so the required egress time is zero and the trigger boundary would collapse onto the WUI area. Not computing one. …` (exit 2) | The traffic did not run, or no car reached a destination. See the evacuation messages above. |
+| `Can't compute a trigger boundary without a wildfire module: …` | Enable the fire, or turn the boundary off. |
+| `k-PERIL has no topography, so the boundary is computed as if the ground were flat.` | Name slope and aspect under `[Landscape]` (an ELMFIRE case build does this). |
+| The boundary is round | The fire ran under one wind for the whole domain: no WindNinja when the case was built. |
+
+## Trigger campaigns
+
+A campaign checks its prerequisites before the first fire and stops with the reason (exit 1). The checks, and what
+each needs, are in [Trigger campaigns](trigger-campaigns.md#before-you-start). Those most often met:
+
+| Message | Fix |
+|---|---|
+| `WindNinja was not found (…). Without it every realization's wind is one value across the whole domain, …` | Install WindNinja or pass `--windninja <exe>`; or tick *Allow uniform weather* (`--allow-uniform-weather`) for a pipeline test. |
+| `… is reached from a realization as '…', which contains a space. …` | Move or rename the scenario folder so the path has no spaces. ELMFIRE passes paths to GDAL unquoted. |
+| `… needs the case's wui_area.tif, and … has no marked cell.` | Paint a WUI area (step 6) and apply it to the case. |
+| `the archive holds no day with a non-zero fire weather index, …` | The ERA5 archive is empty or wrong for the place; delete the case's `climatology/` CSV so the campaign fetches it again. |
+| `another campaign process is running in <folder> (it holds campaign.lock). Stop it first, or wait for it to finish.` | One campaign per folder. A lock that nobody holds is no lock, so a stale `campaign.lock` file never blocks. |
+| `--resume` refused, `differs in: …` | The finished realizations are from other settings. Run without `--resume` for a new campaign, or restore the settings it lists. |
+| `N of M realization(s) were stopped by ELMFIRE's wall-clock limit … and are counted as failed. …` | The probability then under-represents large fires. Run again with a larger `--max-runtime-minutes` (a new campaign folder). |
+| `no realization produced a usable trigger boundary (…); nothing to aggregate.` | Every realization failed or never reached the WUI area. `realizations.csv` gives each one's status and message. |
+| A realization `failed` with exit code 137 (Linux) | The out-of-memory killer. Run fewer at once (`--parallel 1`). |
+
+## Linux
+
+| Message | Fix |
+|---|---|
+| `Unable to load shared library 'gdal_wrap' or one of its dependencies` | GDAL 3.10 (`libgdal.so.36`) is not on `LD_LIBRARY_PATH`. |
+| `Unable to find an entry point named '?' in shared library 'libsumocs'` | The committed SUMO bindings are for Windows. [Regenerate them](building.md#regenerating-the-sumo-c-glue-on-linux) in a local copy. |
+| No WindNinja found although it is installed | The search on `PATH` looks for `WindNinja_cli.exe`. Set `WINDNINJA_CLI` to the executable, or pass `--windninja`. |
+
+The Linux setup is in [Building: Linux](building.md#linux).
