@@ -28,6 +28,9 @@ namespace PREACT.Utility
             public int Ncols, Nrows;
             public bool[] WuiArea, RandomIgnition, InitialIgnition, ManualTriggerBuffer;
 
+            /// <summary>Where the painting's grid lies, when the file records it; null for older files.</summary>
+            public GraphicalFireInput.PaintedGrid Grid;
+
             public bool Any(bool[] mask)
             {
                 if (mask == null) return false;
@@ -72,6 +75,7 @@ namespace PREACT.Utility
                 m.RandomIgnition = ReadMask(br, count);
                 m.InitialIgnition = ReadMask(br, count);
                 m.ManualTriggerBuffer = ReadMask(br, count);
+                if (m.ManualTriggerBuffer != null) m.Grid = GraphicalFireInput.ReadPaintedGrid(br);
                 return m;
             }
         }

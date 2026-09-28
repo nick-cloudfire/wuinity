@@ -139,7 +139,14 @@ namespace PREACTcli
                 return 1;
             }
 
-            string caseDir = Path.GetFullPath(output ?? Path.Combine(input.RootFolder, settings.CaseDirectory));
+            string campaign = CampaignLayout.DescribeRunningCampaign(input.RootFolder);
+            if (campaign != null)
+            {
+                Console.Error.WriteLine("ERROR: " + campaign);
+                return 1;
+            }
+
+            string caseDir = output != null ? Path.GetFullPath(output) : ElmfireCoupling.CaseDirectoryPath(input.RootFolder, settings);
             ElmfireCaseBuilder.Options o = ElmfireCoupling.CreateBuildOptions(input, settings, caseDir, Console.WriteLine);
 
             o.PathToGdal ??= GdalTools.FindBinDirectory();
@@ -154,7 +161,12 @@ namespace PREACTcli
 
             if (mesh != null) o.Weather.WindNinjaMesh = mesh;
             if (vegetation != null) o.Weather.WindNinjaVegetation = vegetation;
-            if (archive != null) o.Weather.ArchiveCsvPath = Path.GetFullPath(archive);
+            //The user's archive is not rewritten: the case works on its own copy in climatology/.
+            if (archive != null)
+            {
+                o.Weather.ArchiveCsvPath = ClimatologySampler.WorkingCopy(Path.GetFullPath(archive),
+                    Path.Combine(caseDir, "climatology"), Console.WriteLine);
+            }
             if (fromYear.HasValue) o.Weather.ArchiveStartYear = fromYear.Value;
             if (toYear.HasValue) o.Weather.ArchiveEndYear = toYear.Value;
             if (conditioning.HasValue) o.Weather.ConditioningDays = conditioning.Value;
@@ -193,7 +205,7 @@ namespace PREACTcli
             }
             catch (Exception e)
             {
-                Console.Error.WriteLine("build-case failed: " + e.Message);
+                Console.Error.WriteLine("build-case failed: " + Program.Describe(e));
                 return 1;
             }
         }

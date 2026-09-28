@@ -157,6 +157,82 @@ namespace PREACT.Utility
         }
 
         /// <summary>
+        /// Checks that every raster a namelist names is there (the ones ELMFIRE requires) and lies on the grid of the
+        /// DEM it names: size, origin, cell size and CRS. The same check the case builder runs, applied to the
+        /// namelist that is about to run - a template, a hand-edited namelist - rather than to the stems the builder
+        /// knows, so a raster left on an old grid is refused with its key and both sizes instead of ELMFIRE
+        /// segfaulting or stopping with "raster dimensions mismatch" once per realization.
+        /// </summary>
+        /// <param name="includeWeather">Whether to check the <c>WEATHER_DIRECTORY</c> rasters too; a campaign draws its
+        /// own weather per realization, so it leaves them out.</param>
+        /// <param name="inputsDirectory">Replaces the namelist's <c>FUELS_AND_TOPOGRAPHY_DIRECTORY</c> when given.</param>
+        public static Report ValidateNamelistRasters(string[] namelistLines, string runDirectory, bool includeWeather,
+            string inputsDirectory = null, Action<string> log = null)
+        {
+            var report = new Report();
+            List<ElmfireStems.NamelistRaster> rasters = ElmfireStems.ReferencedRasters(namelistLines, runDirectory, inputsDirectory);
+
+            ElmfireStems.NamelistRaster dem = rasters.Find(r => r.Key == "DEM_FILENAME");
+            if (dem == null || !File.Exists(dem.Path))
+            {
+                Add(report, dem == null ? "DEM_FILENAME" : Describe(dem),
+                    "the namelist's DEM is not there, and ELMFIRE takes the grid - domain, cell size and CRS - from it.",
+                    fatal: true);
+                return report;
+            }
+
+            MasterGrid grid;
+            try
+            {
+                grid = MasterGrid.FromRasterFile(dem.Path);
+            }
+            catch (Exception e)
+            {
+                Add(report, Describe(dem), "cannot be read as the case grid: " + e.Message, fatal: true);
+                return report;
+            }
+
+            var bandCounts = new Dictionary<string, int>();
+            foreach (ElmfireStems.NamelistRaster r in rasters)
+            {
+                if (r.Weather && !includeWeather) continue;
+                if (!File.Exists(r.Path))
+                {
+                    if (r.Required) Add(report, Describe(r), "required by ELMFIRE but not there.", fatal: true);
+                    continue;
+                }
+
+                CheckRaster(report, r.Path, r.Weather ? WeatherStemFor(r.Key) : r.Stem, grid, bandCounts,
+                    Describe(r), checkFinite: false, gridName: $"the case grid ({Path.GetFileName(dem.Path)})");
+            }
+
+            if (includeWeather) CheckWeatherBandsAgree(report, bandCounts);
+
+            if (log != null)
+            {
+                foreach (Problem p in report.Problems) log("  namelist rasters: " + (p.Fatal ? "" : "(warning) ") + p);
+            }
+
+            return report;
+        }
+
+        private static string Describe(ElmfireStems.NamelistRaster r) => $"{r.Key} = '{r.Stem}' ({r.Path})";
+
+        /// <summary>The weather stem a weather key stands for, so the band-count check compares like with like.</summary>
+        private static string WeatherStemFor(string key)
+        {
+            switch (key)
+            {
+                case "WS_FILENAME": return ElmfireStems.WindSpeed;
+                case "WD_FILENAME": return ElmfireStems.WindDirection;
+                case "M1_FILENAME": return ElmfireStems.M1;
+                case "M10_FILENAME": return ElmfireStems.M10;
+                case "M100_FILENAME": return ElmfireStems.M100;
+                default: return key;
+            }
+        }
+
+        /// <summary>
         /// The five weather rasters have to carry the same number of bands.
         /// </summary>
         /// <remarks>
@@ -191,9 +267,10 @@ namespace PREACT.Utility
         }
 
         private static void CheckRaster(Report report, string path, string stem, MasterGrid grid,
-            Dictionary<string, int> bandCounts)
+            Dictionary<string, int> bandCounts, string displayName = null, bool checkFinite = true,
+            string gridName = "the master grid")
         {
-            string name = stem + ".tif";
+            string name = displayName ?? stem + ".tif";
             Gdal.AllRegister();
 
             Dataset ds = null;
@@ -221,15 +298,15 @@ namespace PREACT.Utility
                 if (ds.RasterXSize != grid.Header.Ncols || ds.RasterYSize != grid.Header.Nrows)
                 {
                     Add(report, name,
-                        $"is {ds.RasterXSize}x{ds.RasterYSize} but the master grid is " +
+                        $"is {ds.RasterXSize}x{ds.RasterYSize} but {gridName} is " +
                         $"{grid.Header.Ncols}x{grid.Header.Nrows}. ELMFIRE reads every raster cell-for-cell, " +
                         "so a different size means the layers do not describe the same ground.", fatal: true);
                     //Still worth reporting the rest, since a size mismatch usually comes with others.
                 }
 
-                CheckGeoTransform(report, ds, name, grid);
-                CheckProjection(report, ds, name, grid);
-                CheckFinite(report, ds, name);
+                CheckGeoTransform(report, ds, name, grid, gridName);
+                CheckProjection(report, ds, name, grid, gridName);
+                if (checkFinite) CheckFinite(report, ds, name);
             }
             finally
             {
@@ -237,7 +314,8 @@ namespace PREACT.Utility
             }
         }
 
-        private static void CheckGeoTransform(Report report, Dataset ds, string name, MasterGrid grid)
+        private static void CheckGeoTransform(Report report, Dataset ds, string name, MasterGrid grid,
+            string gridName = "the master grid")
         {
             double[] gt = new double[6];
             ds.GetGeoTransform(gt);
@@ -257,7 +335,7 @@ namespace PREACT.Utility
             if (System.Math.Abs(gt[1] - cell) > 0.001 * cell || System.Math.Abs(-gt[5] - cell) > 0.001 * cell)
             {
                 Add(report, name,
-                    $"has {gt[1]} x {-gt[5]} m cells but the master grid has {cell} m. Every distance ELMFIRE " +
+                    $"has {gt[1]} x {-gt[5]} m cells but {gridName} has {cell} m. Every distance ELMFIRE " +
                     "and k-PERIL measure comes from the grid's own cell size.", fatal: true);
             }
 
@@ -267,7 +345,7 @@ namespace PREACT.Utility
                 double dx = gt[0] - grid.XMin;
                 double dy = gt[3] - top;
                 Add(report, name,
-                    $"starts at ({gt[0]:F1}, {gt[3]:F1}) but the master grid starts at " +
+                    $"starts at ({gt[0]:F1}, {gt[3]:F1}) but {gridName} starts at " +
                     $"({grid.XMin:F1}, {top:F1}) - offset by ({dx:F1}, {dy:F1}) m, " +
                     $"about ({dx / cell:F1}, {dy / cell:F1}) cells. The layers are misregistered, which " +
                     "ELMFIRE cannot detect: it would burn one place's fuel with another place's terrain.",
@@ -275,7 +353,8 @@ namespace PREACT.Utility
             }
         }
 
-        private static void CheckProjection(Report report, Dataset ds, string name, MasterGrid grid)
+        private static void CheckProjection(Report report, Dataset ds, string name, MasterGrid grid,
+            string gridName = "the master grid")
         {
             string wkt = ds.GetProjection();
             if (string.IsNullOrEmpty(wkt))
@@ -314,7 +393,7 @@ namespace PREACT.Utility
             if (!string.Equals(epsg, grid.Epsg, StringComparison.OrdinalIgnoreCase))
             {
                 Add(report, name,
-                    $"is in {epsg} but the master grid is in {grid.Epsg}. Eastings in different UTM zones " +
+                    $"is in {epsg} but {gridName} is in {grid.Epsg}. Eastings in different UTM zones " +
                     "describe ground hundreds of kilometres apart while looking equally valid.", fatal: true);
             }
         }

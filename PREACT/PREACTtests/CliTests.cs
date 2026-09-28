@@ -15,6 +15,159 @@ namespace PREACT.Tests
             runner.Add("cli: PREACT is found where the build script puts it, by the platform's name", FindPreact);
             runner.Add("cli: converge-trigger arguments are parsed strictly", ArgumentParsing);
             runner.Add("cli: the newest campaign folder is found, replaced ones are not", LatestCampaign);
+            runner.Add("cli: every realization's evacuation runs on its own reproducible seed", EvacuationSeeds);
+            runner.Add("cli: progress lines carry decile areas only for a realization with a boundary", ProgressAreas);
+            runner.Add("cli: a realization's archived scenario opens where it is kept", ArchivedScenarioOpensInPlace);
+            runner.Add("cli: an unexpected exception ends a command with a message and exit 1", UnhandledExceptionExit);
+            runner.Add("cli: realizations stopped by the wall-clock limit are called out, not just counted", TruncatedCalledOut);
+        }
+
+        private static void TruncatedCalledOut()
+        {
+            Assert.True(ConvergenceAggregator.DescribeTruncated(0, 40, 8640) == null, "nothing to say when none were");
+            string said = ConvergenceAggregator.DescribeTruncated(3, 40, 8640);
+            Assert.True(said != null && said.Contains("3 of 40") && said.Contains("144 min") && said.Contains("--max-runtime-minutes"),
+                "how many, the limit, and what to do: " + said);
+        }
+
+        private static void UnhandledExceptionExit()
+        {
+            TextWriter was = Console.Error;
+            var w = new StringWriter();
+            int exit;
+            try
+            {
+                Console.SetError(w);
+                exit = PREACTcli.Program.Guarded("converge-trigger",
+                    () => throw new IOException("Access to the path 'campaign_mati_1234abcd' is denied.",
+                        new UnauthorizedAccessException("the live raster is open")));
+            }
+            finally
+            {
+                Console.SetError(was);
+            }
+            Assert.Equal(1, exit, "exit code");
+            Assert.True(w.ToString().Contains("converge-trigger stopped on an unexpected error")
+                        && w.ToString().Contains("the live raster is open"), "the message names the command and the causes: " + w);
+            Assert.Equal(7, PREACTcli.Program.Guarded("build-case", () => 7), "a command's own exit code passes through");
+        }
+
+        private static void ArchivedScenarioOpensInPlace()
+        {
+            using var s = new FormatTests.Scenario();
+            var baseLines = new List<string>(FormatTests.Scenario.Lines) { "", "[kPERIL]", "OutputName=b.asc", "WuiAreaFile=C:/elsewhere/wui.tif" };
+            Campaign c = MinimalCampaign(s.Folder, 12345, baseLines.ToArray());
+            string id = CampaignLayout.RealizationId(4);
+            string dir = c.RealizationDir(id);
+            Directory.CreateDirectory(Path.Combine(dir, "outputs"));
+
+            var record = new RealizationRecord { Toa = "outputs/toa.tif", Ros = "outputs/vs.tif", Sd = "outputs/sd.tif", Mfws = "outputs/mfws.tif" };
+            string[] ran = RealizationRunner.ScenarioLines(c, 4, id, dir, record);
+            string[] kept = RealizationRunner.RebasePaths(ran, s.Folder, dir);
+
+            Assert.True(kept.Contains("PopulationFile=../../../../pop.csv"), "the population, from the realization's folder: "
+                        + kept.FirstOrDefault(l => l.StartsWith("PopulationFile")));
+            Assert.True(kept.Contains("TimeOfArrivalFile=outputs/toa.tif"), "the realization's own fire, from its folder: "
+                        + kept.FirstOrDefault(l => l.StartsWith("TimeOfArrivalFile")));
+            Assert.True(kept.Contains("Name=base_01234567_0000004"), "other keys are untouched");
+            Assert.True(kept.Contains("WuiAreaFile=C:/elsewhere/wui.tif"), "an absolute (drive) path is left alone");
+
+            Input.PREACTInput input = Input.PREACTInput.LoadFromLines(kept, dir, out bool _);
+            Assert.Equal(3, input.Population.Data.Households.Length, "the population loads from there");
+            Assert.True(!Input.PREACTInput.Requirements.Any(r => r.Key.Contains("PopulationFile") || r.Key.Contains("MaskFile")),
+                "nothing the base scenario had is missing: " + string.Join("; ", Input.PREACTInput.Requirements.Select(r => r + ": " + r.Message)));
+        }
+
+        private static void ProgressAreas()
+        {
+            string Line(string status, double[] area)
+            {
+                TextWriter was = Console.Out;
+                var w = new StringWriter();
+                try
+                {
+                    Console.SetOut(w);
+                    ConvergenceAggregator.EmitProgressJson("0000002", status, 1, 1, 0, 0, 20, false, area, new double?[10]);
+                }
+                finally
+                {
+                    Console.SetOut(was);
+                }
+                return w.ToString();
+            }
+
+            var area = new double[] { 9, 8, 7, 6, 5, 4, 3, 2, 1, 0.5 };
+            Assert.True(Line(CampaignLayout.StatusOk, area).Contains("\"area\":[9,8,7"), "an ok realization reports the field");
+            Assert.True(!Line(CampaignLayout.StatusNotThreatened, null).Contains("\"area\""), "a not-threatened one leaves it out");
+
+        }
+
+        /// <summary>A campaign with just what writing a realization's scenario reads.</summary>
+        internal static Campaign MinimalCampaign(string scenarioDir, int seed, string[] baseLines)
+        {
+            var c = new Campaign
+            {
+                Options = CampaignOptions.Parse(new[] { "--wui", Path.Combine(scenarioDir, "base.wui"), "--max", "3", "--seed", seed.ToString(System.Globalization.CultureInfo.InvariantCulture) }),
+                BaseWuiPath = Path.Combine(scenarioDir, "base.wui"),
+                ScenarioDir = scenarioDir,
+                BaseLines = baseLines,
+                ScenarioName = "base",
+                SettingsHash = "0123456789abcdef",
+                StartDateTime = new DateTime(2026, 6, 28, 12, 0, 0),
+                InputsDir = Path.Combine(scenarioDir, "case", "inputs"),
+            };
+            c.Folder = Path.Combine(scenarioDir, "_output", "campaign_base_01234567");
+            c.RealizationsDir = Path.Combine(c.Folder, "realizations");
+            return c;
+        }
+
+        private static void EvacuationSeeds()
+        {
+            string dir = Directory.CreateTempSubdirectory("preact-seed-").FullName;
+            try
+            {
+                string[] baseLines = { "[Simulation]", "Name=base", "RandomSeed=42", "", "[kPERIL]", "OutputName=b.asc" };
+                Campaign c = MinimalCampaign(dir, 12345, baseLines);
+
+                int Seed(string[] lines)
+                {
+                    Input.PREACTInput input = Input.PREACTInput.LoadFromLines(lines, dir, out bool _);
+                    return input.Simulation.RandomSeed;
+                }
+
+                var seen = new HashSet<int>();
+                for (int index = 1; index <= 200; ++index)
+                {
+                    string id = CampaignLayout.RealizationId(index);
+                    var record = new RealizationRecord { Toa = "outputs/toa.tif", Ros = "outputs/vs.tif", Sd = "outputs/sd.tif", Mfws = "outputs/mfws.tif" };
+                    string[] lines = RealizationRunner.ScenarioLines(c, index, id, c.RealizationDir(id), record);
+                    int seed = Seed(lines);
+                    Assert.True(seed != 0, "never 0, which PREACT reads as 'seed from the clock'");
+                    Assert.True(seed != 42, "not the base scenario's own seed, which every realization would share");
+                    Assert.Equal(record.EvacuationSeed, seed, "the record carries the seed the scenario was written with");
+                    Assert.True(seen.Add(seed), "a seed of its own for realization " + index);
+
+                    //The same realization again - a resume re-running only its evacuation - gets the same seed.
+                    var again = new RealizationRecord { Toa = record.Toa, Ros = record.Ros, Sd = record.Sd, Mfws = record.Mfws };
+                    Assert.Equal(seed, Seed(RealizationRunner.ScenarioLines(c, index, id, c.RealizationDir(id), again)),
+                        "the same seed when realization " + index + " is written again");
+                }
+
+                Assert.True(RealizationRunner.EvacuationSeed(-RealizationRunner.EvacuationSeedOffset - 7, 7) != 0,
+                    "the one index that would land on 0 is moved off it");
+                Assert.True(RealizationRunner.EvacuationSeed(12345, 1) != RealizationRunner.EvacuationSeed(54321, 1),
+                    "another campaign seed gives another evacuation");
+
+                //Kept in the realization's record and read back.
+                string rdir = Path.Combine(dir, "r");
+                var saved = new RealizationRecord { EvacuationSeed = RealizationRunner.EvacuationSeed(12345, 3) };
+                saved.Save(rdir);
+                Assert.Equal(saved.EvacuationSeed, RealizationRecord.Load(rdir).EvacuationSeed, "realization.txt keeps the seed");
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
         }
 
         private static void ExitCodes()

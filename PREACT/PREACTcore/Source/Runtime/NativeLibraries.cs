@@ -96,6 +96,65 @@ namespace PREACT.Runtime
             }
         }
 
+        /// <summary>
+        /// The engine's own native runtime folders - GDAL's SWIG wraps, NFDRS4, FOFEM - under <c>Runtimes/Native</c>
+        /// beside PREACTcore.dll, where every build copies them.
+        /// </summary>
+        public static string[] EngineRuntimeFolders()
+        {
+            string root = Path.Combine(Path.GetDirectoryName(typeof(NativeLibraries).Assembly.Location) ?? ".", "Runtimes", "Native");
+            return new[]
+            {
+                Path.Combine(root, "FOFEM", "x64"),
+                Path.Combine(root, "GDAL", "x64"),
+                Path.Combine(root, "NFDRS4", "x64"),
+            };
+        }
+
+        /// <summary>
+        /// What the <see cref="Engine"/> sets up for a process, for one that uses the engine's GDAL code without
+        /// building an Engine - PREACTcli: the resolver over <see cref="EngineRuntimeFolders"/> for the engine and the
+        /// GDAL wrapper assemblies (plus <paramref name="extraFolders"/>), PROJ's search path, and GDAL's drivers.
+        /// </summary>
+        /// <remarks>
+        /// PREACTcli used to die on Linux in its first GDAL call with "The type initializer for
+        /// 'OSGeo.OSR.OsrPINVOKE' threw an exception": its build copies only the Windows <c>*.dll</c> wraps beside
+        /// the executable, the <c>lib*_wrap.so</c> stay in <c>Runtimes/Native/GDAL/x64</c>, and only the Engine
+        /// constructor ever registered the resolver that finds them - so every Linux user had to put that folder on
+        /// <c>LD_LIBRARY_PATH</c>. Only libgdal itself (GDAL 3.10's libgdal.so.36) still has to be findable by the
+        /// platform loader.
+        /// </remarks>
+        public static void SetUpForProcess(IEnumerable<string> extraFolders = null)
+        {
+            var folders = new List<string>(EngineRuntimeFolders());
+            if (extraFolders != null) folders.AddRange(extraFolders);
+
+            Register(folders, typeof(NativeLibraries).Assembly, typeof(OSGeo.GDAL.Gdal).Assembly,
+                typeof(OSGeo.OGR.Ogr).Assembly, typeof(OSGeo.OSR.Osr).Assembly);
+
+            //The process environment, which on Windows already holds the Machine and User values it was started
+            //with. Only when something was found: an empty list would replace PROJ's own compiled-in search path.
+            var projPaths = new List<string>();
+            foreach (string candidate in new[] { Environment.GetEnvironmentVariable("PROJ_DATA"), Environment.GetEnvironmentVariable("PROJ_LIB") })
+            {
+                if (!string.IsNullOrEmpty(candidate) && Directory.Exists(candidate) && !projPaths.Contains(candidate))
+                {
+                    projPaths.Add(candidate);
+                }
+            }
+            if (projPaths.Count == 0 && !RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && Directory.Exists("/usr/share/proj"))
+            {
+                projPaths.Add("/usr/share/proj");
+            }
+            if (projPaths.Count > 0)
+            {
+                OSGeo.OSR.Osr.SetPROJSearchPaths(projPaths.ToArray());
+            }
+
+            OSGeo.GDAL.Gdal.AllRegister();
+            OSGeo.OGR.Ogr.RegisterAll();
+        }
+
         private static IntPtr Resolve(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)
         {
             string[] folders = _searchFolders;

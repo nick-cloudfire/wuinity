@@ -45,6 +45,7 @@ namespace PREACTcli.Campaigns
 
             c.ScenarioName = CampaignLayout.CampaignScenarioName(input.Simulation.Name, c.BaseWuiPath);
             c.StartDateTime = input.Simulation.StartDateTime;
+            c.BaseRandomSeed = input.Simulation.RandomSeed;
             c.CentreLatLon = CentreOf(input.Simulation.LowerLeftLatLon, input.Simulation.DomainSize);
 
             if (!input.TriggerBufferModule.Enabled
@@ -66,7 +67,7 @@ namespace PREACTcli.Campaigns
 
             // ------------------------------------------------------------ the case
             ElmfireInput elmfire = input.WildfireModule.ElmfireInput;
-            string caseDir = Path.GetFullPath(Path.Combine(c.ScenarioDir, elmfire.CaseDirectory));
+            string caseDir = ElmfireCoupling.CaseDirectoryPath(c.ScenarioDir, elmfire);
 
             if (!string.IsNullOrEmpty(o.ElmfireTemplate))
             {
@@ -96,7 +97,10 @@ namespace PREACTcli.Campaigns
                 : ElmfireCoupling.ResolveExecutable(c.ScenarioDir, elmfire.ElmfireExe);
             if (running && (c.ElmfireExe == null || !File.Exists(c.ElmfireExe)))
             {
-                return Fail("the ELMFIRE executable was not found; pass --elmfire <path> or set [ELMFIRE] ElmfireExe.");
+                return Fail((!string.IsNullOrEmpty(o.ElmfireExe)
+                                ? "--elmfire names " + c.ElmfireExe + ", which is not there."
+                                : ElmfireCoupling.DescribeMissingExecutable(c.ScenarioDir, elmfire.ElmfireExe))
+                            + " Pass --elmfire <path> or set [ELMFIRE] ElmfireExe.");
             }
 
             c.GdalBin = o.PathToGdal
@@ -126,6 +130,22 @@ namespace PREACTcli.Campaigns
             {
                 return Fail("the template names no fuel model raster that exists in " + c.InputsDir
                             + " (FBFM_FILENAME), so ELMFIRE could not start.");
+            }
+
+            //Every raster the template names, on the case grid - checked here, once, rather than by ELMFIRE in every
+            //realization: a fuel raster left on an old grid failed each one with "Fuel Model raster dimensions
+            //mismatch (680 vs 541)", only after its weather had been drawn, up to --max times. The weather is left
+            //out: every realization writes its own onto the case grid.
+            ElmfireCaseValidator.Report rasters = ElmfireCaseValidator.ValidateNamelistRasters(c.TemplateLines, runRoot,
+                includeWeather: false, inputsDirectory: c.InputsDir);
+            if (!rasters.Ok)
+            {
+                return Fail("the template " + Path.GetFileName(c.TemplatePath) + " names rasters that are not on the case "
+                            + "grid, so ELMFIRE could not run a single realization:\n         "
+                            + string.Join("\n         ", rasters.Fatal)
+                            + "\n       Build the case again (Prepare data, or PREACTcli build-case): it re-cuts onto the grid "
+                            + "every raster named by the case's elmfire.data, its kept namelists (elmfire.data.kept-*) and "
+                            + "the scenario's [ELMFIRE] NamelistTemplate. Or point the template at rasters on the grid.");
             }
 
             string maskStem = ElmfireNamelist.GetKeyInGroup(c.TemplateLines, ElmfireNamelistKeys.InputsGroup,
@@ -233,6 +253,10 @@ namespace PREACTcli.Campaigns
             s["weather.conditioning_days"] = o.ConditioningDays.ToString(CultureInfo.InvariantCulture);
             s["weather.windninja"] = c.WindNinjaExe == null ? "(none: uniform wind)" : Path.GetFileName(c.WindNinjaExe) + " mesh " + o.WindNinjaMesh;
             s["weather.start"] = c.StartDateTime.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture);
+
+            //How each realization's evacuation is seeded. Recorded because realizations computed before it existed ran
+            //on a clock seed, and reusing them beside reproducible ones would mix the two.
+            s["evacuation.seed"] = "seed + " + RealizationRunner.EvacuationSeedOffset.ToString(CultureInfo.InvariantCulture) + " + index";
 
             c.SettingsHash = ElmfireFingerprint.Hash(string.Join("\n", s.Select(kv => kv.Key + "=" + kv.Value)));
             c.Folder = Path.Combine(c.ScenarioDir, CampaignLayout.OutputFolder,
@@ -354,6 +378,13 @@ namespace PREACTcli.Campaigns
         public static bool PrepareWeather(Campaign c)
         {
             CampaignOptions o = c.Options;
+
+            //A --weather-archive is the user's file: the campaign reads a copy kept in its own folder, which is also
+            //the record of the archive it drew from.
+            if (!string.IsNullOrEmpty(o.WeatherArchive))
+            {
+                c.ArchivePath = ClimatologySampler.WorkingCopy(c.ArchivePath, c.Folder, Console.WriteLine);
+            }
 
             string dem = ElmfireStems.Tif(c.InputsDir, ElmfireStems.Dem);
             try
@@ -512,7 +543,8 @@ namespace PREACTcli.Campaigns
 
         private static string Absolute(string root, string path)
         {
-            return Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(root, path));
+            string normalised = PREACTInput.NormalisePath(path);
+            return Path.GetFullPath(Path.IsPathRooted(normalised) ? normalised : Path.Combine(root, normalised));
         }
 
         private static Campaign Fail(string message)

@@ -49,14 +49,14 @@ namespace PREACTcli.Campaigns
             WriteDiagnosticsHeader(diag);
             using var summary = new StreamWriter(Path.Combine(_c.Folder, CampaignLayout.RealizationsCsv));
             summary.WriteLine("realization,status,reused,message,fire_area_acres,elmfire_minutes,ignition_x,ignition_y,"
-                              + "wind_from_deg,mean_wind_10m_mph,dead_1h_pct,live_herbaceous_pct,live_woody_pct");
+                              + "wind_from_deg,mean_wind_10m_mph,dead_1h_pct,live_herbaceous_pct,live_woody_pct,evacuation_seed");
 
             int[,] insideCount = null;
             AscRaster.Header header = default;
             EnsembleFireStatistics fireStatistics = null;
             var usedFires = new List<(string Id, RealizationRecord Record)>();
 
-            int nOk = 0, nNotThreatened = 0, nFailed = 0, nReused = 0;
+            int nOk = 0, nNotThreatened = 0, nFailed = 0, nReused = 0, nTruncated = 0;
             int streak = 0, launched = 0, completed = 0;
             bool converged = false;
             var previousArea = new double?[Deciles.Length];
@@ -115,6 +115,7 @@ namespace PREACTcli.Campaigns
 
                 if (status == CampaignLayout.StatusNotThreatened) ++nNotThreatened;
                 if (status == CampaignLayout.StatusFailed) ++nFailed;
+                if (result.Truncated) ++nTruncated;
 
                 Console.WriteLine($"{CampaignLayout.ProgressTag}{completed}/{o.MaxRealizations} realization {result.Id} {status}");
 
@@ -165,8 +166,10 @@ namespace PREACTcli.Campaigns
                     Console.WriteLine($"[{result.Id}] {status}: {result.Message}");
                 }
 
+                //The decile areas only with a boundary: a not-threatened or failed realization leaves the field as
+                //it was, and a row of zeros for it made the GUI's table drop to nothing after each one (e2e F6).
                 EmitProgressJson(result.Id, status, nOk, nNotThreatened, nFailed, streak, o.Streak, converged,
-                    insideCount != null ? area : null, delta);
+                    status == CampaignLayout.StatusOk ? area : null, delta);
 
                 if (converged && pending.Count > 0 && !_stopping)
                 {
@@ -186,6 +189,9 @@ namespace PREACTcli.Campaigns
                                         + "--resume continues this campaign.");
                 return 3;
             }
+
+            string truncated = DescribeTruncated(nTruncated, completed, o.MaxRuntimeSeconds);
+            if (truncated != null) Console.Error.WriteLine("WARNING: " + truncated);
 
             if (insideCount == null || nOk == 0)
             {
@@ -216,11 +222,30 @@ namespace PREACTcli.Campaigns
             CampaignReports.WriteRealizedWeather(_c, usedFires);
 
             Console.WriteLine($"Done. {completed} realization(s): {nOk} boundaries, {nNotThreatened} not threatened, "
-                              + $"{nFailed} failed ({nReused} reused from an earlier run). Converged: {converged}.");
+                              + $"{nFailed} failed" + (nTruncated > 0 ? $" ({nTruncated} of them stopped by the wall-clock limit)" : "")
+                              + $" ({nReused} reused from an earlier run). Converged: {converged}.");
             Console.WriteLine("Probability raster: " + outPath);
             Console.WriteLine("Convergence diagnostics: " + diagnosticsPath);
             Console.WriteLine($"{CampaignLayout.ProgressTag}{o.MaxRealizations}/{o.MaxRealizations}");
             return 0;
+        }
+
+        /// <summary>
+        /// The warning for realizations ELMFIRE stopped at the wall-clock limit, or null when there were none.
+        /// </summary>
+        /// <remarks>
+        /// They are counted as failed - an incomplete fire says nothing about the ground it had not reached yet - but
+        /// they are not a random sample of the failures: the fires that run longest are the largest, so every one of
+        /// them left out moves the probability towards small fires (review MI-2). Said at the end of every campaign
+        /// that had any, with what to change.
+        /// </remarks>
+        internal static string DescribeTruncated(int truncated, int completed, double maxRuntimeSeconds)
+        {
+            if (truncated <= 0) return null;
+            return $"{truncated} of {completed} realization(s) were stopped by ELMFIRE's wall-clock limit "
+                   + $"({maxRuntimeSeconds / 60.0:0} min) and are counted as failed. They are the slowest fires, usually the "
+                   + "largest, so the probability raster under-represents large fires. Run the campaign with a larger "
+                   + "--max-runtime-minutes (the limit is one of its settings, so that is a new campaign folder).";
         }
 
         private static void Fold(int[,] insideCount, float[,] boundary, AscRaster.Header header)
@@ -310,7 +335,7 @@ namespace PREACTcli.Campaigns
         /// One JSON object per realization on stdout, for the GUI window. Hand-built (one fixed shape, no JSON
         /// dependency) with invariant formatting so a comma-decimal locale cannot produce malformed JSON.
         /// </summary>
-        private static void EmitProgressJson(string id, string status, int nOk, int nNotThreatened, int nFailed,
+        internal static void EmitProgressJson(string id, string status, int nOk, int nNotThreatened, int nFailed,
             int streak, int streakTarget, bool converged, double[] area, double?[] delta)
         {
             var sb = new StringBuilder(CampaignLayout.ProgressJsonTag);
@@ -371,7 +396,8 @@ namespace PREACTcli.Campaigns
                 rec == null ? "" : N(rec.WindFromDeg), rec == null ? "" : N(rec.MeanWindMph),
                 rec == null ? "" : N(rec.M1Percent),
                 rec == null || !rec.LiveDrawn ? "" : N(rec.LiveHerbaceousPercent),
-                rec == null || !rec.LiveDrawn ? "" : N(rec.LiveWoodyPercent)));
+                rec == null || !rec.LiveDrawn ? "" : N(rec.LiveWoodyPercent),
+                rec == null || rec.EvacuationSeed == 0 ? "" : rec.EvacuationSeed.ToString(CultureInfo.InvariantCulture)));
             w.Flush();
         }
     }

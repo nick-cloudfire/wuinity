@@ -26,6 +26,9 @@ namespace PREACTcli.Campaigns
         public string ScenarioName;
 
         public DateTime StartDateTime;
+
+        /// <summary>The base scenario's own <c>[Simulation] RandomSeed</c>, which realizations replace with their own.</summary>
+        public int BaseRandomSeed;
         public Vector2d CentreLatLon;
 
         /// <summary><c>[kPERIL] WuiAreaSource</c>: Raster, EvacuationGroupsCombined.</summary>

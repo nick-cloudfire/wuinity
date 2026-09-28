@@ -45,7 +45,8 @@ namespace PREACT.Utility
         /// The fire reader needs the first three rasters, and SPREAD_RATE_IN_M is the one that is not an error
         /// anywhere when wrong: without it ELMFIRE dumps ft/min and the fire spreads 3.28 times too fast. The
         /// midflame wind is what k-PERIL's length-to-breadth ratio is defined for; without it the trigger boundary
-        /// falls back to the 10 m wind, which elongates every spread ellipse. One list, so the case builder, the
+        /// falls back to the 10 m wind, which overstates every ellipse's length-to-breadth ratio (though with
+        /// kPERILcore's breakdown the boundary changes little - see EvacuationManager.ResolveTriggerWind). One list, so the case builder, the
         /// single-run patch and every campaign realization force the same set.
         /// </remarks>
         public static readonly (string Key, string Value)[] RequiredOutputs =
@@ -442,6 +443,96 @@ namespace PREACT.Utility
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Every assignment in the namelist, in file order, as (group, key, value): the group without its
+        /// <c>&amp;</c>, the key upper-cased with any subscript kept (<c>X_IGN(1)</c>), the value as
+        /// <see cref="GetKeyInGroup"/> returns it. Comments, blank lines and anything outside a group are skipped.
+        /// </summary>
+        public static List<(string Group, string Key, string Value)> ReadAssignments(string[] lines)
+        {
+            var result = new List<(string, string, string)>();
+            string group = null;
+
+            foreach (string raw in lines ?? new string[0])
+            {
+                string trimmed = raw.Trim();
+                if (trimmed.StartsWith("&", StringComparison.Ordinal))
+                {
+                    group = trimmed.Substring(1).Trim().ToUpperInvariant();
+                    continue;
+                }
+                if (trimmed.StartsWith("/", StringComparison.Ordinal))
+                {
+                    group = null;
+                    continue;
+                }
+                if (group == null || trimmed.Length == 0 || trimmed.StartsWith("!", StringComparison.Ordinal)) continue;
+
+                int eq = trimmed.IndexOf('=');
+                if (eq <= 0) continue;
+
+                string key = StripWhitespace(trimmed.Substring(0, eq)).ToUpperInvariant();
+                string value = trimmed.Substring(eq + 1).Trim();
+                int bang = value.IndexOf('!');
+                if (bang >= 0) value = value.Substring(0, bang).Trim();
+                result.Add((group, key, value.Trim('\'', '"')));
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// The assignments two namelists disagree on, one line each - <c>&amp;INPUTS FBFM_FILENAME: 'fbfm40_roads101'
+        /// -&gt; 'fbfm40'</c> - with a key only one of them sets shown as "(unset)". Values that differ only in how
+        /// they are written (<c>3600</c> and <c>3600.0</c>, <c>.true.</c> and <c>.TRUE.</c>) count as the same.
+        /// </summary>
+        public static List<string> DescribeDifferences(string[] before, string[] after)
+        {
+            var was = new Dictionary<string, string>(StringComparer.Ordinal);
+            var order = new List<string>();
+            foreach ((string group, string key, string value) in ReadAssignments(before))
+            {
+                string id = "&" + group + " " + key;
+                if (!was.ContainsKey(id)) order.Add(id);
+                was[id] = value;
+            }
+
+            var now = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach ((string group, string key, string value) in ReadAssignments(after))
+            {
+                string id = "&" + group + " " + key;
+                if (!was.ContainsKey(id) && !now.ContainsKey(id)) order.Add(id);
+                now[id] = value;
+            }
+
+            //Keys set to another value first - those are what running one instead of the other changes - then the
+            //ones only the first sets, then the ones only the second does.
+            var changed = new List<string>();
+            var onlyBefore = new List<string>();
+            var onlyAfter = new List<string>();
+            foreach (string id in order)
+            {
+                was.TryGetValue(id, out string a);
+                now.TryGetValue(id, out string b);
+                if (SameValue(a, b)) continue;
+                string line = id + ": " + (a == null ? "(unset)" : "'" + a + "'") + " -> " + (b == null ? "(unset)" : "'" + b + "'");
+                (a == null ? onlyAfter : b == null ? onlyBefore : changed).Add(line);
+            }
+            changed.AddRange(onlyBefore);
+            changed.AddRange(onlyAfter);
+            return changed;
+        }
+
+        private static bool SameValue(string a, string b)
+        {
+            if (a == null || b == null) return a == b;
+            if (string.Equals(a, b, StringComparison.OrdinalIgnoreCase)) return true;
+
+            return double.TryParse(a.Replace('d', 'e').Replace('D', 'E'), NumberStyles.Float, CultureInfo.InvariantCulture, out double x)
+                   && double.TryParse(b.Replace('d', 'e').Replace('D', 'E'), NumberStyles.Float, CultureInfo.InvariantCulture, out double y)
+                   && x == y;
         }
 
         private static string StripWhitespace(string s)

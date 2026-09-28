@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 
 namespace PREACT.Utility
 {
@@ -168,6 +170,65 @@ namespace PREACT.Utility
 
         public const string ManifestFile = "campaign.json";
         public const string LockFile = "campaign.lock";
+
+        /// <summary>
+        /// Whether a campaign process holds <paramref name="campaignFolder"/>'s <see cref="LockFile"/> now: it keeps
+        /// the file open with no sharing for as long as it runs, so the operating system releases it however the
+        /// process ends, and a file left behind is not a lock.
+        /// </summary>
+        public static bool IsLockHeld(string campaignFolder)
+        {
+            string path = Path.Combine(campaignFolder, LockFile);
+            if (!File.Exists(path)) return false;
+            try
+            {
+                using (new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                {
+                    return false;
+                }
+            }
+            catch (IOException)
+            {
+                return true;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return false;
+            }
+        }
+
+        /// <summary>The campaign folders under <paramref name="scenarioFolder"/>/_output a campaign is running in now.</summary>
+        public static List<string> RunningCampaigns(string scenarioFolder)
+        {
+            var running = new List<string>();
+            if (string.IsNullOrEmpty(scenarioFolder)) return running;
+            string output = Path.Combine(scenarioFolder, OutputFolder);
+            if (!Directory.Exists(output)) return running;
+
+            try
+            {
+                foreach (string folder in Directory.GetDirectories(output, CampaignFolderPrefix + "*"))
+                {
+                    if (IsLockHeld(folder)) running.Add(folder);
+                }
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            return running;
+        }
+
+        /// <summary>
+        /// Why a scenario's case cannot be built now, or null: a campaign running from the scenario's folder reads the
+        /// case's inputs in every realization, and a build re-cuts, rewrites and moves them (review MI-4).
+        /// </summary>
+        public static string DescribeRunningCampaign(string scenarioFolder)
+        {
+            List<string> running = RunningCampaigns(scenarioFolder);
+            if (running.Count == 0) return null;
+            return $"a trigger campaign is running ({string.Join(", ", running.Select(Path.GetFileName))}) and every one of "
+                   + "its realizations reads this case's rasters, which a build re-cuts and rewrites. Wait for it to "
+                   + "finish, or stop it, then build the case.";
+        }
         public const string TemplateSnapshot = "template.data";
         public const string RealizationsFolder = "realizations";
         public const string RealizationRecord = "realization.txt";

@@ -776,6 +776,12 @@ namespace PREACT.Input
         /// <summary>Whether a requirement reported now would be critical if it asked to be.</summary>
         private static bool InSoftScope { get => _softDepth > 0; }
 
+        /// <summary>
+        /// True while a section of a switched-off module is being read (<see cref="SoftRequirements"/>), so a parser
+        /// can keep quiet about what only matters when the module runs.
+        /// </summary>
+        public static bool ReadingSwitchedOffSection { get => InSoftScope; }
+
         private static void AddRequirement(string key, string message, bool critical)
         {
             critical &= !InSoftScope;

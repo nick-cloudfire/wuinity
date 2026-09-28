@@ -120,7 +120,7 @@ namespace PREACT.Utility
                 return false;
             }
 
-            string caseDir = Path.Combine(input.RootFolder, settings.CaseDirectory);
+            string caseDir = CaseDirectoryPath(input.RootFolder, settings);
 
             if (!TryBuildCase(input, settings, caseDir, log, out problem, out ElmfireCaseBuilder.Result built))
             {
@@ -179,7 +179,7 @@ namespace PREACT.Utility
             void Log(string m) => log?.Invoke(m);
             long generation = ElmfireProcesses.Generation;
 
-            string caseDir = Path.Combine(input.RootFolder, settings.CaseDirectory);
+            string caseDir = CaseDirectoryPath(input.RootFolder, settings);
 
             //Checked before anything is built or run: a duration outside these bounds is a unit mistake, not a
             //long fire - the real campaign's 7 200 000 s was 2000 h typed where seconds were meant.
@@ -269,12 +269,28 @@ namespace PREACT.Utility
             }
 
             string[] runLines = PatchNamelist(namelist, caseDir, settings, gdalBin, exe, Log);
+
+            //Every raster the namelist names, on the grid of the DEM it names, before ELMFIRE is asked: it compares
+            //nothing itself, and a fuel raster left on an old grid ends in a segfault or "raster dimensions
+            //mismatch" that names neither the file nor the grid.
+            ElmfireCaseValidator.Report rasters = ElmfireCaseValidator.ValidateNamelistRasters(runLines, caseDir,
+                includeWeather: true);
+            if (!rasters.Ok)
+            {
+                result.Message = $"The namelist {Path.GetFileName(namelist)} names rasters that are not on the case grid, "
+                                 + "so ELMFIRE cannot run it: " + ElmfireCaseValidator.Summarize(rasters).TrimEnd('.')
+                                 + ". Build the case again: it re-cuts onto the grid every raster named by the case's "
+                                 + "elmfire.data, its kept namelists (elmfire.data.kept-*) and the NamelistTemplate. Or "
+                                 + "point the namelist at rasters on the grid.";
+                return result;
+            }
+
             string fingerprint = ElmfireFingerprint.ForRun(runLines, caseDir, exe);
 
+            string missingExe = exe == null ? DescribeMissingExecutable(input.RootFolder, settings.ElmfireExe) : null;
             if (exe == null && !settings.ReuseExistingOutput)
             {
-                result.Message = "elmfire.exe was not found. Set [ELMFIRE] ElmfireExe, or put the build under "
-                                 + "ThirdParty/elmfire/build/windows/bin.";
+                result.Message = "ELMFIRE cannot run: " + missingExe;
                 return result;
             }
 
@@ -311,7 +327,9 @@ namespace PREACT.Utility
             if (!run.Ok)
             {
                 result.Cancelled = run.Cancelled;
-                result.Message = run.Message;
+                result.Message = exe == null
+                    ? "ELMFIRE cannot run: " + missingExe + " There were no outputs of an identical earlier run to reuse."
+                    : run.Message;
                 return result;
             }
 
@@ -502,8 +520,8 @@ namespace PREACT.Utility
             //parse has already said so once with the key name.
             foreach (KeyValuePair<string, string> layer in settings.GetSourceRasters())
             {
-                string path = Path.IsPathRooted(layer.Value) ? layer.Value : Path.Combine(input.RootFolder, layer.Value);
-                if (File.Exists(path)) options.UserRasters[layer.Key] = path;
+                string path = PREACTInput.ResolvePath(input.RootFolder, layer.Value);
+                if (File.Exists(path)) options.UserRasters[layer.Key] = Path.GetFullPath(path);
             }
 
             //The same points the ignition editor placed, in WGS84. The builder measures them in the case's own CRS
@@ -532,11 +550,11 @@ namespace PREACT.Utility
             //before the case existed (contract C2); the builder checks the case grid first.
             if (!string.IsNullOrEmpty(input.WildfireModule.GraphicalFireInputFile))
             {
-                options.PaintedMasksPath = Path.Combine(input.RootFolder, input.WildfireModule.GraphicalFireInputFile);
+                options.PaintedMasksPath = PREACTInput.ResolvePath(input.RootFolder, input.WildfireModule.GraphicalFireInputFile);
                 string grid = input.Landscape?.GetReferenceFile();
                 if (!string.IsNullOrEmpty(grid))
                 {
-                    options.PaintedMasksGridPath = Path.Combine(input.RootFolder, grid);
+                    options.PaintedMasksGridPath = PREACTInput.ResolvePath(input.RootFolder, grid);
                 }
             }
 
@@ -556,6 +574,13 @@ namespace PREACT.Utility
             if (hoursProblem != null)
             {
                 problem = "[ELMFIRE] SimulationTstopHours: " + hoursProblem + ".";
+                return false;
+            }
+
+            string campaign = CampaignLayout.DescribeRunningCampaign(input.RootFolder);
+            if (campaign != null)
+            {
+                problem = "The case was not built: " + campaign;
                 return false;
             }
 
@@ -600,18 +625,21 @@ namespace PREACT.Utility
 
             if (!string.IsNullOrEmpty(settings.NamelistTemplate))
             {
-                if (Path.IsPathRooted(settings.NamelistTemplate))
+                //Either slash, like every other path in a scenario: a template named on Windows as
+                //"templates\mati.data" is one file name with a backslash in it anywhere else.
+                string template = PREACTInput.NormalisePath(settings.NamelistTemplate);
+                if (Path.IsPathRooted(template))
                 {
-                    if (File.Exists(settings.NamelistTemplate)) return settings.NamelistTemplate;
+                    if (File.Exists(template)) return template;
 
                     problem = "The namelist template named by the scenario is not there: " + settings.NamelistTemplate;
                     return null;
                 }
 
-                string inCase = Path.Combine(caseDir, settings.NamelistTemplate);
+                string inCase = Path.Combine(caseDir, template);
                 if (File.Exists(inCase)) return inCase;
 
-                string inRoot = Path.Combine(rootFolder, settings.NamelistTemplate);
+                string inRoot = PREACTInput.ResolvePath(rootFolder, template);
                 if (File.Exists(inRoot))
                 {
                     log?.Invoke($"Namelist template {settings.NamelistTemplate} resolved against the scenario "
@@ -654,7 +682,7 @@ namespace PREACT.Utility
         {
             if (!string.IsNullOrEmpty(named))
             {
-                string path = Path.IsPathRooted(named) || string.IsNullOrEmpty(rootFolder) ? named : Path.Combine(rootFolder, named);
+                string path = string.IsNullOrEmpty(rootFolder) ? PREACTInput.NormalisePath(named) : PREACTInput.ResolvePath(rootFolder, named);
                 return File.Exists(path) ? path : null;
             }
 
@@ -683,6 +711,37 @@ namespace PREACT.Utility
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Why <see cref="ResolveExecutable"/> found nothing, naming what it tried: the path the scenario's
+        /// <c>[ELMFIRE] ElmfireExe</c> resolves to, or the vendored build it looked for.
+        /// </summary>
+        public static string DescribeMissingExecutable(string rootFolder, string named)
+        {
+            bool windows = System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(
+                System.Runtime.InteropServices.OSPlatform.Windows);
+            if (!string.IsNullOrWhiteSpace(named))
+            {
+                string path = string.IsNullOrEmpty(rootFolder) ? PREACTInput.NormalisePath(named) : PREACTInput.ResolvePath(rootFolder, named);
+                return $"[ELMFIRE] ElmfireExe names {path}, which is not there. Correct the path in the scenario (Hazards "
+                       + "tab), or clear it to use the build in WUInity/Assets/ThirdParty/elmfire.";
+            }
+
+            string relative = windows ? "ThirdParty/elmfire/build/windows/bin/elmfire.exe" : "ThirdParty/elmfire/build/linux/bin/elmfire";
+            return $"[ELMFIRE] ElmfireExe is not set and there is no {relative} above {AssemblyDirectory() ?? "this program"} "
+                   + $"or {Directory.GetCurrentDirectory()}. Set ElmfireExe to the executable, or build ELMFIRE there.";
+        }
+
+        /// <summary>
+        /// The scenario's <c>[ELMFIRE] CaseDirectory</c> as a full path: relative to the scenario folder, either
+        /// slash. One rule for the GUI's build, a run, build-case and a campaign - a Windows-written
+        /// <c>cases\mati</c> used to be one folder name with a backslash in it off Windows.
+        /// </summary>
+        public static string CaseDirectoryPath(string rootFolder, ElmfireInput settings)
+        {
+            string named = string.IsNullOrWhiteSpace(settings?.CaseDirectory) ? "elmfire" : settings.CaseDirectory;
+            return ResolveFolder(rootFolder, named);
         }
 
         private static string AssemblyDirectory()
@@ -748,7 +807,8 @@ namespace PREACT.Utility
 
             try
             {
-                string full = Path.IsPathRooted(folder) ? folder : Path.Combine(root, folder);
+                string normalised = PREACTInput.NormalisePath(folder);
+                string full = Path.IsPathRooted(normalised) || string.IsNullOrEmpty(root) ? normalised : Path.Combine(root, normalised);
                 return Path.GetFullPath(full);
             }
             catch

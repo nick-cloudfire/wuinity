@@ -22,6 +22,32 @@ namespace PREACT.Tests
             runner.Add("seam: the run's fire weather codes are the archive's derivation, at local noon", FireWeatherCodes);
             runner.Add("seam: an imported fire resolves backslash paths and keeps rectangular cells", ImportedFireGrid);
             runner.Add("seam: a new scenario's response curve survives its first save (no destinations or groups yet)", NewScenarioKeepsCurve);
+            runner.Add("seam: the campaign's weather report reads each day's codes at its local noon, not 12 UTC", WeatherReportLocalNoon);
+        }
+
+        /// <summary>
+        /// Review MI-6: the distributions report took each pool day's FFMC/DMC/DC/ISI/BUI from its 12:00 UTC row, which
+        /// west of Greenwich is before local noon - for all of CONUS the previous day's codes. It matches on the FWI noon
+        /// the pool was built from (fixed at integration, 5f21346e); this keeps it so.
+        /// </summary>
+        private static void WeatherReportLocalNoon()
+        {
+            var day = new DateTime(2021, 8, 10);
+            var rows = new List<HourlyWeatherRow>
+            {
+                new HourlyWeatherRow { Time = day.AddHours(12), Dc = 100, Dmc = 10, IsFwiNoon = false },
+                new HourlyWeatherRow { Time = day.AddHours(20), Dc = 500, Dmc = 50, IsFwiNoon = true }, //noon LST at 120 W
+            };
+            var pool = new List<AnnualMaximaDay>
+            {
+                new AnnualMaximaDay { Year = 2021, Date = day, Temperature = 35, RelativeHumidity = 12, WindSpeed = 8, WindDirection = 270, Fwi = 60 },
+            };
+
+            List<WeatherStatisticsReport.VariableStatistics> stats = WeatherStatisticsReport.Compute(pool, rows, null, 1.0, 2.0);
+            WeatherStatisticsReport.VariableStatistics dc = stats.Single(v => v.Name == "dc");
+            Assert.Near(500.0, dc.Mean, 1e-9, "DC from the day's local-noon row");
+            Assert.True(stats.Any(v => v.Name == "wind_speed_10m") && !stats.Any(v => v.Name == "wind_speed_20ft"),
+                "the derived wind is labelled as the 10 m wind it is");
         }
 
         private static bool Windows => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);

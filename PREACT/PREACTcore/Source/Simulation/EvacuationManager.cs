@@ -541,10 +541,21 @@ namespace PREACT.Evacuation
         /// Speed: the fire's own midflame wind whenever the fire module has one - an ELMFIRE run's
         /// <c>mfws_*.tif</c>, or <c>[AscImport] MidflameWindSpeedFile</c> for a campaign realization. k-PERIL's
         /// length-to-breadth correlation is defined for midflame wind, and the 10 m wind it used to be handed is
-        /// several times larger (Mati realization 13: 14.4 mi/h at 10 m, 2.75 mi/h midflame) - with L/B growing
-        /// exponentially in it, every ellipse became a needle. Only without one is <c>[kPERIL] WindSpeedFile</c>
-        /// (or the fire's own 10 m series) used, and that is said as a warning, because it is used <i>as</i>
-        /// midflame wind.
+        /// several times larger (Mati realization 13: 14.4 mi/h at 10 m, 2.75 mi/h midflame). Only without one is
+        /// <c>[kPERIL] WindSpeedFile</c> (or the fire's own 10 m series) used, and that is said as a warning,
+        /// because it is used <i>as</i> midflame wind.
+        /// </para>
+        /// <para>
+        /// What the midflame wind changes is the length-to-breadth ratio (L/B) each cell's ellipse is built from.
+        /// What it does not change much is the boundary. kPERILcore breaks the ellipse down along its parametric
+        /// angle, so the rate towards an angle psi off the head is |(a sin psi, c + b cos psi)|, and once L/B is
+        /// above about 3 that is close to ROS (1 + cos psi) / 2 whatever L/B is: the flank rate is 0.51 of the head
+        /// rate at 5.9 mi/h (L/B 4) and 0.50 at 16.3 mi/h (L/B 60). The wind moves the flank and backing rates only
+        /// below about 3 mi/h of effective midflame wind (0.55 at 2.75 mi/h). On two Mati realizations midflame
+        /// against 10 m wind changed the boundary by 1-2 % (Jaccard 0.99). So neither "a 10 m wind makes needles"
+        /// nor "midflame wind widens the boundary" is true of this k-PERIL; nothing here caps L/B, and whether the
+        /// breakdown should follow the true polar ellipse, under which both the wind and a cap would matter a great
+        /// deal, is k-PERIL's author's call.
         /// </para>
         /// <para>
         /// Direction: from the weather the fire ran on, sampled at each cell's arrival time. For an ELMFIRE fire run
@@ -608,9 +619,10 @@ namespace PREACT.Evacuation
                 Engine.Message(simulation, Engine.LogType.Warning,
                     "k-PERIL has no midflame wind for this fire, so " + System.IO.Path.GetFileName(wind.SpeedFile)
                     + " is being used AS midflame wind. If it is 10 m wind (as ws.tif from the weather pipeline is), "
-                    + "every spread ellipse comes out too elongated and the boundary too narrow across the wind. An "
-                    + "ELMFIRE build from a7fb9d6 on writes the midflame wind itself (DUMP_MIDFLAME_WINDSPEED); for an "
-                    + "imported fire set [AscImport] MidflameWindSpeedFile.");
+                    + "every spread ellipse's length-to-breadth ratio is computed from a wind several times too "
+                    + "strong; the boundary itself moves little unless the midflame wind would be below about 3 mi/h. "
+                    + "An ELMFIRE build from a7fb9d6 on writes the midflame wind itself (DUMP_MIDFLAME_WINDSPEED); for "
+                    + "an imported fire set [AscImport] MidflameWindSpeedFile.");
             }
 
             return wind;
@@ -1079,17 +1091,13 @@ namespace PREACT.Evacuation
 
                             _triggerBufferModule.Run();
 
-                            //Per-group outputs are named after the group, so several boundaries from
-                            //one simulation do not overwrite each other.
-                            string outputName = _input.TriggerBufferModule.kPERILInput.OutputName;
-                            if (runs.Count > 1)
-                            {
-                                outputName = Path.GetFileNameWithoutExtension(outputName) + "_" + runs[i].Label + Path.GetExtension(outputName);
-                            }
+                            string outputName = BoundaryFileName(_input.TriggerBufferModule.kPERILInput.OutputName,
+                                runs.Count > 1 ? runs[i].Label : null);
                             string outputFilePath = Path.Combine(simulation.Engine.OutputFolder, simulation.SimulationIndex + "_" + outputName);
                             kPERIL.SaveToFile(_triggerBufferModule.TriggerBufferOutput,
                                 simulation.Hazards.Wildfire.GetCellSizeX(), outputFilePath,
-                                simulation.Hazards.Wildfire.GetGridOriginUtm());
+                                simulation.Hazards.Wildfire.GetGridOriginUtm(),
+                                simulation.Hazards.Wildfire.GetGridEpsgCode());
 
                             //Registered here, once per run, rather than once after the loop - which
                             //would have recorded only the last group's boundary.
@@ -1102,6 +1110,27 @@ namespace PREACT.Evacuation
             {
                 Engine.Message(simulation, Engine.LogType.Log, "No trigger buffer module was enabled.");
             }
+        }
+
+        /// <summary>
+        /// The file a trigger boundary is written to, before the simulation index: <c>[kPERIL] OutputName</c> with
+        /// <c>.asc</c> added when it has no extension, and a per-group boundary's group name before the extension, so
+        /// several boundaries from one simulation do not overwrite each other.
+        /// </summary>
+        /// <remarks>
+        /// Mati's <c>OutputName=trigger_boundary</c> was written as <c>_output/0_trigger_boundary</c>, a file nothing
+        /// opens as a raster by its name, while a campaign's are <c>*.asc</c> (e2e F7).
+        /// </remarks>
+        public static string BoundaryFileName(string outputName, string groupLabel = null)
+        {
+            string name = string.IsNullOrWhiteSpace(outputName) ? kPERILInput.DefaultOutputName : outputName.Trim();
+            string extension = Path.GetExtension(name);
+            if (string.IsNullOrEmpty(extension))
+            {
+                extension = ".asc";
+            }
+            string stem = Path.GetFileNameWithoutExtension(name);
+            return stem + (string.IsNullOrEmpty(groupLabel) ? string.Empty : "_" + groupLabel) + extension;
         }
 
         public void InsertNewCar(Vector2d startLatLon, EvacuationDestination evacuationGoal, uint numberOfPeopleInCar)

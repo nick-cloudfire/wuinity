@@ -20,6 +20,7 @@ namespace PREACT.Tests
             runner.Add("engine: the clock is exact after a day of 0.1 s steps", ExactClock);
             runner.Add("engine: no weather file means no weather and no download", NoWeather);
             runner.Add("engine: a run on an incomplete scenario is refused and still finishes", RunGatedOnChecklist);
+            runner.Add("engine: a run whose cars mostly fail to enter SUMO is stopped, a few unroutable cars are not", SumoInjectionFailure);
         }
 
         private sealed class TestVehicle : TrafficModuleVehicle
@@ -210,5 +211,25 @@ namespace PREACT.Tests
             Assert.True(log.Take().Any(m => m.Contains("not complete enough to run")), "and said why");
             Assert.True(log.FinishedCount > 0, "SimulationsFinished was still called");
         }
-    }
+    
+        private static void SumoInjectionFailure()
+        {
+            const string glue = "Unable to find an entry point named '?' in shared library 'libsumocs'.";
+            int n = Traffic.SUMOModule.InjectionCheckMinimumCars;
+
+            Assert.True(Traffic.SUMOModule.DescribeInjectionFailure(n - 1, 0, n - 1, 0, glue) == null,
+                "too few cars to judge yet");
+
+            string broken = Traffic.SUMOModule.DescribeInjectionFailure(n, 0, n, 0, glue);
+            Assert.True(broken != null && broken.Contains(n + " of the first " + n) && broken.Contains("Eclipse.Sumo.Libsumo"),
+                "every car refused by libsumo stops the run and names the bindings: " + broken);
+
+            string unrouted = Traffic.SUMOModule.DescribeInjectionFailure(100, 5, 0, 95, null);
+            Assert.True(unrouted != null && unrouted.Contains("no route"), "nearly all unroutable stops it too: " + unrouted);
+
+            Assert.True(Traffic.SUMOModule.DescribeInjectionFailure(100, 85, 3, 12, "x") == null,
+                "a few unroutable or refused cars are normal and do not");
+            Assert.True(Traffic.SUMOModule.DescribeInjectionFailure(928, 928, 0, 0, null) == null, "all injected");
+        }
+}
 }
