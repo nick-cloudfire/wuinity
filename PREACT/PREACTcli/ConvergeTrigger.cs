@@ -170,6 +170,7 @@ namespace PREACTcli
         private static void PrintInspect(Campaign c, bool match, System.Collections.Generic.List<CampaignManifest> others)
         {
             (int started, int ok, int not, int failed) = match ? CampaignManifest.Count(c.Folder) : (0, 0, 0, 0);
+            string held = Directory.Exists(c.Folder) ? CampaignLock.HeldBy(c.Folder) : null;
 
             var sb = new StringBuilder(CampaignLayout.InspectTag);
             sb.Append('{');
@@ -179,6 +180,7 @@ namespace PREACTcli
             sb.Append("\"notThreatened\":").Append(not).Append(',');
             sb.Append("\"failed\":").Append(failed).Append(',');
             sb.Append("\"started\":").Append(started).Append(',');
+            sb.Append("\"running\":").Append(held != null ? "true" : "false").Append(',');
             sb.Append("\"others\":[");
             for (int i = 0; i < others.Count; ++i)
             {
@@ -190,6 +192,7 @@ namespace PREACTcli
             sb.Append("]}");
             Console.WriteLine(sb.ToString());
 
+            if (held != null) Console.WriteLine("Running now: " + held);
             if (match)
             {
                 Console.WriteLine($"A campaign with these settings exists: {c.Folder}. --resume would reuse {ok + not} "
