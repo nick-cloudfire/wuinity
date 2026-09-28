@@ -86,6 +86,24 @@ namespace PREACT.Input
         }
 
         /// <summary>
+        /// Reads the landscape again after its bands were re-pointed in memory - a fire case build points
+        /// <c>[Landscape]</c> at the case's own terrain (contract C1). What was loaded from the old bands is
+        /// dropped first, so a new set that fails to load leaves no landscape rather than the previous grid.
+        /// Painted masks and ignition points are left as they are.
+        /// </summary>
+        /// <remarks>
+        /// The loaded landscape is what k-PERIL samples its slope from and what the GUI paints and draws on; it
+        /// is read when the scenario is parsed, so without this a run straight after a build used the terrain
+        /// the scenario named before it.
+        /// </remarks>
+        public void ReloadLandscape(SimulationInput simulationInput, WildfireModuleInput wildfireInput,
+            LandscapeInput landscapeInput, string rootFolder)
+        {
+            _lcpData = null;
+            LoadLandscape(simulationInput, wildfireInput, landscapeInput, rootFolder);
+        }
+
+        /// <summary>
         /// Loads the landscape from whichever of the three ways of describing one the scenario used:
         /// separate GeoTIFF bands, a single multiband GeoTIFF, or a FARSITE .lcp.
         ///

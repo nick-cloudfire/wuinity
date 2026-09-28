@@ -841,6 +841,27 @@ namespace WUInity
         }
 
         /// <summary>
+        /// Reads the scenario's terrain again from its <c>[Landscape]</c> section, after that was re-pointed in
+        /// memory - a fire case build sets it to the case's dem/slp/asp, "Use the case terrain" does the same -
+        /// and resets the painter, whose grid may be another one now.
+        /// </summary>
+        /// <remarks>
+        /// The terrain is loaded when the scenario is parsed. Without this the painter kept drawing on, and a
+        /// run straight after the build sampled k-PERIL's slope from, the terrain the scenario named before.
+        /// </remarks>
+        public void ReloadLandscape()
+        {
+            if (_input == null)
+            {
+                return;
+            }
+
+            _input.WildfireModule.Data.ReloadLandscape(_input.Simulation, _input.WildfireModule, _input.Landscape, _input.RootFolder);
+            _painter.SetLCPData(_input.WildfireModule.Data.LandscapeData);
+            _painter.ResetForScenario();
+        }
+
+        /// <summary>
         /// Redraws everything placed in the scenario's simulation coordinates: the UTM map, the domain border,
         /// the camera, the markers, the road network and the painter's grid. Needed whenever the origin may
         /// have moved - a load, or the area of interest changed in Place and time, which used to move the

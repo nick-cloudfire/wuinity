@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using ImGuiNET;
 using PREACT;
 using UnityEngine;
@@ -27,9 +26,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
         private static int _convergenceMinSequence = 10;
         private static float _convergenceMaxDifference = 0.02f;
 
-        //The scenario as saved just before the run, to tell afterwards whether the run changed it in memory.
-        private static string _preRunSnapshot;
-        private static string _preRunPath;
         private static DateTime _startedAt;
         private static string _lastResult = string.Empty;
         private static bool _stopRequested;
@@ -317,8 +313,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 }
             }
 
-            _preRunSnapshot = ScenarioSession.Serialise(ScenarioSession.Input);
-            _preRunPath = ScenarioSession.FilePath;
             _startedAt = DateTime.Now;
             _lastResult = string.Empty;
             _stopRequested = false;
@@ -353,51 +347,10 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
             _stopRequested = false;
 
-            RestoreScenarioAfterRun();
+            //Nothing to put back: a run keeps what it derives - the fire's rasters, k-PERIL's wind, the weather
+            //anchor - in runtime objects and leaves the scenario as it was saved (contract C4).
             ResultsWindow.Rescan();
             WorkflowService.Invalidate();
-        }
-
-        /// <summary>
-        /// Puts back the scenario the run was started with, when the run changed it in memory.
-        /// </summary>
-        /// <remarks>
-        /// A run writes paths it derives into the scenario it runs - k-PERIL's wind rasters, the imported
-        /// arrival times, the weather file and anchor - and a later Save then pins them into the .wui, after
-        /// which "left empty, the case's own is used" is no longer true. The scenario was saved just before
-        /// the run, so the file is exactly the pre-run scenario, and reading it back undoes those writes.
-        /// </remarks>
-        private static void RestoreScenarioAfterRun()
-        {
-            if (!ScenarioSession.HasInput || _preRunSnapshot == null || ScenarioSession.FilePath != _preRunPath)
-            {
-                return;
-            }
-
-            string now = ScenarioSession.Serialise(ScenarioSession.Input);
-            if (now == _preRunSnapshot)
-            {
-                return;
-            }
-
-            // V1-INTEGRATION: C4 - once runs no longer mutate PREACTInput, the two are always equal and this never fires.
-            var changed = new List<string>();
-            string[] before = _preRunSnapshot.Split('\n');
-            string[] after = now.Split('\n');
-            var beforeSet = new HashSet<string>(before);
-            foreach (string line in after)
-            {
-                if (!beforeSet.Contains(line) && line.Contains("=") && changed.Count < 6) changed.Add(line.Trim());
-            }
-
-            PREACT.Engine.Message(null, PREACT.Engine.LogType.Log, "The run wrote into the scenario it ran ("
-                + string.Join("; ", changed) + "). Reading the scenario back from " + System.IO.Path.GetFileName(_preRunPath)
-                + ", saved just before the run, so none of that ends up saved into it.");
-
-            if (!ScenarioSession.IsBusy)
-            {
-                ScenarioSession.Load(_preRunPath);
-            }
         }
     }
 }

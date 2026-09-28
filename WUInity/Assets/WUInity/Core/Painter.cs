@@ -238,8 +238,8 @@ namespace WUInity
         ///   none      - the landscape, for a scenario with no fire that still wants areas painted.
         ///
         /// The old order put <c>AscImportInput.TimeOfArrivalFile</c> first whatever the module - and a run
-        /// fills that in for an ELMFIRE fire, so what the painter used depended on whether a run had happened
-        /// yet this session.
+        /// used to fill that in for an ELMFIRE fire, so what the painter used depended on whether a run had
+        /// happened yet this session.
         /// </remarks>
         public static string ExpectedGridReference(PREACT.Input.PREACTInput input)
         {
@@ -251,8 +251,8 @@ namespace WUInity
             switch (input.WildfireModule.Module)
             {
                 case PREACT.Input.WildfireModuleInput.WildfireModules.ELMFIRE:
-                    // V1-INTEGRATION: C2 - the case build converts painted masks against the case grid and fails
-                    // otherwise; painting only ever on dem.tif is the GUI's half of that.
+                    //Contract C2: the case build converts painted masks against the case grid and fails otherwise;
+                    //painting only ever on dem.tif is the GUI's half of that.
                     return ElmfireGridReference(input);
 
                 case PREACT.Input.WildfireModuleInput.WildfireModules.AscImport:

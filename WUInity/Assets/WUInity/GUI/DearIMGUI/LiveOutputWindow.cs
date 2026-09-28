@@ -115,9 +115,11 @@ namespace Assets.WUInity.GUI.DearIMGUI
             //scenario's own date: the case's weather is a historical peak fire-weather day drawn out of ERA5,
             //and the run reads that day's hours. Without saying so, a July scenario reporting August weather
             //looks like a bug.
-            if (sim.Input.Weather != null && sim.Input.Weather.HasWeatherAnchor)
+            //The run's own weather manager, not the scenario: an ELMFIRE run anchors its weather to the fire's day
+            //at run time without writing that into the scenario (contract C4).
+            if (sim.Weather.HasWeatherAnchor)
             {
-                ImGui.TextDisabled($"From {sim.Input.Weather.WeatherAnchorDateTime:yyyy-MM-dd} in the record - "
+                ImGui.TextDisabled($"From {sim.Weather.WeatherAnchor:yyyy-MM-dd} in the record - "
                     + "the day the fire was computed against.");
             }
 

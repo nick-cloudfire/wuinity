@@ -200,7 +200,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
             public string DemType;
             public bool UseAnderson13;
             public int MinHouseholdSize, MaxHouseholdSize;
-            public DateTime StartedUtc;
 
             internal readonly List<Action<PREACTInput>> Writes = new List<Action<PREACTInput>>();
             internal readonly List<Action> AfterApply = new List<Action>();
@@ -280,7 +279,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 UseAnderson13 = UseAnderson13,
                 MinHouseholdSize = MinHouseholdSize,
                 MaxHouseholdSize = MaxHouseholdSize,
-                StartedUtc = DateTime.UtcNow,
             };
         }
 
@@ -1049,9 +1047,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
             string problem;
             try
             {
-                // V1-INTEGRATION: C1 - BuildCaseOnly updates the input in place (today: the weather anchor and file;
-                // once C1 lands also [Landscape] dem/slp/asp and [kPERIL] WuiAreaFile). This runs on the worker
-                // while editing is locked, and Finish marks the scenario changed and refreshes everything after.
+                //Contract C1: on success this points [Landscape] at the case's dem/slp/asp, [kPERIL] WuiAreaFile at
+                //the wui_area.tif it wrote, and [Weather] at the day and archive the fire was computed against - in
+                //place. It runs on the worker while editing is locked; Finish then marks the scenario changed.
                 ok = PREACT.Utility.ElmfireCoupling.BuildCaseOnly(ctx.Input, LogStep, out problem);
             }
             finally
@@ -1066,26 +1064,17 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 throw new Exception(problem ?? "the case could not be built");
             }
 
-            DateTime builtFrom = ctx.StartedUtc;
-            ctx.Then(() => AdoptCaseOutputs(ctx.Input, builtFrom));
+            //The terrain the build pointed [Landscape] at is read, and the painter goes onto the case grid; on the
+            //main thread, after Finish has applied the step.
+            ctx.Then(() => PreactGUI.WUInity?.ReloadLandscape());
             return Task.CompletedTask;
         }
 
         /// <summary>
-        /// Points the scenario at what the case build made: its terrain for [Landscape], and the WUI area it
-        /// rasterised for k-PERIL. Idempotent, so it stays harmless once the engine does the same.
+        /// [Landscape] elevation, slope and aspect become the case's dem/slp/asp.tif, when the case has them, and
+        /// the terrain is read again. A case build does this itself; this is for a scenario whose case was built
+        /// before it did (the workflow's "Use the case terrain").
         /// </summary>
-        // V1-INTEGRATION: C1 - the GUI-side copy of what ElmfireCoupling.BuildCaseOnly will do in place on success.
-        // Kept because it is a no-op once the engine has done it, and it makes an existing case consistent now.
-        public static void AdoptCaseOutputs(PREACTInput input, DateTime builtSinceUtc)
-        {
-            if (input == null) return;
-            AdoptCaseTerrain(input);
-            AdoptCaseWuiArea(input, builtSinceUtc);
-            PreactGUI.WUInity?.Painter?.ResetForScenario();
-        }
-
-        /// <summary>[Landscape] elevation, slope and aspect become the case's dem/slp/asp.tif, when the case has them.</summary>
         public static void AdoptCaseTerrain(PREACTInput input)
         {
             if (input == null || !string.IsNullOrEmpty(input.Landscape.LandscapeFile)) return;
@@ -1104,11 +1093,17 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
             if (File.Exists(Path.Combine(input.RootFolder, slp))) input.Landscape.SlopeFile = slp;
             if (File.Exists(Path.Combine(input.RootFolder, asp))) input.Landscape.AspectFile = asp;
+
+            if (input == ScenarioSession.Input)
+            {
+                PreactGUI.WUInity?.ReloadLandscape();
+            }
         }
 
         /// <summary>
         /// [kPERIL] WuiAreaFile becomes the case's wui_area.tif - only one written since
-        /// <paramref name="builtSinceUtc"/>, since an older one may be from masks painted since replaced.
+        /// <paramref name="builtSinceUtc"/>, since an older one may be from masks painted since replaced. A case
+        /// build sets it itself; this is for a scenario whose case was built before it did.
         /// </summary>
         public static void AdoptCaseWuiArea(PREACTInput input, DateTime builtSinceUtc = default)
         {

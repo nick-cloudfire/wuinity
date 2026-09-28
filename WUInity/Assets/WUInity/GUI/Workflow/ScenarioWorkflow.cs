@@ -755,7 +755,8 @@ namespace WUInity.Workflow
                 if (string.IsNullOrEmpty(_in.Landscape.LandscapeFile) && elevation?.Replace('\\', '/') != caseDem)
                 {
                     RasterInfo own = Exists(elevation) ? Raster(elevation) : null;
-                    // V1-INTEGRATION: C1 - once BuildCaseOnly sets [Landscape] to the case terrain, a fresh build never shows this.
+                    //A case build sets [Landscape] to the case terrain itself (contract C1), so this is a scenario whose
+                    //case was built before it did, or one whose terrain was changed by hand since.
                     s.Warn("[Landscape] " + (string.IsNullOrEmpty(elevation) ? "names no terrain" : $"uses {elevation}"
                         + (own != null && !own.SameSize(_caseGrid) ? $" ({own.Width} x {own.Height})" : ""))
                         + $", not the fire case's {caseDem} ({_caseGrid.Width} x {_caseGrid.Height}).",
@@ -1137,7 +1138,8 @@ namespace WUInity.Workflow
                     else
                     {
                         protectedOk = true;
-                        // V1-INTEGRATION: C1 - a case build will set WuiAreaFile to the case's wui_area.tif itself.
+                        //A case build sets WuiAreaFile to the case's wui_area.tif itself (contract C1); this is a case
+                        //built before it did.
                         if (caseWuiExists) s.Warn($"k-PERIL is reading the painted mask directly; the case build rasterised it as {caseWui}.",
                             WorkflowAction.UseCaseWuiArea, "Use " + caseWui);
                     }
@@ -1164,7 +1166,8 @@ namespace WUInity.Workflow
             if (IsElmfire && !string.IsNullOrEmpty(k.WindSpeedFile))
             {
                 bool pinned = k.WindSpeedFile.Replace('\\', '/').EndsWith("inputs/ws.tif");
-                // V1-INTEGRATION: C4 - a run no longer writes these into the scenario once the engine stops mutating its input.
+                //A run no longer writes these into the scenario (contract C4); this catches a .wui saved after an
+                //older run that did.
                 s.Warn(pinned
                     ? $"WindSpeedFile names {k.WindSpeedFile} - pinned by an earlier run that was then saved. It overrides the fire's own wind; clear it."
                     : $"WindSpeedFile ({k.WindSpeedFile}) overrides the wind of the fire itself.",
