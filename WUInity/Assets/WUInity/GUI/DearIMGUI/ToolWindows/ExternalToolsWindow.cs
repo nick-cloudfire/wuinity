@@ -71,11 +71,11 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 "The case gets one wind value for the whole domain, so a trigger boundary comes out circular instead of wind-driven.");
 
             ImGui.SeparatorText("Traffic and projections");
-            Tool("SUMO (bin folder)", t.SumoBin, null, "the machine PATH entry containing 'Sumo' and 'bin'",
+            Tool("SUMO (bin folder)", t.SumoBin, null, "SUMO_HOME/bin, then the PATH folder holding sumo, then a PATH folder named like SUMO's bin",
                 "The road network cannot be built (netconvert) and the traffic simulation cannot start.");
-            Tool("PROJ_LIB", t.ProjLib, null, "the PROJ_LIB machine environment variable",
+            Tool("PROJ_LIB", t.ProjLib, null, "the PROJ_LIB environment variable",
                 "Coordinate transforms may fail; GDAL needs PROJ's database to reproject anything.");
-            Tool("PROJ_DATA", t.ProjData, null, "the PROJ_DATA machine environment variable", "As PROJ_LIB, for newer PROJ versions.");
+            Tool("PROJ_DATA", t.ProjData, null, "the PROJ_DATA environment variable", "As PROJ_LIB, for newer PROJ versions.");
 
             ImGui.SeparatorText("Keys");
             DrawOpenTopographyKey();
@@ -143,6 +143,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
             {
                 ToolsService.KeyChanged();
             }
+            Fields.Hint("Used by the fire case build, a DEM download and a campaign started from here, until the",
+                        "application closes. Nothing writes it to the scenario or to disk.");
         }
     }
 }

@@ -56,6 +56,17 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 return;
             }
 
+            //The engine keeps the last run after another scenario is opened; it is not this one's.
+            if (!ScenarioSession.SimulationActive && sim.Input != ScenarioSession.Input)
+            {
+                ImGui.TextDisabled("Nothing has run for the open scenario yet"
+                    + (string.IsNullOrEmpty(sim.Input?.Simulation?.Name) ? "." : $" (the last run was of {sim.Input.Simulation.Name}).")
+                    + " Run > Run simulation starts one.");
+                ImGui.End();
+                CloseIfClosed();
+                return;
+            }
+
             if (sim.State == Simulation.SimulationState.Initializing)
             {
                 ImGui.TextWrapped("Preparing the run: creating the modules. With an ELMFIRE fire, this is where the fire "

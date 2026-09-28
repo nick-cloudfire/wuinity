@@ -53,6 +53,29 @@ namespace WUInity.Workflow
         /// <summary>Scenario-relative path of the raster <see cref="PaintGrid"/> comes from.</summary>
         public string PaintGridReference { get; private set; }
 
+        /// <summary>The painted areas file is on another grid than <see cref="PaintGrid"/>.</summary>
+        public bool PaintingOnOtherGrid { get; private set; }
+
+        /// <summary>
+        /// When <see cref="PaintingOnOtherGrid"/>: the scenario-relative raster whose grid the painting's cells
+        /// match - where it was painted, so it can be moved onto the paint grid - or null when none of the
+        /// scenario's rasters has its size.
+        /// </summary>
+        public string PaintedOnReference { get; private set; }
+
+        /// <summary>
+        /// The namelist the last case build set aside (elmfire.data.kept-&lt;time&gt;, relative to the case folder)
+        /// before writing a new one, while that is the build that wrote the current namelist; else null.
+        /// </summary>
+        public string SetAsideNamelist { get; private set; }
+
+        /// <summary>The painted areas file, scenario-relative, or null.</summary>
+        public string PaintedAreasFile { get => _paintedPath; }
+
+        /// <summary>The painted areas file's size in cells, when it could be read.</summary>
+        public int PaintedWidth { get => _painted?.Width ?? 0; }
+        public int PaintedHeight { get => _painted?.Height ?? 0; }
+
         /// <summary>What stands between the scenario and a run, one line each; empty when it can run.</summary>
         public readonly List<string> RunBlockers = new List<string>();
 
@@ -101,6 +124,9 @@ namespace WUInity.Workflow
             RunWarnings.Clear();
             PaintGrid = null;
             PaintGridReference = null;
+            PaintingOnOtherGrid = false;
+            PaintedOnReference = null;
+            SetAsideNamelist = null;
             RefreshedAt = DateTime.Now;
 
             if (_in == null)
@@ -143,6 +169,8 @@ namespace WUInity.Workflow
 
             _paintedPath = _in.WildfireModule.GraphicalFireInputFile;
             _painted = Exists(_paintedPath) ? _files.Read(Abs(_paintedPath), "gfi", PaintedAreasInfo.Read, null) : null;
+            PaintingOnOtherGrid = _painted != null && PaintGrid != null && !_painted.SameSize(PaintGrid);
+            PaintedOnReference = PaintingOnOtherGrid ? FindPaintedOnGrid() : null;
 
             string population = _in.Population.PopulationFile;
             _households = Exists(population) ? _files.Read(Abs(population), "households", ScenarioFiles.CountPopulationRows, -1) : -1;
@@ -184,6 +212,46 @@ namespace WUInity.Workflow
             RunBlockers.Add("No scenario is open.");
         }
 
+        /// <summary>
+        /// Where a painting that is not on the paint grid was painted: the first of the scenario's rasters that
+        /// has its size and says where it is. A .gfi holds no georeferencing, so this is the only way to know.
+        /// </summary>
+        /// <remarks>
+        /// In order: the scenario's own terrain ([Landscape], which is what painting was done on before the fire
+        /// case was the grid of record - Mati's 616 x 590 mati_dem.tif), the grid a case rebuild replaced
+        /// (inputs/_previous_grid/dem.tif), and the DEM a scenario's own terrain step writes. The last two survive
+        /// "Use the case terrain" and a case build re-pointing [Landscape], so the painting can still be moved
+        /// afterwards.
+        /// </remarks>
+        private string FindPaintedOnGrid()
+        {
+            var candidates = new List<string>
+            {
+                _in.Landscape.GetReferenceFile(),
+                _in.Landscape.ElevationFile,
+                _case + "/inputs/" + PREACT.Utility.ElmfireCaseBuilder.PreviousGridFolder + "/dem.tif",
+                ScenarioFiles.Dem(_name),
+                _case + "/inputs/" + _name + "_dem.tif",
+            };
+
+            string paintGrid = Normalise(PaintGridReference);
+            foreach (string candidate in candidates)
+            {
+                if (string.IsNullOrWhiteSpace(candidate) || Normalise(candidate) == paintGrid || !Exists(candidate)) continue;
+                RasterInfo raster = Raster(candidate);
+                if (raster != null && raster.HasGeoTransform && _painted.SameSize(raster))
+                {
+                    return candidate.Replace('\\', '/');
+                }
+            }
+            return null;
+        }
+
+        private static string Normalise(string recorded) => (recorded ?? string.Empty).Replace('\\', '/').Trim().ToLowerInvariant();
+
+        /// <summary>What the paint grid is called in a button: the fire case's for ELMFIRE, the fire's otherwise.</summary>
+        private string MoveLabel => IsElmfire ? "Move painting onto the fire-case grid" : "Move painting onto the fire grid";
+
         public static string TitleOf(WorkflowStepId id)
         {
             switch (id)
@@ -200,7 +268,7 @@ namespace WUInity.Workflow
                 case WorkflowStepId.TriggerBoundary: return "Trigger boundary (k-PERIL)";
                 case WorkflowStepId.RunSimulation: return "Run one simulation";
                 case WorkflowStepId.Results: return "Results";
-                case WorkflowStepId.Campaign: return "Probabilistic campaign";
+                case WorkflowStepId.Campaign: return "Trigger campaign";
                 default: return id.ToString();
             }
         }
@@ -244,14 +312,17 @@ namespace WUInity.Workflow
                 s.Primary.Disable(s.BlockedBy);
             }
 
-            //Nothing that starts work can be started while work is running.
-            if (_ctx.SimulationActive || _ctx.StepActive)
+            //Nothing that starts work can be started while work is running - a campaign included: its realizations
+            //read the case a data step would rewrite. (The data steps refuse to start then anyway; this says so.)
+            if (_ctx.SimulationActive || _ctx.StepActive || _ctx.CampaignActive)
             {
                 foreach (StepAction a in Actions(s))
                 {
                     if (a.Enabled && StartsWork(a.Id))
                     {
-                        a.Disable(_ctx.SimulationActive ? "Not while a simulation is running." : "Not while \"" + _ctx.StepTitle + "\" is running.");
+                        a.Disable(_ctx.SimulationActive ? "Not while a simulation is running."
+                            : _ctx.StepActive ? "Not while \"" + _ctx.StepTitle + "\" is running."
+                            : "Not while a trigger campaign is running: its realizations read the case.");
                     }
                 }
             }
@@ -278,6 +349,8 @@ namespace WUInity.Workflow
                 case WorkflowAction.OpenFireAreas:
                 //The run window is where the blockers are listed; it will not start while they stand.
                 case WorkflowAction.OpenRun:
+                //Likewise the campaign window, which is also where a running campaign is watched and cancelled.
+                case WorkflowAction.OpenCampaign:
                     return true;
                 default:
                     return false;
@@ -297,7 +370,7 @@ namespace WUInity.Workflow
                 case WorkflowAction.RebuildFireCase:
                 case WorkflowAction.DownloadDemOnly:
                 case WorkflowAction.ApplyFireAreasToCase:
-                case WorkflowAction.OpenCampaign:
+                case WorkflowAction.MovePaintingToCaseGrid:
                     return true;
                 default:
                     return false;
@@ -437,7 +510,7 @@ namespace WUInity.Workflow
 
                 if (_ctx.Tools.Probed && !_ctx.Tools.HaveSumo)
                 {
-                    s.Warn("SUMO was not found on the machine PATH; building the network needs its netconvert.",
+                    s.Warn("SUMO was not found (SUMO_HOME, or a folder on PATH); building the network needs its netconvert.",
                         WorkflowAction.OpenExternalTools, "External tools");
                 }
             }
@@ -577,7 +650,16 @@ namespace WUInity.Workflow
             }
             else if (!fuelSource && caseFuel == null)
             {
-                s.Info("Name a fuel model raster (any CRS; it is warped onto the case grid), or download LANDFIRE's for a US domain.");
+                Vector2d at = _in.Simulation.LowerLeftLatLon;
+                Vector2d size = PREACT.Population.LocalGPWData.SizeToDegrees(at, _in.Simulation.DomainSize);
+                bool us = ScenarioFiles.IsInLandfireCoverage(at, new Vector2d(at.x + size.y, at.y + size.x));
+                s.Info(us
+                    ? "Name a fuel model raster (any CRS; it is warped onto the case grid), or download LANDFIRE's."
+                    : "Outside the US there is no fuel download here: name a fuel model raster of your own, coded as Scott & "
+                      + "Burgan 40 (or Anderson 13, with FuelModelStandard set to match) - a national or European fuel map "
+                      + "translated to those codes. Any CRS; it is warped onto the case grid. Canopy can come from the FIRE-RES "
+                      + "folder (CanopyDatasetFolder).",
+                    WorkflowAction.OpenSourceLayers, "Source layers");
             }
 
             //Canopy: a source, or a case that already has it.
@@ -749,6 +831,8 @@ namespace WUInity.Workflow
                     }
                 }
 
+                NamelistProvenance(s, e, namelist);
+
                 //Sources changed since the build.
                 string built = Abs(namelist);
                 foreach (KeyValuePair<string, string> layer in e.GetSourceRasters())
@@ -768,10 +852,21 @@ namespace WUInity.Workflow
                     RasterInfo own = Exists(elevation) ? Raster(elevation) : null;
                     //A case build sets [Landscape] to the case terrain itself (contract C1), so this is a scenario whose
                     //case was built before it did, or one whose terrain was changed by hand since.
-                    s.Warn("[Landscape] " + (string.IsNullOrEmpty(elevation) ? "names no terrain" : $"uses {elevation}"
+                    string text = "[Landscape] " + (string.IsNullOrEmpty(elevation) ? "names no terrain" : $"uses {elevation}"
                         + (own != null && !own.SameSize(_caseGrid) ? $" ({own.Width} x {own.Height})" : ""))
-                        + $", not the fire case's {caseDem} ({_caseGrid.Width} x {_caseGrid.Height}).",
-                        WorkflowAction.AdoptCaseTerrain, "Use the case terrain");
+                        + $", not the fire case's {caseDem} ({_caseGrid.Width} x {_caseGrid.Height}).";
+                    //The painting's own terrain is how it is known where the painting was; it goes onto the case grid
+                    //first, so switching the terrain cannot leave it on a grid nothing names any more.
+                    if (PaintingOnOtherGrid && PaintedOnReference != null
+                        && Normalise(PaintedOnReference) == Normalise(_in.Landscape.GetReferenceFile()))
+                    {
+                        s.Warn(text + " The painted areas are on that terrain's grid: move them onto the case grid first, "
+                            + "then use the case terrain.", WorkflowAction.MovePaintingToCaseGrid, MoveLabel);
+                    }
+                    else
+                    {
+                        s.Warn(text, WorkflowAction.AdoptCaseTerrain, "Use the case terrain");
+                    }
                 }
             }
 
@@ -786,14 +881,98 @@ namespace WUInity.Workflow
                 s.Summary = caseExists ? "Incomplete: " + string.Join(", ", missing) + " missing" : "Not built";
             }
 
-            s.Primary = new StepAction(WorkflowAction.BuildFireCase, done ? "Build missing layers" : "Build fire case",
-                "Builds only what the case does not already have. Takes minutes: a DEM, weather through WindNinja and Nelson, and the namelist.");
+            s.Primary = new StepAction(WorkflowAction.BuildFireCase, done ? "Update the case" : "Build fire case",
+                "Builds the layers the case does not have yet - a DEM, weather through WindNinja and Nelson - and keeps the "
+                + "ones it has, unless its grid no longer covers the domain (then it is re-cut and every layer carried "
+                + "onto it). The namelist is written again from the scenario every time; a hand-edited elmfire.data is "
+                + "set aside as elmfire.data.kept-<time>. Takes minutes.");
             s.Secondary.Add(new StepAction(WorkflowAction.RebuildFireCase, "Rebuild everything",
                 "Replaces every layer, the weather and the namelist - for a changed domain, cell size or source layer."));
             s.Secondary.Add(new StepAction(WorkflowAction.OpenFireModelSettings, "Fire model settings"));
             s.Secondary.Add(new StepAction(WorkflowAction.OpenFireBehaviour, "Fire behaviour"));
             s.Secondary.Add(new StepAction(WorkflowAction.PreviewNamelist, "Preview namelist"));
             return s;
+        }
+
+        /// <summary>
+        /// Whether the case's elmfire.data is the one its last build wrote, and whether that build set a
+        /// hand-edited one aside. Every build writes the namelist again from the scenario, so an edited one is
+        /// replaced - kept, not destroyed - unless it is named as the NamelistTemplate.
+        /// </summary>
+        private void NamelistProvenance(WorkflowStep s, ElmfireInput e, string namelist)
+        {
+            if (!string.IsNullOrEmpty(e.NamelistTemplate)) return;
+
+            string caseFolder = Abs(_case);
+            string namelistPath = Abs(namelist);
+            DateTime? written = _files.LastWriteUtc(namelistPath);
+
+            //The newest set-aside copy, when it was set aside by the build that wrote the namelist there now.
+            try
+            {
+                string newest = null;
+                DateTime newestAt = DateTime.MinValue;
+                if (_files.DirectoryExists(caseFolder))
+                {
+                    foreach (string kept in Directory.GetFiles(caseFolder, "elmfire.data.kept-*"))
+                    {
+                        string stamp = Path.GetFileName(kept).Substring("elmfire.data.kept-".Length);
+                        if (DateTime.TryParseExact(stamp, "yyyyMMdd_HHmmss", System.Globalization.CultureInfo.InvariantCulture,
+                                System.Globalization.DateTimeStyles.AssumeLocal, out DateTime at) && at > newestAt)
+                        {
+                            newestAt = at;
+                            newest = kept;
+                        }
+                    }
+                }
+                if (newest != null && written.HasValue && Math.Abs((written.Value.ToLocalTime() - newestAt).TotalMinutes) < 2.0)
+                {
+                    SetAsideNamelist = Path.GetFileName(newest);
+                    s.Info($"The last build set a namelist that had been edited by hand aside as {SetAsideNamelist}, and wrote "
+                        + "elmfire.data again from the scenario's settings. To run the hand-edited one as it is, name it as the "
+                        + "NamelistTemplate.", WorkflowAction.UseSetAsideNamelist, "Run " + SetAsideNamelist);
+                    return;
+                }
+            }
+            catch (Exception)
+            {
+                //A folder that cannot be listed says nothing either way.
+            }
+
+            //Not the namelist the last build wrote: the next build replaces it, and says so only in its log.
+            string recorded = ManifestValue(Abs(_case + "/" + PREACT.Utility.ElmfireCaseBuilder.SourceManifestName), "GeneratedNamelistSha256");
+            string current = _files.Read(namelistPath, "sha256", PREACT.Utility.ElmfireFingerprint.HashFile, null);
+            if (current == null || (recorded != null && string.Equals(recorded, current, StringComparison.OrdinalIgnoreCase)))
+            {
+                return;
+            }
+
+            s.Warn($"{namelist} is not the namelist the last build wrote ("
+                + (recorded == null ? "no build of this version recorded one" : "it was edited since") + "). The next build, "
+                + "Update the case or Apply to case writes it again from the scenario's settings and sets this one aside as "
+                + "elmfire.data.kept-<time>. To keep running it as it is, name it as the NamelistTemplate.",
+                WorkflowAction.KeepCaseNamelist, "Keep running it");
+        }
+
+        /// <summary>One key's value from a case manifest (key=value lines, # comments), or null.</summary>
+        private string ManifestValue(string path, string key)
+        {
+            if (path == null || !_files.Exists(path)) return null;
+            return _files.Read(path, "manifest:" + key, p =>
+            {
+                foreach (string raw in File.ReadAllLines(p))
+                {
+                    string line = raw.Trim();
+                    if (line.StartsWith("#")) continue;
+                    int eq = line.IndexOf('=');
+                    if (eq > 0 && string.Equals(line.Substring(0, eq).Trim(), key, StringComparison.OrdinalIgnoreCase))
+                    {
+                        string value = line.Substring(eq + 1).Trim();
+                        return value.Length == 0 ? null : value;
+                    }
+                }
+                return null;
+            }, null);
         }
 
         private WorkflowStep Terrain()
@@ -847,10 +1026,20 @@ namespace WUInity.Workflow
                 s.Error($"GraphicalFireInputFile names {_paintedPath}, which " + (Exists(_paintedPath) ? "cannot be read." : "does not exist."),
                     WorkflowAction.OpenFireAreas, "Paint again");
             }
-            else if (_painted != null && PaintGrid != null && !_painted.SameSize(PaintGrid))
+            else if (PaintingOnOtherGrid && PaintedOnReference != null)
+            {
+                //Painted on a grid the scenario still has: moving it is one step, and nothing is repainted.
+                s.Error($"The areas were painted on a {_painted.Width} x {_painted.Height} grid ({PaintedOnReference}); the fire grid "
+                    + $"({PaintGridReference}) is {PaintGrid.Width} x {PaintGrid.Height}. Move the painting onto it: each cell of the "
+                    + $"fire grid takes the painted value at its centre, in a new file beside {_paintedPath}, which is kept.",
+                    WorkflowAction.MovePaintingToCaseGrid, MoveLabel);
+            }
+            else if (PaintingOnOtherGrid)
             {
                 s.Error($"The areas were painted on a {_painted.Width} x {_painted.Height} grid; the fire grid ({PaintGridReference}) is "
-                    + $"{PaintGrid.Width} x {PaintGrid.Height}. They cannot be applied to it - repaint them on the fire grid.",
+                    + $"{PaintGrid.Width} x {PaintGrid.Height}, and none of the scenario's rasters is {_painted.Width} x {_painted.Height}, "
+                    + "so there is no telling which ground they were painted on. Point [Landscape] at the raster they were "
+                    + "painted on to move them, or repaint them on the fire grid.",
                     WorkflowAction.OpenFireAreas, "Repaint");
             }
             else if (_painted != null)
@@ -903,11 +1092,22 @@ namespace WUInity.Workflow
             if (IsElmfire)
             {
                 var apply = new StepAction(WorkflowAction.ApplyFireAreasToCase, "Apply to case",
-                    "Rebuilds the case keeping its layers, so the painted areas become its ignition_mask.tif and wui_area.tif. "
-                    + "The build reads the painted areas from their file, so unsaved strokes are offered a save first.");
+                    "Builds the case again so the painted areas become its ignition_mask.tif and wui_area.tif. Its other layers "
+                    + "are kept (unless its grid no longer covers the domain: then it is re-cut and they are carried onto it, "
+                    + "and so is the painting), and the namelist is written again from the scenario. The build reads the "
+                    + "painted areas from their file, so unsaved strokes are saved first.");
                 if (_painted == null && !_ctx.UnsavedFireStrokes) apply.Disable("Nothing painted yet.");
-                else if (_painted != null && !onGrid) apply.Disable("The painted areas are not on the case grid; repaint them first.");
+                else if (_painted != null && !onGrid) apply.Disable(PaintedOnReference != null
+                    ? "The painted areas are on another grid; move them onto the fire-case grid first."
+                    : "The painted areas are not on the case grid; repaint them first.");
                 s.Secondary.Add(apply);
+            }
+
+            if (PaintingOnOtherGrid && PaintedOnReference != null)
+            {
+                s.Secondary.Add(new StepAction(WorkflowAction.MovePaintingToCaseGrid, MoveLabel,
+                    $"Writes the painting onto {PaintGridReference} ({PaintGrid.Width} x {PaintGrid.Height}) as a new file, keeping "
+                    + $"{_paintedPath}, and points the scenario at it. Save the scenario afterwards to keep that."));
             }
             return s;
         }
@@ -1143,8 +1343,9 @@ namespace WUInity.Workflow
                     {
                         s.Error("No WuiAreaFile, so k-PERIL falls back to the painted WUI area - which is on another grid "
                             + $"({_painted.Width} x {_painted.Height}), so it refuses it and the run stops.",
-                            caseWuiExists ? WorkflowAction.UseCaseWuiArea : WorkflowAction.OpenFireAreas,
-                            caseWuiExists ? "Use " + caseWui : "Repaint");
+                            caseWuiExists ? WorkflowAction.UseCaseWuiArea
+                                : PaintedOnReference != null ? WorkflowAction.MovePaintingToCaseGrid : WorkflowAction.OpenFireAreas,
+                            caseWuiExists ? "Use " + caseWui : PaintedOnReference != null ? MoveLabel : "Repaint");
                     }
                     else
                     {
@@ -1172,17 +1373,18 @@ namespace WUInity.Workflow
                 else protectedOk = true;
             }
 
-            //The wind k-PERIL takes. For an ELMFIRE fire it is the fire's own; a path pinned into the scenario by a
-            //run that was then saved overrides that.
-            if (IsElmfire && !string.IsNullOrEmpty(k.WindSpeedFile))
+            //The wind k-PERIL takes. For an ELMFIRE fire it is the fire's own midflame wind and direction, and the
+            //scenario's two wind files are not used (EvacuationManager.ResolveTriggerWind says so in the log).
+            if (IsElmfire && (!string.IsNullOrEmpty(k.WindSpeedFile) || !string.IsNullOrEmpty(k.WindDirectionFile)))
             {
-                bool pinned = k.WindSpeedFile.Replace('\\', '/').EndsWith("inputs/ws.tif");
+                bool pinned = (k.WindSpeedFile ?? string.Empty).Replace('\\', '/').EndsWith("inputs/ws.tif");
                 //A run no longer writes these into the scenario (contract C4); this catches a .wui saved after an
                 //older run that did.
-                s.Warn(pinned
-                    ? $"WindSpeedFile names {k.WindSpeedFile} - pinned by an earlier run that was then saved. It overrides the fire's own wind; clear it."
-                    : $"WindSpeedFile ({k.WindSpeedFile}) overrides the wind of the fire itself.",
-                    WorkflowAction.ClearPinnedWind, "Clear it");
+                s.Info((pinned
+                        ? $"WindSpeedFile names {k.WindSpeedFile} - pinned by an earlier run that was then saved. "
+                        : "[kPERIL] names wind rasters of its own. ")
+                    + "An ELMFIRE fire brings its own midflame wind and direction, which k-PERIL takes instead, so they are "
+                    + "not used; clearing them says so.", WorkflowAction.ClearPinnedWind, "Clear them");
             }
 
             if (IsElmfire && _in.WildfireModule.ElmfireInput.SimulationTstopHours < 24.0)
@@ -1309,7 +1511,12 @@ namespace WUInity.Workflow
             DateTime? logWritten = _files.LastWriteUtc(log);
             bool ranSinceSaved = logWritten.HasValue && (!scenarioWritten.HasValue || logWritten.Value >= scenarioWritten.Value);
 
-            if (_ctx.LastRunFailed == true)
+            if (!string.IsNullOrEmpty(_ctx.LastRunRefusedBecause))
+            {
+                s.Warn("The last run did not start: the engine refused the scenario - " + _ctx.LastRunRefusedBecause,
+                    WorkflowAction.CheckScenario, "Check scenario");
+            }
+            else if (_ctx.LastRunFailed == true)
             {
                 s.Warn("The last run ended in an error; the console says why.", WorkflowAction.OpenRun, "Run again");
             }
@@ -1529,7 +1736,9 @@ namespace WUInity.Workflow
             {
                 BlockBy(s, WorkflowStepId.FireCase, "every realization runs on the case, which is not complete.");
             }
-            else if (areas != null && areas.Issues.Exists(i => i.Fix == WorkflowAction.ApplyFireAreasToCase || i.Fix == WorkflowAction.OpenFireAreas && i.Level == IssueLevel.Error))
+            else if (areas != null && areas.Issues.Exists(i => i.Fix == WorkflowAction.ApplyFireAreasToCase
+                         || i.Fix == WorkflowAction.MovePaintingToCaseGrid
+                         || i.Fix == WorkflowAction.OpenFireAreas && i.Level == IssueLevel.Error))
             {
                 BlockBy(s, WorkflowStepId.FireAreas, "the painted areas are not applied to the case (or not on its grid).");
             }
@@ -1537,11 +1746,24 @@ namespace WUInity.Workflow
             {
                 BlockBy(s, WorkflowStepId.None, "A simulation started from the GUI is using the case.");
             }
+            else if (_ctx.StepActive)
+            {
+                BlockBy(s, WorkflowStepId.None, "\"" + _ctx.StepTitle + "\" is running, and may be rewriting the files every realization reads.");
+            }
 
             if (_ctx.IsDirty && !_ctx.CampaignActive)
             {
                 //Not a blocker: the campaign window asks to save when Run is pressed.
                 s.Info("Unsaved changes: the campaign reads the scenario from its .wui, so Run asks to save them first.");
+            }
+
+            //The campaign CLI stops before its first fire when WindNinja cannot run, unless told to go ahead on uniform
+            //wind - which the step-5 warning alone does not say.
+            if (_ctx.Tools.Probed && !_ctx.Tools.HaveWindNinja)
+            {
+                s.Warn("No WindNinja: a campaign stops before its first fire unless \"Allow uniform weather\" is ticked in its "
+                    + "window, and then every fire runs under one wind for the whole domain.", WorkflowAction.OpenExternalTools,
+                    "External tools");
             }
 
             bool done = _files.Exists(final);

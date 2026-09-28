@@ -28,7 +28,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
 
             if (ImGui.BeginTabItem("Fire model"))
             {
-                FireInputTab.Draw(input);
+                using (Fields.ReadOnlyWhileBusy()) FireInputTab.Draw(input);
                 ImGui.EndTabItem();
             }
 
@@ -37,25 +37,25 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
             //feel like they were lost.
             if (ImGui.BeginTabItem("Fire behaviour"))
             {
-                DrawBehaviour(input);
+                using (Fields.ReadOnlyWhileBusy()) DrawBehaviour(input);
                 ImGui.EndTabItem();
             }
 
             if (ImGui.BeginTabItem("Fire areas"))
             {
-                Editors.FireAreasWindow.DrawSummary(input);
+                using (Fields.ReadOnlyWhileBusy()) Editors.FireAreasWindow.DrawSummary(input);
                 ImGui.EndTabItem();
             }
 
             if (ImGui.BeginTabItem("Smoke"))
             {
-                SmokeInputTab.Draw(input);
+                using (Fields.ReadOnlyWhileBusy()) SmokeInputTab.Draw(input);
                 ImGui.EndTabItem();
             }
 
             if (ImGui.BeginTabItem("Trigger boundary"))
             {
-                TriggerBoundaryInputTab.Draw(input);
+                using (Fields.ReadOnlyWhileBusy()) TriggerBoundaryInputTab.Draw(input);
                 ImGui.EndTabItem();
             }
 

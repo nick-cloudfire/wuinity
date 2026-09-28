@@ -18,6 +18,26 @@ namespace Assets.WUInity.GUI.DearIMGUI
     /// </remarks>
     public static class Fields
     {
+        /// <summary>An ImGui disabled block for a using statement: EndDisabled runs however the block is left.</summary>
+        public readonly struct DisabledScope : IDisposable
+        {
+            public DisabledScope(bool disabled)
+            {
+                ImGui.BeginDisabled(disabled);
+            }
+
+            public void Dispose()
+            {
+                ImGui.EndDisabled();
+            }
+        }
+
+        /// <summary>Fields drawn inside are read-only while a run or a data step holds the scenario.</summary>
+        public static DisabledScope ReadOnlyWhileBusy()
+        {
+            return new DisabledScope(ScenarioSession.EditingLocked);
+        }
+
         /// <summary>Something is set in a way that will not work, or is about to be lost.</summary>
         public static readonly Vector4 Warning = new Vector4(0.9f, 0.7f, 0.2f, 1f);
 

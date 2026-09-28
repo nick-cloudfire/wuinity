@@ -143,7 +143,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             //Everything drawn in simulation coordinates moves with the origin: the map tiles, the markers, the
             //border, the camera, the painter's grid and the road network.
-            PreactGUI.WUInity.RefreshScenarioView();
+            PreactGUI.WUInity.RefreshScenarioView(sameScenario: true);
             ScenarioSession.NotifyEdited("area of interest");
 
             _domainNote = hadData

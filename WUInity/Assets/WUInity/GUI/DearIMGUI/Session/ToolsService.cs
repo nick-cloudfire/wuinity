@@ -90,9 +90,13 @@ namespace Assets.WUInity.GUI.DearIMGUI
             });
         }
 
-        /// <summary>Called when the OpenTopography key was typed in, which needs no probe.</summary>
+        /// <summary>
+        /// Called when the OpenTopography key was typed in, which needs no probe. The key goes to where the case
+        /// build looks for one, so what unblocks step 5 is also what the build uses.
+        /// </summary>
         public static void KeyChanged()
         {
+            ScenarioDataSteps.ApplySessionOpenTopographyKey();
             _current.OpenTopographyKeySource = ScenarioDataSteps.OpenTopographyApiKeySource;
             Changed?.Invoke();
         }

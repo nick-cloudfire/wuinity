@@ -7,15 +7,20 @@ namespace Assets.WUInity.GUI.DearIMGUI
 {
     /// <summary>
     /// The default arrangement of the main dockspace: the workflow panel down the left, the console along the
-    /// bottom, the map in the middle. Applied the first time this layout version runs, and again on
-    /// View &gt; Reset window layout; after that ImGui keeps whatever the user arranges (for as long as ImGui's
-    /// settings are kept at all - see <see cref="SettingsPersist"/>).
+    /// bottom, the map in the middle. Laid out when the dockspace has no arrangement yet, when this layout version
+    /// has not run before, and on View &gt; Reset window layout; otherwise ImGui keeps whatever the user arranged.
     /// </summary>
     /// <remarks>
     /// ImGui.NET does not wrap the DockBuilder API (it is in imgui_internal.h), but the cimgui library that
     /// UImGui ships exports it on every platform (igDockBuilder* in win-x64/cimgui.dll, linux-x64/cimgui.so,
     /// osx/cimgui.dylib). It is called directly here. If an entry point is ever missing, the layout is
     /// skipped - windows then open where they were last, or float - and nothing else is affected.
+    ///
+    /// Where the arrangement is kept: the prefab's UImGui has no IniSettingsAsset, and UImGui then leaves ImGui its
+    /// default imgui.ini in the working folder (WUInity/ in the editor), so the dock nodes survive a restart. With
+    /// an IniSettingsAsset assigned the asset holds them instead. Whether to lay out is decided by the dock node
+    /// itself - does the dockspace have a split? - rather than by a PlayerPrefs flag alone, which disagreed with
+    /// imgui.ini as soon as one of the two was deleted and left the panels floating.
     /// </remarks>
     public static class DockLayout
     {
@@ -51,6 +56,13 @@ namespace Assets.WUInity.GUI.DearIMGUI
         [DllImport("cimgui", CallingConvention = CallingConvention.Cdecl)]
         private static extern void igDockBuilderFinish(uint nodeId);
 
+        [DllImport("cimgui", CallingConvention = CallingConvention.Cdecl)]
+        private static extern IntPtr igDockBuilderGetNode(uint nodeId);
+
+        [DllImport("cimgui", CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        private static extern bool ImGuiDockNode_IsSplitNode(IntPtr node);
+
         /// <summary>View &gt; Reset window layout: puts the panels back where they start, next frame.</summary>
         public static void RequestReset()
         {
@@ -80,12 +92,24 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 }
                 catch (Exception)
                 {
-                    //PlayerPrefs unavailable: lay it out every start rather than never.
+                    //PlayerPrefs unavailable: decided by the dock node alone.
+                    applied = LayoutVersion;
                 }
-                //UImGui keeps ImGui's settings only when an IniSettingsAsset is assigned to it (the prefab has
-                //none), so without one nothing of the arrangement survives a restart and the default is laid
-                //out every time rather than once.
-                if (applied < LayoutVersion || !SettingsPersist())
+
+                //Once, at start-up (ImGui has read its settings by the first frame): a dockspace with no split has
+                //never been laid out, or its arrangement was lost; a newer layout version is applied once.
+                bool arranged;
+                try
+                {
+                    IntPtr node = igDockBuilderGetNode(dockspaceId);
+                    arranged = node != IntPtr.Zero && ImGuiDockNode_IsSplitNode(node);
+                }
+                catch (Exception e) when (e is EntryPointNotFoundException || e is DllNotFoundException)
+                {
+                    arranged = false;
+                }
+
+                if (!arranged || applied < LayoutVersion)
                 {
                     _resetRequested = true;
                 }
@@ -118,23 +142,13 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 PlayerPrefs.SetInt(VersionKey, LayoutVersion);
                 PlayerPrefs.Save();
             }
-            catch (Exception e) when (e is EntryPointNotFoundException || e is DllNotFoundException)
+            catch (Exception e)
             {
+                //Any failure, not only a missing entry point: this runs inside the dockspace host window, and an
+                //exception out of it would skip that window's End and its style pops every frame.
                 _unavailable = true;
                 PREACT.Engine.Message(null, PREACT.Engine.LogType.Warning,
                     "The default window layout could not be applied (" + e.Message + "); windows float instead.");
-            }
-        }
-
-        private static unsafe bool SettingsPersist()
-        {
-            try
-            {
-                return ImGuiNET.ImGui.GetIO().IniFilename.Data != null;
-            }
-            catch (Exception)
-            {
-                return false;
             }
         }
 

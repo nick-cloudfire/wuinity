@@ -105,7 +105,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             ImGui.Separator();
             if (ImGui.MenuItem("Quit")) { ScenarioSession.RequestQuit(); }
-            Tooltip("Asks to save unsaved work, and stops a running simulation, data step or campaign first.");
+            Tooltip("Stops a running simulation, data step or campaign first and waits for it, then asks to save unsaved work.");
 
             ImGui.EndMenu();
         }
@@ -287,7 +287,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             Tooltip(ScenarioSession.SimulationActive ? "Stops the run." : "No simulation is running.");
 
             ImGui.Separator();
-            Item("Probabilistic trigger campaign...", WorkflowAction.OpenCampaign, WorkflowStepId.Campaign,
+            Item("Trigger campaign...", WorkflowAction.OpenCampaign, WorkflowStepId.Campaign,
                 "One fire, evacuation and trigger boundary per realization, aggregated into a probability raster.");
 
             ImGui.EndMenu();
@@ -348,7 +348,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 ? "Not written yet: run the simulation (Run > Run simulation, step 11)."
                 : kind == ResultsWindow.Kind.WuiArea
                 ? "The case has no wui_area.tif yet (steps 5 and 6)."
-                : "Not written yet: run a campaign (Run > Probabilistic trigger campaign, step 13).");
+                : "Not written yet: run a campaign (Run > Trigger campaign, step 13).");
         }
 
         // ------------------------------------------------------------------ View
@@ -377,6 +377,10 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 if (ImGui.MenuItem("Road network", string.Empty, roads)) { PreactGUI.WUInity.ShowRoadNetwork(!roads); }
                 Tooltip("The lanes of the scenario's SUMO network - the roads traffic is actually routed on. Needs the "
                     + "SUMO network to have been built (step 2).");
+
+                bool markers = visualizer == null || visualizer.MarkersVisible;
+                if (ImGui.MenuItem("Markers", string.Empty, markers, visualizer != null)) { visualizer.SetMarkersVisible(!markers); }
+                Tooltip("The destinations (in their colours) and the ignition points (white).");
 
                 bool result = ResultsWindow.IsShowing;
                 if (ImGui.MenuItem("Result overlay", string.Empty, result, result)) { ResultsWindow.Hide(); }
@@ -473,9 +477,11 @@ namespace Assets.WUInity.GUI.DearIMGUI
         {
             string text;
             Vector4 colour;
-            if (ScenarioSession.IsBusy)
+            //Read once: the campaign's state is written from its output thread, so the reason can go between two reads.
+            string busy = ScenarioSession.BusyReason;
+            if (!string.IsNullOrEmpty(busy))
             {
-                text = char.ToUpperInvariant(ScenarioSession.BusyReason[0]) + ScenarioSession.BusyReason.Substring(1);
+                text = char.ToUpperInvariant(busy[0]) + busy.Substring(1);
                 colour = new Vector4(0.35f, 0.6f, 0.95f, 1f);
             }
             else if (ScenarioSession.HasInput && ScenarioSession.IsDirty)

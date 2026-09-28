@@ -53,6 +53,15 @@ namespace Assets.WUInity.GUI.DearIMGUI
             Invalidate();
         }
 
+        /// <summary>
+        /// Subscribes to the session's events; from start-up (PreactGUI.SetManager), so the scenario reopened before
+        /// the first frame has its load-time findings too.
+        /// </summary>
+        public static void EnsureSubscribed()
+        {
+            Subscribe();
+        }
+
         private static void Subscribe()
         {
             if (_subscribed) return;
@@ -109,6 +118,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 CampaignActive = ScenarioSession.CampaignActive,
                 Tools = ToolsService.Current,
                 LastRunFailed = PreactGUI.WUInity?.LastRunFailed,
+                LastRunRefusedBecause = PreactGUI.WUInity != null && PreactGUI.WUInity.LastRunRefused
+                                        && PreactGUI.WUInity.LastRunRefusalReasons.Count > 0
+                    ? PreactGUI.WUInity.LastRunRefusalReasons[0] : null,
                 Requirements = _requirements,
                 RequirementsFresh = RequirementsFresh,
                 DistanceToLane = DistanceToLane,
@@ -214,11 +226,13 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 case WorkflowAction.BuildFireCase:
                 case WorkflowAction.RebuildFireCase:
                 case WorkflowAction.AdoptCaseTerrain:
+                case WorkflowAction.KeepCaseNamelist:
+                case WorkflowAction.UseSetAsideNamelist:
                 case WorkflowAction.DownloadDemOnly:
                 case WorkflowAction.ApplyFireAreasToCase:
+                case WorkflowAction.MovePaintingToCaseGrid:
                 case WorkflowAction.UseCaseWuiArea:
                 case WorkflowAction.ClearPinnedWind:
-                case WorkflowAction.OpenCampaign:
                     return true;
                 default:
                     return false;
@@ -226,6 +240,34 @@ namespace Assets.WUInity.GUI.DearIMGUI
         }
 
         // ------------------------------------------------------------------ doing things
+
+        /// <summary>
+        /// Moves the painting onto the paint grid, from the raster the model found it was painted on. Strokes made
+        /// on the paint grid since and not saved would be replaced by it, so that is asked first.
+        /// </summary>
+        private static void MovePainting()
+        {
+            string source = _model.PaintedOnReference;
+            if (!_model.PaintingOnOtherGrid || string.IsNullOrEmpty(source))
+            {
+                PREACT.Engine.Message(null, PREACT.Engine.LogType.Warning, "The painting is not on another grid the scenario "
+                    + "knows of, so there is nothing to move.");
+                return;
+            }
+
+            string paintedOn = $"{_model.PaintedWidth} x {_model.PaintedHeight} ({source})";
+            string target = _model.PaintGridReference;
+            global::WUInity.Painter painter = PreactGUI.WUInity?.Painter;
+            if (painter != null && painter.UnsavedFireStrokes)
+            {
+                ConfirmPrompt.AskToConfirm("Some areas were painted on " + target + " since the scenario was opened, and are "
+                    + "not saved. Moving the saved painting from " + paintedOn + " onto that grid replaces them.",
+                    "Move it, replacing them", () => ScenarioDataSteps.MovePaintingToGrid(source, target));
+                return;
+            }
+
+            ScenarioDataSteps.MovePaintingToGrid(source, target);
+        }
 
         /// <summary>Carries out a workflow action: opens the window it names or starts the work.</summary>
         public static void Perform(WorkflowAction action)
@@ -302,15 +344,59 @@ namespace Assets.WUInity.GUI.DearIMGUI
                     ScenarioDataSteps.AdoptCaseTerrain(input);
                     ScenarioSession.NotifyEdited("case terrain");
                     break;
+                case WorkflowAction.KeepCaseNamelist:
+                    //Resolved against the case folder first, and a template that is the case's own namelist is left
+                    //alone by every build.
+                    input.WildfireModule.ElmfireInput.NamelistTemplate = "elmfire.data";
+                    PREACT.Engine.Message(null, PREACT.Engine.LogType.Log, "[ELMFIRE] NamelistTemplate now names the case's own "
+                        + "elmfire.data, so builds keep it as it is and the Fire behaviour settings no longer reach it. Clear "
+                        + "NamelistTemplate (Fire model settings) to have it written from the scenario again.");
+                    //What the builder carries onto a re-cut grid is the layers it builds; a raster made by hand that the
+                    //namelist names by its stem is left on the old grid.
+                    PREACT.Engine.Message(null, PREACT.Engine.LogType.Warning, "If a build has to re-cut the case grid (its "
+                        + "dem.tif no longer covers the padded domain), only the layers the case is built from are carried "
+                        + "onto the new grid. A raster made by hand that this namelist names - a fuel layer with roads burned "
+                        + "in, say - stays on the old grid, and ELMFIRE then reads two grids. Name such a raster as the source "
+                        + "layer instead (Fuels, canopy and buildings), and it is warped onto whatever grid the case has.");
+                    ScenarioSession.NotifyEdited("namelist template");
+                    break;
+                case WorkflowAction.UseSetAsideNamelist:
+                    {
+                        string kept = _model.SetAsideNamelist;
+                        if (string.IsNullOrEmpty(kept)) break;
+                        input.WildfireModule.ElmfireInput.NamelistTemplate = kept;
+                        PREACT.Engine.Message(null, PREACT.Engine.LogType.Log, "[ELMFIRE] NamelistTemplate now names " + kept
+                            + ": runs use it as it is (only the grid, weather and ignition are filled in), and the Fire behaviour "
+                            + "settings no longer reach it.");
+                        ScenarioSession.NotifyEdited("namelist template");
+                        break;
+                    }
                 case WorkflowAction.OpenFireModelSettings: SettingsPageWindow.Open(SettingsPage.FireModel); break;
                 case WorkflowAction.OpenFireBehaviour: SettingsPageWindow.Open(SettingsPage.FireBehaviour); break;
                 case WorkflowAction.PreviewNamelist: Input.ElmfireNamelistPreviewWindow.Open(input.WildfireModule.ElmfireInput); break;
                 case WorkflowAction.DownloadDemOnly: ScenarioDataSteps.DownloadDemOnly(); break;
 
                 case WorkflowAction.OpenFireAreas: Editors.FireAreasWindow.Open(); break;
+                case WorkflowAction.MovePaintingToCaseGrid: MovePainting(); break;
                 case WorkflowAction.ApplyFireAreasToCase:
-                    ConfirmPrompt.AskToSave("applying the painted areas to the case", ScenarioDataSteps.ApplyPaintedAreasToCase);
-                    break;
+                    {
+                        //The build reads the painted areas from their file, so applying strokes that are not saved would
+                        //apply the old ones: here the only choice is to save first, or not to apply.
+                        global::WUInity.Painter painter = PreactGUI.WUInity?.Painter;
+                        if (painter != null && painter.UnsavedFireStrokes)
+                        {
+                            ConfirmPrompt.AskToConfirm("The painted areas have strokes that are not saved, and the case is built from "
+                                + "the saved file. Save the scenario (and the painted areas) and apply them?", "Save and apply", () =>
+                                {
+                                    if (ScenarioSession.Save()) ScenarioDataSteps.ApplyPaintedAreasToCase();
+                                });
+                        }
+                        else
+                        {
+                            ConfirmPrompt.AskToSave("applying the painted areas to the case", ScenarioDataSteps.ApplyPaintedAreasToCase);
+                        }
+                        break;
+                    }
 
                 case WorkflowAction.OpenDestinations: SettingsPageWindow.Open(SettingsPage.Destinations); break;
                 case WorkflowAction.OpenCurves: SettingsPageWindow.Open(SettingsPage.ResponseCurves); break;
@@ -332,8 +418,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 case WorkflowAction.OpenRun: RunSimulationWindow.Open(); break;
                 case WorkflowAction.OpenResults: ResultsWindow.Open(); break;
                 case WorkflowAction.OpenCampaign:
-                    //The window reseeds from the session and asks to save when Run is pressed: the campaign reads
-                    //the .wui on disk, so that is when unsaved edits matter.
+                    //Always opens - to set a campaign up, or to watch or cancel the one running. The window's Run is
+                    //what is gated (step 13's blocker, a GUI run, a data step), and it asks to save when pressed:
+                    //the campaign reads the .wui on disk, so that is when unsaved edits matter.
                     ProbabilisticTriggerWindow.Open();
                     break;
             }

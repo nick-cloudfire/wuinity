@@ -220,7 +220,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             // ---------------------------------------------------------------- create
             ImGui.Separator();
-            string problem = NewScenarioFactory.Validate(_s);
+            string problem = NewScenarioFactory.Validate(_s, GuiFiles.Exists);
             ImGui.BeginDisabled(problem != null);
             if (ImGui.Button("Create scenario###NewCreate"))
             {
@@ -265,7 +265,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
         private static void Create()
         {
             _problem = null;
-            string problem = NewScenarioFactory.Validate(_s);
+            string problem = NewScenarioFactory.Validate(_s, GuiFiles.Exists);
             if (problem != null)
             {
                 _problem = problem;

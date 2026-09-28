@@ -374,6 +374,20 @@ namespace WUInity
         /// <summary>Whether the last GUI run ended in an error, or null when there has been none.</summary>
         public bool? LastRunFailed { get; private set; }
 
+        /// <summary>
+        /// The last GUI run never started: the engine refused the scenario (its checklist had a critical item, or
+        /// there was no input). Also counted in <see cref="LastRunFailed"/>.
+        /// </summary>
+        public bool LastRunRefused { get; private set; }
+
+        /// <summary>What the engine was still missing when it refused the last run, as the parser words it.</summary>
+        public System.Collections.Generic.IReadOnlyList<string> LastRunRefusalReasons { get => _refusalReasons; }
+        private readonly List<string> _refusalReasons = new List<string>();
+
+        //The simulation the engine held before the run, to tell a run that never made one; and a stop asked for.
+        private Simulation _simulationBeforeRun;
+        private bool _stopRequestedThisRun;
+
         /// <summary>Raised on the main thread when a GUI-started run has finished, however it finished.</summary>
         public event System.Action RunFinished;
 
@@ -388,7 +402,34 @@ namespace WUInity
             _visualsExist = false;
             _runTaskReported = false;
             LastRunFailed = null;
+            LastRunRefused = false;
+            _refusalReasons.Clear();
+            _stopRequestedThisRun = false;
+            _simulationBeforeRun = _engine.Simulation;
             _runTask = _engine.RunSimulations(engineTask);
+
+            //The engine refuses before its first await, so a refused run is already complete here - and the
+            //checklist it judged is still the one published.
+            if (_runTask.IsCompleted && !_engine.LastRunSucceeded && ReferenceEquals(_engine.Simulation, _simulationBeforeRun))
+            {
+                CaptureRefusalReasons();
+            }
+        }
+
+        private void CaptureRefusalReasons()
+        {
+            _refusalReasons.Clear();
+            foreach (PREACTInput.InputRequirement requirement in PREACTInput.Requirements)
+            {
+                if (requirement.Critical)
+                {
+                    _refusalReasons.Add(requirement.ToString() + (string.IsNullOrEmpty(requirement.Message) ? "" : " - " + requirement.Message));
+                }
+            }
+            if (_refusalReasons.Count == 0)
+            {
+                _refusalReasons.Add(_input == null ? "No scenario was handed to the engine." : "The console says why.");
+            }
         }
 
         /// <summary>
@@ -416,12 +457,28 @@ namespace WUInity
                     Debug.LogException(e);
                 }
             }
+            else if (!_engine.LastRunSucceeded && ReferenceEquals(_engine.Simulation, _simulationBeforeRun))
+            {
+                //No simulation was made: the engine refused the scenario before starting, and returned normally.
+                //Reported as what it is, not as a run that "finished in 0.0 min".
+                failed = true;
+                LastRunRefused = true;
+                if (_refusalReasons.Count == 0) CaptureRefusalReasons();
+                Engine.Message(null, Engine.LogType.Warning, "The run did not start: the engine refused the scenario ("
+                    + string.Join("; ", _refusalReasons) + ").");
+            }
             else if (_engine.Simulation != null
                      && (_engine.Simulation.State == Simulation.SimulationState.Error || _engine.Simulation.StoppedDueToError))
             {
                 failed = true;
             }
+            else if (!_engine.LastRunSucceeded && !_stopRequestedThisRun)
+            {
+                //Ran, but reported errors (LastRunErrorCount) without a simulation in the Error state.
+                failed = true;
+            }
 
+            _simulationBeforeRun = null;
             LastRunFailed = failed;
             RunFinished?.Invoke();
         }
@@ -448,6 +505,7 @@ namespace WUInity
 
         public void StopSimulations()
         {
+            _stopRequestedThisRun = IsSimulationActive;
             HideAllRuntimeVisuals();
             _engine.CloseSimulations(false);
         }
@@ -858,7 +916,8 @@ namespace WUInity
 
             _input.WildfireModule.Data.ReloadLandscape(_input.Simulation, _input.WildfireModule, _input.Landscape, _input.RootFolder);
             _painter.SetLCPData(_input.WildfireModule.Data.LandscapeData);
-            _painter.ResetForScenario();
+            //The same scenario: strokes not saved yet stay unsaved (and are asked about), whatever the grid does.
+            _painter.ResetGrid();
         }
 
         /// <summary>
@@ -867,7 +926,7 @@ namespace WUInity
         /// have moved - a load, or the area of interest changed in Place and time, which used to move the
         /// simulation grid and leave all of these where they were.
         /// </summary>
-        public void RefreshScenarioView()
+        public void RefreshScenarioView(bool sameScenario = false)
         {
             if (_input == null)
             {
@@ -877,8 +936,10 @@ namespace WUInity
 
             //A different scenario is a different grid. The painter used to keep the first grid it resolved
             //for the whole session, textures and group ownership included, and wrote the next scenario's
-            //masks with the previous one's cell count.
-            _painter.ResetForScenario();
+            //masks with the previous one's cell count. The same scenario with its area moved keeps what was
+            //painted and not saved.
+            if (sameScenario) _painter.ResetGrid();
+            else _painter.ResetForScenario();
 
             //A different scenario is a different network, in a different frame. Dropped rather than reused,
             //which would draw the previous scenario's roads at this one's origin.
@@ -1195,6 +1256,26 @@ namespace WUInity
             _onPickCancelled = null;
             _onClicks(_clickLatLons);
             _onClicks = null;
+        }
+
+        /// <summary>
+        /// Abandons a position or area being picked, without calling back: the scenario it was for is no longer the
+        /// one open (another was opened meanwhile), so neither placing it nor reopening its editor would be right.
+        /// </summary>
+        public void CancelPick()
+        {
+            if (!_pickingPos && !_pickingBoundingBox)
+            {
+                return;
+            }
+
+            _pickingPos = false;
+            _onClick = null;
+            _pickingBoundingBox = false;
+            _onClicks = null;
+            _onPickCancelled = null;
+            if (_boundingBoxRenderer != null) _boundingBoxRenderer.gameObject.SetActive(false);
+            NewLogMessage("Picking on the map was cancelled: another scenario was opened.");
         }
 
         public void PickPosOnMap(System.Action<PREACT.Math.Vector2d> onClick, System.Action cancelled = null)

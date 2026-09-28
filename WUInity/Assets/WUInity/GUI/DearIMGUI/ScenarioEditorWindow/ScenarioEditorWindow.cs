@@ -65,8 +65,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
                         ImGui.TextDisabled("Read-only while " + ScenarioSession.BusyReason + ".");
                     }
 
-                    //Read-only while a run or a data step is using the scenario: they read it from another thread.
-                    ImGui.BeginDisabled(ScenarioSession.EditingLocked);
+                    //Read-only while a run or a data step is using the scenario: they read it from another thread. Only
+                    //the fields are disabled (Fields.ReadOnlyWhileBusy, in each tab), so the tabs can still be browsed
+                    //during an hours-long build.
                     if (ImGui.BeginTabBar("AllSettingsTabs"))
                     {
                         if (ImGui.BeginTabItem("Scenario###AllScenario"))
@@ -89,7 +90,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
                         ImGui.EndTabBar();
                     }
-                    ImGui.EndDisabled();
                 }
             }
             ImGui.End();

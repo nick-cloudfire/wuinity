@@ -48,37 +48,37 @@ namespace Assets.WUInity.GUI.DearIMGUI
         {
             if (ImGui.BeginTabItem("Modules"))
             {
-                DrawModules(input);
+                using (Fields.ReadOnlyWhileBusy()) DrawModules(input);
                 ImGui.EndTabItem();
             }
 
             if (ImGui.BeginTabItem("Population"))
             {
-                DrawPopulation(input);
+                using (Fields.ReadOnlyWhileBusy()) DrawPopulation(input);
                 ImGui.EndTabItem();
             }
 
             if (ImGui.BeginTabItem("Destinations"))
             {
-                DrawDestinations(input);
+                using (Fields.ReadOnlyWhileBusy()) DrawDestinations(input);
                 ImGui.EndTabItem();
             }
 
             if (ImGui.BeginTabItem("Response curves"))
             {
-                DrawResponseCurves(input);
+                using (Fields.ReadOnlyWhileBusy()) DrawResponseCurves(input);
                 ImGui.EndTabItem();
             }
 
             if (ImGui.BeginTabItem("Demographics"))
             {
-                DrawDemographics(input);
+                using (Fields.ReadOnlyWhileBusy()) DrawDemographics(input);
                 ImGui.EndTabItem();
             }
 
             if (ImGui.BeginTabItem("Evacuation groups"))
             {
-                DrawGroups(input);
+                using (Fields.ReadOnlyWhileBusy()) DrawGroups(input);
                 ImGui.EndTabItem();
             }
         }

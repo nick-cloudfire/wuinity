@@ -153,6 +153,34 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             Fields.Hint("Everything here is painted on this grid: the fire's own, which the case's masks,",
                         "the evacuation groups and k-PERIL all share.");
 
+            //A painting saved on another grid cannot be shown or added to here; painting would start from nothing
+            //and its first save would be the only one on this grid. Moving it is the one thing to do first.
+            bool movable = model.PaintingOnOtherGrid && !string.IsNullOrEmpty(model.PaintedOnReference);
+            if (model.PaintingOnOtherGrid)
+            {
+                Fields.Caution($"The saved painting ({model.PaintedAreasFile}) is on a {model.PaintedWidth} x {model.PaintedHeight} grid"
+                    + (movable ? $", {model.PaintedOnReference}'s." : ", which none of the scenario's rasters matches."));
+                if (movable)
+                {
+                    ImGui.BeginDisabled(ScenarioSession.IsBusy);
+                    if (ImGui.Button((isElmfire ? "Move painting onto the fire-case grid" : "Move painting onto the fire grid") + "###MovePainting"))
+                    {
+                        WorkflowService.Perform(WorkflowAction.MovePaintingToCaseGrid);
+                    }
+                    ImGui.EndDisabled();
+                    if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                    {
+                        ImGui.SetTooltip(ScenarioSession.IsBusy ? ScenarioSession.BusyTooltip
+                            : "Each cell of " + model.PaintGridReference + " takes the painted value at its centre. Written as a new "
+                              + "file beside " + model.PaintedAreasFile + ", which is kept; the scenario then names the new one.");
+                    }
+                }
+                else
+                {
+                    Fields.Hint("Painting here starts from nothing; saving writes a new file and keeps the old one.");
+                }
+            }
+
             ImGui.SeparatorText("Area being painted");
             for (int i = 0; i < Modes.Length; ++i)
             {
@@ -191,9 +219,18 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
 
             if (!Painting)
             {
+                //Not while a campaign runs either (editing is locked for a run or a data step already).
+                bool busy = ScenarioSession.IsBusy;
+                ImGui.BeginDisabled(movable || busy);
                 if (ImGui.Button("Start painting"))
                 {
                     StartPainting();
+                }
+                ImGui.EndDisabled();
+                if ((movable || busy) && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                {
+                    ImGui.SetTooltip(busy ? ScenarioSession.BusyTooltip
+                        : "Move the saved painting onto this grid first: until then it cannot be shown or added to.");
                 }
             }
             else if (ImGui.Button("Stop painting"))
@@ -224,7 +261,8 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                 if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
                 {
                     ImGui.SetTooltip(apply == null ? "" : !apply.Enabled ? apply.Tooltip
-                        : "Rebuilds the case keeping its layers, so these areas become its ignition_mask.tif and wui_area.tif.");
+                        : "Builds the case again so these areas become its ignition_mask.tif and wui_area.tif. Its other layers "
+                          + "are kept unless its grid has to be re-cut, and the namelist is written again from the scenario.");
                 }
             }
 
@@ -241,7 +279,8 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             {
                 foreach (StepIssue issue in areas.Issues)
                 {
-                    if (issue.Level == IssueLevel.Error) Fields.Caution(issue.Text);
+                    //The painting on another grid is said, with its button, under Grid above.
+                    if (issue.Level == IssueLevel.Error && issue.Fix != WorkflowAction.MovePaintingToCaseGrid) Fields.Caution(issue.Text);
                 }
             }
         }
@@ -332,7 +371,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
 
         private static void Save(PREACTInput input)
         {
-            string written = PreactGUI.WUInity.Painter.SavePaintedFireAreas(input.RootFolder);
+            string written = PreactGUI.WUInity.Painter.SavePaintedFireAreas(input.RootFolder, input.WildfireModule.GraphicalFireInputFile);
             if (string.IsNullOrEmpty(written))
             {
                 return;

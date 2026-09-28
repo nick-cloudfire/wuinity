@@ -29,7 +29,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
         private static DateTime _startedAt;
         private static string _lastResult = string.Empty;
+        private static readonly List<string> _lastRefusal = new List<string>();
         private static bool _stopRequested;
+        private static bool _gateRechecked;
 
         public static void Open()
         {
@@ -51,6 +53,13 @@ namespace Assets.WUInity.GUI.DearIMGUI
         {
             if (_subscribed) return;
             _subscribed = true;
+            //The last run's result is the previous scenario's once another is opened.
+            ScenarioSession.ScenarioChanged += () =>
+            {
+                _lastResult = string.Empty;
+                _lastRefusal.Clear();
+                _runAnyway = false;
+            };
             if (PreactGUI.WUInity != null)
             {
                 PreactGUI.WUInity.RunFinished += OnRunFinished;
@@ -198,6 +207,11 @@ namespace Assets.WUInity.GUI.DearIMGUI
             if (model.RunBlockers.Count > 0)
             {
                 ImGui.Checkbox("Run anyway, knowing it may stop part-way###RunAnyway", ref _runAnyway);
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("Skips the workflow's blockers listed above. What the scenario check lists as required "
+                        + "still stops the run: the engine refuses a scenario with a required item missing.");
+                }
             }
 
             ImGui.Separator();
@@ -222,6 +236,10 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 ImGui.SeparatorText("Last run");
                 if (PreactGUI.WUInity.LastRunFailed == true) Fields.Caution(_lastResult);
                 else ImGui.TextWrapped(_lastResult);
+                for (int i = 0; i < _lastRefusal.Count && i < 8; ++i)
+                {
+                    ImGui.BulletText(_lastRefusal[i]);
+                }
                 if (ImGui.Button("Results")) ResultsWindow.Open();
                 ImGui.SameLine();
                 if (ImGui.Button("Live output")) LiveOutputWindow.Open();
@@ -339,9 +357,16 @@ namespace Assets.WUInity.GUI.DearIMGUI
             //The engine refuses a scenario whose checklist has a critical item, and it judges by the last parse -
             //which is the load, before any edit made since. So the scenario is checked as it is now first, and a
             //refusal is shown here, with its reasons, instead of as a line in the console.
-            if (!WorkflowService.RequirementsFresh)
+            //The gate is the checklist of the last parse anywhere - a campaign window reading its base scenario
+            //publishes one too. When it disagrees with this scenario's own current check, the check runs again so
+            //the gate judges this scenario (once: a second disagreement is left for the engine to report).
+            bool gateStale = WorkflowService.RequirementsFresh && CriticalRequirements().Count == 0
+                             && !PREACT.Input.PREACTInput.RequirementsMet && !_gateRechecked;
+            if (!WorkflowService.RequirementsFresh || gateStale)
             {
+                _gateRechecked = gateStale;
                 _lastResult = string.Empty;
+                _lastRefusal.Clear();
                 ScenarioCheckWindow.Check(ok =>
                 {
                     if (ok)
@@ -357,8 +382,10 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 return;
             }
 
+            _gateRechecked = false;
             _startedAt = DateTime.Now;
             _lastResult = string.Empty;
+            _lastRefusal.Clear();
             _stopRequested = false;
 
             var task = new EngineTask(_numberOfRuns, 0,
@@ -389,7 +416,15 @@ namespace Assets.WUInity.GUI.DearIMGUI
             TimeSpan took = DateTime.Now - _startedAt;
             Simulation sim = PreactGUI.Engine.Simulation;
             bool failed = PreactGUI.WUInity.LastRunFailed == true;
-            if (_stopRequested)
+            _lastRefusal.Clear();
+            if (PreactGUI.WUInity.LastRunRefused)
+            {
+                //Refused before it started: saying "finished" would read as a run that happened.
+                _lastRefusal.AddRange(PreactGUI.WUInity.LastRunRefusalReasons);
+                _lastResult = "Not run: the engine refused the scenario - it still needs:";
+                ConsoleWindow.Open();
+            }
+            else if (_stopRequested)
             {
                 //A stop during the fire ends the run as "did not start" in the engine's terms; to the person who
                 //pressed Stop it is simply stopped.
@@ -398,8 +433,10 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
             else
             {
+                int errors = PreactGUI.Engine.LastRunErrorCount;
                 _lastResult = failed
-                    ? $"Ended in an error after {took.TotalMinutes:0.#} min - the console has what led up to it."
+                    ? $"Ended in an error after {took.TotalMinutes:0.#} min" + (errors > 0 ? $" ({errors} error(s) reported)" : "")
+                      + " - the console has what led up to it."
                     : $"Finished in {took.TotalMinutes:0.#} min" + (sim != null ? $" ({sim.State})." : ".");
             }
             _stopRequested = false;

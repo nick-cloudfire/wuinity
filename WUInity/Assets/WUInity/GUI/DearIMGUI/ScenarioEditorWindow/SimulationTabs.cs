@@ -22,19 +22,19 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
 
             if (ImGui.BeginTabItem("Place and time"))
             {
-                SimulationInputTab.Draw(input);
+                using (Fields.ReadOnlyWhileBusy()) SimulationInputTab.Draw(input);
                 ImGui.EndTabItem();
             }
 
             if (ImGui.BeginTabItem("Terrain"))
             {
-                LandscapeInputTab.Draw(input);
+                using (Fields.ReadOnlyWhileBusy()) LandscapeInputTab.Draw(input);
                 ImGui.EndTabItem();
             }
 
             if (ImGui.BeginTabItem("Weather"))
             {
-                WeatherInputTab.Draw(input.Weather);
+                using (Fields.ReadOnlyWhileBusy()) WeatherInputTab.Draw(input.Weather);
                 ImGui.EndTabItem();
             }
 

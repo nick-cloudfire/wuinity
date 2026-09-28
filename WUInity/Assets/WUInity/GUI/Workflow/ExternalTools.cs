@@ -19,7 +19,7 @@ namespace WUInity.Workflow
         public string WindNinjaExe = string.Empty;
         public string WindNinjaOverride = string.Empty;
 
-        /// <summary>SUMO's bin folder as the engine found it on the machine PATH.</summary>
+        /// <summary>SUMO's bin folder as the engine found it (SUMO_HOME/bin, then PATH).</summary>
         public string SumoBin = string.Empty;
         public string ProjLib = string.Empty;
         public string ProjData = string.Empty;

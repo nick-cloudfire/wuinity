@@ -44,10 +44,32 @@ namespace Assets.WUInity.GUI.DearIMGUI
         private static string _status = string.Empty;
         private static volatile bool _busy;
         private static volatile bool _lastFailed;
+        private static volatile bool _stopRequested;
         public static string Status { get => _status; }
         public static bool Busy { get => _busy; }
         /// <summary>The step or chain running now, or last run.</summary>
         public static string CurrentTitle { get => _progressTitle; }
+
+        /// <summary>A stop was asked for the running step; it ends after the link it is in.</summary>
+        public static bool StopRequested { get => _stopRequested; }
+
+        /// <summary>
+        /// Stops the running step or chain: no further link starts, and an ELMFIRE or WindNinja process it started is
+        /// killed now. A download or a GDAL warp under way finishes first - they cannot be interrupted - so
+        /// <see cref="Busy"/> stays true until it has.
+        /// </summary>
+        public static void RequestStop()
+        {
+            if (!_busy || _stopRequested)
+            {
+                return;
+            }
+
+            _stopRequested = true;
+            _status = "Stopping " + _progressTitle + "...";
+            LogStep("Stop requested: nothing further starts; ELMFIRE and WindNinja are stopped at once, a download under way finishes first.");
+            PREACT.Utility.ElmfireRunner.CancelAll();
+        }
 
         /// <summary>The workflow step the running (or last) chain belongs to.</summary>
         public static WorkflowStepId Owner { get; private set; }
@@ -76,29 +98,50 @@ namespace Assets.WUInity.GUI.DearIMGUI
         //for a key that should outlive the session and never reach the scenario file, which is meant to
         //be shared.
         //
-        //The two fallbacks below are for the case where that file has not been made yet, so the step is
-        //not simply unusable until someone finds the template.
+        //The fallback below is for the case where that file has not been made yet, so the step is not
+        //simply unusable until someone finds the template. The case build does not take a key from the
+        //GUI - the engine finds its own (PREACT.Utility.OpenTopographyKey: the environment, then the same
+        //file) - so a key typed here is put into this process's environment, where the build, and a
+        //campaign CLI started from here, find it. It never leaves the process.
         public static string OpenTopographyApiKeyOverride = string.Empty;
 
+        private const string OpenTopographyVariable = "OPENTOPOGRAPHY_API_KEY";
+
+        //What the environment held before anything typed here was put into it, and what was put in.
+        private static readonly string _environmentKeyAtStart = System.Environment.GetEnvironmentVariable(OpenTopographyVariable);
+        private static string _sessionKeyInEnvironment;
+
+        /// <summary>The environment's key, unless it is only the one typed in for this session.</summary>
+        private static string EnvironmentKey
+        {
+            get
+            {
+                string value = System.Environment.GetEnvironmentVariable(OpenTopographyVariable);
+                if (string.IsNullOrWhiteSpace(value)) return null;
+                if (_sessionKeyInEnvironment != null && value.Trim() == _sessionKeyInEnvironment) return null;
+                return value.Trim();
+            }
+        }
+
         /// <summary>
-        /// The key that will actually be used, and where it came from. The configuration file wins, so a
-        /// key typed here once cannot quietly shadow the one the file supplies from then on. Main thread
-        /// only (it reads a Unity resource).
+        /// The key that will actually be used, and where it came from, in the engine's order: the environment,
+        /// then the configuration file, then a key typed in for this session. Main thread only (it reads a
+        /// Unity resource).
         /// </summary>
         public static string EffectiveOpenTopographyApiKey
         {
             get
             {
+                string fromEnvironment = EnvironmentKey;
+                if (fromEnvironment != null)
+                {
+                    return fromEnvironment;
+                }
+
                 string fromFile = global::WUInity.OpenTopographyAccess.ApiKey;
                 if (!string.IsNullOrWhiteSpace(fromFile))
                 {
                     return fromFile.Trim();
-                }
-
-                string fromEnvironment = System.Environment.GetEnvironmentVariable("OPENTOPOGRAPHY_API_KEY");
-                if (!string.IsNullOrWhiteSpace(fromEnvironment))
-                {
-                    return fromEnvironment.Trim();
                 }
 
                 return OpenTopographyApiKeyOverride.Trim();
@@ -109,19 +152,51 @@ namespace Assets.WUInity.GUI.DearIMGUI
         {
             get
             {
+                if (EnvironmentKey != null)
+                {
+                    return "the OPENTOPOGRAPHY_API_KEY environment variable";
+                }
                 if (!string.IsNullOrWhiteSpace(global::WUInity.OpenTopographyAccess.ApiKey))
                 {
                     return "Resources/OpenTopography/OpenTopographyConfiguration.txt";
-                }
-                if (!string.IsNullOrWhiteSpace(System.Environment.GetEnvironmentVariable("OPENTOPOGRAPHY_API_KEY")))
-                {
-                    return "the OPENTOPOGRAPHY_API_KEY environment variable";
                 }
                 if (!string.IsNullOrWhiteSpace(OpenTopographyApiKeyOverride))
                 {
                     return "typed in for this session only";
                 }
                 return string.Empty;
+            }
+        }
+
+        /// <summary>
+        /// Puts the key typed in for this session where the engine looks for one - this process's environment -
+        /// when neither the environment nor the configuration file supplies one; clears it again when the field
+        /// is emptied. Called when the field changes and before a step that downloads terrain.
+        /// </summary>
+        public static void ApplySessionOpenTopographyKey()
+        {
+            string typed = OpenTopographyApiKeyOverride.Trim();
+            bool suppliedElsewhere = !string.IsNullOrWhiteSpace(_environmentKeyAtStart)
+                                     || !string.IsNullOrWhiteSpace(global::WUInity.OpenTopographyAccess.ApiKey);
+            if (suppliedElsewhere)
+            {
+                return;
+            }
+
+            string value = typed.Length == 0 ? null : typed;
+            if (value == _sessionKeyInEnvironment)
+            {
+                return;
+            }
+
+            try
+            {
+                System.Environment.SetEnvironmentVariable(OpenTopographyVariable, value);
+                _sessionKeyInEnvironment = value;
+            }
+            catch (Exception e)
+            {
+                Engine.Message(null, Engine.LogType.Warning, "Could not hand the OpenTopography key to the case build: " + e.Message);
             }
         }
 
@@ -271,6 +346,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             _busy = true;
             _lastFailed = false;
+            _stopRequested = false;
             Owner = owner;
             _status = title + "...";
             _progressWindowOpen = true;
@@ -288,6 +364,14 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 int ran = 0;
                 foreach (ChainLink link in links)
                 {
+                    if (_stopRequested)
+                    {
+                        ok = false;
+                        failure = title + " STOPPED before " + link.Title.ToLowerInvariant() + ".";
+                        LogStep(failure);
+                        break;
+                    }
+
                     bool needed;
                     try { needed = link.Needed(ctx); }
                     catch { needed = true; }
@@ -312,7 +396,19 @@ namespace Assets.WUInity.GUI.DearIMGUI
                     catch (Exception e)
                     {
                         ok = false;
-                        failure = link.Title + " FAILED: " + (e is AggregateException ae ? ae.GetBaseException().Message : e.Message);
+                        failure = (_stopRequested ? link.Title + " STOPPED: " : link.Title + " FAILED: ")
+                                  + (e is AggregateException ae ? ae.GetBaseException().Message : e.Message);
+                        LogStep(failure);
+                        break;
+                    }
+
+                    //A link that finished although it was asked to stop - a case build whose WindNinja was killed can
+                    //carry on with uniform wind - is not a result to trust.
+                    if (_stopRequested)
+                    {
+                        ok = false;
+                        failure = link.Title + " STOPPED: it finished after the stop was asked for, so what it made may be "
+                                  + "incomplete; run it again.";
                         LogStep(failure);
                         break;
                     }
@@ -356,6 +452,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             _status = summary;
             _lastFailed = !ok;
             _busy = false;
+            _stopRequested = false;
             _progressFraction = 1f;
 
             if (stillOpen && (ctx.Writes.Count > 0 || ctx.ChangedInPlace))
@@ -380,6 +477,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             _busy = true;
             _lastFailed = false;
+            _stopRequested = false;
             Owner = WorkflowStepId.None;
             _status = title + "...";
             _progressWindowOpen = true;
@@ -400,6 +498,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 PreactGUI.Post(() =>
                 {
                     _busy = false;
+                    _stopRequested = false;
                     _lastFailed = failure != null;
                     _progressFraction = 1f;
                     _status = failure ?? title + ": done.";
@@ -480,6 +579,22 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 ImGui.SetScrollHereY(1.0f);
             }
             ImGui.EndChild();
+
+            if (_busy)
+            {
+                ImGui.BeginDisabled(_stopRequested);
+                if (ImGui.Button(_stopRequested ? "Stopping..." : "Stop"))
+                {
+                    RequestStop();
+                }
+                ImGui.EndDisabled();
+                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                {
+                    ImGui.SetTooltip("Nothing further starts; ELMFIRE and WindNinja are stopped at once. A download or a raster "
+                        + "warp under way finishes first.");
+                }
+                ImGui.SameLine();
+            }
 
             ImGui.BeginDisabled(_busy);
             if (ImGui.Button("Close"))
@@ -618,7 +733,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 throw new FileNotFoundException("Download the OSM data first.", osmPath);
             }
 
-            //The engine already locates SUMO's bin folder from the machine PATH, so the builder is
+            //The engine already locates SUMO's bin folder (SUMO_HOME, then PATH), so the builder is
             //given that before it starts looking for netconvert itself. The network is projected into the
             //simulation's own UTM zone (netconvert --proj): left to itself netconvert picks the zone of the
             //OSM data's centre, which for a domain pinned to a neighbouring zone, or straddling a boundary, is
@@ -919,7 +1034,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
         /// Builds the ELMFIRE case: the rasters, the weather series and the namelist. With
         /// <paramref name="rebuildExisting"/> every layer is made again, as for a changed domain or cell size.
         /// </summary>
-        private static Task DoBuildElmfireCase(StepContext ctx, bool rebuildExisting)
+        private static Task DoBuildElmfireCase(StepContext ctx, bool rebuildExisting, PaintingFacts painting = null)
         {
             ElmfireInput settings = ctx.Input.WildfireModule.ElmfireInput;
             bool previous = settings.RebuildExistingLayers;
@@ -928,6 +1043,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             ctx.ChangedInPlace = true;
             bool ok;
             string problem;
+            DateTime started = DateTime.Now;
             try
             {
                 //Contract C1: on success this points [Landscape] at the case's dem/slp/asp, [kPERIL] WuiAreaFile at
@@ -950,7 +1066,248 @@ namespace Assets.WUInity.GUI.DearIMGUI
             //The terrain the build pointed [Landscape] at is read, and the painter goes onto the case grid; on the
             //main thread, after Finish has applied the step.
             ctx.Then(() => PreactGUI.WUInity?.ReloadLandscape());
+
+            //Every build writes the namelist again from the scenario. One edited by hand is set aside first, which the
+            //builder only says in its log; said where it is seen as well.
+            string setAside = NamelistSetAsideSince(GuiFiles.Resolve(ctx.Root, ScenarioFiles.CaseDirectory(ctx.Input)), started);
+            if (setAside != null)
+            {
+                string message = "A hand-edited namelist was set aside as " + setAside + ": the build wrote elmfire.data again from "
+                    + "the scenario's settings. To run the hand-edited one as it is, name it as [ELMFIRE] NamelistTemplate "
+                    + "(workflow step 5 offers to).";
+                LogStep(message);
+                ctx.Then(() => Engine.Message(null, Engine.LogType.Warning, message));
+            }
+
+            //The build has just placed the painting on the case grid as ignition_mask.tif and wui_area.tif, through the
+            //grid it was painted on; the painting file itself follows it there, or the next build (and the painter)
+            //would be left with a painting on a grid nothing names any more.
+            if (painting != null)
+            {
+                CarryPaintingOntoCaseGrid(ctx, painting);
+            }
+
+            //Strokes not saved (the save question was answered "Don't save") are in the scenario's masks on the grid the
+            //painter had. A re-cut grid would drop them; they are carried onto it too, and stay unsaved.
+            if (painting != null && painting.UnsavedStrokeGrid.x > 0)
+            {
+                Vector2int strokes = painting.UnsavedStrokeGrid;
+                string setAsideGrid = ScenarioFiles.CaseInput(ctx.Input, PREACT.Utility.ElmfireCaseBuilder.PreviousGridFolder + "/dem.tif");
+                string caseGrid = ScenarioFiles.CaseInput(ctx.Input, "dem.tif");
+                ctx.Then(() => CarryUnsavedStrokes(ctx.Input, strokes, setAsideGrid, caseGrid));
+            }
             return Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// On the main thread after a build: when the case grid changed under unsaved fire strokes, and the grid they
+        /// were painted on is the one the build set aside, moves them onto the new grid in memory.
+        /// </summary>
+        private static void CarryUnsavedStrokes(PREACTInput input, Vector2int strokeGrid, string previousGrid, string currentGrid)
+        {
+            global::WUInity.Painter painter = PreactGUI.WUInity?.Painter;
+            if (input == null || input != ScenarioSession.Input || painter == null || !painter.UnsavedFireStrokes) return;
+
+            PREACT.Input.WildfireData data = input.WildfireModule.Data;
+            int cells = strokeGrid.x * strokeGrid.y;
+            if (data.WuiArea == null || data.WuiArea.Length != cells) return;
+
+            try
+            {
+                var to = PREACT.Utility.PaintedMaskResampler.Grid.FromRaster(GuiFiles.Resolve(input.RootFolder, currentGrid));
+                if (to.Ncols == strokeGrid.x && to.Nrows == strokeGrid.y) return;
+
+                string previousPath = GuiFiles.Resolve(input.RootFolder, previousGrid);
+                if (previousPath == null || !File.Exists(previousPath))
+                {
+                    return;
+                }
+                var from = PREACT.Utility.PaintedMaskResampler.Grid.FromRaster(previousPath);
+                if (from.Ncols != strokeGrid.x || from.Nrows != strokeGrid.y) return;
+
+                var masks = new PREACT.Utility.PaintedMaskResampler.Masks
+                {
+                    Ncols = from.Ncols, Nrows = from.Nrows, WuiArea = data.WuiArea, RandomIgnition = data.RandomIgnition,
+                    InitialIgnition = data.InitialIgnition, ManualTriggerBuffer = data.ManualTriggerBuffer,
+                };
+                var moved = PREACT.Utility.PaintedMaskResampler.Resample(masks, from, to, out bool _);
+                data.WuiArea = moved.WuiArea;
+                data.RandomIgnition = moved.RandomIgnition;
+                data.InitialIgnition = moved.InitialIgnition;
+                data.ManualTriggerBuffer = moved.ManualTriggerBuffer;
+                data.PaintedCellCount = new Vector2int(to.Ncols, to.Nrows);
+                Engine.Message(null, Engine.LogType.Log, $"The fire areas painted and not saved were carried from the old "
+                    + $"{from.Ncols} x {from.Nrows} case grid onto the new {to.Ncols} x {to.Nrows} one; they are still unsaved.");
+            }
+            catch (Exception e)
+            {
+                Engine.Message(null, Engine.LogType.Warning, "Could not carry the unsaved fire strokes onto the new case grid: " + e.Message);
+            }
+        }
+
+        /// <summary>The name of an elmfire.data.kept-&lt;time&gt; the builder set aside at or after <paramref name="since"/>, or null.</summary>
+        private static string NamelistSetAsideSince(string caseFolder, DateTime since)
+        {
+            if (string.IsNullOrEmpty(caseFolder) || !Directory.Exists(caseFolder)) return null;
+
+            string found = null;
+            DateTime foundAt = DateTime.MinValue;
+            foreach (string kept in Directory.GetFiles(caseFolder, "elmfire.data.kept-*"))
+            {
+                string stamp = Path.GetFileName(kept).Substring("elmfire.data.kept-".Length);
+                if (DateTime.TryParseExact(stamp, "yyyyMMdd_HHmmss", System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.AssumeLocal, out DateTime at)
+                    && at >= since.AddSeconds(-2) && at > foundAt)
+                {
+                    found = Path.GetFileName(kept);
+                    foundAt = at;
+                }
+            }
+            return found;
+        }
+
+        /// <summary>
+        /// What is known about the painting before a build changes the scenario: its file, and the grids it may
+        /// have been painted on - the terrain [Landscape] names before the build points it at the case, and the one
+        /// the workflow found. Captured on the main thread.
+        /// </summary>
+        public sealed class PaintingFacts
+        {
+            public string File;
+            public readonly List<string> Grids = new List<string>();
+
+            /// <summary>The paint grid's size when fire strokes are unsaved, else (0, 0).</summary>
+            public Vector2int UnsavedStrokeGrid;
+
+            public static PaintingFacts Capture(PREACTInput input)
+            {
+                if (input == null) return null;
+                global::WUInity.Painter painter = PreactGUI.WUInity?.Painter;
+                var facts = new PaintingFacts
+                {
+                    File = input.WildfireModule?.GraphicalFireInputFile,
+                    UnsavedStrokeGrid = painter != null && painter.UnsavedFireStrokes ? painter.PaintGridSize : new Vector2int(0, 0),
+                };
+                string file = facts.File;
+                if (string.IsNullOrEmpty(file)) return facts;
+
+                //The grid a re-cut sets aside is the newest, so it comes first.
+                facts.Grids.Add(ScenarioFiles.CaseInput(input, PREACT.Utility.ElmfireCaseBuilder.PreviousGridFolder + "/dem.tif"));
+                string landscape = input.Landscape?.GetReferenceFile();
+                if (!string.IsNullOrEmpty(landscape)) facts.Grids.Add(landscape);
+                string found = WorkflowService.Model.PaintedOnReference;
+                if (!string.IsNullOrEmpty(found)) facts.Grids.Add(found);
+                return facts;
+            }
+        }
+
+        /// <summary>
+        /// On the worker, after a successful build: when the painting is not on the case's (possibly re-cut) grid
+        /// but on one of the grids it may have been painted on, moves it onto the case grid as a new file.
+        /// </summary>
+        private static void CarryPaintingOntoCaseGrid(StepContext ctx, PaintingFacts painting)
+        {
+            if (string.IsNullOrEmpty(painting.File)) return;
+            string gfi = GuiFiles.Resolve(ctx.Root, painting.File);
+            string caseDem = GuiFiles.Resolve(ctx.Root, ScenarioFiles.CaseInput(ctx.Input, "dem.tif"));
+            if (gfi == null || !File.Exists(gfi) || caseDem == null || !File.Exists(caseDem))
+            {
+                return;
+            }
+
+            try
+            {
+                PaintedAreasInfo header = PaintedAreasInfo.Read(gfi);
+                PREACT.Utility.PaintedMaskResampler.Grid caseGrid = PREACT.Utility.PaintedMaskResampler.Grid.FromRaster(caseDem);
+                if (header.Width == caseGrid.Ncols && header.Height == caseGrid.Nrows)
+                {
+                    return;
+                }
+
+                foreach (string candidate in painting.Grids)
+                {
+                    string path = GuiFiles.Resolve(ctx.Root, candidate);
+                    if (path == null || !File.Exists(path)) continue;
+                    PREACT.Utility.PaintedMaskResampler.Grid grid = PREACT.Utility.PaintedMaskResampler.Grid.FromRaster(path);
+                    if (grid.Ncols != header.Width || grid.Nrows != header.Height) continue;
+
+                    LogStep($"The painting ({header.Width} x {header.Height}) was on the grid of {candidate}, and the case is now "
+                        + $"{caseGrid.Ncols} x {caseGrid.Nrows}; moving it onto the case grid too.");
+                    //Unsaved strokes are newer than the file, and are carried on their own (CarryUnsavedStrokes).
+                    MovePainting(ctx, painting.File, candidate, ScenarioFiles.CaseInput(ctx.Input, "dem.tif"),
+                        replaceUnsavedStrokes: false);
+                    return;
+                }
+
+                LogStep($"The painting in {painting.File} is {header.Width} x {header.Height} cells and the case grid "
+                    + $"{caseGrid.Ncols} x {caseGrid.Nrows}; none of the grids this build knows has its size, so it was not "
+                    + "moved. Step 6 (Fire areas) says what to do.");
+            }
+            catch (Exception e)
+            {
+                //The build itself succeeded; the painting file is only not carried along, and step 6 says so.
+                LogStep("Could not move the painting onto the case grid: " + e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Moves the scenario's painting from the grid of <paramref name="sourceGrid"/> onto that of
+        /// <paramref name="targetGrid"/> (both scenario-relative), as a new file beside it; the original is kept.
+        /// The scenario then names the new file (unsaved until the scenario is saved).
+        /// </summary>
+        public static void MovePaintingToGrid(string sourceGrid, string targetGrid)
+        {
+            string painting = Input?.WildfireModule?.GraphicalFireInputFile;
+            if (string.IsNullOrEmpty(painting) || string.IsNullOrEmpty(sourceGrid) || string.IsNullOrEmpty(targetGrid))
+            {
+                return;
+            }
+
+            RunStep("Moving the painting onto the fire-case grid", WorkflowStepId.FireAreas, c =>
+            {
+                MovePainting(c, painting, sourceGrid, targetGrid, replaceUnsavedStrokes: true);
+                return Task.CompletedTask;
+            });
+        }
+
+        /// <summary>On the worker: the move itself, and the scenario's reference to the new file once it has succeeded.</summary>
+        private static void MovePainting(StepContext ctx, string painting, string sourceGrid, string targetGrid, bool replaceUnsavedStrokes)
+        {
+            string gfi = GuiFiles.Resolve(ctx.Root, painting);
+            string target = GuiFiles.Resolve(ctx.Root, targetGrid);
+            PREACT.Utility.PaintedMaskResampler.Grid grid = PREACT.Utility.PaintedMaskResampler.Grid.FromRaster(target);
+            string output = PREACT.Utility.PaintedMaskResampler.NewFileName(gfi, grid.Ncols, grid.Nrows);
+
+            PREACT.Utility.PaintedMaskResampler.Result moved = PREACT.Utility.PaintedMaskResampler.ResampleFile(
+                gfi, GuiFiles.Resolve(ctx.Root, sourceGrid), target, output);
+            foreach (string line in moved.Describe())
+            {
+                LogStep(line);
+            }
+
+            //Beside the original, in the same (relative) folder.
+            string folder = Path.GetDirectoryName(painting.Replace('\\', '/'))?.Replace('\\', '/');
+            string relative = string.IsNullOrEmpty(folder) ? Path.GetFileName(output) : folder + "/" + Path.GetFileName(output);
+            ctx.Set(i => i.WildfireModule.GraphicalFireInputFile = relative);
+            ctx.Then(() => ReloadPaintedAreas(ctx.Input, replaceUnsavedStrokes));
+            LogStep("The scenario now names " + relative + " as its painted areas; save the scenario to keep that.");
+        }
+
+        /// <summary>
+        /// On the main thread: the scenario's painted areas read again from the file it names, and the painter's
+        /// fire textures dropped so they are drawn from them.
+        /// </summary>
+        private static void ReloadPaintedAreas(PREACTInput input, bool replaceUnsavedStrokes)
+        {
+            if (input == null || input != ScenarioSession.Input) return;
+            global::WUInity.Painter painter = PreactGUI.WUInity?.Painter;
+            if (!replaceUnsavedStrokes && painter != null && painter.UnsavedFireStrokes) return;
+
+            string path = GuiFiles.Resolve(input.RootFolder, input.WildfireModule.GraphicalFireInputFile);
+            if (path == null || !File.Exists(path)) return;
+
+            input.WildfireModule.Data.LoadGraphicalFireInput(input.WildfireModule, path, false, out bool _);
+            PreactGUI.WUInity?.Painter?.ReloadFireAreas();
         }
 
         /// <summary>
@@ -1043,17 +1400,22 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
         public static void BuildElmfireCase(bool rebuildExisting = false)
         {
+            //The build downloads its terrain with the engine's key; a key typed in for this session is handed to it.
+            ApplySessionOpenTopographyKey();
+            PaintingFacts painting = PaintingFacts.Capture(Input);
             RunStep(rebuildExisting ? "Rebuilding the fire case" : "Building the fire case", WorkflowStepId.FireCase,
-                c => DoBuildElmfireCase(c, rebuildExisting));
+                c => DoBuildElmfireCase(c, rebuildExisting, painting));
         }
 
         /// <summary>
-        /// Rebuilds the case keeping its layers, so newly painted masks become its ignition_mask.tif and
-        /// wui_area.tif ("Apply to case").
+        /// Builds the case again, keeping its layers (unless its grid has to be re-cut), so newly painted masks
+        /// become its ignition_mask.tif and wui_area.tif ("Apply to case"). The namelist is written again too.
         /// </summary>
         public static void ApplyPaintedAreasToCase()
         {
-            RunStep("Applying the painted areas to the fire case", WorkflowStepId.FireAreas, c => DoBuildElmfireCase(c, false));
+            ApplySessionOpenTopographyKey();
+            PaintingFacts painting = PaintingFacts.Capture(Input);
+            RunStep("Applying the painted areas to the fire case", WorkflowStepId.FireAreas, c => DoBuildElmfireCase(c, false, painting));
         }
 
         public static void DownloadDemOnly()
