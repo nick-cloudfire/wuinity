@@ -191,8 +191,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
                     ImGui.SliderFloat("Tolerance (relative change)", ref _convergenceMaxDifference, 0.01f, 0.2f);
                 }
             }
-            //Serial only. Parallel is not implemented by the engine (it never allocates the simulations it would
-            //run), and ParallelProcess starts preact.exe from PATH on the .wui on disk.
+            //Serial only: the engine has no other mode (SUMO allows one instance per process). A trigger campaign
+            //is what runs realizations in parallel, as separate PREACT processes.
             ImGui.TextDisabled("Runs one after another in this process, drawn on the map as they go.");
 
             if (model.RunBlockers.Count > 0)

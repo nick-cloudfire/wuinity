@@ -39,7 +39,8 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
                 {
                     double hours = input.WildfireModule.ElmfireInput.SimulationTstopHours;
                     Fields.Warn($"The fire stops after {hours:F1} h (Fire > Fire model settings, Timing and reuse). No boundary is",
-                                "computed for an area the fire never reaches, so a short run can produce none.");
+                                "computed for an area the fire never reaches, so a short run can produce none.",
+                                $"A trigger campaign sets its own fire duration ({PREACT.Utility.CampaignLayout.DefaultFireHours:0} h by default).");
                 }
 
                 ImGui.Separator();

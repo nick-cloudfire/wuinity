@@ -734,8 +734,19 @@ namespace WUInity.Workflow
                 int needed = (int)Math.Ceiling(e.SimulationTstopHours * 3600.0 / dt) + 1;
                 if (ws != null && ws.Bands < needed)
                 {
-                    s.Warn($"ws.tif holds {ws.Bands} weather band(s) but a {e.SimulationTstopHours:0.#} h fire needs {needed}; ELMFIRE refuses the run.",
-                        WorkflowAction.RebuildFireCase, "Rebuild the weather");
+                    //The run extends a generated case's weather itself; one on the scenario's own template it cannot.
+                    if (string.IsNullOrEmpty(e.NamelistTemplate))
+                    {
+                        s.Info($"ws.tif holds {ws.Bands} weather band(s) and a {e.SimulationTstopHours:0.#} h fire needs {needed}: "
+                            + "the run extends the case's weather first (a WindNinja solve per extra hour).",
+                            WorkflowAction.RebuildFireCase, "Rebuild the weather now");
+                    }
+                    else
+                    {
+                        s.Warn($"ws.tif holds {ws.Bands} weather band(s) but a {e.SimulationTstopHours:0.#} h fire needs {needed}, and "
+                            + "the scenario runs its own NamelistTemplate, so the run is refused: extend that template's weather.",
+                            WorkflowAction.OpenFireModelSettings, "Fire duration");
+                    }
                 }
 
                 //Sources changed since the build.

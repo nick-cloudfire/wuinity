@@ -569,7 +569,7 @@ namespace PREACT.Wildfire
 			Engine.Message(null, Engine.LogType.Log,
 				$"Landscape assembled from separate rasters: {Header.numeast} x {Header.numnorth} cells of "
 				+ $"{RasterCellResolutionX:F1} m, elevation {Header.loelev} to {Header.hielev} m."
-				+ (HaveFuel ? string.Empty : " No fuel model band, so no fire can be spread on it."));
+				+ (HaveFuel ? string.Empty : " No fuel model band (not needed: ELMFIRE spreads the fire on its case's own fuel, an imported fire brings its own)."));
 		}
 
 		/// <summary>

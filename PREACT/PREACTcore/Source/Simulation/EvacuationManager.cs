@@ -1054,8 +1054,9 @@ namespace PREACT.Evacuation
                             if (!FireReachedArea(simulation, runs[i].WuiArea, xCount, yCount, out int burnedCells))
                             {
                                 string longer = _input.WildfireModule.Module == Input.WildfireModuleInput.WildfireModules.ELMFIRE
-                                    ? "raise [ELMFIRE] SimulationTstopHours to give the fire time to arrive"
-                                    : "the fire these rasters came from would have to run longer (in a campaign, the hours per realization)";
+                                    ? "raise [ELMFIRE] SimulationTstopHours (1 to 240 h) to give the fire time to arrive"
+                                    : "the fire these rasters came from would have to run longer (for a campaign's realization, "
+                                      + "the campaign's fire duration, --hours, 72 h by default)";
                                 Engine.Message(simulation, Engine.LogType.Warning,
                                     $"The fire never reached {runs[i].Label}, so no trigger boundary was computed for "
                                     + "it. Either it is not threatened in this scenario, or the fire was not run for "

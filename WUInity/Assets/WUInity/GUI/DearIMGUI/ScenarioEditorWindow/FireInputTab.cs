@@ -110,10 +110,11 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
                 ImGui.Indent();
 
                 Fields.Real("SimulationTstopHours", ref elmfire.SimulationTstopHours);
-                Fields.Hint($"{elmfire.SimulationTstopHours:F1} hours of fire ({elmfire.TstopSeconds():F0} s to",
-                            "ELMFIRE, which wants seconds). The case needs at least this many hourly weather",
-                            "bands or ELMFIRE refuses the run. Separate from the",
-                            "evacuation's own end time.");
+                Fields.Hint($"{elmfire.SimulationTstopHours:F1} hours of fire for a run of this scenario ({elmfire.TstopSeconds():F0} s",
+                            "to ELMFIRE, which wants seconds); 1 to 240 h. A case whose weather is shorter is given",
+                            "more when the run starts (one WindNinja solve per extra hour), unless the scenario runs",
+                            "its own NamelistTemplate. Separate from the evacuation's end time, and from a trigger",
+                            $"campaign's fire duration, which the campaign window sets ({PREACT.Utility.CampaignLayout.DefaultFireHours:0} h by default).");
 
                 Fields.Check("Reuse output already in the case folder", ref elmfire.ReuseExistingOutput,
                     "Off means ELMFIRE runs again every time the simulation starts, which is what changed "
