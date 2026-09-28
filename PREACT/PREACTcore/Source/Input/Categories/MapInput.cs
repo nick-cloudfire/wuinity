@@ -23,47 +23,37 @@ namespace PREACT.Input
 
         public void Parse(string[] inputLines, int startIndex, out bool success)
         {
-            success = false;
-            int issues = 0;            
+            //Nothing here can stop a run: the map is a backdrop. An unknown provider or zoom level keeps the
+            //default and says so (the unknown provider used to be logged as a SimulationError, which stopped
+            //whatever simulation happened to be running).
             Dictionary<string, string> inputToParse = PREACTInput.GetHeaderInput(inputLines, startIndex);
             string input, userInput;
             
             input = nameof(MapProvider);
             if (inputToParse.TryGetValue(input, out userInput))
             {
-                switch (userInput)
+                if (InputParse.Enum(userInput, out MapServiceProvider provider))
                 {
-                    case nameof(MapServiceProvider.Mapbox):
-                        MapProvider = MapServiceProvider.Mapbox;
-                        break;
-                    case nameof(MapServiceProvider.Bing):
-                        MapProvider = MapServiceProvider.Bing;
-                        break;
-                    case nameof(MapServiceProvider.OSM):
-                        MapProvider = MapServiceProvider.OSM;
-                        break;
-                    default:
-                        ++issues;
-                        Engine.Message(null, Engine.LogType.SimulationError, "Unknown map provider supplied by user, using " + MapProvider.ToString() + ".");
-                        break;
+                    MapProvider = provider;
                 }
-            }
-            else
-            {
+                else
+                {
+                    PREACTInput.CouldNotInterpretInputMessage(input, userInput, false, MapProvider.ToString());
+                }
             }
 
             input = nameof(ZoomLevel);
             if (inputToParse.TryGetValue(input, out userInput))
             {
-                int.TryParse(userInput, out ZoomLevel);
-                if(ZoomLevel < 0 || ZoomLevel > 20)
+                if (!InputParse.Int(userInput, out int zoom) || zoom < 0 || zoom > 20)
                 {
+                    PREACTInput.CouldNotInterpretInputMessage(input, userInput, false, "13");
                     ZoomLevel = 13;
-                    Engine.Message(null, Engine.LogType.Warning, "User has specified an incorrect zoom level (" + userInput + "), using " + ZoomLevel + ".");                                       
                 }
-            }
-            else
-            {
+                else
+                {
+                    ZoomLevel = zoom;
+                }
             }
 
             success = true;

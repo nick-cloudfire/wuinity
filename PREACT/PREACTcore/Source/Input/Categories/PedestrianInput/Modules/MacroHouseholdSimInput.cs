@@ -14,7 +14,23 @@ namespace PREACT.Input
     {
         public Vector2 WalkingSpeedMinMax = new Vector2(0.7f, 1.0f);
         public float WalkingSpeedModifier = 1.0f;
-        public float WalkingDistanceModifier = 1.0f;          
+        public float WalkingDistanceModifier = 1.0f;
+
+        /// <summary>
+        /// Whether a household that has not left yet starts to leave when the fire front comes within
+        /// <see cref="FireReactionDistance"/> of its home, instead of waiting for its drawn response time.
+        /// On by default.
+        /// </summary>
+        public bool ReactToFire = true;
+
+        /// <summary>Distance from home to the current fire front, in metres, at which a household leaves.</summary>
+        public float FireReactionDistance = 500.0f;
+
+        /// <summary>
+        /// How often, in simulated seconds, the distance to the front is recomputed. The front moves slowly
+        /// next to this; the computation is O(fire cells).
+        /// </summary>
+        public float FireReactionUpdateInterval = 300.0f;
         
         public MacroHouseholdSimInput()
         {
@@ -24,35 +40,56 @@ namespace PREACT.Input
         public static MacroHouseholdSimInput Parse(string[] inputLines, int startIndex, out bool success)
         {
             MacroHouseholdSimInput newInput = new MacroHouseholdSimInput();
-            success = false;
-            int issues = 0;            
+            success = true;
             Dictionary<string, string> inputToParse = PREACTInput.GetHeaderInput(inputLines, startIndex);
             string input, userInput;
 
+            //All optional with defaults; a value that cannot be read keeps its default and says so.
             input = nameof(WalkingDistanceModifier);
-            if (inputToParse.TryGetValue(input, out userInput))
+            if (inputToParse.TryGetValue(input, out userInput) && (!InputParse.Float(userInput, out newInput.WalkingDistanceModifier) || newInput.WalkingDistanceModifier <= 0f))
             {
-                float.TryParse(userInput, out newInput.WalkingDistanceModifier);
+                newInput.WalkingDistanceModifier = 1.0f;
+                PREACTInput.CouldNotInterpretInputMessage(input, userInput, false, "1");
             }
 
             input = nameof(WalkingSpeedMinMax);
             if (inputToParse.TryGetValue(input, out userInput))
             {
-                string[] data = userInput.Split(',');
-                if (data.Length >= 2)
+                if (!InputParse.Vector2(userInput, out newInput.WalkingSpeedMinMax) || newInput.WalkingSpeedMinMax.X <= 0f || newInput.WalkingSpeedMinMax.Y < newInput.WalkingSpeedMinMax.X)
                 {
-                    float.TryParse(data[0], out newInput.WalkingSpeedMinMax.X);
-                    float.TryParse(data[1], out newInput.WalkingSpeedMinMax.Y);
+                    newInput.WalkingSpeedMinMax = new Vector2(0.7f, 1.0f);
+                    PREACTInput.CouldNotInterpretInputMessage(input, userInput, false, "0.7,1");
                 }
             }
 
             input = nameof(WalkingSpeedModifier);
-            if (inputToParse.TryGetValue(input, out userInput))
+            if (inputToParse.TryGetValue(input, out userInput) && (!InputParse.Float(userInput, out newInput.WalkingSpeedModifier) || newInput.WalkingSpeedModifier <= 0f))
             {
-                float.TryParse(userInput, out newInput.WalkingSpeedModifier);
+                newInput.WalkingSpeedModifier = 1.0f;
+                PREACTInput.CouldNotInterpretInputMessage(input, userInput, false, "1");
             }
 
-            success = true;
+            input = nameof(ReactToFire);
+            if (inputToParse.TryGetValue(input, out userInput) && !InputParse.Bool(userInput, out newInput.ReactToFire))
+            {
+                newInput.ReactToFire = true;
+                PREACTInput.CouldNotInterpretInputMessage(input, userInput, false, "true");
+            }
+
+            input = nameof(FireReactionDistance);
+            if (inputToParse.TryGetValue(input, out userInput) && (!InputParse.Float(userInput, out newInput.FireReactionDistance) || newInput.FireReactionDistance < 0f))
+            {
+                newInput.FireReactionDistance = 500.0f;
+                PREACTInput.CouldNotInterpretInputMessage(input, userInput, false, "500");
+            }
+
+            input = nameof(FireReactionUpdateInterval);
+            if (inputToParse.TryGetValue(input, out userInput) && (!InputParse.Float(userInput, out newInput.FireReactionUpdateInterval) || newInput.FireReactionUpdateInterval <= 0f))
+            {
+                newInput.FireReactionUpdateInterval = 300.0f;
+                PREACTInput.CouldNotInterpretInputMessage(input, userInput, false, "300");
+            }
+
             return newInput;
         }
     }

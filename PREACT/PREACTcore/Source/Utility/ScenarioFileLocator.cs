@@ -71,6 +71,12 @@ namespace PREACT.Utility
                 return false;
             }
 
+            //Backslashes are separators only on Windows; a scenario written there (sumo\osm.sumocfg) has to
+            //resolve everywhere, and Path.GetFileName keeps the backslash off Windows. Forward slashes work on
+            //every platform, so the path is normalised before anything else - and reported back that way.
+            recorded = recorded.Trim().Replace('\\', '/');
+            resolved = recorded;
+
             //An absolute path is the user naming a file outside the scenario, which is allowed. Nothing to
             //search for: there is no subfolder of the scenario it could have moved to.
             if (Path.IsPathRooted(recorded))

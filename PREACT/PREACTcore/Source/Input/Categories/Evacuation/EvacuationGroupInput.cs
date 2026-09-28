@@ -36,281 +36,197 @@ namespace PREACT.Evacuation
 
         }
 
-        public static void Parse(Dictionary<string, EvacuationGroupInput> newInputs, string[] inputLines, List<int> evacGroupLineIndices, 
+        public static void Parse(Dictionary<string, EvacuationGroupInput> newInputs, string[] inputLines, List<int> evacGroupLineIndices,
             Dictionary<string, EvacuationDestinationInput> destinationInputs, Dictionary<string, ResponseCurve> responseCurves, SimulationInput simulation, PopulationInput population, string rootFolder, out bool success)
+        {
+            Parse(newInputs, inputLines, evacGroupLineIndices, destinationInputs, responseCurves, simulation, population, rootFolder, true, true, out success);
+        }
+
+        /// <summary>
+        /// Reads every <c>[EvacuationGroup]</c>, each on its own: a problem in one is reported and the others are
+        /// still read (a failure used to break out of the loop and lose every later group).
+        /// </summary>
+        /// <remarks>
+        /// What is critical follows what the run needs. Response curves are needed by the pedestrian module;
+        /// the group's destinations only by the traffic module, and only for the destination choices that draw
+        /// from the group's own list. <c>EvacuationOrderDateTime</c> (default: the simulation start) and
+        /// <c>Demographics</c> (default: the default demographics) are optional, as documented - both used to be
+        /// reported as critical, which is why no shipped example loaded as runnable. References to destinations
+        /// or curves that do not exist are kept as written, so a save does not silently drop a typo.
+        /// </remarks>
+        public static void Parse(Dictionary<string, EvacuationGroupInput> newInputs, string[] inputLines, List<int> evacGroupLineIndices,
+            Dictionary<string, EvacuationDestinationInput> destinationInputs, Dictionary<string, ResponseCurve> responseCurves, SimulationInput simulation, PopulationInput population, string rootFolder,
+            bool pedestrianEnabled, bool trafficEnabled, out bool success)
         {            
-            success = false;
+            success = true;
             newInputs.Clear();
 
             for (int i = 0; i < evacGroupLineIndices.Count; ++i)
             {
                 EvacuationGroupInput newInput = new EvacuationGroupInput();
-                success = false;
-                int issues = 0;
                 Dictionary<string, string> inputToParse = PREACTInput.GetHeaderInput(inputLines, evacGroupLineIndices[i]);
                 string nameOfInput, userInput;
+                bool groupOk = true;
 
-                //critical
                 nameOfInput = nameof(Name);
-                if (inputToParse.TryGetValue(nameOfInput, out userInput))
+                if (!inputToParse.TryGetValue(nameOfInput, out userInput) || userInput.Length == 0)
                 {
-                    newInput.Name = userInput;
-                    success = true;
-                }
-                else
-                {
+                    PREACTInput.InputProblem("EvacuationGroup", $"the section on line {evacGroupLineIndices[i] + 1} has no Name; it is ignored.");
                     success = false;
-                    PREACTInput.InputNotFoundMessage(nameOfInput, true);
+                    continue;
                 }
-                if (!success)
+                newInput.Name = userInput;
+                if (newInputs.ContainsKey(newInput.Name))
                 {
-                    break;
+                    PREACTInput.InputWarning("EvacuationGroup", $"{newInput.Name} is defined more than once; the first definition is used.");
+                    continue;
                 }
+                string prefix = newInput.Name + " ";
 
-                //not critical, use starts
+                //not critical: defaults to the simulation start, as documented
                 nameOfInput = nameof(EvacuationOrderDateTime);
+                newInput.EvacuationOrderDateTime = simulation.StartDateTime;
                 if (inputToParse.TryGetValue(nameOfInput, out userInput))
                 {
-                    success = DateTime.TryParse(userInput, out newInput.EvacuationOrderDateTime);
-                    if (!success)
+                    if (!InputParse.DateTime(userInput, out newInput.EvacuationOrderDateTime))
                     {
-                        PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
+                        newInput.EvacuationOrderDateTime = simulation.StartDateTime;
+                        PREACTInput.CouldNotInterpretInputMessage(prefix + nameOfInput, userInput, false, "the simulation start");
                     }
                 }
                 else
                 {
-                    success = false;
-                    PREACTInput.InputNotFoundMessage(nameOfInput, true);
+                    PREACTInput.InputNotFoundMessage(prefix + nameOfInput, false, "the simulation start");
                 }
-                if (!success)
-                {
-                    newInput.EvacuationOrderDateTime = simulation.StartDateTime;
-                    success = true;
-                }
-                
 
-                //critical
+                //not critical
                 nameOfInput = nameof(DestinationChoice);
                 if (inputToParse.TryGetValue(nameOfInput, out userInput))
                 {
-                    switch (userInput)
+                    if (!InputParse.Enum(userInput, out newInput.DestinationChoice))
                     {
-                        case nameof(DestinationChoices.Random):
-                            newInput.DestinationChoice = DestinationChoices.Random;
-                            break;
-                        case nameof(DestinationChoices.ClosestEuclidean):
-                            newInput.DestinationChoice = DestinationChoices.ClosestEuclidean;
-                            break;
-                        case nameof(DestinationChoices.EvacGroupCDF):
-                            newInput.DestinationChoice = DestinationChoices.EvacGroupCDF;
-                            break;
-                        case nameof(DestinationChoices.EvacGroupClosestEuclidean):
-                            newInput.DestinationChoice = DestinationChoices.EvacGroupClosestEuclidean;
-                            break;
-                        default:
-                            ++issues;
-                            Engine.Message(null, Engine.LogType.SimulationError, nameOfInput + " was not recognized." + PREACTInput.pleaseCheckInput);
-                            break;
+                        newInput.DestinationChoice = DestinationChoices.EvacGroupCDF;
+                        PREACTInput.CouldNotInterpretInputMessage(prefix + nameOfInput, userInput, false, nameof(DestinationChoices.EvacGroupCDF));
                     }
                 }
                 else
                 {
-                    success = false;
-                    PREACTInput.InputNotFoundMessage(nameOfInput);
+                    PREACTInput.InputNotFoundMessage(prefix + nameOfInput, false, nameof(DestinationChoices.EvacGroupCDF));
                 }
-                if (!success)
-                {
-                    break;
-                }
+                bool usesGroupDestinations = newInput.DestinationChoice == DestinationChoices.EvacGroupCDF
+                                             || newInput.DestinationChoice == DestinationChoices.EvacGroupClosestEuclidean;
 
-                //not critical, uses default
+                //not critical: the default demographics are used
                 nameOfInput = nameof(Demographics);
-                if (inputToParse.TryGetValue(nameOfInput, out userInput))
+                if (inputToParse.TryGetValue(nameOfInput, out userInput) && userInput.Length > 0)
                 {
                     newInput.Demographics = userInput;
-                    if (population.Demographics.ContainsKey(userInput))
+                    if (!population.Demographics.ContainsKey(userInput))
                     {
-                        success = true;
-                    }
-                    else
-                    {
-                        success = false;
-                        PREACTInput.MissingReferenceToOtherInput(nameOfInput, userInput);
+                        PREACTInput.MissingReferenceToOtherInput(prefix + nameOfInput, userInput, false);
                     }
                 }
                 else
                 {
-                    success = false;
-                    PREACTInput.InputNotFoundMessage(nameOfInput, true);
-                }
-                if (!success)
-                {
-                    newInput.Demographics = string.Empty;
+                    PREACTInput.InputNotFoundMessage(prefix + nameOfInput, false, "the default demographics");
                 }
 
-
-                //maybe critical
-                nameOfInput = nameof(Destinations);
-                if (inputToParse.TryGetValue(nameOfInput, out userInput))
+                //critical only for the traffic module, and only for a choice that draws from the group's own list
+                using (PREACTInput.SoftRequirements(!trafficEnabled || !usesGroupDestinations))
                 {
-                    success = true;
-                    string[] data = PREACTInput.TrimAll(userInput.Split(','));
-                    for (int j = 0; j < data.Length; ++j)
+                    nameOfInput = nameof(Destinations);
+                    if (inputToParse.TryGetValue(nameOfInput, out userInput))
                     {
-                        if (destinationInputs.ContainsKey(data[j]))
+                        newInput.Destinations.AddRange(InputParse.List(userInput));
+                        foreach (string destination in newInput.Destinations)
                         {
-                            newInput.Destinations.Add(data[j]);
+                            if (!destinationInputs.ContainsKey(destination))
+                            {
+                                groupOk &= !trafficEnabled || !usesGroupDestinations;
+                                PREACTInput.MissingReferenceToOtherInput(prefix + nameOfInput, destination);
+                            }
+                        }
+                    }
+                    if (newInput.Destinations.Count == 0)
+                    {
+                        groupOk &= !trafficEnabled || !usesGroupDestinations;
+                        PREACTInput.InputNotFoundMessage(prefix + nameOfInput, true);
+                    }
+
+                    if (newInput.Destinations.Count == 1)
+                    {
+                        newInput.DestinationsCDF.Add(1.0);
+                    }
+                    else if (newInput.Destinations.Count > 1)
+                    {
+                        groupOk &= ReadCdf(inputToParse, nameof(DestinationsCDF), prefix, newInput.Destinations, newInput.DestinationsCDF,
+                            newInput.DestinationChoice == DestinationChoices.EvacGroupCDF && trafficEnabled);
+                    }
+                }
+
+                //critical for the pedestrian module: every household draws its departure from one of these
+                using (PREACTInput.SoftRequirements(!pedestrianEnabled))
+                {
+                    nameOfInput = nameof(ResponseCurves);
+                    if (inputToParse.TryGetValue(nameOfInput, out userInput))
+                    {
+                        newInput.ResponseCurves.AddRange(InputParse.List(userInput));
+                        foreach (string curve in newInput.ResponseCurves)
+                        {
+                            if (!responseCurves.ContainsKey(curve))
+                            {
+                                groupOk &= !pedestrianEnabled;
+                                PREACTInput.MissingReferenceToOtherInput(prefix + nameOfInput, curve);
+                            }
+                        }
+                    }
+                    if (newInput.ResponseCurves.Count == 0)
+                    {
+                        groupOk &= !pedestrianEnabled;
+                        PREACTInput.InputNotFoundMessage(prefix + nameOfInput, true);
+                    }
+
+                    if (newInput.ResponseCurves.Count == 1)
+                    {
+                        newInput.ResponseCurvesCDF.Add(1.0);
+                    }
+                    else if (newInput.ResponseCurves.Count > 1)
+                    {
+                        groupOk &= ReadCdf(inputToParse, nameof(ResponseCurvesCDF), prefix, newInput.ResponseCurves, newInput.ResponseCurvesCDF, pedestrianEnabled);
+                    }
+
+                    //A group's area comes from either a painted mask or a shapefile. The mask is checked
+                    //first and wins when both are present, so a group that has been painted is not
+                    //silently overridden by whatever shapefile it was originally defined from. A file that is
+                    //named but missing is critical (the user meant an area); no area at all is critical only
+                    //when there are several groups to tell apart.
+                    bool haveMask = inputToParse.TryGetValue(nameof(MaskFile), out string mask) && mask.Length > 0;
+                    bool haveShape = inputToParse.TryGetValue(nameof(ShapeFile), out string shape) && shape.Length > 0;
+                    if (haveMask)
+                    {
+                        newInput.MaskFile = mask;
+                        PREACTInput.CheckIfFileExist(prefix + nameof(MaskFile), ref newInput.MaskFile, rootFolder, out bool found);
+                        groupOk &= found || !pedestrianEnabled;
+                    }
+                    if (haveShape)
+                    {
+                        newInput.ShapeFile = shape;
+                        PREACTInput.CheckIfFileExist(prefix + nameof(ShapeFile), ref newInput.ShapeFile, rootFolder, out bool found, !haveMask);
+                        groupOk &= found || haveMask || !pedestrianEnabled;
+                    }
+                    if (!haveMask && !haveShape)
+                    {
+                        if (evacGroupLineIndices.Count > 1)
+                        {
+                            groupOk &= !pedestrianEnabled;
+                            PREACTInput.InputProblem(prefix + nameof(ShapeFile), "no MaskFile or ShapeFile, so no household can be placed in this group rather than another.");
                         }
                         else
                         {
-                            success = false;
-                            PREACTInput.MissingReferenceToOtherInput(nameOfInput, data[j]);
+                            PREACTInput.InputWarning(prefix + nameof(ShapeFile), "no MaskFile or ShapeFile: every household is outside the group"
+                                + (population.CullOutsideGroups ? " and, with CullOutsideGroups=true, is removed from the run." : " and is assigned to it as the default group."));
                         }
                     }
-                }
-                else
-                {
-                    success = false;
-                    PREACTInput.InputNotFoundMessage(nameOfInput, true);
-                }
-                if (!success && (newInput.DestinationChoice == DestinationChoices.EvacGroupCDF || newInput.DestinationChoice == DestinationChoices.EvacGroupClosestEuclidean))
-                {
-                    break;
-                }
-
-                //maybe critical
-                if (newInput.Destinations.Count == 1)
-                {
-                    newInput.DestinationsCDF.Add(1.0);
-                }
-                else
-                {
-                    nameOfInput = nameof(DestinationsCDF);
-                    if (inputToParse.TryGetValue(nameOfInput, out userInput))
-                    {
-                        string[] data = PREACTInput.TrimAll(userInput.Split(','));
-                        for (int j = 0; j < data.Length; ++j)
-                        {
-                            double cumulativeProbability;
-                            success = double.TryParse(data[j], out cumulativeProbability);
-                            if (success)
-                            {
-                                newInput.DestinationsCDF.Add(cumulativeProbability);
-                            }
-                            else
-                            {
-                                PREACTInput.CouldNotInterpretInputMessage(nameOfInput, data[j]);
-                                break;
-                            }
-                        }
-                    }
-                    else
-                    {
-                        success = false;
-                        PREACTInput.InputNotFoundMessage(nameOfInput, true);
-                    }
-                    if (newInput.Destinations.Count != newInput.DestinationsCDF.Count)
-                    {
-                        success = false;
-                        PREACTInput.IncorrectInputCount(nameOfInput);
-                    }
-                    if (!success && (newInput.DestinationChoice == DestinationChoices.EvacGroupCDF || newInput.DestinationChoice == DestinationChoices.EvacGroupClosestEuclidean))
-                    {
-                        break;
-                    }
-                }
-
-                //critical
-                nameOfInput = nameof(ResponseCurves);
-                if (inputToParse.TryGetValue(nameOfInput, out userInput))
-                {
-                    success = true;
-                    string[] data = PREACTInput.TrimAll(userInput.Split(','));
-                    for (int j = 0; j < data.Length; ++j)
-                    {
-                        newInput.ResponseCurves.Add(data[j]);
-                    }
-                }
-                else
-                {
-                    success = false;
-                    PREACTInput.InputNotFoundMessage(nameOfInput, true);
-                }
-                if (!success)
-                {
-                    break;
-                }
-
-                //maybe critical
-                if (newInput.ResponseCurves.Count == 1)
-                {
-                    newInput.ResponseCurvesCDF.Add(1.0);
-                }
-                else
-                {
-                    nameOfInput = nameof(ResponseCurvesCDF);
-                    if (inputToParse.TryGetValue(nameOfInput, out userInput))
-                    {
-                        string[] data = PREACTInput.TrimAll(userInput.Split(','));
-                        for (int j = 0; j < data.Length; ++j)
-                        {
-                            double cumulativeProbability;
-                            success = double.TryParse(data[j], out cumulativeProbability);
-                            if (success)
-                            {
-                                newInput.ResponseCurvesCDF.Add(cumulativeProbability);
-                            }
-                            else
-                            {
-                                PREACTInput.CouldNotInterpretInputMessage(nameOfInput, data[j]);
-                                break;
-                            }
-                        }
-                    }
-                    else
-                    {
-                        success = false;
-                        PREACTInput.InputNotFoundMessage(nameOfInput, true);
-                    }
-                    if (newInput.ResponseCurves.Count != newInput.ResponseCurvesCDF.Count)
-                    {
-                        success = false;
-                        PREACTInput.IncorrectInputCount(nameOfInput);
-                    }
-                    if (!success)
-                    {
-                        break;
-                    }
-                }
-
-                //A group's area comes from either a painted mask or a shapefile. The mask is checked
-                //first and wins when both are present, so a group that has been painted is not
-                //silently overridden by whatever shapefile it was originally defined from.
-                nameOfInput = nameof(MaskFile);
-                if (inputToParse.TryGetValue(nameOfInput, out userInput))
-                {
-                    newInput.MaskFile = userInput;
-                    PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.MaskFile, rootFolder, out success);
-                }
-
-                //maybe critical
-                if (string.IsNullOrEmpty(newInput.MaskFile))
-                {
-                    nameOfInput = nameof(ShapeFile);
-                    if (inputToParse.TryGetValue(nameOfInput, out userInput))
-                    {
-                        newInput.ShapeFile = userInput;
-                        PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.ShapeFile, rootFolder, out success);
-                    }
-                    else
-                    {
-                        success = false;
-                        PREACTInput.InputNotFoundMessage(nameOfInput, true);
-                    }
-                }
-                if (!success && evacGroupLineIndices.Count > 1) //if only one then it is not critical
-                {
-                    break;
                 }
 
                 //not critical
@@ -318,73 +234,106 @@ namespace PREACT.Evacuation
                 {
                     newInput.Default = true;
                 }
-                else
+                if (inputToParse.TryGetValue(nameof(Default), out userInput) && InputParse.Bool(userInput, out bool isDefault))
                 {
-                    nameOfInput = nameof(Default);
-                    if (inputToParse.TryGetValue(nameOfInput, out userInput))
-                    {
-                        success = bool.TryParse(userInput, out newInput.Default);
-                    }
-                    else
-                    {
-                        success = false;
-                        PREACTInput.InputNotFoundMessage(nameOfInput);
-                    }
-                    if (!success)
-                    {
-                        newInput.Default = false;
-                    }
-                    else if (newInput.Default)
+                    if (isDefault)
                     {
                         foreach (EvacuationGroupInput prevInput in newInputs.Values)
                         {
                             prevInput.Default = false;
                         }
+                        newInput.Default = true;
+                    }
+                    else if (newInputs.Count > 0)
+                    {
+                        newInput.Default = false;
                     }
                 }
 
-                //not critical
+                //not critical: display only
                 nameOfInput = nameof(Color);
-                success = true;
                 if (inputToParse.TryGetValue(nameOfInput, out userInput))
                 {
-                    string[] data = PREACTInput.TrimAll(userInput.Split(','));
-                    if (data.Length == 3)
+                    if (!InputParse.Color(userInput, out newInput.Color))
                     {
-                        issues += float.TryParse(data[0], out newInput.Color.r) ? 0 : 1;
-                        issues += float.TryParse(data[1], out newInput.Color.g) ? 0 : 1;
-                        issues += float.TryParse(data[2], out newInput.Color.b) ? 0 : 1;
-                    }
-                    else
-                    {
-                        issues++;
-                    }
-                    if (issues > 0)
-                    {
-                        PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
+                        newInput.Color = PREACTColor.Random();
+                        PREACTInput.CouldNotInterpretInputMessage(prefix + nameOfInput, userInput, false, "a random colour");
                     }
                 }
                 else
                 {
-                    success = false;
-                    PREACTInput.InputNotFoundMessage(nameOfInput);
-                }
-                if (!success || issues > 0)
-                {
                     newInput.Color = PREACTColor.Random();
                 }
 
+                success &= groupOk;
                 newInputs.Add(newInput.Name, newInput);
             }
-            
-            if(newInputs.Count == evacGroupLineIndices.Count)
+        }
+
+        /// <summary>
+        /// Reads a cumulative distribution over <paramref name="items"/> and checks it is one: as many values as
+        /// items, each in [0, 1], never decreasing, ending at 1.
+        /// </summary>
+        /// <remarks>
+        /// An item whose CDF step is zero can never be drawn - Mati's <c>DestinationsCDF=1,1</c> sends every car
+        /// to the first destination - which is valid but almost always a mistake, so it is said. A CDF that ends
+        /// below 1 sends the remaining draws to the last item.
+        /// </remarks>
+        private static bool ReadCdf(Dictionary<string, string> inputToParse, string key, string prefix, List<string> items, List<double> cdf, bool critical)
+        {
+            if (!inputToParse.TryGetValue(key, out string userInput))
             {
-                success = true;
+                PREACTInput.InputNotFoundMessage(prefix + key, critical);
+                //Evenly spread, so a run with the module off - or a save - has something consistent.
+                for (int k = 0; k < items.Count; ++k)
+                {
+                    cdf.Add((k + 1) / (double)items.Count);
+                }
+                return !critical;
             }
-            else
+
+            if (!InputParse.DoubleList(userInput, cdf))
             {
-                Engine.Message(null, Engine.LogType.InputError, "Could not read all specified EvacuationGroups.");
+                PREACTInput.CouldNotInterpretInputMessage(prefix + key, userInput, critical);
+                for (int k = 0; k < items.Count; ++k)
+                {
+                    cdf.Add((k + 1) / (double)items.Count);
+                }
+                return !critical;
             }
+
+            if (cdf.Count != items.Count)
+            {
+                if (critical)
+                {
+                    PREACTInput.IncorrectInputCount(prefix + key);
+                }
+                else
+                {
+                    PREACTInput.InputWarning(prefix + key, $"has {cdf.Count} values for {items.Count} entries.");
+                }
+                return !critical;
+            }
+
+            for (int k = 0; k < cdf.Count; ++k)
+            {
+                double previous = k == 0 ? 0.0 : cdf[k - 1];
+                if (cdf[k] < 0.0 || cdf[k] > 1.0 + 1e-9 || cdf[k] < previous)
+                {
+                    PREACTInput.CouldNotInterpretInputMessage(prefix + key, userInput + " (a cumulative distribution must rise from 0 to 1 and never fall)", critical);
+                    return !critical;
+                }
+                if (cdf[k] - previous < 1e-12)
+                {
+                    PREACTInput.InputWarning(prefix + key, $"gives {items[k]} a probability of 0 ({userInput}), so it is never chosen. Cumulative values: 0.5,1 would split evenly between two.");
+                }
+            }
+            if (cdf[cdf.Count - 1] < 1.0 - 1e-9)
+            {
+                PREACTInput.InputWarning(prefix + key, $"ends at {cdf[cdf.Count - 1]} rather than 1; draws above it go to {items[items.Count - 1]}.");
+            }
+
+            return true;
         }
     }
 }

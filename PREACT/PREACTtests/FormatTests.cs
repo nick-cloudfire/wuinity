@@ -1,0 +1,374 @@
+using System.Globalization;
+using PREACT.Evacuation;
+using PREACT.Input;
+
+namespace PREACT.Tests
+{
+    /// <summary>
+    /// The .wui format rules, each on a small synthetic scenario written to a temporary folder.
+    /// </summary>
+    internal static class FormatTests
+    {
+        public static void Register(Runner runner)
+        {
+            runner.Add("format: synthetic scenario loads runnable and round-trips", BaseScenarioLoads);
+            runner.Add("format: inline comments, '=' in values, trimmed values", CommentsAndEquals);
+            runner.Add("format: duplicate key is reported, first value wins", DuplicateKey);
+            runner.Add("format: duplicate section is reported, not thrown", DuplicateSection);
+            runner.Add("format: a bad value does not discard later sections", BadValueIsolated);
+            runner.Add("format: population CSV with blank lines", PopulationBlankLines);
+            runner.Add("format: absolute response curve survives a save", AbsoluteResponseCurve);
+            runner.Add("format: response curve rows with comments and blank lines", ResponseCurveRows);
+            runner.Add("format: backslash paths resolve and are saved with '/'", BackslashPaths);
+            runner.Add("format: optional group keys are not critical", OptionalGroupKeys);
+            runner.Add("format: numbers read the same on a comma-decimal thread", CultureIndependent);
+            runner.Add("format: sections of disabled modules are kept on save", DisabledModulesKept);
+            runner.Add("format: retired sections and keys are tolerated and not written", RetiredTolerated);
+            runner.Add("format: Revalidate writes nothing into the scenario folder", RevalidateInMemory);
+            runner.Add("format: CDF problems are reported", CdfValidation);
+        }
+
+        /// <summary>A folder with a minimal, complete scenario: pedestrians on, traffic off, no fire.</summary>
+        internal sealed class Scenario : IDisposable
+        {
+            public readonly string Folder;
+            public Scenario()
+            {
+                Folder = Path.Combine(Path.GetTempPath(), "preact-tests-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+                Directory.CreateDirectory(Folder);
+                File.WriteAllLines(Path.Combine(Folder, "pop.csv"), new[]
+                {
+                    "lat,lon,carLat,carLon,people",
+                    "38.0130,23.9010,38.0131,23.9011,3",
+                    "38.0140,23.9020,38.0141,23.9021,2",
+                    "38.0150,23.9030,38.0151,23.9031,4",
+                });
+                //In simulation coordinates, covering the whole 2 x 2 km domain.
+                File.WriteAllLines(Path.Combine(Folder, "group.asc"), new[]
+                {
+                    "ncols 2", "nrows 2", "xllcorner 0", "yllcorner 0", "cellsize 1000", "NODATA_value -9999", "1 1", "1 1",
+                });
+            }
+
+            public static string[] Lines => new[]
+            {
+                "[Simulation]",
+                "Name=synthetic",
+                "LowerLeftLatLon=38.0123,23.9",
+                "DomainSize=2000,2000",
+                "DeltaTime=1",
+                "StartDateTime=2026-06-28T12:00:00",
+                "EndDateTime=2026-06-28T14:00:00",
+                "StopWhenEvacuated=true",
+                "",
+                "[Population]",
+                "PopulationFile=pop.csv",
+                "CullOutsideGroups=false",
+                "",
+                "[Demographics]",
+                "Name=standard",
+                "AllowMoreThanOneCar=true",
+                "MaxCars=2",
+                "MaxCarsProbability=0.3",
+                "Default=true",
+                "",
+                "[ResponseCurve]",
+                "Name=standard",
+                "TimeInput=Relative",
+                "0,0",
+                "600,0.5",
+                "1200,1",
+                "",
+                "[Destination]",
+                "Name=north",
+                "LatLon=38.03,23.91",
+                "Type=Exit",
+                "MaxFlow=-1",
+                "MaxVehicles=-1",
+                "MaxPeople=-1",
+                "Blocked=false",
+                "Color=1,0,0",
+                "",
+                "[Destination]",
+                "Name=south",
+                "LatLon=38.013,23.905",
+                "Type=Exit",
+                "MaxFlow=-1",
+                "MaxVehicles=-1",
+                "MaxPeople=-1",
+                "Blocked=false",
+                "Color=0,1,0",
+                "",
+                "[EvacuationGroup]",
+                "Name=all",
+                "EvacuationOrderDateTime=2026-06-28T12:00:00",
+                "Color=1,1,1",
+                "DestinationChoice=EvacGroupCDF",
+                "Destinations=north,south",
+                "DestinationsCDF=0.5,1",
+                "ResponseCurves=standard",
+                "Demographics=standard",
+                "MaskFile=group.asc",
+                "Default=true",
+                "",
+                "[PedestrianModule]",
+                "Enabled=true",
+                "Module=MacroHouseholdSim",
+                "",
+                "[MacroHouseholdSim]",
+                "WalkingSpeedMinMax=0.7,1",
+                "",
+                "[TrafficModule]",
+                "Enabled=false",
+                "Module=SUMO",
+                "",
+                "[SUMO]",
+                "ConfigurationFile=sumo/osm.sumocfg",
+                "OutputRasterSize=25",
+                "SmokeAlpha=0",
+                "SmokeBeta=0",
+            };
+
+            public string Write(IEnumerable<string> lines, string name = "scenario.wui")
+            {
+                string path = Path.Combine(Folder, name);
+                File.WriteAllLines(path, lines);
+                return path;
+            }
+
+            public PREACTInput Load(IEnumerable<string> lines, out bool runnable)
+            {
+                return PREACTInput.LoadFromDisk(Write(lines), out runnable);
+            }
+
+            public void Dispose()
+            {
+                try { Directory.Delete(Folder, true); } catch { }
+            }
+        }
+
+        internal static List<string> Replace(string key, string value, string section = null)
+        {
+            var lines = new List<string>(Scenario.Lines);
+            string current = null;
+            for (int i = 0; i < lines.Count; ++i)
+            {
+                if (lines[i].StartsWith("[")) { current = lines[i].Trim('[', ']'); continue; }
+                if ((section == null || current == section) && lines[i].StartsWith(key + "="))
+                {
+                    if (value == null) lines.RemoveAt(i); else lines[i] = key + "=" + value;
+                    return lines;
+                }
+            }
+            throw new TestFailure("test setup: key " + key + " not found");
+        }
+
+        private static PREACTInput.InputRequirement Find(string key)
+        {
+            return PREACTInput.Requirements.FirstOrDefault(r => r.Key == key || r.Key.EndsWith(" " + key));
+        }
+
+        private static string Critical() => string.Join("; ", PREACTInput.Requirements.Where(r => r.Critical).Select(r => r.ToString() + ": " + r.Message));
+
+        private static void BaseScenarioLoads()
+        {
+            using var s = new Scenario();
+            PREACTInput input = s.Load(Scenario.Lines, out bool runnable);
+            Assert.True(runnable, "the base scenario should be runnable; critical: " + Critical());
+            Assert.Equal(3, input.Population.Data.Households.Length, "households");
+            Assert.Equal(2, input.Evacuation.EvacuationDestinationInputs.Count, "destinations");
+            RoundTrip.Run(Path.Combine(s.Folder, "scenario.wui"), null);
+        }
+
+        private static void CommentsAndEquals()
+        {
+            using var s = new Scenario();
+            var lines = new List<string>(Scenario.Lines);
+            lines[lines.IndexOf("Name=synthetic")] = "Name=a=b   # the name";
+            lines[lines.IndexOf("Module=MacroHouseholdSim")] = "Module=MacroHouseholdSim #comment";
+            lines.Insert(1, "   # a whole-line comment");
+            lines.Insert(1, "#another");
+            PREACTInput input = s.Load(lines, out bool runnable);
+            Assert.Equal("a=b", input.Simulation.Name, "Name split on the first '=' and trimmed after the comment");
+            Assert.Equal(PedestrianModuleInput.PedestrianModules.MacroHouseholdSim, input.PedestrianModule.Module, "Module with an inline comment");
+            Assert.True(runnable, "still runnable; critical: " + Critical());
+            Assert.True(Find("Module") == null, "no requirement for the commented Module");
+        }
+
+        private static void DuplicateKey()
+        {
+            using var s = new Scenario();
+            var lines = new List<string>(Scenario.Lines);
+            lines.Insert(lines.IndexOf("DeltaTime=1") + 1, "DeltaTime=5");
+            PREACTInput input = s.Load(lines, out bool runnable);
+            Assert.Near(1.0, input.Simulation.DeltaTime, 1e-9, "the first DeltaTime is used");
+            Assert.True(runnable, "a duplicate key does not block the run");
+            PREACTInput.InputRequirement r = Find("DeltaTime");
+            Assert.True(r != null && !r.Critical, "the duplicate is on the checklist, non-critical");
+        }
+
+        private static void DuplicateSection()
+        {
+            using var s = new Scenario();
+            var lines = new List<string>(Scenario.Lines);
+            lines.AddRange(new[] { "", "[Simulation]", "Name=second" });
+            PREACTInput input = s.Load(lines, out bool runnable);
+            Assert.Equal("synthetic", input.Simulation.Name, "the first [Simulation] is read");
+            Assert.True(runnable, "a duplicate section does not block the run; critical: " + Critical());
+            Assert.True(PREACTInput.Requirements.Any(r => r.Key == "[Simulation]" && !r.Critical), "the duplicate section is reported");
+        }
+
+        private static void BadValueIsolated()
+        {
+            using var s = new Scenario();
+            PREACTInput input = s.Load(Replace("LowerLeftLatLon", "37.96"), out bool runnable);
+            Assert.True(!runnable, "an unreadable LowerLeftLatLon is critical");
+            Assert.True(Find("LowerLeftLatLon")?.Critical == true, "LowerLeftLatLon is the critical item");
+            Assert.Equal(2, input.Evacuation.EvacuationDestinationInputs.Count, "later sections are still read");
+            Assert.Equal("synthetic", input.Simulation.Name, "the rest of [Simulation] is still read");
+            Assert.Equal(new DateTime(2026, 6, 28, 14, 0, 0), input.Simulation.EndDateTime, "keys after the bad one are still read");
+        }
+
+        private static void PopulationBlankLines()
+        {
+            using var s = new Scenario();
+            File.WriteAllLines(Path.Combine(s.Folder, "pop.csv"), new[]
+            {
+                "lat,lon,carLat,carLon,people", "38.0130,23.9010,38.0131,23.9011,3", "", "38.0140,23.9020,38.0141,23.9021,2", "", "   ", "",
+            });
+            PREACTInput input = s.Load(Scenario.Lines, out bool runnable);
+            Assert.True(runnable, "blank lines do not break the population; critical: " + Critical());
+            Assert.Equal(2, input.Population.Data.Households.Length, "households");
+        }
+
+        private static void AbsoluteResponseCurve()
+        {
+            using var s = new Scenario();
+            var lines = new List<string>(Scenario.Lines);
+            int at = lines.IndexOf("TimeInput=Relative");
+            lines[at] = "TimeInput=Absolute";
+            lines[at + 1] = "2026-06-28T12:00:00,0";
+            lines[at + 2] = "2026-06-28T12:10:00,0.5";
+            lines[at + 3] = "2026-06-28T12:20:00,1";
+            PREACTInput input = s.Load(lines, out bool runnable);
+            Assert.True(runnable, "absolute curve loads; critical: " + Critical());
+            ResponseCurve curve = input.Evacuation.ResponseCurves["standard"];
+            Assert.Equal(TimeInputs.Absolute, curve.TimeInput, "TimeInput");
+            Assert.Near(600.0, curve.DataPoints[1].Time, 1e-3, "second point, seconds after the start");
+
+            string[] written = PREACTInputWriter.Write(input);
+            Assert.True(written.Contains("2026-06-28T12:10:00,0.5"), "written back as a date");
+            PREACTInput again = PREACTInput.LoadFromLines(written, s.Folder, out bool runnable2);
+            Assert.True(runnable2, "reloads runnable; critical: " + Critical());
+            Assert.Near(1200.0, again.Evacuation.ResponseCurves["standard"].DataPoints[2].Time, 1e-3, "third point after the round trip");
+        }
+
+        private static void ResponseCurveRows()
+        {
+            using var s = new Scenario();
+            var lines = new List<string>(Scenario.Lines);
+            int at = lines.IndexOf("TimeInput=Relative");
+            lines.Insert(at + 1, "# rows follow");
+            lines.Insert(at + 3, "");
+            lines.Insert(at + 3, "600, 0.5   # half by ten minutes");
+            lines.RemoveAt(at + 5); //the original 600 row
+            PREACTInput input = s.Load(lines, out bool runnable);
+            Assert.True(runnable, "curve with comments and blank lines loads; critical: " + Critical());
+            Assert.Equal(3, input.Evacuation.ResponseCurves["standard"].DataPoints.Length, "rows");
+
+            var bad = new List<string>(Scenario.Lines);
+            bad[bad.IndexOf("600,0.5")] = "600;0.5";
+            s.Load(bad, out bool badRunnable);
+            Assert.True(!badRunnable, "a bad row is critical");
+            Assert.True(PREACTInput.Requirements.Any(r => r.Critical && r.Message.Contains("600;0.5")), "the message names the bad row");
+        }
+
+        private static void BackslashPaths()
+        {
+            using var s = new Scenario();
+            Directory.CreateDirectory(Path.Combine(s.Folder, "people"));
+            File.Move(Path.Combine(s.Folder, "pop.csv"), Path.Combine(s.Folder, "people", "pop.csv"));
+            PREACTInput input = s.Load(Replace("PopulationFile", "people\\pop.csv"), out bool runnable);
+            Assert.True(runnable, "a backslash path resolves on this platform; critical: " + Critical());
+            Assert.Equal("people/pop.csv", input.Population.PopulationFile, "stored with a forward slash");
+            Assert.True(PREACTInputWriter.Write(input).Contains("PopulationFile=people/pop.csv"), "written with a forward slash");
+        }
+
+        private static void OptionalGroupKeys()
+        {
+            using var s = new Scenario();
+            var lines = Replace("EvacuationOrderDateTime", null, "EvacuationGroup");
+            lines.Remove("Demographics=standard");
+            PREACTInput input = s.Load(lines, out bool runnable);
+            Assert.True(runnable, "EvacuationOrderDateTime and Demographics are optional; critical: " + Critical());
+            Assert.Equal(input.Simulation.StartDateTime, input.Evacuation.EvacuationGroupInputs["all"].EvacuationOrderDateTime, "order defaults to the start");
+            Assert.True(Find("EvacuationOrderDateTime")?.Critical == false, "reported as a default");
+        }
+
+        private static void CultureIndependent()
+        {
+            using var s = new Scenario();
+            string path = s.Write(Scenario.Lines);
+            PREACTInput input = null;
+            var thread = new Thread(() =>
+            {
+                Thread.CurrentThread.CurrentCulture = new CultureInfo("el-GR");
+                input = PREACTInput.LoadFromDisk(path, out bool _);
+            });
+            thread.Start();
+            thread.Join();
+            Assert.Near(38.0123, input.Simulation.LowerLeftLatLon.x, 1e-9, "latitude on an el-GR thread");
+            Assert.Near(0.3, input.Population.Demographics["standard"].MaxCarsProbability, 1e-6, "probability on an el-GR thread");
+            Assert.Near(38.0130, input.Population.Data.Households[0].originLatLon.x, 1e-9, "population CSV on an el-GR thread");
+        }
+
+        private static void DisabledModulesKept()
+        {
+            using var s = new Scenario();
+            var lines = Replace("Enabled", "false", "PedestrianModule");
+            PREACTInput input = s.Load(lines, out bool runnable);
+            Assert.True(runnable, "a scenario with everything off is runnable; critical: " + Critical());
+            string[] written = PREACTInputWriter.Write(input);
+            Assert.True(written.Contains("ConfigurationFile=sumo/osm.sumocfg"), "[SUMO] of a disabled traffic module is kept");
+            Assert.True(written.Contains("PopulationFile=pop.csv"), "[Population] of a disabled pedestrian module is kept");
+            Assert.True(written.Contains("Name=north"), "destinations are kept with both modules off");
+            Assert.True(written.Contains("ResponseCurves=standard"), "groups are kept with both modules off");
+        }
+
+        private static void RetiredTolerated()
+        {
+            using var s = new Scenario();
+            var lines = new List<string>(Scenario.Lines);
+            lines.AddRange(new[] { "", "[Events]", "BlockGoalEventFiles=a.csv", "", "[Evacuation]", "UseTriggerBufferEvacuation=true", "TriggerBufferFile=x.asc" });
+            PREACTInput input = s.Load(lines, out bool runnable);
+            Assert.True(runnable, "retired keys do not block the run; critical: " + Critical());
+            Assert.True(PREACTInput.Requirements.Any(r => r.Key == "[Events]" && !r.Critical), "[Events] is noted once");
+            Assert.True(PREACTInput.Requirements.Any(r => r.Key == "UseTriggerBufferEvacuation" && !r.Critical), "the retired key is noted");
+            string[] written = PREACTInputWriter.Write(input);
+            Assert.True(!written.Any(l => l.StartsWith("UseTriggerBufferEvacuation") || l.StartsWith("TriggerBufferFile") || l == "[Events]"), "retired keys are not written");
+            Assert.True(!written.Any(l => l.StartsWith("WeatherAnchorDateTime") || l.StartsWith("HasWeatherAnchor")), "no unset anchor or computed property written");
+        }
+
+        private static void RevalidateInMemory()
+        {
+            using var s = new Scenario();
+            PREACTInput input = s.Load(Scenario.Lines, out bool _);
+            string[] before = Directory.GetFiles(s.Folder);
+            Assert.True(PREACTInput.Revalidate(input), "revalidates as runnable; critical: " + Critical());
+            input.Simulation.Name = string.Empty;
+            Assert.True(!PREACTInput.Revalidate(input), "an emptied Name is caught");
+            Assert.Equal(before.Length, Directory.GetFiles(s.Folder).Length, "files in the scenario folder");
+        }
+
+        private static void CdfValidation()
+        {
+            using var s = new Scenario();
+            s.Load(Replace("DestinationsCDF", "1,1"), out bool runnable);
+            Assert.True(runnable, "a zero-probability destination is legal");
+            Assert.True(PREACTInput.Requirements.Any(r => r.Key.EndsWith("DestinationsCDF") && r.Message.Contains("never chosen")), "and is pointed out");
+
+            s.Load(Replace("DestinationsCDF", "0.7,0.4"), out bool _);
+            Assert.True(PREACTInput.Requirements.Any(r => r.Key.EndsWith("DestinationsCDF")), "a falling CDF is reported");
+        }
+    }
+}

@@ -64,7 +64,7 @@ namespace PREACT.Input
             //painting a WUI area and reopening the scenario showed nothing.
             if (!string.IsNullOrEmpty(wildfireInput.GraphicalFireInputFile))
             {
-                LoadGraphicalFireInput(wildfireInput, Path.Combine(rootFolder, wildfireInput.GraphicalFireInputFile),
+                LoadGraphicalFireInput(wildfireInput, PREACTInput.ResolvePath(rootFolder, wildfireInput.GraphicalFireInputFile),
                     false, out bool _);
             }
 
@@ -130,7 +130,7 @@ namespace PREACT.Input
 
             if (!string.IsNullOrEmpty(landscapeInput.LandscapeFile))
             {
-                LoadLCPFile(wildfireInput, Path.Combine(rootFolder, landscapeInput.LandscapeFile), simulationInput.Data.UTMOrigin, false, out bool _);
+                LoadLCPFile(wildfireInput, PREACTInput.ResolvePath(rootFolder, landscapeInput.LandscapeFile), simulationInput.Data.UTMOrigin, false, out bool _);
                 return;
             }
 
@@ -139,7 +139,7 @@ namespace PREACT.Input
             {
                 if (!string.IsNullOrEmpty(bands[i]))
                 {
-                    bands[i] = Path.Combine(rootFolder, bands[i]);
+                    bands[i] = PREACTInput.ResolvePath(rootFolder, bands[i]);
                 }
             }
 

@@ -25,49 +25,57 @@ namespace PREACT.Input
 
         public void Parse(string[] inputLines, int startIndex, List<int> demographicsLinesIndices, PedestrianModuleInput pedestrianInput, string rootFolder, out bool success)
         {
-            if (!pedestrianInput.Enabled)
+            //Read in full whether or not the pedestrian module is on, so a scenario saved with it switched off
+            //keeps its population and demographics (this used to return straight away, and the writer then
+            //dropped both). Only the CSV load, and anything critical, depends on the module being enabled.
+            bool needed = pedestrianInput.Enabled;
+            success = true;
+            using (PREACTInput.SoftRequirements(!needed))
             {
-                success = true;
-                return;
-            }
+                Dictionary<string, string> inputToParse = PREACTInput.GetHeaderInput(inputLines, startIndex);
+                string nameOfInput, userInput;
 
-            int issues = 0;            
-            Dictionary<string, string> inputToParse = PREACTInput.GetHeaderInput(inputLines, startIndex);
-            string nameOfInput, userInput;
+                Evacuation.DemographicsInput.Parse(Demographics, inputLines, demographicsLinesIndices, out bool demographicsOk);
 
-            Evacuation.DemographicsInput.Parse(Demographics, inputLines, demographicsLinesIndices, out success);
-            if(!success)
-            {
-                return;
-            }
+                nameOfInput = nameof(PopulationFile);
+                bool haveFile = false;
+                if (inputToParse.TryGetValue(nameOfInput, out userInput) && !string.IsNullOrWhiteSpace(userInput))
+                {
+                    PopulationFile = userInput;
+                    PREACTInput.CheckIfFileExist(nameOfInput, ref PopulationFile, rootFolder, out haveFile);
+                }
+                else
+                {
+                    //Critical when the pedestrian module is on: there is nobody to evacuate without it.
+                    PREACTInput.InputNotFoundMessage(nameOfInput, true);
+                }
 
-            nameOfInput = nameof(PopulationFile);
-            if (inputToParse.TryGetValue(nameOfInput, out userInput))
-            {
-                PopulationFile = userInput;
-                PREACTInput.CheckIfFileExist(nameOfInput, ref PopulationFile, rootFolder, out success);
-            }
-            else
-            {
-                PREACTInput.InputNotFoundMessage(nameOfInput);
-            }
+                nameOfInput = nameof(CullOutsideGroups);
+                if (inputToParse.TryGetValue(nameOfInput, out userInput))
+                {
+                    if (!InputParse.Bool(userInput, out CullOutsideGroups))
+                    {
+                        CullOutsideGroups = false;
+                        PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput, false, "false");
+                    }
+                }
+                else
+                {
+                    PREACTInput.InputNotFoundMessage(nameOfInput, false, "false");
+                }
 
-            nameOfInput = nameof(CullOutsideGroups);
-            if (inputToParse.TryGetValue(nameOfInput, out userInput))
-            {
-                success = bool.TryParse(userInput, out CullOutsideGroups);
-            }
-            else
-            {
-                success = false;
-                PREACTInput.InputNotFoundMessage(nameOfInput);
-            }
-            if(!success)
-            {
-                CullOutsideGroups = false;
-            }
+                if (needed && haveFile)
+                {
+                    Data.LoadAll(pedestrianInput, this, rootFolder, out bool loaded);
+                    if (!loaded)
+                    {
+                        PREACTInput.InputProblem(nameof(PopulationFile), "could not be read; see the log for the line at fault.");
+                    }
+                    success = loaded;
+                }
 
-            Data.LoadAll(pedestrianInput, this, rootFolder, out success);
+                success &= demographicsOk && (haveFile || !needed);
+            }
         }
     }
 }

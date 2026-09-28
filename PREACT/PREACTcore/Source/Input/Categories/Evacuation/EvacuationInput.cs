@@ -19,82 +19,84 @@ namespace PREACT.Input
         public Dictionary<string, EvacuationDestinationInput> EvacuationDestinationInputs = new Dictionary<string, EvacuationDestinationInput>(5);
         public Dictionary<string, ResponseCurve> ResponseCurves = new Dictionary<string, ResponseCurve>(5);        
         public Dictionary<string, EvacuationGroupInput> EvacuationGroupInputs = new Dictionary<string, EvacuationGroupInput>(5);
-        public bool UseTriggerBufferEvacuation = false;
-        public string TriggerBufferFile = string.Empty;
+
+        /// <summary>
+        /// No longer part of the format: never consumed by the engine. Kept only because the Unity scenario
+        /// editor still binds to it; not read, not written. Remove together with the GUI checkbox.
+        /// </summary>
+        [NotInFile] public bool UseTriggerBufferEvacuation = false;
+        /// <summary>See <see cref="UseTriggerBufferEvacuation"/>.</summary>
+        [NotInFile] public string TriggerBufferFile = string.Empty;
 
         public EvacuationInput()
         {
             _data = new EvacuationData();
         }
 
-        public void Parse(string[] inputLines, int startIndex, SimulationInput simulationInput, EventsInput eventsInput, PopulationInput population, PedestrianModuleInput pedestrianInput, TrafficModuleInput trafficInput, List<int> destinationLineIndices, List<int> responseCurveLineIndices, List<int> evacuationGroupLineIndices, string rootFolder, out bool success)
+        /// <summary>
+        /// Reads the destinations, response curves and evacuation groups (each its own repeated section) and
+        /// the <c>[Evacuation]</c> header, which holds nothing current any more.
+        /// </summary>
+        /// <remarks>
+        /// Read in full whether or not any module uses them, so a save keeps them: this used to return at once
+        /// when both the pedestrian and the traffic module were off, and the writer then dropped every
+        /// destination, curve and group. What is critical depends on what is on: destinations for the traffic
+        /// module, response curves and groups for the pedestrian module.
+        /// </remarks>
+        /// <param name="startIndex">Line of the <c>[Evacuation]</c> header, or -1 when the file has none.</param>
+        public void Parse(string[] inputLines, int startIndex, SimulationInput simulationInput, PopulationInput population, PedestrianModuleInput pedestrianInput, TrafficModuleInput trafficInput, List<int> destinationLineIndices, List<int> responseCurveLineIndices, List<int> evacuationGroupLineIndices, string rootFolder, out bool success)
         {
-            if (!pedestrianInput.Enabled && !trafficInput.Enabled)
-            {
-                success = true;
-                return;
-            }
+            bool pedestrian = pedestrianInput.Enabled;
+            bool traffic = trafficInput.Enabled;
+            success = true;
 
-            success = false;
-            int issues = 0;            
-            Dictionary<string, string> inputToParse = PREACTInput.GetHeaderInput(inputLines, startIndex);
-            string nameOfInput, userInput;
-
-            //critical
-            EvacuationDestinationInput.Parse(EvacuationDestinationInputs, inputLines, destinationLineIndices, out success);
-            if (!success)
+            if (startIndex >= 0)
             {
-                return;
-            }
-
-            //critical
-            ResponseCurve.Parse(ResponseCurves, inputLines, responseCurveLineIndices, simulationInput, out success);
-            if (!success)
-            {
-                return;
-            }
-
-            //critical, must be done after response curves and destinations
-            EvacuationGroupInput.Parse(EvacuationGroupInputs, inputLines, evacuationGroupLineIndices, EvacuationDestinationInputs, ResponseCurves, simulationInput, population, rootFolder, out success);
-            if (!success)
-            {
-                return;
-            }
-
-            //not critical
-            nameOfInput = nameof(UseTriggerBufferEvacuation);
-            if (inputToParse.TryGetValue(nameOfInput, out userInput))
-            {
-                bool.TryParse(userInput, out UseTriggerBufferEvacuation);
-            }
-            else
-            {
-                PREACTInput.InputNotFoundMessage(nameOfInput);
-            }
-
-            //maybe critical
-            if(UseTriggerBufferEvacuation)
-            {
-                nameOfInput = nameof(TriggerBufferFile);
-                if (inputToParse.TryGetValue(nameOfInput, out userInput))
+                Dictionary<string, string> inputToParse = PREACTInput.GetHeaderInput(inputLines, startIndex);
+                foreach (string retired in new[] { nameof(UseTriggerBufferEvacuation), nameof(TriggerBufferFile), "EvacuationOrderStart" })
                 {
-                    TriggerBufferFile = userInput;
-                    PREACTInput.CheckIfFileExist(nameOfInput, ref TriggerBufferFile, rootFolder, out success);
+                    if (inputToParse.ContainsKey(retired))
+                    {
+                        PREACTInput.InputWarning(retired, "is no longer used and is ignored; it is not written when the scenario is saved.");
+                    }
                 }
-                else
+            }
+
+            using (PREACTInput.SoftRequirements(!traffic))
+            {
+                EvacuationDestinationInput.Parse(EvacuationDestinationInputs, inputLines, destinationLineIndices, out bool ok);
+                success &= ok;
+                if (EvacuationDestinationInputs.Count == 0)
                 {
+                    PREACTInput.InputProblem("Destination", "the traffic module needs at least one [Destination] to drive to.");
+                    success &= !traffic;
+                }
+            }
+
+            using (PREACTInput.SoftRequirements(!pedestrian))
+            {
+                ResponseCurve.Parse(ResponseCurves, inputLines, responseCurveLineIndices, simulationInput, out bool ok);
+                success &= ok;
+                if (ResponseCurves.Count == 0)
+                {
+                    PREACTInput.InputProblem("ResponseCurve", "the pedestrian module needs at least one [ResponseCurve] to decide when households leave.");
+                    success &= !pedestrian;
+                }
+            }
+
+            //must be done after response curves and destinations
+            using (PREACTInput.SoftRequirements(!pedestrian && !traffic))
+            {
+                EvacuationGroupInput.Parse(EvacuationGroupInputs, inputLines, evacuationGroupLineIndices, EvacuationDestinationInputs, ResponseCurves, simulationInput, population, rootFolder, pedestrian, traffic, out bool ok);
+                success &= ok;
+                if (EvacuationGroupInputs.Count == 0 && pedestrian)
+                {
+                    PREACTInput.InputProblem("EvacuationGroup", "the pedestrian module needs at least one [EvacuationGroup]: every household belongs to one.");
                     success = false;
-                    PREACTInput.InputNotFoundMessage(nameOfInput, true);
-                }
-                if(!success)
-                {
-                    return;
                 }
             }
 
-            _data.LoadAll(rootFolder, out success);
+            _data.LoadAll(rootFolder, out bool _);
         }
-
-        
     }
 }

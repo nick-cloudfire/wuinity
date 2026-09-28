@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Reflection;
 using System.Text;
 using PREACT.Evacuation;
@@ -26,12 +27,21 @@ namespace PREACT.Input
     {
         public static string[] Write(PREACTInput input)
         {
-            var lines = new List<string>();
+            return Write(input, true);
+        }
 
-            Section(lines, nameof(PREACTInput.Simulation), input.Simulation);
-            Section(lines, nameof(PREACTInput.Map), input.Map);
-            Section(lines, nameof(PREACTInput.Landscape), input.Landscape);
-            Section(lines, nameof(PREACTInput.Population), input.Population);
+        /// <param name="omitDefaultSections">Leave out a section that holds only what its absence would mean (a
+        /// module that is off and has nothing configured below it, a map with the default provider). False writes
+        /// every section - what the tests use to learn the defaults.</param>
+        public static string[] Write(PREACTInput input, bool omitDefaultSections)
+        {
+            var lines = new List<string>();
+            bool omit = omitDefaultSections;
+
+            Section(lines, nameof(PREACTInput.Simulation), input.Simulation, omit);
+            Section(lines, nameof(PREACTInput.Map), input.Map, omit);
+            Section(lines, nameof(PREACTInput.Landscape), input.Landscape, omit);
+            Section(lines, nameof(PREACTInput.Population), input.Population, omit);
 
             //Demographics belong to the population section and are read from their own repeated
             //headers, so they follow it.
@@ -39,40 +49,42 @@ namespace PREACT.Input
             {
                 foreach (KeyValuePair<string, DemographicsInput> kv in input.Population.Demographics)
                 {
-                    Section(lines, "Demographics", kv.Value);
+                    Section(lines, "Demographics", kv.Value, omit);
                 }
             }
 
-            Section(lines, nameof(PREACTInput.Evacuation), input.Evacuation);
+            Section(lines, nameof(PREACTInput.Evacuation), input.Evacuation, omit);
             if (input.Evacuation != null)
             {
                 foreach (KeyValuePair<string, ResponseCurve> kv in input.Evacuation.ResponseCurves)
                 {
-                    ResponseCurveSection(lines, kv.Value);
+                    ResponseCurveSection(lines, kv.Value, input.Simulation != null ? input.Simulation.StartDateTime : default);
                 }
                 foreach (KeyValuePair<string, EvacuationDestinationInput> kv in input.Evacuation.EvacuationDestinationInputs)
                 {
-                    Section(lines, "Destination", kv.Value);
+                    Section(lines, "Destination", kv.Value, omit);
                 }
                 foreach (KeyValuePair<string, EvacuationGroupInput> kv in input.Evacuation.EvacuationGroupInputs)
                 {
-                    Section(lines, "EvacuationGroup", kv.Value);
+                    Section(lines, "EvacuationGroup", kv.Value, omit);
                 }
             }
 
-            Section(lines, nameof(PREACTInput.Events), input.Events);
-            Section(lines, nameof(PREACTInput.Weather), input.Weather);
+            Section(lines, nameof(PREACTInput.Weather), input.Weather, omit);
 
             //Each module is followed by the sub-section named after the module it selected, which
-            //is how the parsers locate it (headerLineIndex[nameof(TrafficModules.SUMO)] and so on).
-            Section(lines, nameof(PREACTInput.PedestrianModule), input.PedestrianModule);
-            ModuleSubSection(lines, input.PedestrianModule, "Module", input.PedestrianModule?.MacroHouseholdSimInput);
+            //is how the parsers locate it (headerLineIndex[nameof(TrafficModules.SUMO)] and so on). The module
+            //section is only ever left out when nothing follows it, since its sub-sections are read through it.
+            var sub = new List<string>();
+            ModuleSubSection(sub, input.PedestrianModule, "Module", input.PedestrianModule?.MacroHouseholdSimInput, omit);
+            ModuleWithSubSections(lines, nameof(PREACTInput.PedestrianModule), input.PedestrianModule, sub, omit);
 
-            Section(lines, nameof(PREACTInput.TrafficModule), input.TrafficModule);
-            ModuleSubSection(lines, input.TrafficModule, "Module", input.TrafficModule?.SumoInput);
+            sub = new List<string>();
+            ModuleSubSection(sub, input.TrafficModule, "Module", input.TrafficModule?.SumoInput, omit);
+            ModuleWithSubSections(lines, nameof(PREACTInput.TrafficModule), input.TrafficModule, sub, omit);
 
-            Section(lines, nameof(PREACTInput.WildfireModule), input.WildfireModule);
-            ModuleSubSection(lines, input.WildfireModule, "Module", WildfireSubInput(input));
+            sub = new List<string>();
+            ModuleSubSection(sub, input.WildfireModule, "Module", WildfireSubInput(input), omit);
 
             //The ELMFIRE namelist settings, which Section cannot reach: they hang off ElmfireInput as a
             //nested object and IsWritable refuses those, deliberately - the format has no nesting. Written
@@ -80,27 +92,36 @@ namespace PREACT.Input
             if (input.WildfireModule?.Module == WildfireModuleInput.WildfireModules.ELMFIRE
                 && input.WildfireModule.ElmfireInput?.Namelist != null)
             {
-                Section(lines, ElmfireInput.NamelistSection, input.WildfireModule.ElmfireInput.Namelist);
+                Section(sub, ElmfireInput.NamelistSection, input.WildfireModule.ElmfireInput.Namelist, omit);
             }
 
             //Ignition points live on WildfireData, which Section skips along with every other "Data"
             //member, so they are written here explicitly - one repeated section each, the same shape
-            //destinations and evacuation groups use.
+            //destinations and evacuation groups use. Read through [WildfireModule], so they keep it written.
             if (input.WildfireModule?.Data?.IgnitionPoints != null)
             {
                 foreach (Wildfire.IgnitionPointInput point in input.WildfireModule.Data.IgnitionPoints)
                 {
-                    IgnitionPointSection(lines, point);
+                    IgnitionPointSection(sub, point);
                 }
             }
+            ModuleWithSubSections(lines, nameof(PREACTInput.WildfireModule), input.WildfireModule, sub, omit);
 
-            Section(lines, nameof(PREACTInput.SmokeModule), input.SmokeModule);
-            ModuleSubSection(lines, input.SmokeModule, "Module", SmokeSubInput(input));
+            sub = new List<string>();
+            ModuleSubSection(sub, input.SmokeModule, "Module", SmokeSubInput(input), omit);
+            ModuleWithSubSections(lines, nameof(PREACTInput.SmokeModule), input.SmokeModule, sub, omit);
 
-            Section(lines, nameof(PREACTInput.TriggerBufferModule), input.TriggerBufferModule);
-            ModuleSubSection(lines, input.TriggerBufferModule, "Module", TriggerBufferSubInput(input));
+            sub = new List<string>();
+            ModuleSubSection(sub, input.TriggerBufferModule, "Module", TriggerBufferSubInput(input), omit);
+            ModuleWithSubSections(lines, nameof(PREACTInput.TriggerBufferModule), input.TriggerBufferModule, sub, omit);
 
             return lines.ToArray();
+        }
+
+        private static void ModuleWithSubSections(List<string> lines, string header, object module, List<string> subSections, bool omit)
+        {
+            Section(lines, header, module, omit && subSections.Count == 0);
+            lines.AddRange(subSections);
         }
 
         /// <summary>
@@ -149,14 +170,14 @@ namespace PREACT.Input
             return null;
         }
 
-        private static void ModuleSubSection(List<string> lines, object module, string moduleFieldName, object subInput)
+        private static void ModuleSubSection(List<string> lines, object module, string moduleFieldName, object subInput, bool omit)
         {
             if (module == null || subInput == null) return;
 
             object moduleValue = ReadMember(module, moduleFieldName);
             if (moduleValue == null) return;
 
-            Section(lines, moduleValue.ToString(), subInput);
+            Section(lines, moduleValue.ToString(), subInput, omit);
         }
 
         private static object ReadMember(object target, string name)
@@ -176,7 +197,12 @@ namespace PREACT.Input
         /// written as bare "time,probability" rows after the header keys, which is the shape the
         /// parser expects.
         /// </summary>
-        private static void ResponseCurveSection(List<string> lines, ResponseCurve curve)
+        /// <remarks>
+        /// An Absolute curve is held as seconds after the simulation start and written back as dates, so it
+        /// reloads as the same curve. It used to be written as those seconds under <c>TimeInput=Absolute</c>,
+        /// which the next load could not read, losing the curve.
+        /// </remarks>
+        private static void ResponseCurveSection(List<string> lines, ResponseCurve curve, DateTime simulationStart)
         {
             lines.Add("[ResponseCurve]");
             lines.Add("Name=" + curve.Name);
@@ -187,7 +213,10 @@ namespace PREACT.Input
                 for (int i = 0; i < curve.DataPoints.Length; ++i)
                 {
                     ResponseDataPoint p = curve.DataPoints[i];
-                    lines.Add(F(p.Time) + "," + F(p.Probability));
+                    string time = curve.TimeInput == TimeInputs.Absolute
+                        ? simulationStart.AddSeconds(System.Math.Round((double)p.Time)).ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture)
+                        : F(p.Time);
+                    lines.Add(time + "," + F(p.Probability));
                 }
             }
             lines.Add(string.Empty);
@@ -214,7 +243,7 @@ namespace PREACT.Input
             lines.Add(string.Empty);
         }
 
-        private static void Section(List<string> lines, string header, object source)
+        private static void Section(List<string> lines, string header, object source, bool omitDefault)
         {
             if (source == null) return;
 
@@ -223,18 +252,30 @@ namespace PREACT.Input
 
             foreach (FieldInfo f in t.GetFields(BindingFlags.Public | BindingFlags.Instance))
             {
-                if (Skip(f.Name, f.FieldType)) continue;
+                if (Skip(f.Name, f.FieldType) || f.IsDefined(typeof(NotInFileAttribute), true)) continue;
                 Emit(body, f.Name, f.GetValue(source));
             }
 
             foreach (PropertyInfo p in t.GetProperties(BindingFlags.Public | BindingFlags.Instance))
             {
                 if (!p.CanRead || p.GetIndexParameters().Length > 0) continue;
-                if (Skip(p.Name, p.PropertyType)) continue;
+                if (Skip(p.Name, p.PropertyType) || p.IsDefined(typeof(NotInFileAttribute), true)) continue;
+                //A property without a setter is computed from something else (HasWeatherAnchor, say): writing it
+                //adds a key no parser reads.
+                if (!p.CanWrite) continue;
 
                 object value;
                 try { value = p.GetValue(source); } catch { continue; }
                 Emit(body, p.Name, value);
+            }
+
+            //A section that says only what its absence would say is omitted too, for the sections where
+            //absent and default-valued mean the same thing (a disabled module, a map with the default
+            //provider). Writing them turned a file without, say, a [WildfireModule] into one with an empty
+            //module - which then reported "nothing has been painted" on the next load.
+            if (omitDefault && OmittedWhenDefault.Contains(header) && IsDefault(source, body))
+            {
+                return;
             }
 
             //A section with nothing to say is omitted entirely. The parsers treat a present header
@@ -250,6 +291,38 @@ namespace PREACT.Input
             lines.Add("[" + header + "]");
             lines.AddRange(body);
             lines.Add(string.Empty);
+        }
+
+        private static readonly HashSet<string> OmittedWhenDefault = new HashSet<string>
+        {
+            nameof(PREACTInput.Map), nameof(PREACTInput.Weather),
+            nameof(PREACTInput.PedestrianModule), nameof(PREACTInput.TrafficModule), nameof(PREACTInput.WildfireModule),
+            nameof(PREACTInput.SmokeModule), nameof(PREACTInput.TriggerBufferModule),
+        };
+
+        /// <summary>Whether <paramref name="body"/> is what a freshly constructed instance of the same type writes.</summary>
+        private static bool IsDefault(object source, List<string> body)
+        {
+            object fresh;
+            try
+            {
+                fresh = Activator.CreateInstance(source.GetType());
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+
+            var freshLines = new List<string>();
+            Section(freshLines, "probe", fresh, false);
+            //Section adds the header and a trailing blank line around the body.
+            if (freshLines.Count == 0)
+            {
+                return body.Count == 0;
+            }
+            freshLines.RemoveAt(0);
+            freshLines.RemoveAt(freshLines.Count - 1);
+            return freshLines.SequenceEqual(body);
         }
 
         /// <summary>
@@ -286,8 +359,20 @@ namespace PREACT.Input
         {
             if (value == null) return;
 
+            //An unset date is not a value: WeatherAnchorDateTime=0001-01-01T00:00:00 used to be written for
+            //every scenario without an anchor.
+            if (value is DateTime date && date == default) return;
+
             string text = Format(value);
             if (text == null) return;
+
+            //Paths are stored with forward slashes, which every platform reads; a backslash is a separator on
+            //Windows only. Applies to the scenario's own path keys (PascalCase ...File/...Directory/...Folder/
+            //...Path), not to ELMFIRE's namelist values, which are ELMFIRE's to interpret.
+            if (value is string && IsPathKey(name))
+            {
+                text = text.Replace('\\', '/');
+            }
 
             //An unset path written as "Key=" is worse than omitting it: the parsers find the key,
             //try to resolve it as a file and fail the load, whereas an absent optional key is
@@ -295,6 +380,12 @@ namespace PREACT.Input
             if (text.Length == 0) return;
 
             body.Add(name + "=" + text);
+        }
+
+        private static bool IsPathKey(string name)
+        {
+            return name.EndsWith("File", StringComparison.Ordinal) || name.EndsWith("Directory", StringComparison.Ordinal)
+                   || name.EndsWith("Folder", StringComparison.Ordinal) || name.EndsWith("Path", StringComparison.Ordinal);
         }
 
         private static string Format(object value)

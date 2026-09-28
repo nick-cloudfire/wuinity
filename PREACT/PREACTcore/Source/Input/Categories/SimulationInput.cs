@@ -45,64 +45,41 @@ namespace PREACT.Input
 
         public void Parse(string[] inputLines, int startIndex, out bool success)
         {
-            success = false;
-            int issues = 0;            
+            //Every key is read whatever happened to the ones before it. This used to return at the first
+            //problem, so one bad value (say LowerLeftLatLon without its comma) left the rest of the section
+            //at its defaults - and a save then wrote those defaults back over the user's values.
+            int issues = 0;
             Dictionary<string, string> inputToParse = PREACTInput.GetHeaderInput(inputLines, startIndex);
             string nameOfInput, userInput;
 
-            //critical
+            //critical: every output file is named after it
             nameOfInput = nameof(Name);
-            if(inputToParse.TryGetValue(nameOfInput, out userInput))
+            if(inputToParse.TryGetValue(nameOfInput, out userInput) && userInput.Length > 0)
             {
                 Name = userInput;
-                if(Name.Length == 0)
-                {
-                    PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
-                    ++issues;
-                }                
+            }
+            else if (userInput != null)
+            {
+                ++issues;
+                PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
             }
             else
             {
                 ++issues;
                 PREACTInput.InputNotFoundMessage(nameOfInput, true);
-            }
-            if (issues > 0)
-            {
-                success = false;
-                return;
             }
 
             //critical
             nameOfInput = nameof(LowerLeftLatLon);
             if(inputToParse.TryGetValue(nameOfInput, out userInput))
             {
-                string[] data = userInput.Split(',');
-                issues += double.TryParse(data[0], out _lowerLeftLatLon.x) ? 0 : 1;
-                issues += double.TryParse(data[1], out _lowerLeftLatLon.y) ? 0 : 1;
-                if(issues > 0)
+                if (InputParse.Vector2d(userInput, out Vector2d latLon))
                 {
-                    PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
+                    _lowerLeftLatLon = latLon;
                 }
-            }
-            else
-            {
-                PREACTInput.InputNotFoundMessage(nameOfInput, true);
-            }
-            if(issues > 0)
-            {
-                success = false;
-                return;
-            }
-
-            //critical
-            nameOfInput = nameof(DomainSize);
-            if(inputToParse.TryGetValue(nameOfInput, out userInput))
-            {
-                string[] data = userInput.Split(',');
-                issues += double.TryParse(data[0], out DomainSize.x) ? 0 : 1;
-                issues += double.TryParse(data[1], out DomainSize.y) ? 0 : 1;
-                if (issues > 0)
+                else
                 {
+                    ++issues;
                     PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
                 }
             }
@@ -111,81 +88,104 @@ namespace PREACT.Input
                 ++issues;
                 PREACTInput.InputNotFoundMessage(nameOfInput, true);
             }
-            if (issues > 0)
-            {
-                success = false;
-                return;
-            }
 
-            //not critical
-            nameOfInput = nameof(DeltaTime);
+            //critical
+            nameOfInput = nameof(DomainSize);
             if(inputToParse.TryGetValue(nameOfInput, out userInput))
             {
-                float.TryParse(userInput, out DeltaTime);
+                if (InputParse.Vector2d(userInput, out Vector2d size) && size.x > 0.0 && size.y > 0.0)
+                {
+                    DomainSize = size;
+                }
+                else
+                {
+                    ++issues;
+                    PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
+                }
             }
             else
             {
-                PREACTInput.InputNotFoundMessage(nameOfInput);
+                ++issues;
+                PREACTInput.InputNotFoundMessage(nameOfInput, true);
+            }
+
+            //not critical, but a step of zero or less never advances the clock
+            nameOfInput = nameof(DeltaTime);
+            if(inputToParse.TryGetValue(nameOfInput, out userInput))
+            {
+                if (!InputParse.Float(userInput, out float deltaTime) || deltaTime <= 0f)
+                {
+                    ++issues;
+                    PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
+                }
+                else
+                {
+                    DeltaTime = deltaTime;
+                }
+            }
+            else
+            {
+                PREACTInput.InputNotFoundMessage(nameOfInput, false, InputParse.Format(DeltaTime));
             }
 
             nameOfInput = nameof(StartDateTime);
             if(inputToParse.TryGetValue(nameOfInput, out userInput))
             {
-                success = DateTime.TryParse(userInput, out StartDateTime);
-                if(!success)
+                if(!InputParse.DateTime(userInput, out StartDateTime))
                 {
+                    ++issues;
                     PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
                 }
             }
             else
             {
-                success = false;
+                ++issues;
                 PREACTInput.InputNotFoundMessage(nameOfInput, true);
-            }
-            if(!success)
-            {
-                return;
             }
 
             nameOfInput = nameof(EndDateTime);
             if (inputToParse.TryGetValue(nameOfInput, out userInput))
             {
-                success = DateTime.TryParse(userInput, out EndDateTime);
-                if (!success)
+                if (!InputParse.DateTime(userInput, out EndDateTime))
                 {
+                    ++issues;
                     PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
+                }
+                else if (EndDateTime <= StartDateTime)
+                {
+                    PREACTInput.InputWarning(nameOfInput, $"{userInput} is not after the start ({StartDateTime:yyyy-MM-ddTHH:mm:ss}); the run ends immediately.");
                 }
             }
             else
             {
-                success = false;
+                ++issues;
                 PREACTInput.InputNotFoundMessage(nameOfInput, true);
-            }
-            if (!success)
-            {
-                return;
             }
 
             nameOfInput = nameof(StopWhenEvacuated);
             if (inputToParse.TryGetValue(nameOfInput, out userInput))
             {
-                bool.TryParse(userInput, out StopWhenEvacuated);
+                if (!InputParse.Bool(userInput, out StopWhenEvacuated))
+                {
+                    PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput, false, "false");
+                }
             }
             else
             {
-                PREACTInput.InputNotFoundMessage(nameOfInput);
+                PREACTInput.InputNotFoundMessage(nameOfInput, false, "false");
             }
 
             //Optional and silent when absent: 0 is the documented default and means the same thing every
             //scenario written before this key existed already did.
             nameOfInput = nameof(RandomSeed);
-            if (inputToParse.TryGetValue(nameOfInput, out userInput))
+            if (inputToParse.TryGetValue(nameOfInput, out userInput) && !InputParse.Int(userInput, out RandomSeed))
             {
-                int.TryParse(userInput, out RandomSeed);
+                RandomSeed = 0;
+                PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput, false, "0 (clock-seeded)");
             }
 
             _data.UpdateData(LowerLeftLatLon);
-            success = true;
+            success = issues == 0;
         }
     }
 }    

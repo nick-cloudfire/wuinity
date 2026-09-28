@@ -11,6 +11,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PREACTexecute", "PREACTexec
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PREACTcli", "PREACTcli\PREACTcli.csproj", "{9223D8E8-3211-4BAF-AA88-D45FA6AAE654}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PREACTtests", "PREACTtests\PREACTtests.csproj", "{1040DE40-48AD-4ED8-B9D9-34597A0492BE}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -36,5 +38,9 @@ Global
 		{9223D8E8-3211-4BAF-AA88-D45FA6AAE654}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{9223D8E8-3211-4BAF-AA88-D45FA6AAE654}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{9223D8E8-3211-4BAF-AA88-D45FA6AAE654}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1040DE40-48AD-4ED8-B9D9-34597A0492BE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1040DE40-48AD-4ED8-B9D9-34597A0492BE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1040DE40-48AD-4ED8-B9D9-34597A0492BE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1040DE40-48AD-4ED8-B9D9-34597A0492BE}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

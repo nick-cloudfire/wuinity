@@ -163,9 +163,6 @@ namespace PREACT
             _weather.Update(_time.CurrentDateTime);
             _weatherStopwatch.Stop();
 
-
-            UpdateEvents();
-
             //step all modules forward in time            
             float deltaTime = _input.Simulation.DeltaTime;
             //if only fire running we can take longer steps potentially
@@ -363,26 +360,6 @@ namespace PREACT
         public void ToggleRealtime()
         {
             _runRealtime = !_runRealtime;
-        }
-
-        //TODO: move
-        private void UpdateEvents()
-        {
-            if (_input.TrafficModule.Enabled)
-            {
-                //check for global events
-                if (_input.Events.Data.BlockDestinationEvents != null)
-                {
-                    for (int i = 0; i < _input.Events.Data.BlockDestinationEvents.Count; i++)
-                    {
-                        BlockDestinationEvent bGE = _input.Events.Data.BlockDestinationEvents[i];
-                        if (_time.SimulationTime >= bGE.StartTime && !bGE.Triggered)
-                        {
-                            bGE.ApplyEffects();
-                        }
-                    }
-                }
-            }
         }
 
         private static void StepModule(Stopwatch timer, SimulationModule module, double currentTime, double deltaTime)

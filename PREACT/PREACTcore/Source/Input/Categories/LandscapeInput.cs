@@ -110,14 +110,11 @@ namespace PREACT.Input
 
             field = userInput;
             //By reference, so a band that has been moved into one of the scenario's subfolders is found
-            //and the path corrected in place rather than merely reported.
-            PREACTInput.CheckIfFileExist(key, ref field, rootFolder, out bool exists);
-            if (!exists)
-            {
-                //Kept rather than cleared, so the path stays visible and editable instead of vanishing
-                //from the scenario when it is saved again.
-                Engine.Message(null, Engine.LogType.Warning, key + " points at a file that is not there: " + userInput);
-            }
+            //and the path corrected in place rather than merely reported. Not critical: every band is
+            //optional (k-PERIL treats missing terrain as flat and says so), and this used to use the
+            //critical default, so a moved DEM blocked the whole scenario. A missing file keeps its path, so
+            //it stays visible and editable instead of vanishing from the scenario when it is saved again.
+            PREACTInput.CheckIfFileExist(key, ref field, rootFolder, out bool _, false);
         }
 
         /// <summary>

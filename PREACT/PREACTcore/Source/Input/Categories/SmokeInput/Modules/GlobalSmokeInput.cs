@@ -21,20 +21,12 @@ namespace PREACT.Input
         public static GlobalSmokeInput Parse(string[] inputLines, int startIndex, string rootFolder, SmokeInput smokeInput, out bool success)
         {
             GlobalSmokeInput newInput = new GlobalSmokeInput();
-            if(smokeInput.Module != SmokeInput.SmokeModules.GlobalSmoke)
-            {
-                success = true;
-                return newInput;
-            }
-
-            success = false;
-            int issues = 0;            
             Dictionary<string, string> inputToParse = PREACTInput.GetHeaderInput(inputLines, startIndex);
-            string nameOfInput, userInput;
 
-            //critical
-            nameOfInput = nameof(ExtinctionFile);
-            if (inputToParse.TryGetValue(nameOfInput, out userInput))
+            //critical when the module is in use (the caller makes it soft otherwise). It used to be reported as
+            //a mere default, and the parse then failed without saying why.
+            string nameOfInput = nameof(ExtinctionFile);
+            if (inputToParse.TryGetValue(nameOfInput, out string userInput) && !string.IsNullOrWhiteSpace(userInput))
             {
                 newInput.ExtinctionFile = userInput;
                 PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.ExtinctionFile, rootFolder, out success);
@@ -42,17 +34,11 @@ namespace PREACT.Input
             else
             {
                 success = false;
-                PREACTInput.InputNotFoundMessage(nameOfInput);
-            }
-            if(!success)
-            {
-                return newInput;
+                PREACTInput.InputNotFoundMessage(nameOfInput, true);
             }
 
-            success = true;
             return newInput;
         }
-
     }
 }
 

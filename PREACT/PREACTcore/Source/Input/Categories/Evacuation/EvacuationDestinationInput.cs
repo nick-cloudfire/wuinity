@@ -34,187 +34,129 @@ namespace PREACT.Input
 
         public static void Parse(Dictionary<string, EvacuationDestinationInput> newInputs, string[] inputLines, List<int> destinationLineIndices, out bool success)
         {
-            success = false;
+            //Each [Destination] is read on its own: one without a name or with a bad coordinate is reported and
+            //the others are still read (this used to break out of the loop, losing every later destination).
+            success = true;
             newInputs.Clear();
 
             for(int i = 0; i < destinationLineIndices.Count; ++i)
             {
                 EvacuationDestinationInput newInput = new EvacuationDestinationInput();
-                success = false;
-                int issues = 0;
                 Dictionary<string, string> inputToParse = PREACTInput.GetHeaderInput(inputLines, destinationLineIndices[i]);
                 string nameOfInput, userInput;
 
-                //critical
                 nameOfInput = nameof(Name);
-                if (inputToParse.TryGetValue(nameOfInput, out userInput))
+                if (!inputToParse.TryGetValue(nameOfInput, out userInput) || userInput.Length == 0)
                 {
-                    newInput.Name = userInput;
-                    success = true;
-                }
-                else
-                {
+                    PREACTInput.InputProblem("Destination", $"the section on line {destinationLineIndices[i] + 1} has no Name, so nothing can refer to it; it is ignored.");
                     success = false;
-                    PREACTInput.InputNotFoundMessage(nameOfInput, true);
+                    continue;
                 }
-                if (!success)
+                newInput.Name = userInput;
+                if (newInputs.ContainsKey(newInput.Name))
                 {
-                    break;
+                    PREACTInput.InputWarning("Destination", $"{newInput.Name} is defined more than once; the first definition is used.");
+                    continue;
                 }
 
-                //critical
+                //critical: a destination with no position cannot be driven to
                 nameOfInput = nameof(LatLon);
                 if (inputToParse.TryGetValue(nameOfInput, out userInput))
                 {
-                    string[] data = PREACTInput.TrimAll(userInput.Split(','));
-                    issues += double.TryParse(data[0], out newInput.LatLon.x) ? 0 : 1;
-                    issues += double.TryParse(data[1], out newInput.LatLon.y) ? 0 : 1;
-                    if (issues > 0)
+                    if (!InputParse.Vector2d(userInput, out newInput.LatLon))
                     {
-                        PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
+                        success = false;
+                        PREACTInput.CouldNotInterpretInputMessage(newInput.Name + " " + nameOfInput, userInput);
                     }
                 }
                 else
                 {
                     success = false;
-                    PREACTInput.InputNotFoundMessage(nameOfInput, true);
-                }
-                if (!success || issues > 0)
-                {
-                   break;
+                    PREACTInput.InputNotFoundMessage(newInput.Name + " " + nameOfInput, true);
                 }
 
-                //critical
                 nameOfInput = nameof(Type);
                 if (inputToParse.TryGetValue(nameOfInput, out userInput))
                 {
-                    switch (userInput)
+                    if (!InputParse.Enum(userInput, out newInput.Type))
                     {
-                        case nameof(DestinationTypes.Exit):
-                            newInput.Type = DestinationTypes.Exit;
-                            break;
-                        case nameof(DestinationTypes.Shelter):
-                            newInput.Type = DestinationTypes.Shelter;
-                            break;
-                        default:
-                            ++issues;
-                            Engine.Message(null, Engine.LogType.SimulationError, nameOfInput + " was not recognized." + PREACTInput.pleaseCheckInput);
-                            break;
+                        newInput.Type = DestinationTypes.Exit;
+                        PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput, false, nameof(DestinationTypes.Exit));
                     }
                 }
                 else
                 {
-                    success = false;
-                    PREACTInput.InputNotFoundMessage(nameOfInput, true);
+                    PREACTInput.InputNotFoundMessage(nameOfInput, false, nameof(DestinationTypes.Exit));
                 }
-                if (!success || issues > 0)
-                {
-                    break;
-                }                
 
-                //not critical
                 nameOfInput = nameof(MaxFlow);
                 if (inputToParse.TryGetValue(nameOfInput, out userInput))
                 {
-                    success = float.TryParse(userInput, out newInput.MaxFlow);
+                    if (!InputParse.Float(userInput, out newInput.MaxFlow))
+                    {
+                        newInput.MaxFlow = -1f;
+                        PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput, false, "-1 (unlimited)");
+                    }
                 }
                 else
                 {
-                    success = false;
-                    PREACTInput.InputNotFoundMessage(nameOfInput);
-                }
-                if(!success)
-                {
-                    newInput.MaxFlow = -1f;
+                    PREACTInput.InputNotFoundMessage(nameOfInput, false, "-1 (unlimited)");
                 }
 
-                //not critical
                 nameOfInput = nameof(MaxVehicles);
                 if (inputToParse.TryGetValue(nameOfInput, out userInput))
                 {
-                    success = int.TryParse(userInput, out newInput.MaxVehicles);
+                    if (!InputParse.Int(userInput, out newInput.MaxVehicles))
+                    {
+                        newInput.MaxVehicles = -1;
+                        PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput, false, "-1 (unlimited)");
+                    }
                 }
                 else
                 {
-                    success = false;
-                    PREACTInput.InputNotFoundMessage(nameOfInput);
-                }
-                if (!success)
-                {
-                    newInput.MaxVehicles = -1;
+                    PREACTInput.InputNotFoundMessage(nameOfInput, false, "-1 (unlimited)");
                 }
 
-                //not critical
                 nameOfInput = nameof(MaxPeople);
                 if (inputToParse.TryGetValue(nameOfInput, out userInput))
                 {
-                    success = int.TryParse(userInput, out newInput.MaxPeople);
+                    if (!InputParse.Int(userInput, out newInput.MaxPeople))
+                    {
+                        newInput.MaxPeople = -1;
+                        PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput, false, "-1 (unlimited)");
+                    }
                 }
                 else
-                {                    
-                    PREACTInput.InputNotFoundMessage(nameOfInput);
-                }
-                if(!success)
                 {
-                    newInput.MaxPeople = -1;
+                    PREACTInput.InputNotFoundMessage(nameOfInput, false, "-1 (unlimited)");
                 }
 
-                //not critical
                 nameOfInput = nameof(Blocked);
                 if (inputToParse.TryGetValue(nameOfInput, out userInput))
                 {
-                    success = bool.TryParse(userInput, out newInput.Blocked);
+                    if (!InputParse.Bool(userInput, out newInput.Blocked))
+                    {
+                        newInput.Blocked = false;
+                        PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput, false, "false");
+                    }
                 }
                 else
                 {
-                    success = false;
-                    PREACTInput.InputNotFoundMessage(nameOfInput);
-                }
-                if(!success)
-                {
-                    newInput.Blocked = false;
+                    PREACTInput.InputNotFoundMessage(nameOfInput, false, "false");
                 }
 
-                //not critical
+                //not critical: a colour is only for display
                 nameOfInput = nameof(Color);
                 if (inputToParse.TryGetValue(nameOfInput, out userInput))
                 {
-                    string[] data = PREACTInput.TrimAll(userInput.Split(','));
-                    if(data.Length == 3)
+                    if (!InputParse.Color(userInput, out newInput.Color))
                     {
-                        issues += float.TryParse(data[0], out newInput.Color.r) ? 0 : 1;
-                        issues += float.TryParse(data[1], out newInput.Color.g) ? 0 : 1;
-                        issues += float.TryParse(data[2], out newInput.Color.b) ? 0 : 1;
-                    }
-                    else
-                    {
-                        issues++;
-                    }
-                    if (issues > 0)
-                    {
-                        PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
+                        newInput.Color = PREACTColor.Random();
+                        PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput, false, "a random colour");
                     }
                 }
-                else
-                {
-                    success = false;
-                    PREACTInput.InputNotFoundMessage(nameOfInput);
-                }
-                if(!success || issues > 0)
-                {
-                    newInput.Color = PREACTColor.Random();
-                }                
 
                 newInputs.Add(newInput.Name, newInput);
-            }
-            
-            if(newInputs.Count == destinationLineIndices.Count)
-            {
-                success = true;
-            }
-            else
-            {
-                Engine.Message(null, Engine.LogType.InputError, "Could not read all specified EvacuationDestinations.");
             }
         }
     }
