@@ -50,6 +50,7 @@ namespace PREACT.Tests
             var runner = new Runner(filter);
             FormatTests.Register(runner);
             EngineTests.Register(runner);
+            CliTests.Register(runner);
 
             if (examples)
             {

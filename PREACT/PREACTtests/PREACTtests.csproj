@@ -17,6 +17,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\PREACTcore\PREACTcore.csproj" />
+    <!-- For the CLI tests (argument parsing, PREACT.exe exit codes, finding PREACT.exe); internals are visible. -->
+    <ProjectReference Include="..\PREACTcli\PREACTcli.csproj" />
   </ItemGroup>
 
 </Project>

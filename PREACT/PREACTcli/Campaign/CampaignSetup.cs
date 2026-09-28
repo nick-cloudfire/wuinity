@@ -111,8 +111,11 @@ namespace PREACTcli.Campaigns
             c.PreactExe = o.PreactExe != null ? Path.GetFullPath(o.PreactExe) : RealizationRunner.FindPreactExe();
             if (running && (c.PreactExe == null || !File.Exists(c.PreactExe)))
             {
-                return Fail("PREACT.exe was not found; pass --preact <path>. (--resume-only aggregates a campaign's "
-                            + "finished realizations without it.)");
+                return Fail((o.PreactExe != null ? "--preact names " + c.PreactExe + ", which is not there"
+                                                 : "PREACT (PREACT.exe on Windows) was not found in PREACT/PREACTexecute/bin/Release/"
+                                                   + "net8.0, where build.sh/build.ps1 put it, nor beside PREACTcli")
+                            + "; build it or pass --preact <path>. (--resume-only aggregates a campaign's finished "
+                            + "realizations without it.)");
             }
 
             // ------------------------------------------------------------ the template

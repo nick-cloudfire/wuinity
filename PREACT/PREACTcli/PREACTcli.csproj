@@ -15,6 +15,11 @@
     <ProjectReference Include="..\PREACTcore\PREACTcore.csproj" />
   </ItemGroup>
 
+  <!-- The regression tests exercise the CLI's argument parsing and realization bookkeeping directly. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="PREACTtests" />
+  </ItemGroup>
+
   <!-- The GDAL C# bindings P/Invoke into gdal_wrap.dll by bare name, so it has to sit next to the
        executable (or on PATH). PREACTcore's own copy rules preserve the Runtimes\Native\GDAL\x64
        subpath, which .NET's native resolver does not search - build-case's warp/derive steps then

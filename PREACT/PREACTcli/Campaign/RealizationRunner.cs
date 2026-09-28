@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using PREACT.Utility;
 
 namespace PREACTcli.Campaigns
@@ -125,10 +126,9 @@ namespace PREACTcli.Campaigns
                 int moved = CollectOutputs(outputDir, name, preactDir);
 
                 string boundary = Path.Combine(preactDir, "0_" + outputName);
-                if (exit != 0 || !File.Exists(boundary))
+                message = DescribeRun(exit, File.Exists(boundary), moved, logPath);
+                if (message != null)
                 {
-                    message = $"the evacuation produced no trigger boundary (PREACT exit {exit}, {moved} output file(s)); "
-                              + "see " + logPath + ": " + LogTail(logPath);
                     return false;
                 }
 
@@ -231,6 +231,43 @@ namespace PREACTcli.Campaigns
             }
         }
 
+        /// <summary>PREACT.exe's exit codes (PREACTexecute): 0 ran and succeeded, 1 nothing was run, 2 the run reported errors.</summary>
+        public const int PreactSucceeded = 0, PreactNotRun = 1, PreactRunFailed = 2;
+
+        /// <summary>
+        /// Why a realization's evacuation counts as failed, or null when it produced its boundary. Always names the
+        /// realization's PREACT log and quotes its last lines.
+        /// </summary>
+        /// <remarks>
+        /// Only an exit of 0 with a boundary on disk is a success. PREACT.exe exits 1 when it ran nothing (the
+        /// realization's scenario did not load or was incomplete) and 2 when a simulation stopped on an error or an
+        /// error was reported - k-PERIL refusing to compute a boundary among them - in which case a boundary file
+        /// left behind is not trusted. Anything else is the process dying: a kill, an out-of-memory, a crash.
+        /// </remarks>
+        internal static string DescribeRun(int exit, bool boundaryWritten, int outputFiles, string logPath)
+        {
+            string why;
+            switch (exit)
+            {
+                case PreactSucceeded:
+                    if (boundaryWritten) return null;
+                    why = $"PREACT finished but wrote no trigger boundary ({outputFiles} output file(s))";
+                    break;
+                case PreactNotRun:
+                    why = "PREACT did not run the realization's scenario (exit 1: it did not load, or is missing something "
+                          + "it needs)";
+                    break;
+                case PreactRunFailed:
+                    why = "PREACT's run reported errors (exit 2)" + (boundaryWritten ? "; the boundary it wrote is not used" : "");
+                    break;
+                default:
+                    why = $"PREACT exited {exit}, which it never does by itself - it was killed or crashed "
+                          + "(on Linux 137 is usually the out-of-memory killer)";
+                    break;
+            }
+            return why + "; see " + logPath + ": " + LogTail(logPath);
+        }
+
         /// <summary>The last lines of a log, for failure messages.</summary>
         public static string LogTail(string logPath, int lines = 3)
         {
@@ -246,20 +283,36 @@ namespace PREACTcli.Campaigns
             }
         }
 
+        /// <summary>PREACT.exe for a campaign that was not given <c>--preact</c>, or null.</summary>
         public static string FindPreactExe()
         {
-            string cliDir = Path.GetDirectoryName(Path.GetFullPath(Environment.GetCommandLineArgs()[0]));
-            foreach (string name in new[] { "PREACT.exe", "PREACT" })
+            return FindPreactExe(AppContext.BaseDirectory, RuntimeInformation.IsOSPlatform(OSPlatform.Windows));
+        }
+
+        /// <summary>
+        /// The head-less runner's apphost - <c>PREACT.exe</c> on Windows, <c>PREACT</c> elsewhere - looked for where
+        /// build.ps1/build.sh put it (<c>PREACT/PREACTexecute/bin/Release/net8.0</c>, reached from the CLI's own
+        /// build folder), then beside the CLI (a copied installation), then in the Debug build.
+        /// </summary>
+        /// <remarks>
+        /// The name is the platform's only. Looking for <c>PREACT.exe</c> first everywhere found nothing on Linux
+        /// unless <c>--preact</c> was passed, and a Windows copy lying around would have been started there.
+        /// The build output comes before a copy beside the CLI because that is what the build scripts refresh.
+        /// </remarks>
+        internal static string FindPreactExe(string cliDirectory, bool windows)
+        {
+            if (string.IsNullOrEmpty(cliDirectory)) return null;
+            string name = windows ? "PREACT.exe" : "PREACT";
+            string preactFolder = Path.Combine(cliDirectory, "..", "..", "..", "..", "PREACTexecute", "bin");
+            foreach (string candidate in new[]
+                     {
+                         Path.Combine(preactFolder, "Release", "net8.0", name),
+                         Path.Combine(cliDirectory, name),
+                         Path.Combine(preactFolder, "Debug", "net8.0", name),
+                     })
             {
-                foreach (string c in new[]
-                         {
-                             Path.Combine(cliDir, name),
-                             Path.GetFullPath(Path.Combine(cliDir, "..", "..", "..", "..", "PREACTexecute", "bin", "Release", "net8.0", name)),
-                             Path.GetFullPath(Path.Combine(cliDir, "..", "..", "..", "..", "PREACTexecute", "bin", "Debug", "net8.0", name)),
-                         })
-                {
-                    if (File.Exists(c)) return c;
-                }
+                string full = Path.GetFullPath(candidate);
+                if (File.Exists(full)) return full;
             }
             return null;
         }
