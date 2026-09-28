@@ -64,42 +64,42 @@ See [Command-line tools](command-line-tools.md) for the full argument reference.
 
 ### Finding things in the visualizer
 
-Four menus, grouped by what an entry is:
+The **Scenario workflow** panel, docked on the left, lists every step from an empty folder to a trigger
+campaign, in the order the work is done, each with a status (Done, Needs attention, Blocked, To do), what is
+wrong and a button that does the step:
+
+1. Place and time · 2. Roads · 3. Population · 4. Fuels, canopy and buildings · 5. Fire case (ELMFIRE) ·
+6. Fire areas and ignition · 7. Destinations · 8. Response curves and demographics · 9. Evacuation groups ·
+10. Trigger boundary (k-PERIL) · 11. Run one simulation · 12. Results · 13. Probabilistic campaign
+
+The menus hold the same actions, grouped the same way:
 
 | Menu | Holds |
 |---|---|
-| **File** | New scenario, Load scenario, Save, Save as — the scenario as a document. |
-| **Scenario** | Edit, Prepare data, Checklist, Output — what you do to the loaded one, in that order. |
-| **View** | Map layers (population density, road network), the console, the theme. Nothing here changes the scenario. |
-| **Tools** | Probabilistic trigger campaign, Population editor, Download data. Things that do work of their own. |
+| **File** | New scenario, Open, Open recent, Save, Save as, Copy scenario to, Close, Quit. Unsaved changes are asked about before anything discards them. |
+| **Scenario** | The workflow panel, Place and time, Terrain, Weather, Check scenario, All settings. |
+| **Data** | Roads (OpenStreetMap to a SUMO network), Population (WorldPop to households), Fuels, canopy and buildings (LANDFIRE for the US), Build fire case. Each runs only what is missing. |
+| **Fire** | Fire areas (painting), Ignition points, Fire model settings, Fire behaviour (the namelist) and its preview, Trigger boundary, Smoke. |
+| **Evacuation** | Modules, Destinations, Response curves, Demographics, Evacuation groups, Paint group areas. |
+| **Run** | Run simulation (F5), Pause, Stop, Probabilistic trigger campaign. |
+| **Results** | Live output, Show on map (fire arrival, trigger boundary and probability, burn probability, arrival percentiles), the results of the last run and campaign. |
+| **View** / **Help** | Map layers, console, theme, window layout / getting started, troubleshooting, external tools and keys. |
 
-`Scenario > Edit` opens the scenario editor, whose tabs run in the order the work does:
+Two distinctions worth knowing:
 
-- **Simulation** — General, Map, Terrain, Weather. Where and when the scenario happens, and what it is drawn on.
-- **Evacuation** — General, modules, Population, Demographics, Destinations, Response curves, Evacuation groups.
-- **Hazards** — Fire, Fire behaviour, Ignitions and areas, Smoke, Trigger boundary.
-- **Run** — last, because it closes the editor and starts the simulation.
-
-Two distinctions worth knowing, because both used to be spread across tabs:
-
-- **Fire** is how ELMFIRE is *run* — the case, the executables, what to build, which source layers.
-  **Fire behaviour** is what it is *told*, and becomes the generated `elmfire.data`. Setting a
-  `NamelistTemplate` under Fire replaces the whole of Fire behaviour, and the tab says so.
-- Fuel and canopy rasters are named under **Hazards > Fire > Source layers**, not under
-  Simulation > Terrain. Terrain holds only the elevation, slope and aspect the map and k-PERIL use.
-
-`Scenario > Prepare data` runs every prepare-once step against the loaded scenario — the road network,
-population, the DEM, weather, and the ELMFIRE case — naming each output after the scenario and setting
-the path on it. `Tools > Download data` fetches the same things for a hand-drawn area into a folder of
-your choosing, and wires nothing into a scenario.
+- **Fire model settings** is how ELMFIRE is *run* — the case, the executables, the fire duration, what to
+  build. **Fire behaviour** is what it is *told*, and becomes the generated `elmfire.data`. Setting a
+  `NamelistTemplate` replaces the whole of Fire behaviour, and the page says so.
+- For an ELMFIRE scenario the case's `dem.tif` is the grid everything is painted and computed on. Building
+  the case points `[Landscape]` at the case terrain; fuel and canopy rasters are named under Fuels, canopy
+  and buildings, not under Terrain.
 
 ## 5. Prepare your own scenario
 
-Build a scenario in the visualizer: `File > New scenario`, then set the domain,
-destinations and evacuation groups under `Scenario > Edit`, let
-`Scenario > Prepare data` fetch and build the road network, population and fire
-case, and `File > Save` the `.wui`. To understand or hand-edit that file, read
-[The `.wui` input file format](input-file-format.md).
+`File > New scenario` asks for a folder, a name, the area (picked on the map) and the dates, and writes the
+`.wui` at once. Then work down the workflow panel: each row's button fetches or builds what that step needs —
+roads, population, fuels, the fire case — and sets the paths on the scenario, which `File > Save` (Ctrl+S)
+keeps. To understand or hand-edit the file, read [The `.wui` input file format](input-file-format.md).
 
 ## Where to go next
 

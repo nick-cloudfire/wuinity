@@ -1,5 +1,11 @@
 # Automating ELMFIRE case preparation in WUInity
 
+> **Design notes, not a reference.** This records how the case pipeline was designed and why. Parts of it
+> describe what v1 replaced: there is no `template.data` any more (the namelist is generated on every build by
+> `ElmfireNamelistBuilder`; a hand-edited one is named with `[ELMFIRE] NamelistTemplate`), the fire duration is
+> `--hours` / `SimulationTstopHours` in hours, and the campaign flags `--tstop`, `--realization-weather` and
+> friends are retired. For current usage see [Command-line tools](command-line-tools.md).
+
 Goal: a `template.data` that WUInity patches, plus a "Prepare ELMFIRE case" step that writes
 every raster the template references, so one run and then an ensemble can be launched from the GUI.
 Fuel, canopy and building layers stay external and are only ingested.

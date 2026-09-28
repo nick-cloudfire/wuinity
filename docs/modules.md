@@ -16,7 +16,7 @@ Legend: ✅ production · 🚧 present but under active development / not yet va
 Population input is a single CSV of household origins, vehicle road-access
 points and household sizes (see
 [the format reference](input-file-format.md#companion-file-formats)). Any tool
-can produce it — `Scenario > Prepare data` in the visualizer and
+can produce it — Data > Population in the visualizer and
 [`PREACTcli global-gpw-to-pop`](command-line-tools.md) both do.
 
 ## Traffic

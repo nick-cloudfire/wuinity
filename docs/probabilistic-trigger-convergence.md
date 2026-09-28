@@ -1,5 +1,11 @@
 # Convergence-driven probabilistic trigger boundaries
 
+> **Design notes, not a reference.** This records how the campaign was designed and why. Parts of it
+> describe what v1 replaced: `probabilistic-trigger` and reading pre-generated ensembles (`--dir`) are gone,
+> every realization draws its own weather (`--shared-weather`, `--single-band-weather` and
+> `--realization-weather` are retired), the fire duration is `--hours`, and a campaign keeps everything in
+> `_output/campaign_<name>_<hash>/`. For current usage see [Command-line tools](command-line-tools.md).
+
 Design for the closed-loop Monte Carlo that computes a probabilistic k-PERIL
 trigger boundary, running ELMFIRE realizations on demand and stopping on a
 convergence criterion instead of a fixed count.

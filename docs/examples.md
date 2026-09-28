@@ -55,8 +55,8 @@ simulation start here.
 ## Building your own
 
 In the [Unity visualizer](getting-started.md#5-prepare-your-own-scenario), create
-the scenario with `File > New scenario`, set the domain, destinations and
-evacuation groups under `Scenario > Edit`, build the population, road network and
-fire case with `Scenario > Prepare data`, and `File > Save` the `.wui`. Then run
+the scenario with `File > New scenario`, work down the workflow panel (roads,
+population, fuels and the fire case are built from its rows or the Data menu;
+destinations and groups are under Evacuation), and `File > Save` the `.wui`. Then run
 it with [`PREACT.exe`](command-line-tools.md) or open it in the
 [Unity visualizer](getting-started.md#4-run-in-the-visualizer-unity).

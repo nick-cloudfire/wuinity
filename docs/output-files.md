@@ -17,9 +17,16 @@ single run; batch runs produce one set per run).
 
 ## Notes
 
-- **Batch runs.** With `PREACT.exe <file> <numberOfRuns> <batchSize> <offset>`,
-  each run produces its own `_<i>_` files; the batch stops early once the
-  average evacuation time converges. `_traffic_average.csv` aggregates them.
+- **Several runs.** With `PREACT <file> <numberOfRuns>`, each run produces its
+  own `_<i>_` files, one after another; the runs stop early once the average
+  evacuation time converges. `_traffic_average.csv` aggregates them.
+- **Trigger boundary.** With k-PERIL on, `<i>_<OutputName>` (`[kPERIL]
+  OutputName`, an ESRI ASCII grid on the fire grid) is the run's trigger
+  boundary; with separate evacuation groups, one per group with the group's
+  name appended. An ELMFIRE run's own rasters stay in the case's `outputs/`.
+- **Campaigns** write nothing here: everything a trigger campaign produces is in
+  `_output/campaign_<Name>_<settings hash>/` — see
+  [Command-line tools](command-line-tools.md#converge-trigger--probabilistic-trigger-boundary-campaign).
 - **The GeoTIFF** can be opened in QGIS or any GIS tool. Empty (untravelled)
   cells are written as the `-9999` no-data value rather than zero.
 - If an existing `_output/` folder is present, a new run overwrites files with
