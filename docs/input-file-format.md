@@ -458,7 +458,7 @@ OriginLat,OriginLon,AccessLat,AccessLon,People
   road network, otherwise the vehicle is teleported to the nearest valid edge.
 - `People` – number of people in the household (integer).
 
-Generate this file with the [QGIS plugin](qgis-plugin.md) or
+Generate this file with `Scenario > Prepare data` in the visualizer or
 [`PREACTcli global-gpw-to-pop`](command-line-tools.md).
 
 ### Fire rasters (`[AscImport]`)

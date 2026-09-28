@@ -56,7 +56,3 @@ appear in older examples (`EvacuationOrderStart`, `UTMoffset`, `MaxSimTime`,
 `RootFolder`, `WeatherStreamFile`, `GraphicalFireInputFile`) are silently
 ignored by the current parser.
 
-## "Saving input files is not implemented yet"
-
-Writing a `.wui` file back out from the engine/visualizer is not implemented.
-Build or edit `.wui` files with the [QGIS plugin](qgis-plugin.md) or by hand.

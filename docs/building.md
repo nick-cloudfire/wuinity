@@ -9,7 +9,6 @@
 | `PREACT/PREACTcli/` | Utility CLI (`net8.0`) — currently generates population CSVs. |
 | `PREACT/FeatureTester/` | Internal test harness. |
 | `WUInity/` | Unity visualizer project. |
-| `QGIS_plugin/` | QGIS plugin for preparing input data. |
 | `Examples/` | Ready-to-run example scenarios. |
 | `docs/` | This documentation. |
 
@@ -73,7 +72,3 @@ Third-party libraries live under `PREACT/PREACTcore/Runtimes/` (and
 The Unity host is `WUInity/Assets/WUInity/Core/WUInityManager.cs`, which
 implements the engine's `IExternalManager` interface. The runtime GUI is the
 Dear ImGui-based UI under `WUInity/Assets/WUInity/GUI/DearIMGUI/`.
-
-## QGIS plugin
-
-See [QGIS plugin](qgis-plugin.md) for installation.

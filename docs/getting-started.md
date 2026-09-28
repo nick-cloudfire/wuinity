@@ -93,9 +93,10 @@ your choosing, and wires nothing into a scenario.
 
 ## 5. Prepare your own scenario
 
-The [QGIS plugin](qgis-plugin.md) is the easiest way to build the input data
-(domain, destinations, evacuation groups, population, road network) and export a
-ready-to-run `.wui`. To understand or hand-edit that file, read
+Build a scenario in the visualizer: `File > New scenario`, then set the domain,
+destinations and evacuation groups under `Scenario > Edit`, let
+`Scenario > Prepare data` fetch and build the road network, population and fire
+case, and `File > Save` the `.wui`. To understand or hand-edit that file, read
 [The `.wui` input file format](input-file-format.md).
 
 ## Where to go next

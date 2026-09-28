@@ -41,7 +41,8 @@ PREACT.exe Examples/NFDRS4_Behave/Roxborough/Roxborough_no_smoke.wui
 
 ## Building your own
 
-Use the [QGIS plugin](qgis-plugin.md) to draw the domain, place destinations and
-evacuation groups, generate a population CSV and road network, and export a
-`.wui`. Then run it with [`PREACT.exe`](command-line-tools.md) or open it in the
+In the [Unity visualizer](getting-started.md#5-prepare-your-own-scenario), create
+the scenario with `File > New scenario`, set the domain, destinations and
+evacuation groups under `Scenario > Edit`, build the population, road network and
+fire case with `Scenario > Prepare data`, and `File > Save` the `.wui`. Then run it with [`PREACT.exe`](command-line-tools.md) or open it in the
 [Unity visualizer](getting-started.md#4-run-in-the-visualizer-unity).

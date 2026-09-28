@@ -49,7 +49,6 @@ many simulations to run at once.
 | **`EngineTask`** | Describes a run (serial / batch); the engine manages one or many simulations. |
 | **WUI-NITY** | Unity project that hosts the engine and visualizes it. |
 | **PREACTexecute / PREACTcli** | Console tools that host the engine head-less. |
-| **QGIS plugin** | Prepares input data (population, road network, domain, destinations, evacuation groups) and exports a `.wui` project. |
 
 Simulations run in **UTM coordinate space**, which matters for the traffic and
 fire-spread data. A [Mapbox](https://www.mapbox.com/) access token is needed for
@@ -69,7 +68,6 @@ Full end-user documentation lives in [`docs/`](docs/):
 - **[Examples](docs/examples.md)** – what ships in `Examples/` and which to start with.
 - **[Module status](docs/modules.md)** – which fire / traffic / pedestrian / smoke / trigger modules are production-ready vs experimental.
 - **[Output files](docs/output-files.md)** – what a run produces and what each file contains.
-- **[QGIS plugin](docs/qgis-plugin.md)** – preparing input data with the plugin.
 - **[Troubleshooting](docs/troubleshooting.md)** – common problems and fixes.
 
 ---
