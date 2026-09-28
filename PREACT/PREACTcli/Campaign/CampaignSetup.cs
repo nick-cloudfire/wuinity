@@ -45,6 +45,7 @@ namespace PREACTcli.Campaigns
 
             c.ScenarioName = CampaignLayout.CampaignScenarioName(input.Simulation.Name, c.BaseWuiPath);
             c.StartDateTime = input.Simulation.StartDateTime;
+            c.TimeZone = LocalTime.ZoneAt(input.Simulation.LowerLeftLatLon.x, input.Simulation.LowerLeftLatLon.y);
             c.BaseRandomSeed = input.Simulation.RandomSeed;
             c.CentreLatLon = CentreOf(input.Simulation.LowerLeftLatLon, input.Simulation.DomainSize);
 
@@ -253,6 +254,12 @@ namespace PREACTcli.Campaigns
             s["weather.conditioning_days"] = o.ConditioningDays.ToString(CultureInfo.InvariantCulture);
             s["weather.windninja"] = c.WindNinjaExe == null ? "(none: uniform wind)" : Path.GetFileName(c.WindNinjaExe) + " mesh " + o.WindNinjaMesh;
             s["weather.start"] = c.StartDateTime.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture);
+            //A historical day's bands start at the scenario's local hour, converted to the archive's UTC; they used to
+            //start at that hour read as UTC, so realizations from before and after are different fires.
+            if (o.WeatherSampling == WeatherRasterPipeline.SamplingMode.HistoricalDay)
+            {
+                s["weather.band_clock"] = "local start hour in " + c.TimeZone.Id + ", archive UTC";
+            }
 
             //How each realization's evacuation is seeded. Recorded because realizations computed before it existed ran
             //on a clock seed, and reusing them beside reproducible ones would mix the two.
@@ -409,6 +416,7 @@ namespace PREACTcli.Campaigns
                 WindNinjaExe = c.WindNinjaExe,
                 WindNinjaMesh = o.WindNinjaMesh,
                 SimulationStartDateTime = c.StartDateTime,
+                StartTimeZone = c.TimeZone,
                 SimulationTstopSeconds = CampaignLayout.TstopSeconds(o.Hours),
                 SecondsPerBand = c.SecondsPerBand,
                 MaxBands = 0,

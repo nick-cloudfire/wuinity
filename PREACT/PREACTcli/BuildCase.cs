@@ -287,7 +287,7 @@ namespace PREACTcli
             Console.WriteLine("      --weather-date <date>          use this historical day instead of sampling one");
             Console.WriteLine("      --weather-seed <n>             seeds which peak day is drawn");
             Console.WriteLine("      --conditioning-days <n>        Nelson spin-up window (default 20)");
-            Console.WriteLine("      --burning-from/-to <0-23>      burning period the moisture minimum is reported over");
+            Console.WriteLine("      --burning-from/-to <0-23>      burning period (local hours) the moisture minimum is reported over");
             Console.WriteLine("      --windninja <exe>  --wn-mesh coarse|medium|fine  --wn-vegetation grass|brush|trees");
             Console.WriteLine("      --no-climatology               uniform rasters from the fallbacks below");
             Console.WriteLine("      --wind <m/s> --wind-dir <deg> --m1/--m10/--m100 <%>   fallbacks where a stage cannot run");

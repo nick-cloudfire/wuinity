@@ -27,6 +27,9 @@ namespace PREACTcli.Campaigns
 
         public DateTime StartDateTime;
 
+        /// <summary>The civil time zone <see cref="StartDateTime"/> is stated in, at the domain's south-west corner.</summary>
+        public TimeZoneInfo TimeZone;
+
         /// <summary>The base scenario's own <c>[Simulation] RandomSeed</c>, which realizations replace with their own.</summary>
         public int BaseRandomSeed;
         public Vector2d CentreLatLon;

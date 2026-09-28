@@ -205,9 +205,10 @@ A case's weather is a **historical peak fire-weather day**:
    (`--weather-date`).
 3. **Bands.** One per `DT_METEOROLOGY` (3600 s) for the fire's `SimulationTstopHours`, walking consecutive
    archive hours from the drawn day at the scenario's start hour — so hour 30 of a three-day fire is the second
-   night of a real sequence, not the first day replayed. The archive is on UTC and the start hour is the
-   scenario's local time; v1 does not convert between them (a [known issue](../CHANGELOG.md#known-issues)), so in
-   the western US a 13:00 start reads the drawn day's early-morning hours.
+   night of a real sequence, not the first day replayed. The start hour is the scenario's local time, daylight
+   saving included, with the time zone looked up from the domain's coordinates; the archive is on UTC, so band 1
+   of a 13:00 start is 10:00 UTC at Mati in August and 20:00 UTC in California in October. The build's log gives
+   both (`weather: 8 bands of 1 h from 2007-08-25 10:00 UTC (13:00 local, UTC+03:00) ...`).
 4. **Wind.** A WindNinja solve per band from that hour's archive wind (`fine` mesh, `grass` vegetation), giving a
    terrain-resolved speed and direction on the grid; the edge cells outside WindNinja's mesh take the domain
    value. A failed solve carries the previous band forward. Without WindNinja: one wind value over the whole

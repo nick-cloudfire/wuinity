@@ -58,6 +58,7 @@ Magnitudes are from the Mati (Greece) case and the shipped examples, measured on
 | Namelist | Kept between builds, hand edits included. | Written again from the scenario's settings on every build; a hand-edited one is set aside as `elmfire.data.kept-<time>`. | Hand edits no longer apply unless moved into Fire behaviour or a `NamelistTemplate`. |
 | Class layers carried over a re-cut | Interpolated. | Nearest neighbour. | Rebuilt cases with building, WUI, barrier or pyrome layers. |
 | Non-square GeoTIFF pixels | Read as square. | Kept. | Mati's DEM (27.592 × 27.616 m): about 14 m across the grid. |
+| Hour of day of a historical-day weather series | The scenario's local start hour was read as a UTC hour of the ERA5 archive: every band 3 h late at Mati in summer (2 h in winter), 7–8 h early in California, where a 13:00 fire burned under the drawn day's early morning. The logged burning period was on UTC too. | The local start hour, daylight saving included, converted to UTC with the domain's time zone; band 1 of a 13:00 start is 10:00 UTC at Mati in August. The recorded weather anchor is that UTC instant. | Mati, 3 h from 12:35 on 2007-08-25: bands 12–14 → 09–11 UTC, mean dead moisture 4.4/7.3/10.3 → 5.9/9.2/11.0 % (1/10/100 h). Rebuild a case's weather (`--rebuild`, or Update the case with Rebuild existing layers) to pick it up. A historical-day campaign gets a new settings identity. |
 
 **Imported fires (`AscImport`)**
 
@@ -173,9 +174,6 @@ longer downloads a year of weather on every run.
 The Windows GUI's acceptance check is the [manual test](docs/manual-test-v1.md); the head-less paths were run
 end to end on Linux.
 
-- **Case weather is anchored in UTC.** A case's historical-day weather walks the ERA5 archive, which is on UTC,
-  from the scenario's start hour, which is local time; v1 does not convert between them. In the western US a
-  13:00 start reads the drawn day's early-morning hours.
 - **Southern hemisphere fire seasons.** The fire-weather codes set October to January to an FWI of 0, a northern
   hemisphere winter. In the southern hemisphere those months are the fire season, so its peak days are never
   drawn.

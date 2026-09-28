@@ -573,6 +573,7 @@ namespace PREACT.Utility
                 //DT_METEOROLOGY comes from the namelist settings so the two cannot disagree - a series
                 //written hourly and read at any other interval is silently stretched in time.
                 w.SimulationStartDateTime = o.StartDateTime;
+                if (w.StartTimeZone == null) w.StartTimeZone = LocalTime.ZoneAt(o.LowerLeftLatLon.x, o.LowerLeftLatLon.y);
                 w.SimulationTstopSeconds = o.SimulationTstopSeconds;
                 w.SecondsPerBand = secondsPerBand;
 
