@@ -21,6 +21,7 @@ namespace PREACT.Tests
             runner.Add("cli: an unexpected exception ends a command with a message and exit 1", UnhandledExceptionExit);
             runner.Add("cli: realizations stopped by the wall-clock limit are called out, not just counted", TruncatedCalledOut);
             runner.Add("cli: --help, -h and help print the usage with exit 0; PREACT says it ran only when it did", HelpAndUsage);
+            runner.Add("cli: a realization's scenario shows its own fire's rasters, none of the base scenario's [AscImport] ones", NoStaleAscImportDisplay);
         }
 
         private static void TruncatedCalledOut()
@@ -60,6 +61,40 @@ namespace PREACT.Tests
             {
                 try { Directory.Delete(dir, true); } catch { }
             }
+        }
+
+        /// <summary>
+        /// Review NIT: FIX-D keeps [AscImport] beside ELMFIRE through saves, and a realization overwrote its
+        /// FirelineIntensityFile only when the fire wrote one and never its FuelModelFile, so a base scenario's stale
+        /// display rasters reached the realization.
+        /// </summary>
+        private static void NoStaleAscImportDisplay()
+        {
+            using var s = new FormatTests.Scenario();
+            var baseLines = new List<string>(FormatTests.Scenario.Lines)
+            {
+                "", "[AscImport]", "StartDateTime=2026-06-28T12:00:00", "FirelineIntensityFile=old/flin.asc", "FuelModelFile=old/fbfm.asc",
+            };
+            Campaign c = MinimalCampaign(s.Folder, 12345, baseLines.ToArray());
+            string id = CampaignLayout.RealizationId(2);
+            string dir = c.RealizationDir(id);
+            Directory.CreateDirectory(dir);
+
+            var record = new RealizationRecord { Toa = "outputs/toa.tif", Ros = "outputs/vs.tif", Sd = "outputs/sd.tif", Mfws = "outputs/mfws.tif" };
+            string[] noFuel = RealizationRunner.ScenarioLines(c, 2, id, dir, record);
+            Assert.True(noFuel.Contains("FirelineIntensityFile=") && noFuel.Contains("FuelModelFile="),
+                "without a fireline intensity from the fire or a fuel raster in the case, both are cleared: "
+                + string.Join(" | ", noFuel.Where(l => l.StartsWith("Fireline") || l.StartsWith("FuelModel"))));
+
+            Directory.CreateDirectory(c.InputsDir);
+            File.WriteAllText(Path.Combine(c.InputsDir, "fbfm40.tif"), "raster");
+            c.FuelStem = "fbfm40";
+            record.Fi = "outputs/flin.tif";
+            string[] withFuel = RealizationRunner.ScenarioLines(c, 2, id, dir, record);
+            Assert.True(withFuel.Any(l => l.StartsWith("FirelineIntensityFile=_output/") && l.EndsWith("/outputs/flin.tif", StringComparison.Ordinal))
+                        && withFuel.Contains("FuelModelFile=case/inputs/fbfm40.tif"),
+                "otherwise the realization's own: " + string.Join(" | ", withFuel.Where(l => l.StartsWith("Fireline") || l.StartsWith("FuelModel"))));
+            Assert.True(!withFuel.Any(l => l.Contains("old/")), "and nothing of the base scenario's");
         }
 
         private static (int Exit, string Output) RunDotnet(string workingDirectory, string dll, params string[] args)

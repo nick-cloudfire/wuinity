@@ -181,6 +181,13 @@ namespace PREACT.Tests
                     continue;
                 }
 
+                //An empty value says nothing is set, which is what leaving the key out says: a realization's scenario
+                //clears [kPERIL] WindSpeedFile= on purpose, and the writer omits empty paths (review NIT).
+                if (value.Trim().Length == 0 && !writtenKeys.ContainsKey(section + "|" + key))
+                {
+                    continue;
+                }
+
                 if (!writtenKeys.TryGetValue(section + "|" + key, out string written2))
                 {
                     yield return $"[{section}] {key}={value} was dropped by the writer";

@@ -34,6 +34,7 @@ namespace PREACT.Tests
             runner.Add("format: a module's sections survive a save when it is off, another option is chosen, or its header is missing", ModuleSectionsKept);
             runner.Add("format: only a selected imported fire decides the simulation's UTM zone", StaleAscImportDoesNotPin);
             runner.Add("format: what no parser reads is reported once, and nothing in it stops the run", IgnoredContentReported);
+            runner.Add("roundtrip: a key a realization clears on purpose (WindSpeedFile=) is not reported as dropped", EmptyKeyRoundTrip);
         }
 
         /// <summary>
@@ -150,6 +151,23 @@ namespace PREACT.Tests
         /// [IgnitionPoint]s and [ELMFIRE], and the next save deleted them. And Enabled=false skipped Module and
         /// [ELMFIRE], so a switched-off ELMFIRE fire lost its settings on the first save.
         /// </summary>
+        /// <summary>
+        /// Review NIT: "PREACTtests &lt;realization .wui&gt;" failed every realization scenario with "[kPERIL] WindSpeedFile= was
+        /// dropped by the writer": the CLI writes the key empty on purpose and the writer leaves empty paths out.
+        /// </summary>
+        private static void EmptyKeyRoundTrip()
+        {
+            using var s = new Scenario();
+            var lines = new List<string>(Scenario.Lines)
+            {
+                "", "[TriggerBufferModule]", "Enabled=false", "Module=kPERIL",
+                "", "[kPERIL]", "WindSpeedFile=", "OutputName=r1_trigger.asc",
+            };
+            string file = Path.Combine(s.Folder, "realization.wui");
+            File.WriteAllLines(file, lines);
+            RoundTrip.Run(file, null);
+        }
+
         private static void MissingEnabledKeepsFire()
         {
             using var s = new Scenario();
