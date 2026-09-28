@@ -1074,7 +1074,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             //Every build writes the namelist again from the scenario. One edited by hand is set aside first, which the
             //builder only says in its log; said where it is seen as well.
-            string setAside = NamelistSetAsideSince(GuiFiles.Resolve(ctx.Root, ScenarioFiles.CaseDirectory(ctx.Input)), started);
+            string setAside = NamelistSetAsideSince(PREACT.Utility.ElmfireCoupling.CaseDirectoryPath(ctx.Root, settings), started);
             if (setAside != null)
             {
                 string message = "A hand-edited namelist was set aside as " + setAside + ": the build wrote elmfire.data again from "

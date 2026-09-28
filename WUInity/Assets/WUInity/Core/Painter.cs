@@ -217,12 +217,8 @@ namespace WUInity
         /// </summary>
         public static string ElmfireGridReference(PREACT.Input.PREACTInput input)
         {
-            string caseDirectory = input?.WildfireModule?.ElmfireInput?.CaseDirectory;
-            if (string.IsNullOrEmpty(caseDirectory))
-            {
-                caseDirectory = "elmfire";
-            }
-            return caseDirectory.Replace('\\', '/').TrimEnd('/') + "/inputs/dem.tif";
+            //The workflow's own spelling of it, so the grid the painter names is the grid the workflow compares.
+            return global::WUInity.Workflow.ScenarioFiles.CaseInput(input, "dem.tif");
         }
 
         /// <summary>

@@ -136,7 +136,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
         private static void SetDomain(PREACTInput scenario, PREACT.Math.Vector2d lowerLeft, PREACT.Math.Vector2d size)
         {
             bool hadData = GuiFiles.Exists(GuiFiles.Resolve(scenario.RootFolder, scenario.Population.PopulationFile))
-                           || System.IO.Directory.Exists(System.IO.Path.Combine(scenario.RootFolder, global::WUInity.Workflow.ScenarioFiles.CaseDirectory(scenario)));
+                           || System.IO.Directory.Exists(PREACT.Utility.ElmfireCoupling.CaseDirectoryPath(scenario.RootFolder,
+                               scenario.WildfireModule?.ElmfireInput) ?? string.Empty);
 
             scenario.Simulation.LowerLeftLatLon = lowerLeft;
             scenario.Simulation.DomainSize = size;

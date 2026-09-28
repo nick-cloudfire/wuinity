@@ -99,8 +99,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 }
 
                 //The fire of the last run, from the case's own outputs: the newest arrival-time raster.
-                string caseOutputs = Path.Combine(input.RootFolder, ScenarioFiles.CaseDirectory(input), "outputs");
-                if (Directory.Exists(caseOutputs))
+                string caseDir = PREACT.Utility.ElmfireCoupling.CaseDirectoryPath(input.RootFolder, input.WildfireModule?.ElmfireInput);
+                string caseOutputs = caseDir == null ? null : Path.Combine(caseDir, "outputs");
+                if (caseOutputs != null && Directory.Exists(caseOutputs))
                 {
                     string newest = null;
                     DateTime newestAt = DateTime.MinValue;

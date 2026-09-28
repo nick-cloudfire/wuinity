@@ -250,7 +250,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             try
             {
-                string caseDir = Resolve(input.RootFolder, elmfire.CaseDirectory);
+                //The engine's rule, as the campaign CLI's: an empty CaseDirectory is "elmfire", not "no case".
+                string caseDir = ElmfireCoupling.CaseDirectoryPath(input.RootFolder, elmfire);
                 if (!string.IsNullOrEmpty(caseDir))
                 {
                     _scenarioTemplate = ElmfireCoupling.ResolveNamelist(caseDir, input.RootFolder, elmfire, null, out _) ?? string.Empty;

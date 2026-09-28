@@ -258,12 +258,21 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
                 return;
             }
 
+            //The case folder by the engine's rule (either slash, "elmfire" when none is named), so the button reads the
+            //case the build writes and the run reads.
+            string caseDir = PREACT.Utility.ElmfireCoupling.CaseDirectoryPath(root, elmfire);
+            string generated = caseDir == null ? null : System.IO.Path.Combine(caseDir, "elmfire.data");
+
             //The template if one is named, otherwise the case's own namelist - the same two the run resolves
-            //between, in the same order, so the button reads whichever file the run would use.
-            string named = string.IsNullOrEmpty(elmfire.NamelistTemplate)
-                ? null
-                : Resolve(root, elmfire.NamelistTemplate);
-            string generated = Resolve(root, System.IO.Path.Combine(elmfire.CaseDirectory ?? "elmfire", "elmfire.data"));
+            //between, in the same order, so the button reads whichever file the run would use. A relative template is
+            //looked for in the case folder first and then beside the scenario, as ElmfireCoupling.ResolveNamelist does.
+            string named = null;
+            if (!string.IsNullOrEmpty(elmfire.NamelistTemplate))
+            {
+                string template = PREACT.Input.PREACTInput.NormalisePath(elmfire.NamelistTemplate);
+                string inCase = caseDir == null || System.IO.Path.IsPathRooted(template) ? null : System.IO.Path.Combine(caseDir, template);
+                named = inCase != null && GuiFiles.Exists(inCase) ? inCase : Resolve(root, template);
+            }
 
             string source = !string.IsNullOrEmpty(named) && GuiFiles.Exists(named) ? named
                           : (GuiFiles.Exists(generated) ? generated : null);
@@ -277,7 +286,6 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
             //Two files, because they hold different things and the namelist cannot hold both: it names the
             //stems inside the case, never the sources they were warped out of. Read together so one button
             //restores the whole case into the editor.
-            string caseDir = Resolve(root, elmfire.CaseDirectory ?? "elmfire");
 
             if (ImGui.Button("Read this case into the editor"))
             {
