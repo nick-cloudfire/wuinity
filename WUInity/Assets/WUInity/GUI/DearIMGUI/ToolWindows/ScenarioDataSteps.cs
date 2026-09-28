@@ -44,10 +44,32 @@ namespace Assets.WUInity.GUI.DearIMGUI
         private static string _status = string.Empty;
         private static volatile bool _busy;
         private static volatile bool _lastFailed;
+        private static volatile bool _stopRequested;
         public static string Status { get => _status; }
         public static bool Busy { get => _busy; }
         /// <summary>The step or chain running now, or last run.</summary>
         public static string CurrentTitle { get => _progressTitle; }
+
+        /// <summary>A stop was asked for the running step; it ends after the link it is in.</summary>
+        public static bool StopRequested { get => _stopRequested; }
+
+        /// <summary>
+        /// Stops the running step or chain: no further link starts, and an ELMFIRE or WindNinja process it started is
+        /// killed now. A download or a GDAL warp under way finishes first - they cannot be interrupted - so
+        /// <see cref="Busy"/> stays true until it has.
+        /// </summary>
+        public static void RequestStop()
+        {
+            if (!_busy || _stopRequested)
+            {
+                return;
+            }
+
+            _stopRequested = true;
+            _status = "Stopping " + _progressTitle + "...";
+            LogStep("Stop requested: nothing further starts; ELMFIRE and WindNinja are stopped at once, a download under way finishes first.");
+            PREACT.Utility.ElmfireRunner.CancelAll();
+        }
 
         /// <summary>The workflow step the running (or last) chain belongs to.</summary>
         public static WorkflowStepId Owner { get; private set; }
@@ -324,6 +346,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             _busy = true;
             _lastFailed = false;
+            _stopRequested = false;
             Owner = owner;
             _status = title + "...";
             _progressWindowOpen = true;
@@ -341,6 +364,14 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 int ran = 0;
                 foreach (ChainLink link in links)
                 {
+                    if (_stopRequested)
+                    {
+                        ok = false;
+                        failure = title + " STOPPED before " + link.Title.ToLowerInvariant() + ".";
+                        LogStep(failure);
+                        break;
+                    }
+
                     bool needed;
                     try { needed = link.Needed(ctx); }
                     catch { needed = true; }
@@ -365,7 +396,19 @@ namespace Assets.WUInity.GUI.DearIMGUI
                     catch (Exception e)
                     {
                         ok = false;
-                        failure = link.Title + " FAILED: " + (e is AggregateException ae ? ae.GetBaseException().Message : e.Message);
+                        failure = (_stopRequested ? link.Title + " STOPPED: " : link.Title + " FAILED: ")
+                                  + (e is AggregateException ae ? ae.GetBaseException().Message : e.Message);
+                        LogStep(failure);
+                        break;
+                    }
+
+                    //A link that finished although it was asked to stop - a case build whose WindNinja was killed can
+                    //carry on with uniform wind - is not a result to trust.
+                    if (_stopRequested)
+                    {
+                        ok = false;
+                        failure = link.Title + " STOPPED: it finished after the stop was asked for, so what it made may be "
+                                  + "incomplete; run it again.";
                         LogStep(failure);
                         break;
                     }
@@ -409,6 +452,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             _status = summary;
             _lastFailed = !ok;
             _busy = false;
+            _stopRequested = false;
             _progressFraction = 1f;
 
             if (stillOpen && (ctx.Writes.Count > 0 || ctx.ChangedInPlace))
@@ -433,6 +477,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             _busy = true;
             _lastFailed = false;
+            _stopRequested = false;
             Owner = WorkflowStepId.None;
             _status = title + "...";
             _progressWindowOpen = true;
@@ -453,6 +498,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 PreactGUI.Post(() =>
                 {
                     _busy = false;
+                    _stopRequested = false;
                     _lastFailed = failure != null;
                     _progressFraction = 1f;
                     _status = failure ?? title + ": done.";
@@ -533,6 +579,22 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 ImGui.SetScrollHereY(1.0f);
             }
             ImGui.EndChild();
+
+            if (_busy)
+            {
+                ImGui.BeginDisabled(_stopRequested);
+                if (ImGui.Button(_stopRequested ? "Stopping..." : "Stop"))
+                {
+                    RequestStop();
+                }
+                ImGui.EndDisabled();
+                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                {
+                    ImGui.SetTooltip("Nothing further starts; ELMFIRE and WindNinja are stopped at once. A download or a raster "
+                        + "warp under way finishes first.");
+                }
+                ImGui.SameLine();
+            }
 
             ImGui.BeginDisabled(_busy);
             if (ImGui.Button("Close"))

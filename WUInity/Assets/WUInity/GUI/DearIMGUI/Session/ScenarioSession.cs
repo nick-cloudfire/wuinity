@@ -484,6 +484,11 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
         // ------------------------------------------------------------------ quitting
 
+        //Quitting after the running work has stopped: when the stop was asked for, and until when to wait.
+        private static bool _quitAfterStop;
+        private static float _quitWaitUntil;
+        private const float QuitWaitSeconds = 30f;
+
         /// <summary>
         /// Unity asks before quitting a player; returning false keeps it open while the prompt is answered.
         /// </summary>
@@ -491,7 +496,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
         {
             if (_quitConfirmed || (!IsDirty && !IsBusy))
             {
-                StopRunningWork();
+                StopRunningWorkForQuit();
                 return true;
             }
 
@@ -499,41 +504,157 @@ namespace Assets.WUInity.GUI.DearIMGUI
             return false;
         }
 
-        /// <summary>File &gt; Quit, and the application's own quit, once unsaved work and running work are settled.</summary>
+        /// <summary>
+        /// File &gt; Quit, and the application's own quit. Running work is stopped first and waited for, since
+        /// nothing can be saved while a run or a data step holds the scenario; then unsaved changes are asked
+        /// about; then the application quits.
+        /// </summary>
         public static void RequestQuit()
         {
-            Action quit = () =>
+            string busy = BusyReason;
+            if (busy != null)
             {
-                ConfirmPrompt.AskToSave("quitting", () =>
-                {
-                    _quitConfirmed = true;
-                    StopRunningWork();
-#if UNITY_EDITOR
-                    UnityEditor.EditorApplication.isPlaying = false;
-#endif
-                    Application.Quit();
-                });
-            };
-
-            if (IsBusy)
-            {
-                ConfirmPrompt.AskToConfirm(char.ToUpper(BusyReason[0]) + BusyReason.Substring(1)
-                    + ". Quitting stops it.", "Stop it and quit", quit);
+                ConfirmPrompt.AskToConfirm(Capitalised(busy) + ". Quitting stops it first"
+                    + (IsDirty ? ", then asks whether to save the unsaved changes." : "."), "Stop it and quit", StopThenQuit);
                 return;
             }
 
-            quit();
+            ConfirmPrompt.AskToSave("quitting", Quit);
+        }
+
+        /// <summary>Stops everything running, then waits for it (see <see cref="Update"/>) before the save question.</summary>
+        private static void StopThenQuit()
+        {
+            StopRunningWork();
+            _quitAfterStop = true;
+            _quitWaitUntil = UnityEngine.Time.realtimeSinceStartup + QuitWaitSeconds;
+            ShowQuitWait();
+        }
+
+        private static void ShowQuitWait()
+        {
+            ConfirmPrompt.ShowWaiting(() => "Stopping before quitting: " + (BusyReason ?? "nearly done") + ".\n\n"
+                    + "A download that is under way finishes first; ELMFIRE, WindNinja and a campaign are stopped at once.",
+                IsDirty ? "Quit now, without saving" : "Quit now", Quit,
+                () =>
+                {
+                    _quitAfterStop = false;
+                    Engine.Message(null, Engine.LogType.Log, "Quitting was cancelled; what was stopping goes on stopping.");
+                });
+        }
+
+        /// <summary>Once per frame while quitting waits for running work to stop.</summary>
+        private static void UpdateQuit()
+        {
+            if (!_quitAfterStop)
+            {
+                return;
+            }
+
+            if (!IsBusy)
+            {
+                _quitAfterStop = false;
+                ConfirmPrompt.Dismiss();
+                ConfirmPrompt.AskToSave("quitting", Quit);
+                return;
+            }
+
+            if (UnityEngine.Time.realtimeSinceStartup > _quitWaitUntil)
+            {
+                //Still asked, not forced: the waiting prompt already offers to quit without waiting.
+                _quitWaitUntil = float.MaxValue;
+                Engine.Message(null, Engine.LogType.Warning, "Still waiting for " + (BusyReason ?? "running work")
+                    + " to stop before quitting. \"Quit now\" in the prompt quits without waiting.");
+            }
+        }
+
+        /// <summary>The quit itself, once everything has been asked.</summary>
+        private static void Quit()
+        {
+            _quitAfterStop = false;
+            _quitConfirmed = true;
+            StopRunningWorkForQuit();
+#if UNITY_EDITOR
+            UnityEditor.EditorApplication.isPlaying = false;
+#endif
+            Application.Quit();
         }
 
         /// <summary>
-        /// Stops everything that would otherwise outlive the GUI: the run (and the ELMFIRE or WindNinja process
-        /// trees this process started, which the engine's close kills whether or not a run is going - a data
-        /// step's WindNinja included), and a campaign process with everything it started.
+        /// Asks everything that runs to stop: the run (and the ELMFIRE or WindNinja process trees this process
+        /// started, which the engine's close kills whether or not a run is going - a data step's WindNinja
+        /// included), a data step (after the link it is in), and a campaign with everything it started.
+        /// Returns at once; <see cref="IsBusy"/> says when they have.
         /// </summary>
-        private static void StopRunningWork()
+        public static void StopRunningWork()
         {
             PreactGUI.Engine?.CloseSimulations(false);
+            ScenarioDataSteps.RequestStop();
+            if (ProbabilisticTriggerWindow.IsRunning) ProbabilisticTriggerWindow.Stop();
+        }
+
+        /// <summary>
+        /// As <see cref="StopRunningWork"/>, for when the application is about to go: the campaign's process tree is
+        /// waited for (a few seconds) and killed, since nothing would be left to finish a cancel afterwards.
+        /// </summary>
+        private static void StopRunningWorkForQuit()
+        {
+            PreactGUI.Engine?.CloseSimulations(false);
+            ScenarioDataSteps.RequestStop();
             ProbabilisticTriggerWindow.StopForQuit();
+        }
+
+#if UNITY_EDITOR
+        /// <summary>
+        /// Leaving Play mode in the editor: Unity raises no wantsToQuit for it and it cannot be cancelled, so the
+        /// running work is stopped and waited for (up to 20 s), and unsaved changes are saved if asked - in the
+        /// editor's own dialog, since no further ImGui frame will be drawn.
+        /// </summary>
+        public static void OnPlayModeStateChanged(UnityEditor.PlayModeStateChange state)
+        {
+            if (state != UnityEditor.PlayModeStateChange.ExitingPlayMode || _quitConfirmed)
+            {
+                return;
+            }
+
+            if (IsBusy)
+            {
+                StopRunningWorkForQuit();
+                var clock = System.Diagnostics.Stopwatch.StartNew();
+                //A data step's completion is posted to the main thread, which is this one: run it while waiting.
+                while (EditingLocked && clock.Elapsed.TotalSeconds < 20.0)
+                {
+                    System.Threading.Thread.Sleep(100);
+                    PreactGUI.DrainPostedWork();
+                }
+            }
+
+            if (!IsDirty)
+            {
+                return;
+            }
+
+            if (EditingLocked)
+            {
+                UnityEditor.EditorUtility.DisplayDialog("Unsaved changes are lost",
+                    $"\"{DisplayName}\" has unsaved changes ({DirtySummary}), and they cannot be saved: after 20 s of "
+                    + $"stopping, {BusyReason}. File > Quit, which waits for it, is the way to leave with them saved.", "OK");
+                return;
+            }
+
+            bool save = UnityEditor.EditorUtility.DisplayDialog("Unsaved changes",
+                $"\"{DisplayName}\" has unsaved changes ({DirtySummary}).\n\nSave them before leaving Play mode?",
+                "Save", "Don't save");
+            if (save && !Save())
+            {
+                UnityEditor.EditorUtility.DisplayDialog("Not saved", "The scenario could not be saved; the Console says why.", "OK");
+            }
+        }
+#endif
+
+        private static string Capitalised(string phrase)
+        {
+            return string.IsNullOrEmpty(phrase) ? string.Empty : char.ToUpper(phrase[0]) + phrase.Substring(1);
         }
 
         // ------------------------------------------------------------------ per frame
@@ -542,6 +663,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
         public static void Update()
         {
             Poll(false);
+            UpdateQuit();
             HandleShortcuts();
         }
 

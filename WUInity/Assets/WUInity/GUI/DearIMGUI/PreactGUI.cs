@@ -38,6 +38,10 @@ namespace Assets.WUInity.GUI.DearIMGUI
             //Asked before the application quits, so unsaved work and a running simulation are not lost to
             //a closed window.
             Application.wantsToQuit += ScenarioSession.OnWantsToQuit;
+#if UNITY_EDITOR
+            //Leaving Play mode raises no wantsToQuit, and cannot be refused; the session saves if asked instead.
+            UnityEditor.EditorApplication.playModeStateChanged += ScenarioSession.OnPlayModeStateChanged;
+#endif
         }
 
         private void OnDisable()
@@ -45,6 +49,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
             UImGuiUtility.Layout -= OnLayout;
             UImGuiUtility.OnInitialize -= OnImGuiInitialized;
             Application.wantsToQuit -= ScenarioSession.OnWantsToQuit;
+#if UNITY_EDITOR
+            UnityEditor.EditorApplication.playModeStateChanged -= ScenarioSession.OnPlayModeStateChanged;
+#endif
         }
 
         private void OnImGuiInitialized(UImGui.UImGui obj)
@@ -261,6 +268,15 @@ namespace Assets.WUInity.GUI.DearIMGUI
         }
 
         private void Update()
+        {
+            DrainMainThreadQueues();
+        }
+
+        /// <summary>
+        /// Runs the work posted to the main thread now, from the main thread, for code that has to wait on it
+        /// without returning to the frame loop (leaving Play mode waits for a data step to finish this way).
+        /// </summary>
+        public static void DrainPostedWork()
         {
             DrainMainThreadQueues();
         }

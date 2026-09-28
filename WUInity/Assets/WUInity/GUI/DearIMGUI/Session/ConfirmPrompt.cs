@@ -21,7 +21,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
         private static bool _pending;
         private static bool _openRequested;
+        private static bool _dismissRequested;
         private static string _message = string.Empty;
+        private static Func<string> _liveMessage;
         private static string _primaryLabel = string.Empty;
         private static string _secondaryLabel = string.Empty;
         private static Action _onPrimary, _onSecondary, _onCancel;
@@ -40,6 +42,15 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 return;
             }
 
+            //Saving is refused while a run or a data step holds the scenario, so it is not offered then.
+            if (ScenarioSession.EditingLocked)
+            {
+                Ask($"\"{ScenarioSession.DisplayName}\" has unsaved changes ({ScenarioSession.DirtySummary}), and they cannot "
+                    + $"be saved while {ScenarioSession.BusyReason ?? "work is running"}.\n\nGo on with {what} without them?",
+                    "Go on without saving", proceed, null, null, cancelled);
+                return;
+            }
+
             Ask($"\"{ScenarioSession.DisplayName}\" has unsaved changes ({ScenarioSession.DirtySummary}).\n\n"
                 + $"Save them before {what}?",
                 "Save", () =>
@@ -50,6 +61,40 @@ namespace Assets.WUInity.GUI.DearIMGUI
                     }
                 },
                 "Don't save", proceed, cancelled);
+        }
+
+        /// <summary>
+        /// A question with two answers besides Cancel, for when "save" and "don't save" are not the choice.
+        /// </summary>
+        public static void AskChoice(string message, string primaryLabel, Action onPrimary, string secondaryLabel,
+            Action onSecondary, Action cancelled = null)
+        {
+            Ask(message, primaryLabel, onPrimary, secondaryLabel, onSecondary, cancelled);
+        }
+
+        /// <summary>
+        /// A modal that says what is being waited for, re-read every frame, with one way out besides Cancel. It stays
+        /// up until <see cref="Dismiss"/> or another question replaces it.
+        /// </summary>
+        public static void ShowWaiting(Func<string> message, string primaryLabel, Action onPrimary, Action cancelled)
+        {
+            Ask(message?.Invoke() ?? string.Empty, primaryLabel, onPrimary, null, null, cancelled);
+            _liveMessage = message;
+        }
+
+        /// <summary>
+        /// Takes the current question down without answering it: nothing it would have done is done. A question
+        /// asked straight afterwards takes its place.
+        /// </summary>
+        public static void Dismiss()
+        {
+            if (!_pending)
+            {
+                return;
+            }
+            _onPrimary = _onSecondary = _onCancel = null;
+            _liveMessage = null;
+            _dismissRequested = true;
         }
 
         /// <summary>A yes/cancel question, for things that cannot be undone.</summary>
@@ -70,6 +115,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 previousCancel?.Invoke();
             }
 
+            _dismissRequested = false;
+            _liveMessage = null;
             _message = message;
             _primaryLabel = primary;
             _secondaryLabel = secondary;
@@ -106,6 +153,15 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 return;
             }
 
+            if (_dismissRequested)
+            {
+                ImGui.CloseCurrentPopup();
+                ImGui.EndPopup();
+                _dismissRequested = false;
+                Finish(null);
+                return;
+            }
+
             if (!open)
             {
                 ImGui.CloseCurrentPopup();
@@ -115,7 +171,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
 
             ImGui.PushTextWrapPos(ImGui.GetFontSize() * 30f);
-            ImGui.TextUnformatted(_message);
+            ImGui.TextUnformatted(_liveMessage != null ? _liveMessage() ?? string.Empty : _message);
             ImGui.PopTextWrapPos();
             ImGui.Separator();
 
@@ -161,6 +217,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
         private static void Finish(Action then)
         {
             _pending = false;
+            _liveMessage = null;
             _onPrimary = _onSecondary = _onCancel = null;
             then?.Invoke();
         }

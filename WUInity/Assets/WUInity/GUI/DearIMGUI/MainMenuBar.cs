@@ -105,7 +105,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             ImGui.Separator();
             if (ImGui.MenuItem("Quit")) { ScenarioSession.RequestQuit(); }
-            Tooltip("Asks to save unsaved work, and stops a running simulation, data step or campaign first.");
+            Tooltip("Stops a running simulation, data step or campaign first and waits for it, then asks to save unsaved work.");
 
             ImGui.EndMenu();
         }
