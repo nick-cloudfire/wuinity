@@ -78,79 +78,35 @@ namespace PREACT.Input
 
         public static AscImportInput Parse(string[] inputLines, int startIndex, string rootFolder, out bool success)
         {
-            success = false;
-            int issues = 0;            
             AscImportInput newInput = new AscImportInput();
             Dictionary<string, string> inputToParse = PREACTInput.GetHeaderInput(inputLines, startIndex);
             string nameOfInput, userInput;
+
+            //Every key is read even after a problem, and the section fails at the end: returning at the first
+            //problem dropped every key after it, and saving the scenario then wrote the section without them.
+            bool ok = true;
 
             //critical
             nameOfInput = nameof(StartDateTime);
             if (inputToParse.TryGetValue(nameOfInput, out userInput))
             {
-                 success = DateTime.TryParse(userInput, System.Globalization.CultureInfo.InvariantCulture,
-                     System.Globalization.DateTimeStyles.None, out newInput.StartDateTime);
+                if (!DateTime.TryParse(userInput, System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.None, out newInput.StartDateTime))
+                {
+                    ok = false;
+                    PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
+                }
             }
             else
             {
-                success = false;
-                PREACTInput.InputNotFoundMessage(nameOfInput);
-            }
-            if (!success)
-            {
-                return newInput;
+                ok = false;
+                PREACTInput.InputNotFoundMessage(nameOfInput, true);
             }
 
-            //critical
-            nameOfInput = nameof(TimeOfArrivalFile);
-            if (inputToParse.TryGetValue(nameOfInput, out userInput))
-            {
-                newInput.TimeOfArrivalFile = userInput;
-                PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.TimeOfArrivalFile, rootFolder, out success);                
-            }
-            else
-            {
-                success = false;
-                PREACTInput.InputNotFoundMessage(nameOfInput);
-            }
-            if (!success)
-            {
-                return newInput;
-            }
-
-            //critical only for k-PERIL
-            nameOfInput = nameof(RateOfSpreadFile);
-            if (inputToParse.TryGetValue(nameOfInput, out userInput))
-            {
-                newInput.RateOfSpreadFile = userInput;
-                PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.RateOfSpreadFile, rootFolder, out success);                
-            }
-            else
-            {
-                success = false;
-                PREACTInput.InputNotFoundMessage(nameOfInput);
-            }
-            if (!success)
-            {
-                return newInput;
-            }
-
-            //critical only for k-PERIL
-            nameOfInput = nameof(SpreadDirectionFile);
-            if (inputToParse.TryGetValue(nameOfInput, out userInput))
-            {
-                newInput.SpreadDirectionFile = userInput;
-                PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.SpreadDirectionFile, rootFolder, out success);                
-            }
-            else
-            {
-                success = false;
-                PREACTInput.InputNotFoundMessage(nameOfInput);
-            }
-            if (!success)
-            {
-                return newInput;
-            }
+            //critical: the fire itself; rate of spread and spread direction are what k-PERIL runs on
+            ok &= ReadRequiredFile(inputToParse, nameof(TimeOfArrivalFile), ref newInput.TimeOfArrivalFile, rootFolder);
+            ok &= ReadRequiredFile(inputToParse, nameof(RateOfSpreadFile), ref newInput.RateOfSpreadFile, rootFolder);
+            ok &= ReadRequiredFile(inputToParse, nameof(SpreadDirectionFile), ref newInput.SpreadDirectionFile, rootFolder);
 
             //Not critical: the default is seconds, which is what ELMFIRE writes and what the rest of the
             //platform works in. A scenario importing a .asc from FARSITE, FlamMap or Prometheus has to say
@@ -168,12 +124,12 @@ namespace PREACT.Input
                 }
             }
 
-            //not critical
+            //not critical: without it fireline intensity reads as 0
             nameOfInput = nameof(FirelineIntensityFile);
-            if (inputToParse.TryGetValue(nameOfInput, out userInput))
+            if (inputToParse.TryGetValue(nameOfInput, out userInput) && userInput.Length > 0)
             {
                 newInput.FirelineIntensityFile = userInput;
-                PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.FirelineIntensityFile, rootFolder,out success);
+                PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.FirelineIntensityFile, rootFolder, out _, critical: false);
             }
             else
             {
@@ -211,8 +167,22 @@ namespace PREACT.Input
                 }
             }
 
-            success = true;
+            success = ok;
             return newInput;
+        }
+
+        private static bool ReadRequiredFile(Dictionary<string, string> inputToParse, string nameOfInput, ref string field,
+                                             string rootFolder)
+        {
+            if (!inputToParse.TryGetValue(nameOfInput, out string userInput) || userInput.Length == 0)
+            {
+                PREACTInput.InputNotFoundMessage(nameOfInput, true);
+                return false;
+            }
+
+            field = userInput;
+            PREACTInput.CheckIfFileExist(nameOfInput, ref field, rootFolder, out bool exists);
+            return exists;
         }
     }
 }

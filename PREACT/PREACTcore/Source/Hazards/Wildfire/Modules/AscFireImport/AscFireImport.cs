@@ -189,9 +189,13 @@ namespace PREACT.Wildfire
             size = new Vector2d(_cellsize * ncols, _cellsize * nrows);
         }
 
+        /// <summary>
+        /// Done once the clock is past the last arrival - on the simulation's clock, so the fire's own start
+        /// offset is added, as everywhere else here. Without it a fire that starts late was "done" that much early.
+        /// </summary>
         public override bool IsSimulationDone()
         {
-            return _simulation.Time.SimulationTime > _maxTimeOfArrival ? true : false;
+            return _simulation.Time.SimulationTime > _maxTimeOfArrival + _startTime;
         }
 
         float[,] maxROS;
@@ -295,13 +299,13 @@ namespace PREACT.Wildfire
                 Engine.Message(null, Engine.LogType.SimulationError, "Time of arrival raster could not be read: " + TOAFile);
                 return;
             }
-            float[,] ros = Utility.AscRaster.Read(ROSFile, out _, out bool rosOk);
+            float[,] ros = Utility.AscRaster.Read(ROSFile, out Utility.AscRaster.Header rosHeader, out bool rosOk);
             if (!rosOk)
             {
                 Engine.Message(null, Engine.LogType.SimulationError, "Rate of spread raster could not be read: " + ROSFile);
                 return;
             }
-            float[,] sd = Utility.AscRaster.Read(SDFile, out _, out bool sdOk);
+            float[,] sd = Utility.AscRaster.Read(SDFile, out Utility.AscRaster.Header sdHeader, out bool sdOk);
             if (!sdOk)
             {
                 Engine.Message(null, Engine.LogType.SimulationError, "Spread direction raster could not be read: " + SDFile);
@@ -312,10 +316,34 @@ namespace PREACT.Wildfire
             bool fiOk = false;
             if (!string.IsNullOrEmpty(FIFile))
             {
-                fi = Utility.AscRaster.Read(FIFile, out _, out fiOk);
+                fi = Utility.AscRaster.Read(FIFile, out Utility.AscRaster.Header fiHeader, out fiOk);
                 if (!fiOk)
                 {
                     Engine.Message(null, Engine.LogType.Warning, "Fireline intensity raster could not be read, using 0: " + FIFile);
+                }
+                else if (fiHeader.Ncols != header.Ncols || fiHeader.Nrows != header.Nrows)
+                {
+                    Engine.Message(null, Engine.LogType.Warning,
+                        $"Fireline intensity raster is {fiHeader.Ncols}x{fiHeader.Nrows}, not the {header.Ncols}x{header.Nrows} "
+                        + "of the arrival times; using 0: " + FIFile);
+                    fiOk = false;
+                }
+            }
+
+            //The four describe one fire cell by cell. Read at the arrival raster's indices, a smaller one threw an
+            //IndexOutOfRangeException and a larger one was silently read at the wrong cells.
+            foreach ((string what, string file, Utility.AscRaster.Header other) in new[]
+                     {
+                         ("Rate of spread", ROSFile, rosHeader),
+                         ("Spread direction", SDFile, sdHeader),
+                     })
+            {
+                if (other.Ncols != header.Ncols || other.Nrows != header.Nrows)
+                {
+                    Engine.Message(null, Engine.LogType.SimulationError,
+                        $"{what} raster is {other.Ncols}x{other.Nrows}, not the {header.Ncols}x{header.Nrows} of the "
+                        + $"arrival times {TOAFile}; the fire rasters have to come from one run: {file}");
+                    return;
                 }
             }
 
@@ -342,14 +370,14 @@ namespace PREACT.Wildfire
             {
                 for (int x = 0; x < ncols; x++)
                 {
-                    float TOAValue = toa[x, y] * toSeconds;
-                    if (TOAValue > _maxTimeOfArrival)
+                    //Unburned is stored as float.MaxValue. The raster says so with its nodata value, a negative
+                    //number (ELMFIRE's -9999) or NaN; a positive nodata such as 3.4e38 used to be taken as a real
+                    //arrival, became the last one, and the fire never finished.
+                    float raw = toa[x, y];
+                    float TOAValue = IsNoArrival(raw, header.NoDataValue) ? float.MaxValue : raw * toSeconds;
+                    if (TOAValue != float.MaxValue && TOAValue > _maxTimeOfArrival)
                     {
                         _maxTimeOfArrival = TOAValue;
-                    }
-                    if (TOAValue < 0)
-                    {
-                        TOAValue = float.MaxValue;
                     }
 
                     _data[x, y].TimeOfAArrival = TOAValue;
@@ -359,6 +387,14 @@ namespace PREACT.Wildfire
                     _data[x, y].isActive = false;
                 }
             }
+        }
+
+        private static bool IsNoArrival(float raw, double noData)
+        {
+            if (float.IsNaN(raw) || float.IsInfinity(raw) || raw < 0f) return true;
+            //A nodata of 0 is not honoured: 0 is also the ignition cell's arrival time.
+            if (noData != 0.0 && !double.IsNaN(noData) && System.Math.Abs(raw - noData) <= System.Math.Abs(noData) * 1e-6) return true;
+            return raw >= 1e30f;
         }
 
         /// <summary>
@@ -417,7 +453,9 @@ namespace PREACT.Wildfire
         {
             Vector2int cell = SimulationPosToCellIndex(simulationPos, out bool inside);
 
-            if (!inside || _simulation.Time.SimulationTime < _data[cell.x, cell.y].TimeOfAArrival)
+            //On the simulation's clock, like Step and GetTimeOfArrival: the stored arrival is from the fire's start.
+            if (!inside || _data[cell.x, cell.y].TimeOfAArrival == float.MaxValue
+                || _simulation.Time.SimulationTime < _data[cell.x, cell.y].TimeOfAArrival + _startTime)
             {
                 return FireCellState.Dead;
             }
@@ -547,8 +585,10 @@ namespace PREACT.Wildfire
         {
             Vector2d LocalPos = simulationPos;
             LocalPos -= _originOffset;
-            int xIndex = (int)(ncols * LocalPos.x / _landscapeSize.x);
-            int yIndex = (int)(nrows * LocalPos.y / _landscapeSize.y);
+            //Floor, not a cast: a cast truncates towards zero, so up to a cell west or south of the grid mapped to
+            //column or row 0 and counted as inside.
+            int xIndex = (int)System.Math.Floor(ncols * LocalPos.x / _landscapeSize.x);
+            int yIndex = (int)System.Math.Floor(nrows * LocalPos.y / _landscapeSize.y);
             inside = IsInside(xIndex, yIndex);
 
             return new Vector2int(xIndex, yIndex);

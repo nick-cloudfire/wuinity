@@ -79,17 +79,16 @@ namespace PREACT.Input
         public static kPERILInput Parse(string[] inputLines, int startIndex, string rootFolder, out bool success)
         {
             kPERILInput newInput = new kPERILInput();
-            success = false;
-            int issues = 0;            
+            //Every key is read even after a problem: returning at the first one dropped the keys after it, and a
+            //save then wrote the section without them.
+            bool ok = true;
             Dictionary<string, string> inputToParse = PREACTInput.GetHeaderInput(inputLines, startIndex);
             string nameOfInput, userInput;
 
-            //A wind field is required, but not necessarily from here: the ELMFIRE module hands over the case's
-            //own ws/wd when this is unset, which is the arrangement that cannot disagree with the fire. So an
-            //absent key is not a defect - it is left to be filled in, and the run says so if nothing does.
-            //These replace the single MidflameWindspeed scalar this section used to carry: k-PERIL accepts a
-            //full wind field and the weather pipeline produces one with WindNinja, so representing the whole
-            //domain by one number threw away exactly the terrain-driven variation WindNinja exists to resolve.
+            //Neither wind key is needed with a fire that carries its own wind: ELMFIRE's midflame wind and its
+            //weather's direction are handed over by the fire module, and an imported fire can name its midflame
+            //raster in [AscImport]. These are the fallback for an imported fire without one, and the run says
+            //loudly when the speed here is being used as midflame wind.
             nameOfInput = nameof(WindSpeedFile);
             if (inputToParse.TryGetValue(nameOfInput, out userInput) && userInput.Length > 0)
             {
@@ -97,16 +96,15 @@ namespace PREACT.Input
                 PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.WindSpeedFile, rootFolder, out bool windSpeedExists);
                 if (!windSpeedExists)
                 {
-                    success = false;
+                    ok = false;
                     PREACTInput.InputNotFoundMessage(nameOfInput, true);
-                    return newInput;
                 }
             }
             else
             {
                 PREACTInput.OptionalInputMissing(nameOfInput,
-                    "No wind field named for the trigger boundary. Running ELMFIRE supplies the case's own; "
-                    + "otherwise set it here, or the run stops when it needs one.");
+                    "No fallback wind speed for the trigger boundary. An ELMFIRE fire supplies its own midflame wind, "
+                    + "and an imported one can name it as [AscImport] MidflameWindSpeedFile.");
             }
 
             nameOfInput = nameof(WindDirectionFile);
@@ -116,9 +114,8 @@ namespace PREACT.Input
                 PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.WindDirectionFile, rootFolder, out bool windDirectionExists);
                 if (!windDirectionExists)
                 {
-                    success = false;
+                    ok = false;
                     PREACTInput.InputNotFoundMessage(nameOfInput, true);
-                    return newInput;
                 }
             }
 
@@ -167,32 +164,27 @@ namespace PREACT.Input
                 }
             }
 
-            //Only needed when the area comes from a raster; the group options derive it instead, so
-            //demanding a file there would reject a perfectly good scenario.
-            if (newInput.WuiAreaSource != WuiAreaSources.Raster)
-            {
-                success = true;
-                return newInput;
-            }
-
-            //optional: a .asc mask marking the WUI area to protect (1 = WUI). Without it,
-            //k-PERIL has no community to back-propagate from and the trigger boundary is empty.
+            //A mask marking the WUI area to protect (1 = WUI); the case build writes elmfire/inputs/wui_area.tif and
+            //points this at it. Read whatever the source, so a scenario switched to groups keeps it when saved;
+            //only a raster source needs it, since the group options derive the area instead.
+            bool needed = newInput.WuiAreaSource == WuiAreaSources.Raster;
             nameOfInput = nameof(WuiAreaFile);
-            if (inputToParse.TryGetValue(nameOfInput, out userInput))
+            if (inputToParse.TryGetValue(nameOfInput, out userInput) && userInput.Length > 0)
             {
                 newInput.WuiAreaFile = userInput;
                 PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.WuiAreaFile, rootFolder, out bool wuiExists);
-                if (!wuiExists)
+                if (!wuiExists && needed)
                 {
                     Engine.Message(null, Engine.LogType.Warning, nameOfInput + " was specified but not found: " + userInput);
                 }
             }
-            else
+            else if (needed)
             {
-                Engine.Message(null, Engine.LogType.Warning, nameOfInput + " was not specified; k-PERIL needs a WUI area to compute a trigger boundary.");
+                Engine.Message(null, Engine.LogType.Warning, nameOfInput + " was not specified; k-PERIL needs a WUI area to "
+                    + "compute a trigger boundary. Building the ELMFIRE case writes one from the painted WUI area.");
             }
 
-            success = true;
+            success = ok;
             return newInput;
         }
 

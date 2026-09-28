@@ -151,8 +151,6 @@ namespace kperil
             slopeRaster = new float[this.totalX,this.totalY];
             aspectRaster = new float[this.totalX,this.totalY];
 
-            const float toDegrees = 180f / (float)Math.PI;
-
             const float radToDeg = 180f / (float)Math.PI;
 
             float SampleElevation(int x, int y)
