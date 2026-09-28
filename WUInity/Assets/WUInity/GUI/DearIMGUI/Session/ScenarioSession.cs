@@ -289,7 +289,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             if (painter.UnsavedFireStrokes)
             {
-                string written = painter.SavePaintedFireAreas(_input.RootFolder);
+                string written = painter.SavePaintedFireAreas(_input.RootFolder, _input.WildfireModule.GraphicalFireInputFile);
                 if (!string.IsNullOrEmpty(written))
                 {
                     _input.WildfireModule.GraphicalFireInputFile = written;

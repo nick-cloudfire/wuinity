@@ -60,6 +60,7 @@ namespace WUInity.Workflow
 
         OpenFireAreas,
         ApplyFireAreasToCase,
+        MovePaintingToCaseGrid,
 
         OpenDestinations,
         OpenCurves,

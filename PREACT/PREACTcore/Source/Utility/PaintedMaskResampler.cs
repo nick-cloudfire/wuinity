@@ -35,7 +35,9 @@ namespace PREACT.Utility
     /// </para>
     /// <para>
     /// The painting is written to a new file beside the old one and the old file is never touched, so moving it
-    /// cannot lose anything; what points the scenario at the new file is the caller's business.
+    /// cannot lose anything; what points the scenario at the new file is the caller's business. The new file
+    /// keeps the old one's modification time, since what was painted - and so whether a case's masks are older
+    /// than it - did not change.
     /// </para>
     /// </remarks>
     public static class PaintedMaskResampler
@@ -327,6 +329,9 @@ namespace PREACT.Utility
             try
             {
                 GraphicalFireInput.SaveGraphicalFireInput(partial, data, moved.Ncols, moved.Nrows);
+                //As old as the painting it came from: nothing was painted, only placed on other cells, so masks a
+                //build already made from the original are not stale against it.
+                File.SetLastWriteTimeUtc(partial, File.GetLastWriteTimeUtc(gfiPath));
                 File.Move(partial, outputGfi);
             }
             finally

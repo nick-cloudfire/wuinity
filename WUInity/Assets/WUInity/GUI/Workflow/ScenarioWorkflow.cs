@@ -53,6 +53,23 @@ namespace WUInity.Workflow
         /// <summary>Scenario-relative path of the raster <see cref="PaintGrid"/> comes from.</summary>
         public string PaintGridReference { get; private set; }
 
+        /// <summary>The painted areas file is on another grid than <see cref="PaintGrid"/>.</summary>
+        public bool PaintingOnOtherGrid { get; private set; }
+
+        /// <summary>
+        /// When <see cref="PaintingOnOtherGrid"/>: the scenario-relative raster whose grid the painting's cells
+        /// match - where it was painted, so it can be moved onto the paint grid - or null when none of the
+        /// scenario's rasters has its size.
+        /// </summary>
+        public string PaintedOnReference { get; private set; }
+
+        /// <summary>The painted areas file, scenario-relative, or null.</summary>
+        public string PaintedAreasFile { get => _paintedPath; }
+
+        /// <summary>The painted areas file's size in cells, when it could be read.</summary>
+        public int PaintedWidth { get => _painted?.Width ?? 0; }
+        public int PaintedHeight { get => _painted?.Height ?? 0; }
+
         /// <summary>What stands between the scenario and a run, one line each; empty when it can run.</summary>
         public readonly List<string> RunBlockers = new List<string>();
 
@@ -101,6 +118,8 @@ namespace WUInity.Workflow
             RunWarnings.Clear();
             PaintGrid = null;
             PaintGridReference = null;
+            PaintingOnOtherGrid = false;
+            PaintedOnReference = null;
             RefreshedAt = DateTime.Now;
 
             if (_in == null)
@@ -143,6 +162,8 @@ namespace WUInity.Workflow
 
             _paintedPath = _in.WildfireModule.GraphicalFireInputFile;
             _painted = Exists(_paintedPath) ? _files.Read(Abs(_paintedPath), "gfi", PaintedAreasInfo.Read, null) : null;
+            PaintingOnOtherGrid = _painted != null && PaintGrid != null && !_painted.SameSize(PaintGrid);
+            PaintedOnReference = PaintingOnOtherGrid ? FindPaintedOnGrid() : null;
 
             string population = _in.Population.PopulationFile;
             _households = Exists(population) ? _files.Read(Abs(population), "households", ScenarioFiles.CountPopulationRows, -1) : -1;
@@ -183,6 +204,46 @@ namespace WUInity.Workflow
             }
             RunBlockers.Add("No scenario is open.");
         }
+
+        /// <summary>
+        /// Where a painting that is not on the paint grid was painted: the first of the scenario's rasters that
+        /// has its size and says where it is. A .gfi holds no georeferencing, so this is the only way to know.
+        /// </summary>
+        /// <remarks>
+        /// In order: the scenario's own terrain ([Landscape], which is what painting was done on before the fire
+        /// case was the grid of record - Mati's 616 x 590 mati_dem.tif), the grid a case rebuild replaced
+        /// (inputs/_previous_grid/dem.tif), and the DEM a scenario's own terrain step writes. The last two survive
+        /// "Use the case terrain" and a case build re-pointing [Landscape], so the painting can still be moved
+        /// afterwards.
+        /// </remarks>
+        private string FindPaintedOnGrid()
+        {
+            var candidates = new List<string>
+            {
+                _in.Landscape.GetReferenceFile(),
+                _in.Landscape.ElevationFile,
+                _case + "/inputs/" + PREACT.Utility.ElmfireCaseBuilder.PreviousGridFolder + "/dem.tif",
+                ScenarioFiles.Dem(_name),
+                _case + "/inputs/" + _name + "_dem.tif",
+            };
+
+            string paintGrid = Normalise(PaintGridReference);
+            foreach (string candidate in candidates)
+            {
+                if (string.IsNullOrWhiteSpace(candidate) || Normalise(candidate) == paintGrid || !Exists(candidate)) continue;
+                RasterInfo raster = Raster(candidate);
+                if (raster != null && raster.HasGeoTransform && _painted.SameSize(raster))
+                {
+                    return candidate.Replace('\\', '/');
+                }
+            }
+            return null;
+        }
+
+        private static string Normalise(string recorded) => (recorded ?? string.Empty).Replace('\\', '/').Trim().ToLowerInvariant();
+
+        /// <summary>What the paint grid is called in a button: the fire case's for ELMFIRE, the fire's otherwise.</summary>
+        private string MoveLabel => IsElmfire ? "Move painting onto the fire-case grid" : "Move painting onto the fire grid";
 
         public static string TitleOf(WorkflowStepId id)
         {
@@ -297,6 +358,7 @@ namespace WUInity.Workflow
                 case WorkflowAction.RebuildFireCase:
                 case WorkflowAction.DownloadDemOnly:
                 case WorkflowAction.ApplyFireAreasToCase:
+                case WorkflowAction.MovePaintingToCaseGrid:
                 case WorkflowAction.OpenCampaign:
                     return true;
                 default:
@@ -768,10 +830,21 @@ namespace WUInity.Workflow
                     RasterInfo own = Exists(elevation) ? Raster(elevation) : null;
                     //A case build sets [Landscape] to the case terrain itself (contract C1), so this is a scenario whose
                     //case was built before it did, or one whose terrain was changed by hand since.
-                    s.Warn("[Landscape] " + (string.IsNullOrEmpty(elevation) ? "names no terrain" : $"uses {elevation}"
+                    string text = "[Landscape] " + (string.IsNullOrEmpty(elevation) ? "names no terrain" : $"uses {elevation}"
                         + (own != null && !own.SameSize(_caseGrid) ? $" ({own.Width} x {own.Height})" : ""))
-                        + $", not the fire case's {caseDem} ({_caseGrid.Width} x {_caseGrid.Height}).",
-                        WorkflowAction.AdoptCaseTerrain, "Use the case terrain");
+                        + $", not the fire case's {caseDem} ({_caseGrid.Width} x {_caseGrid.Height}).";
+                    //The painting's own terrain is how it is known where the painting was; it goes onto the case grid
+                    //first, so switching the terrain cannot leave it on a grid nothing names any more.
+                    if (PaintingOnOtherGrid && PaintedOnReference != null
+                        && Normalise(PaintedOnReference) == Normalise(_in.Landscape.GetReferenceFile()))
+                    {
+                        s.Warn(text + " The painted areas are on that terrain's grid: move them onto the case grid first, "
+                            + "then use the case terrain.", WorkflowAction.MovePaintingToCaseGrid, MoveLabel);
+                    }
+                    else
+                    {
+                        s.Warn(text, WorkflowAction.AdoptCaseTerrain, "Use the case terrain");
+                    }
                 }
             }
 
@@ -847,10 +920,20 @@ namespace WUInity.Workflow
                 s.Error($"GraphicalFireInputFile names {_paintedPath}, which " + (Exists(_paintedPath) ? "cannot be read." : "does not exist."),
                     WorkflowAction.OpenFireAreas, "Paint again");
             }
-            else if (_painted != null && PaintGrid != null && !_painted.SameSize(PaintGrid))
+            else if (PaintingOnOtherGrid && PaintedOnReference != null)
+            {
+                //Painted on a grid the scenario still has: moving it is one step, and nothing is repainted.
+                s.Error($"The areas were painted on a {_painted.Width} x {_painted.Height} grid ({PaintedOnReference}); the fire grid "
+                    + $"({PaintGridReference}) is {PaintGrid.Width} x {PaintGrid.Height}. Move the painting onto it: each cell of the "
+                    + $"fire grid takes the painted value at its centre, in a new file beside {_paintedPath}, which is kept.",
+                    WorkflowAction.MovePaintingToCaseGrid, MoveLabel);
+            }
+            else if (PaintingOnOtherGrid)
             {
                 s.Error($"The areas were painted on a {_painted.Width} x {_painted.Height} grid; the fire grid ({PaintGridReference}) is "
-                    + $"{PaintGrid.Width} x {PaintGrid.Height}. They cannot be applied to it - repaint them on the fire grid.",
+                    + $"{PaintGrid.Width} x {PaintGrid.Height}, and none of the scenario's rasters is {_painted.Width} x {_painted.Height}, "
+                    + "so there is no telling which ground they were painted on. Point [Landscape] at the raster they were "
+                    + "painted on to move them, or repaint them on the fire grid.",
                     WorkflowAction.OpenFireAreas, "Repaint");
             }
             else if (_painted != null)
@@ -906,8 +989,17 @@ namespace WUInity.Workflow
                     "Rebuilds the case keeping its layers, so the painted areas become its ignition_mask.tif and wui_area.tif. "
                     + "The build reads the painted areas from their file, so unsaved strokes are offered a save first.");
                 if (_painted == null && !_ctx.UnsavedFireStrokes) apply.Disable("Nothing painted yet.");
-                else if (_painted != null && !onGrid) apply.Disable("The painted areas are not on the case grid; repaint them first.");
+                else if (_painted != null && !onGrid) apply.Disable(PaintedOnReference != null
+                    ? "The painted areas are on another grid; move them onto the fire-case grid first."
+                    : "The painted areas are not on the case grid; repaint them first.");
                 s.Secondary.Add(apply);
+            }
+
+            if (PaintingOnOtherGrid && PaintedOnReference != null)
+            {
+                s.Secondary.Add(new StepAction(WorkflowAction.MovePaintingToCaseGrid, MoveLabel,
+                    $"Writes the painting onto {PaintGridReference} ({PaintGrid.Width} x {PaintGrid.Height}) as a new file, keeping "
+                    + $"{_paintedPath}, and points the scenario at it. Save the scenario afterwards to keep that."));
             }
             return s;
         }
@@ -1143,8 +1235,9 @@ namespace WUInity.Workflow
                     {
                         s.Error("No WuiAreaFile, so k-PERIL falls back to the painted WUI area - which is on another grid "
                             + $"({_painted.Width} x {_painted.Height}), so it refuses it and the run stops.",
-                            caseWuiExists ? WorkflowAction.UseCaseWuiArea : WorkflowAction.OpenFireAreas,
-                            caseWuiExists ? "Use " + caseWui : "Repaint");
+                            caseWuiExists ? WorkflowAction.UseCaseWuiArea
+                                : PaintedOnReference != null ? WorkflowAction.MovePaintingToCaseGrid : WorkflowAction.OpenFireAreas,
+                            caseWuiExists ? "Use " + caseWui : PaintedOnReference != null ? MoveLabel : "Repaint");
                     }
                     else
                     {
@@ -1529,7 +1622,9 @@ namespace WUInity.Workflow
             {
                 BlockBy(s, WorkflowStepId.FireCase, "every realization runs on the case, which is not complete.");
             }
-            else if (areas != null && areas.Issues.Exists(i => i.Fix == WorkflowAction.ApplyFireAreasToCase || i.Fix == WorkflowAction.OpenFireAreas && i.Level == IssueLevel.Error))
+            else if (areas != null && areas.Issues.Exists(i => i.Fix == WorkflowAction.ApplyFireAreasToCase
+                         || i.Fix == WorkflowAction.MovePaintingToCaseGrid
+                         || i.Fix == WorkflowAction.OpenFireAreas && i.Level == IssueLevel.Error))
             {
                 BlockBy(s, WorkflowStepId.FireAreas, "the painted areas are not applied to the case (or not on its grid).");
             }

@@ -216,6 +216,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 case WorkflowAction.AdoptCaseTerrain:
                 case WorkflowAction.DownloadDemOnly:
                 case WorkflowAction.ApplyFireAreasToCase:
+                case WorkflowAction.MovePaintingToCaseGrid:
                 case WorkflowAction.UseCaseWuiArea:
                 case WorkflowAction.ClearPinnedWind:
                 case WorkflowAction.OpenCampaign:
@@ -226,6 +227,34 @@ namespace Assets.WUInity.GUI.DearIMGUI
         }
 
         // ------------------------------------------------------------------ doing things
+
+        /// <summary>
+        /// Moves the painting onto the paint grid, from the raster the model found it was painted on. Strokes made
+        /// on the paint grid since and not saved would be replaced by it, so that is asked first.
+        /// </summary>
+        private static void MovePainting()
+        {
+            string source = _model.PaintedOnReference;
+            if (!_model.PaintingOnOtherGrid || string.IsNullOrEmpty(source))
+            {
+                PREACT.Engine.Message(null, PREACT.Engine.LogType.Warning, "The painting is not on another grid the scenario "
+                    + "knows of, so there is nothing to move.");
+                return;
+            }
+
+            string paintedOn = $"{_model.PaintedWidth} x {_model.PaintedHeight} ({source})";
+            string target = _model.PaintGridReference;
+            global::WUInity.Painter painter = PreactGUI.WUInity?.Painter;
+            if (painter != null && painter.UnsavedFireStrokes)
+            {
+                ConfirmPrompt.AskToConfirm("Some areas were painted on " + target + " since the scenario was opened, and are "
+                    + "not saved. Moving the saved painting from " + paintedOn + " onto that grid replaces them.",
+                    "Move it, replacing them", () => ScenarioDataSteps.MovePaintingToGrid(source, target));
+                return;
+            }
+
+            ScenarioDataSteps.MovePaintingToGrid(source, target);
+        }
 
         /// <summary>Carries out a workflow action: opens the window it names or starts the work.</summary>
         public static void Perform(WorkflowAction action)
@@ -308,6 +337,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 case WorkflowAction.DownloadDemOnly: ScenarioDataSteps.DownloadDemOnly(); break;
 
                 case WorkflowAction.OpenFireAreas: Editors.FireAreasWindow.Open(); break;
+                case WorkflowAction.MovePaintingToCaseGrid: MovePainting(); break;
                 case WorkflowAction.ApplyFireAreasToCase:
                     ConfirmPrompt.AskToSave("applying the painted areas to the case", ScenarioDataSteps.ApplyPaintedAreasToCase);
                     break;

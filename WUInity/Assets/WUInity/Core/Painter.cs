@@ -633,6 +633,29 @@ namespace WUInity
             }
         }
 
+        /// <summary>
+        /// The scenario's painted fire areas were replaced from a file (a painting moved onto the fire grid): the
+        /// fire textures are dropped so they are drawn from the new masks, and nothing painted here is unsaved.
+        /// </summary>
+        public void ReloadFireAreas()
+        {
+            if (_manager != null && gameObject.activeSelf && GetPaintMode() != PaintMode.EvacGroup)
+            {
+                _manager.StopPainter();
+            }
+
+            DestroyTexture(ref wuiAreaTex);
+            DestroyTexture(ref randomIgnitionTex);
+            DestroyTexture(ref initialIgnitionTex);
+            wuiAreaColorArray = randomIgnitionColorArray = initialIgnitionColorArray = null;
+            if (paintMode != PaintMode.EvacGroup)
+            {
+                activeTexture = null;
+                activeColorArray = null;
+            }
+            UnsavedFireStrokes = false;
+        }
+
         private static void DestroyTexture(ref Texture2D texture)
         {
             if (texture != null)
@@ -899,7 +922,7 @@ namespace WUInity
                 return null;
             }
 
-            string name = string.IsNullOrEmpty(fileName) ? GraphicalFireInput.DefaultFileName : fileName;
+            string name = FileNameOnThisGrid(folder, string.IsNullOrEmpty(fileName) ? GraphicalFireInput.DefaultFileName : fileName);
             string path = System.IO.Path.Combine(folder, name);
 
             GraphicalFireInput.SaveGraphicalFireInput(path, fireData, fireDataCellCount.x, fireDataCellCount.y);
@@ -912,6 +935,50 @@ namespace WUInity
                 + $"{fireDataCellCount.x} x {fireDataCellCount.y} grid of {_fireGridCellSize:F1} m.");
 
             return name;
+        }
+
+        /// <summary>
+        /// <paramref name="name"/>, unless a painting of another grid is saved under it: that one is the only record
+        /// of where those areas were (Mati's 616 x 590 painting, before it was moved onto the case grid), so it is
+        /// kept, and this grid's areas get a name of their own beside it (painted_fire_areas_566x541.gfi).
+        /// </summary>
+        private string FileNameOnThisGrid(string folder, string name)
+        {
+            name = name.Replace('\\', '/');
+            string path = System.IO.Path.Combine(folder, name);
+            if (!System.IO.File.Exists(path))
+            {
+                return name;
+            }
+
+            int width = 0, height = 0;
+            try
+            {
+                using (var br = new System.IO.BinaryReader(System.IO.File.OpenRead(path)))
+                {
+                    width = br.ReadInt32();
+                    height = br.ReadInt32();
+                }
+            }
+            catch (System.Exception)
+            {
+                //Unreadable: not a painting anything can be recovered from, so it is replaced as before.
+                return name;
+            }
+
+            if (width == fireDataCellCount.x && height == fireDataCellCount.y)
+            {
+                return name;
+            }
+
+            string fresh = PREACT.Utility.PaintedMaskResampler.NewFileName(path, fireDataCellCount.x, fireDataCellCount.y);
+            string relativeFolder = System.IO.Path.GetDirectoryName(name)?.Replace('\\', '/');
+            string freshName = string.IsNullOrEmpty(relativeFolder)
+                ? System.IO.Path.GetFileName(fresh)
+                : relativeFolder + "/" + System.IO.Path.GetFileName(fresh);
+            Engine.Message(null, Engine.LogType.Warning, $"{name} holds a painting on a {width} x {height} grid, so it is kept; "
+                + $"the areas painted on this {fireDataCellCount.x} x {fireDataCellCount.y} grid are saved as {freshName}.");
+            return freshName;
         }
 
         private static bool AnyPainted(bool[] mask, int cells)

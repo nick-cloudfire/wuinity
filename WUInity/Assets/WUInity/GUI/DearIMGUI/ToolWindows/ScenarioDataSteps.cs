@@ -919,7 +919,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
         /// Builds the ELMFIRE case: the rasters, the weather series and the namelist. With
         /// <paramref name="rebuildExisting"/> every layer is made again, as for a changed domain or cell size.
         /// </summary>
-        private static Task DoBuildElmfireCase(StepContext ctx, bool rebuildExisting)
+        private static Task DoBuildElmfireCase(StepContext ctx, bool rebuildExisting, PaintingFacts painting = null)
         {
             ElmfireInput settings = ctx.Input.WildfireModule.ElmfireInput;
             bool previous = settings.RebuildExistingLayers;
@@ -950,7 +950,145 @@ namespace Assets.WUInity.GUI.DearIMGUI
             //The terrain the build pointed [Landscape] at is read, and the painter goes onto the case grid; on the
             //main thread, after Finish has applied the step.
             ctx.Then(() => PreactGUI.WUInity?.ReloadLandscape());
+
+            //The build has just placed the painting on the case grid as ignition_mask.tif and wui_area.tif, through the
+            //grid it was painted on; the painting file itself follows it there, or the next build (and the painter)
+            //would be left with a painting on a grid nothing names any more.
+            if (painting != null)
+            {
+                CarryPaintingOntoCaseGrid(ctx, painting);
+            }
             return Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// What is known about the painting before a build changes the scenario: its file, and the grids it may
+        /// have been painted on - the terrain [Landscape] names before the build points it at the case, and the one
+        /// the workflow found. Captured on the main thread.
+        /// </summary>
+        public sealed class PaintingFacts
+        {
+            public string File;
+            public readonly List<string> Grids = new List<string>();
+
+            public static PaintingFacts Capture(PREACTInput input)
+            {
+                string file = input?.WildfireModule?.GraphicalFireInputFile;
+                if (string.IsNullOrEmpty(file)) return null;
+
+                var facts = new PaintingFacts { File = file };
+                //The grid a re-cut sets aside is the newest, so it comes first.
+                facts.Grids.Add(ScenarioFiles.CaseInput(input, PREACT.Utility.ElmfireCaseBuilder.PreviousGridFolder + "/dem.tif"));
+                string landscape = input.Landscape?.GetReferenceFile();
+                if (!string.IsNullOrEmpty(landscape)) facts.Grids.Add(landscape);
+                string found = WorkflowService.Model.PaintedOnReference;
+                if (!string.IsNullOrEmpty(found)) facts.Grids.Add(found);
+                return facts;
+            }
+        }
+
+        /// <summary>
+        /// On the worker, after a successful build: when the painting is not on the case's (possibly re-cut) grid
+        /// but on one of the grids it may have been painted on, moves it onto the case grid as a new file.
+        /// </summary>
+        private static void CarryPaintingOntoCaseGrid(StepContext ctx, PaintingFacts painting)
+        {
+            string gfi = GuiFiles.Resolve(ctx.Root, painting.File);
+            string caseDem = GuiFiles.Resolve(ctx.Root, ScenarioFiles.CaseInput(ctx.Input, "dem.tif"));
+            if (gfi == null || !File.Exists(gfi) || caseDem == null || !File.Exists(caseDem))
+            {
+                return;
+            }
+
+            try
+            {
+                PaintedAreasInfo header = PaintedAreasInfo.Read(gfi);
+                PREACT.Utility.PaintedMaskResampler.Grid caseGrid = PREACT.Utility.PaintedMaskResampler.Grid.FromRaster(caseDem);
+                if (header.Width == caseGrid.Ncols && header.Height == caseGrid.Nrows)
+                {
+                    return;
+                }
+
+                foreach (string candidate in painting.Grids)
+                {
+                    string path = GuiFiles.Resolve(ctx.Root, candidate);
+                    if (path == null || !File.Exists(path)) continue;
+                    PREACT.Utility.PaintedMaskResampler.Grid grid = PREACT.Utility.PaintedMaskResampler.Grid.FromRaster(path);
+                    if (grid.Ncols != header.Width || grid.Nrows != header.Height) continue;
+
+                    LogStep($"The painting ({header.Width} x {header.Height}) was on the grid of {candidate}, and the case is now "
+                        + $"{caseGrid.Ncols} x {caseGrid.Nrows}; moving it onto the case grid too.");
+                    MovePainting(ctx, painting.File, candidate, ScenarioFiles.CaseInput(ctx.Input, "dem.tif"));
+                    return;
+                }
+
+                LogStep($"The painting in {painting.File} is {header.Width} x {header.Height} cells and the case grid "
+                    + $"{caseGrid.Ncols} x {caseGrid.Nrows}; none of the grids this build knows has its size, so it was not "
+                    + "moved. Step 6 (Fire areas) says what to do.");
+            }
+            catch (Exception e)
+            {
+                //The build itself succeeded; the painting file is only not carried along, and step 6 says so.
+                LogStep("Could not move the painting onto the case grid: " + e.Message);
+            }
+        }
+
+        /// <summary>
+        /// Moves the scenario's painting from the grid of <paramref name="sourceGrid"/> onto that of
+        /// <paramref name="targetGrid"/> (both scenario-relative), as a new file beside it; the original is kept.
+        /// The scenario then names the new file (unsaved until the scenario is saved).
+        /// </summary>
+        public static void MovePaintingToGrid(string sourceGrid, string targetGrid)
+        {
+            string painting = Input?.WildfireModule?.GraphicalFireInputFile;
+            if (string.IsNullOrEmpty(painting) || string.IsNullOrEmpty(sourceGrid) || string.IsNullOrEmpty(targetGrid))
+            {
+                return;
+            }
+
+            RunStep("Moving the painting onto the fire-case grid", WorkflowStepId.FireAreas, c =>
+            {
+                MovePainting(c, painting, sourceGrid, targetGrid);
+                return Task.CompletedTask;
+            });
+        }
+
+        /// <summary>On the worker: the move itself, and the scenario's reference to the new file once it has succeeded.</summary>
+        private static void MovePainting(StepContext ctx, string painting, string sourceGrid, string targetGrid)
+        {
+            string gfi = GuiFiles.Resolve(ctx.Root, painting);
+            string target = GuiFiles.Resolve(ctx.Root, targetGrid);
+            PREACT.Utility.PaintedMaskResampler.Grid grid = PREACT.Utility.PaintedMaskResampler.Grid.FromRaster(target);
+            string output = PREACT.Utility.PaintedMaskResampler.NewFileName(gfi, grid.Ncols, grid.Nrows);
+
+            PREACT.Utility.PaintedMaskResampler.Result moved = PREACT.Utility.PaintedMaskResampler.ResampleFile(
+                gfi, GuiFiles.Resolve(ctx.Root, sourceGrid), target, output);
+            foreach (string line in moved.Describe())
+            {
+                LogStep(line);
+            }
+
+            //Beside the original, in the same (relative) folder.
+            string folder = Path.GetDirectoryName(painting.Replace('\\', '/'))?.Replace('\\', '/');
+            string relative = string.IsNullOrEmpty(folder) ? Path.GetFileName(output) : folder + "/" + Path.GetFileName(output);
+            ctx.Set(i => i.WildfireModule.GraphicalFireInputFile = relative);
+            ctx.Then(() => ReloadPaintedAreas(ctx.Input));
+            LogStep("The scenario now names " + relative + " as its painted areas; save the scenario to keep that.");
+        }
+
+        /// <summary>
+        /// On the main thread: the scenario's painted areas read again from the file it names, and the painter's
+        /// fire textures dropped so they are drawn from them.
+        /// </summary>
+        private static void ReloadPaintedAreas(PREACTInput input)
+        {
+            if (input == null || input != ScenarioSession.Input) return;
+
+            string path = GuiFiles.Resolve(input.RootFolder, input.WildfireModule.GraphicalFireInputFile);
+            if (path == null || !File.Exists(path)) return;
+
+            input.WildfireModule.Data.LoadGraphicalFireInput(input.WildfireModule, path, false, out bool _);
+            PreactGUI.WUInity?.Painter?.ReloadFireAreas();
         }
 
         /// <summary>
@@ -1043,8 +1181,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
         public static void BuildElmfireCase(bool rebuildExisting = false)
         {
+            PaintingFacts painting = PaintingFacts.Capture(Input);
             RunStep(rebuildExisting ? "Rebuilding the fire case" : "Building the fire case", WorkflowStepId.FireCase,
-                c => DoBuildElmfireCase(c, rebuildExisting));
+                c => DoBuildElmfireCase(c, rebuildExisting, painting));
         }
 
         /// <summary>
@@ -1053,7 +1192,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
         /// </summary>
         public static void ApplyPaintedAreasToCase()
         {
-            RunStep("Applying the painted areas to the fire case", WorkflowStepId.FireAreas, c => DoBuildElmfireCase(c, false));
+            PaintingFacts painting = PaintingFacts.Capture(Input);
+            RunStep("Applying the painted areas to the fire case", WorkflowStepId.FireAreas, c => DoBuildElmfireCase(c, false, painting));
         }
 
         public static void DownloadDemOnly()
