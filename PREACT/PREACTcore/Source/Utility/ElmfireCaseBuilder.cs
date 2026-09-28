@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using PREACT.Math;
 using PREACT.Population;
@@ -163,7 +164,26 @@ namespace PREACT.Utility
             /// <summary>Simulation start, for the namelist's CURRENT_YEAR / BAND_ONE_HOUR_OF_YEAR.</summary>
             public DateTime StartDateTime = new DateTime(2020, 7, 1, 12, 0, 0);
 
-            public double SimulationTstopSeconds = 72000.0;
+            /// <summary>How long the fire runs, in seconds - the namelist's SIMULATION_TSTOP, and what the weather
+            /// series has to cover. The CLI and the GUI both pass the scenario's own
+            /// <c>[ELMFIRE] SimulationTstopHours</c>; this default only applies to a bare API call.</summary>
+            public double SimulationTstopSeconds = 8.0 * 3600.0;
+
+            /// <summary>The ELMFIRE executable, used only to find ELMFIRE's default fuel model table.</summary>
+            public string ElmfireExe;
+
+            /// <summary>
+            /// The namelist template the case will run (<c>[ELMFIRE] NamelistTemplate</c>), when there is one. Only
+            /// its <c>FBFM_FILENAME</c> is read, so the ignition mask is restricted against the fuel the run burns.
+            /// </summary>
+            public string TemplateNamelistPath;
+
+            /// <summary>
+            /// DEMs the caller already has (the scenario's own landscape DEM), used for the grid when they cover
+            /// the padded domain - so a case needs no second download. One that does not cover it is passed over:
+            /// cutting the grid from it would shrink the padding.
+            /// </summary>
+            public List<string> CandidateDemPaths = new List<string>();
 
             /// <summary>Copied into &amp;MISCELLANEOUS PATH_TO_GDAL so ELMFIRE's own shell-outs
             /// resolve to a known-good GDAL rather than whatever is first on PATH.</summary>
@@ -217,8 +237,18 @@ namespace PREACT.Utility
             public List<PlacedIgnition> Ignitions = new List<PlacedIgnition>();
 
             public bool HasIgnitionPoint => Ignitions.Count > 0;
-            public double IgnitionX => Ignitions.Count > 0 ? Ignitions[0].X : 0.0;
-            public double IgnitionY => Ignitions.Count > 0 ? Ignitions[0].Y : 0.0;
+
+            /// <summary>True when the case's old grid did not cover the padded domain and was cut again.</summary>
+            public bool GridRebuilt;
+
+            /// <summary>Layers warped from the old grid onto a re-cut one, because this build had no source for them.</summary>
+            public List<string> Carried = new List<string>();
+
+            /// <summary>SHA-256 of the namelist this build wrote, recorded so the next build can tell a hand edit.</summary>
+            public string NamelistSha256;
+
+            /// <summary>Where a hand-edited namelist was set aside before regenerating, or null.</summary>
+            public string KeptNamelistPath;
 
             /// <summary>The exported painted WUI area, for k-PERIL's WuiAreaFile; null if none was painted.</summary>
             public string WuiAreaFile;
@@ -255,59 +285,51 @@ namespace PREACT.Utility
             //caller asked for a rebuild - see Options.OverwriteExistingLayers for why that is the default.
             bool Needed(string stem)
             {
-                string path = Path.Combine(inputs, stem + ".tif");
+                string path = ElmfireStems.Tif(inputs, stem);
                 if (o.OverwriteExistingLayers || !File.Exists(path))
                 {
                     return true;
                 }
 
-                result.Reused.Add(stem);
-                result.Written.Add(stem);
+                if (!result.Reused.Contains(stem)) result.Reused.Add(stem);
+                if (!result.Written.Contains(stem)) result.Written.Add(stem);
                 return false;
             }
 
             //---------------------------------------------------------------- 1-2. DEM and master grid
-            //The grid comes from dem.tif, which ELMFIRE also reads the domain and CRS from, so when the case
-            //already has one it is the grid - there is nothing to download, warp or decide. This is also why
-            //a prepared case needs no OpenTopography key.
-            string demPath = Path.Combine(inputs, "dem.tif");
-            MasterGrid grid;
+            //The grid comes from dem.tif, which ELMFIRE also reads the domain and CRS from, so a case's own DEM
+            //is the grid of record - but only if it is the grid this scenario asks for. A dem.tif that does not
+            //cover the padded domain used to be kept anyway, and the grid silently shrank to it: on Mati the
+            //"2000 m" padding came out as 473 m to the west, 14 m to the east and minus 28 m to the south, so the
+            //southern strip of the evacuation domain had no fire data at all.
+            string demPath = ElmfireStems.Tif(inputs, ElmfireStems.Dem);
+            MasterGrid grid = null;
+            string previousGridDirectory = null;
 
-            if (!Needed("dem"))
+            if (!o.OverwriteExistingLayers && File.Exists(demPath))
             {
-                grid = MasterGrid.FromRasterFile(demPath);
-                Log($"Reusing the case's own DEM: {grid.Header.Ncols}x{grid.Header.Nrows} @ "
-                    + $"{grid.Header.CellSize:F1} m, {grid.Epsg}.");
-            }
-            else
-            {
-                string rawDem = Path.Combine(inputs, "dem_source.tif");
-                if (!string.IsNullOrEmpty(o.LocalDemPath))
+                MasterGrid existing = MasterGrid.FromRasterFile(demPath);
+                string mismatch = DescribeGridMismatch(existing, o, southWest, northEast);
+                if (mismatch == null)
                 {
-                    if (!File.Exists(o.LocalDemPath)) throw new FileNotFoundException("No such DEM: " + o.LocalDemPath);
-                    Log($"Using local DEM {o.LocalDemPath}.");
-                    File.Copy(o.LocalDemPath, rawDem, overwrite: true);
-                }
-                else if (File.Exists(rawDem))
-                {
-                    //A downloaded DEM is reused even under --force: --force is about writing into a
-                    //non-empty case folder, not about re-fetching data that cannot have changed.
-                    Log("Reusing the previously downloaded DEM.");
+                    grid = existing;
+                    result.Reused.Add(ElmfireStems.Dem);
+                    result.Written.Add(ElmfireStems.Dem);
+                    Log($"Reusing the case's own DEM: {grid.Header.Ncols}x{grid.Header.Nrows} @ "
+                        + $"{grid.Header.CellSize:F1} m, {grid.Epsg}.");
                 }
                 else
                 {
-                    if (string.IsNullOrEmpty(o.OpenTopographyApiKey))
-                    {
-                        throw new Exception(
-                            "A DEM is needed and there is none in the case, so one has to be downloaded - but no "
-                            + "OpenTopography key was found. Put it in "
-                            + "WUInity/Assets/Resources/OpenTopography/OpenTopographyConfiguration.txt or set "
-                            + "OPENTOPOGRAPHY_API_KEY, or point the case at a DEM you already have.");
-                    }
-
-                    Log($"Downloading {o.DemType} DEM from OpenTopography...");
-                    await OpenTopographyDownloader.Download(southWest, northEast, o.OpenTopographyApiKey, rawDem, o.DemType);
+                    Log($"The case's dem.tif is not this scenario's grid: {mismatch}");
+                    Log("  Re-cutting the grid from the source DEM, and carrying every other layer the case holds "
+                        + "onto it; the old rasters are kept in inputs/" + PreviousGridFolder + ".");
+                    previousGridDirectory = SetAsidePreviousGrid(inputs, Log);
                 }
+            }
+
+            if (grid == null)
+            {
+                string rawDem = await ResolveSourceDem(o, inputs, southWest, northEast, previousGridDirectory, Log);
 
                 Log($"Warping DEM to the local UTM zone at {o.CellSizeMetres:F0} m...");
                 grid = RasterHarmonizer.BuildUtmMasterGrid(
@@ -315,14 +337,16 @@ namespace PREACT.Utility
                     southWest.x, southWest.y, northEast.x, northEast.y,
                     o.CellSizeMetres);
                 Log($"Master grid: {grid.Header.Ncols}x{grid.Header.Nrows} @ {grid.Header.CellSize:F1} m, {grid.Epsg}");
-                result.Written.Add("dem");
+                result.Written.Add(ElmfireStems.Dem);
+                ReportDemCoverage(rawDem, southWest, northEast, result, Log);
             }
 
             result.Grid = grid;
+            result.GridRebuilt = previousGridDirectory != null;
 
             //---------------------------------------------------------------- 3. Slope / aspect
-            bool needSlope = Needed("slp");
-            bool needAspect = Needed("asp");
+            bool needSlope = Needed(ElmfireStems.Slope);
+            bool needAspect = Needed(ElmfireStems.Aspect);
             if (needSlope || needAspect)
             {
                 Log("Deriving slope and aspect (Horn's method)...");
@@ -335,23 +359,23 @@ namespace PREACT.Utility
                 SlopeAspect.Compute(elevation, grid.Header.CellSize, out float[,] slope, out float[,] aspect);
                 if (needSlope)
                 {
-                    GeoTiffRasterWriter.WriteBand(grid, slope, Path.Combine(inputs, "slp.tif"));
-                    result.Written.Add("slp");
+                    GeoTiffRasterWriter.WriteBand(grid, slope, ElmfireStems.Tif(inputs, ElmfireStems.Slope));
+                    result.Written.Add(ElmfireStems.Slope);
                 }
                 if (needAspect)
                 {
-                    GeoTiffRasterWriter.WriteBand(grid, aspect, Path.Combine(inputs, "asp.tif"));
-                    result.Written.Add("asp");
+                    GeoTiffRasterWriter.WriteBand(grid, aspect, ElmfireStems.Tif(inputs, ElmfireStems.Aspect));
+                    result.Written.Add(ElmfireStems.Aspect);
                 }
             }
 
             //---------------------------------------------------------------- 4. adj / phi
             //Both are just 1.0 everywhere, same shape/CRS as the DEM (WildfireAV's
             //makePhiAndAdjFiles.py) - they are not related to ignition.
-            foreach (string stem in new[] { "adj", "phi" })
+            foreach (string stem in new[] { ElmfireStems.Adj, ElmfireStems.Phi })
             {
                 if (!Needed(stem)) continue;
-                GeoTiffRasterWriter.WriteConstant(grid, 1.0f, Path.Combine(inputs, stem + ".tif"));
+                GeoTiffRasterWriter.WriteConstant(grid, 1.0f, ElmfireStems.Tif(inputs, stem));
                 result.Written.Add(stem);
             }
 
@@ -384,26 +408,17 @@ namespace PREACT.Utility
                     continue;
                 }
 
-                string method = o.CategoricalStems.Contains(stem) ? "near" : "bilinear";
-                string warped = Path.Combine(inputs, stem + ".tif");
-                Log($"  {stem}: warping onto the master grid ({method}).");
-                RasterHarmonizer.WarpToGrid(source, warped, grid, method);
+                WarpLayer(o, result, grid, stem, source, ElmfireStems.Tif(inputs, stem), Log);
+            }
 
-                //Scrubbed here, on the way in, because ELMFIRE traps on floating-point invalid and one NaN
-                //aborts the whole run with a message naming an unrelated line. These external products are
-                //exactly where NaN comes from - several declare no nodata value at all, so voids arrive as NaN
-                //rather than as anything a reader would skip. 0 means "none of this here" for every layer
-                //ingested through this path: no canopy, no buildings, not in the mask.
-                long scrubbed = RasterScrubber.ReplaceNonFinite(warped, 0f, Log);
-                if (scrubbed > 0)
-                {
-                    long cells = (long)grid.Header.Ncols * grid.Header.Nrows;
-                    Log($"    {stem}: {scrubbed} non-finite cell(s) replaced with 0 "
-                        + $"({100.0 * scrubbed / System.Math.Max(1, cells):F1} % of the grid).");
-                    result.Fallbacks.Add($"{stem}: {scrubbed} non-finite cells replaced with 0");
-                }
-
-                result.Written.Add(stem);
+            //---------------------------------------------------------------- 5a. Layers from the old grid
+            //Only after a re-cut grid. Whatever the case held that this build had no source for - hand-prepared
+            //fuel, buildings, canopy - is warped from its old copy onto the new grid rather than lost. Inside the
+            //old extent that is the same data; in the new padding it is nodata, i.e. no fuel and no buildings,
+            //which is what the old grid said about ground it did not cover.
+            if (previousGridDirectory != null)
+            {
+                CarryPreviousGridLayers(o, result, grid, inputs, previousGridDirectory, Log);
             }
 
             //---------------------------------------------------------------- 5b. Canopy defaults
@@ -412,14 +427,11 @@ namespace PREACT.Utility
             //produces a case that builds cleanly and then cannot run. Canopy is also precisely the
             //layer that has no global source, so defaulting it to zero - no canopy fuel, hence
             //surface fire only, no crown fire - is what makes an arbitrary domain runnable at all.
-            //Needed() is what keeps this from destroying real canopy: it used to test only whether this run
-            //had warped the stem, so a case whose cc/ch/cbh/cbd were prepared earlier had them overwritten
-            //with zeros the next time the builder ran without being handed them again - and zero canopy is a
-            //silent switch from crown fire to surface fire only.
+            //Needed() is what keeps this from destroying real canopy.
             foreach (string stem in new[] { "cc", "ch", "cbh", "cbd" })
             {
                 if (result.Written.Contains(stem) || !Needed(stem)) continue;
-                GeoTiffRasterWriter.WriteConstant(grid, 0.0f, Path.Combine(inputs, stem + ".tif"));
+                GeoTiffRasterWriter.WriteConstant(grid, 0.0f, ElmfireStems.Tif(inputs, stem));
                 result.Written.Add(stem);
                 result.Defaulted.Add(stem);
             }
@@ -433,7 +445,7 @@ namespace PREACT.Utility
             //---------------------------------------------------------------- 5c. Painted masks
             //Run before the ignition-mask default below, so a painted ignition area is used rather
             //than being overwritten by the ignite-anywhere fallback.
-            ApplyPaintedMasks(o, result, inputs, grid, Log);
+            ApplyPaintedMasks(o, result, inputs, grid, previousGridDirectory, Log);
 
             //---------------------------------------------------------------- 5d. Ignition points
             //After the painted masks, because an explicitly placed point supersedes the centroid of a
@@ -443,13 +455,18 @@ namespace PREACT.Utility
             //---------------------------------------------------------------- 6. Ignition mask
             //Only generated when the user did not supply one: an all-ones mask lets ELMFIRE's
             //RANDOM_IGNITIONS place a fire anywhere in the domain, which is the neutral default.
-            string ignitionMask = Path.Combine(inputs, "ignition_mask.tif");
+            string ignitionMask = ElmfireStems.Tif(inputs, ElmfireStems.IgnitionMask);
             if (!File.Exists(ignitionMask))
             {
                 Log("  ignition_mask: none supplied, writing an all-ones (ignite-anywhere) mask.");
                 GeoTiffRasterWriter.WriteConstant(grid, 1.0f, ignitionMask);
-                result.Written.Add("ignition_mask");
+                result.Written.Add(ElmfireStems.IgnitionMask);
             }
+
+            //The fuel stem the run will burn: the template's FBFM_FILENAME when a template is in force, else what
+            //the case holds. Resolved once, so the mask restriction, the namelist and the validator agree.
+            string[] template = ReadTemplate(o.TemplateNamelistPath);
+            result.FuelStem = ElmfireStems.FuelStem(template, inputs) ?? ResolveStem(result, ElmfireStems.Fuel);
 
             if (o.RestrictIgnitionToBurnableFuel)
             {
@@ -461,25 +478,26 @@ namespace PREACT.Utility
             //layer if one was supplied.
             //
             //All five together, or none: they are one weather series split across five files, and a mixture
-            //of a case's own wind and freshly sampled moisture is not a description of any day. The wind is
-            //also what k-PERIL derives its spread ellipse from, so silently redrawing it changes a trigger
-            //boundary computed against the fire that came before.
-            string[] weatherStems = { "ws", "wd", "m1", "m10", "m100" };
-            bool haveAllWeather = true;
-            foreach (string stem in weatherStems)
-            {
-                if (!File.Exists(Path.Combine(inputs, stem + ".tif"))) { haveAllWeather = false; break; }
-            }
+            //of a case's own wind and freshly sampled moisture is not a description of any day. Kept only when
+            //the series covers the fire: ELMFIRE refuses a multi-band series shorter than SIMULATION_TSTOP ("Not
+            //enough weather bands"), and a case kept at 8 bands for a 72 h fire failed that way on every run.
+            double secondsPerBand = o.Namelist != null && o.Namelist.DT_METEOROLOGY > 0 ? o.Namelist.DT_METEOROLOGY : 3600.0;
+            string keptWeatherProblem = DescribeKeptWeather(inputs, o.SimulationTstopSeconds, secondsPerBand);
 
-            if (haveAllWeather && !o.OverwriteExistingLayers)
+            if (keptWeatherProblem == null && !o.OverwriteExistingLayers && previousGridDirectory == null)
             {
-                Log("  weather: the case already has ws/wd/m1/m10/m100; keeping them.");
-                result.Reused.AddRange(weatherStems);
-                result.Written.AddRange(weatherStems);
-                WarnIfKeptWindIsUniform(Path.Combine(inputs, "ws.tif"), Log);
+                Log("  weather: the case already has ws/wd/m1/m10/m100 covering the fire; keeping them.");
+                result.Reused.AddRange(ElmfireStems.Weather);
+                result.Written.AddRange(ElmfireStems.Weather);
+                WarnIfKeptWindIsUniform(ElmfireStems.Tif(inputs, ElmfireStems.WindSpeed), Log);
             }
             else
             {
+                if (keptWeatherProblem != null && File.Exists(ElmfireStems.Tif(inputs, ElmfireStems.WindSpeed)))
+                {
+                    Log("  weather: " + keptWeatherProblem + "; building it again.");
+                }
+
                 Log("Building baseline weather (climatology -> WindNinja -> Nelson)...");
 
                 WeatherRasterPipeline.Options w = o.Weather ?? new WeatherRasterPipeline.Options();
@@ -491,10 +509,10 @@ namespace PREACT.Utility
                 //written hourly and read at any other interval is silently stretched in time.
                 w.SimulationStartDateTime = o.StartDateTime;
                 w.SimulationTstopSeconds = o.SimulationTstopSeconds;
-                if (o.Namelist != null && o.Namelist.DT_METEOROLOGY > 0)
-                {
-                    w.SecondsPerBand = o.Namelist.DT_METEOROLOGY;
-                }
+                w.SecondsPerBand = secondsPerBand;
+
+                //A single case wants the whole series, one band per hour of fire: the cap exists for campaigns.
+                w.MaxBands = 0;
 
                 //WindNinja is not resolved here: the pipeline probes for it itself when none is named, so no
                 //caller can forget to and quietly get a uniform wind field.
@@ -505,11 +523,11 @@ namespace PREACT.Utility
                 {
                     //Beside the case rather than inside inputs/: it is a cache shared by every
                     //realization, not one of ELMFIRE's inputs.
-                    w.ArchiveCsvPath = Path.Combine(o.OutputDirectory, "climatology", $"{o.Name}_era5_hourly.csv");
+                    w.ArchiveCsvPath = ArchivePath(o.OutputDirectory, o.Name);
                 }
 
                 result.Weather = await WeatherRasterPipeline.Run(w);
-                result.Written.AddRange(weatherStems);
+                result.Written.AddRange(ElmfireStems.Weather);
             }
 
             //---------------------------------------------------------------- 8. Loose files
@@ -520,25 +538,31 @@ namespace PREACT.Utility
                 Log($"  copy: {Path.GetFileName(f)}");
             }
 
-            //---------------------------------------------------------------- 9. Namelist
-            //Kept when the case has one, for the same reason the rasters are: the namelist is where the
-            //physics is tuned, and a generated one is a starting point rather than an improvement on a
-            //template someone has worked on. Overwriting it was the most expensive thing this could quietly
-            //undo.
-            //Resolved once every layer is in place, so it reflects the case as it now stands whether the
-            //namelist is about to be written or kept.
-            result.FuelStem = ResolveStem(result, FuelStems);
+            //The surface fuel table, written once here rather than by every ELMFIRE run. With FUEL_MODEL_FILE unset
+            //ELMFIRE writes its built-in table into the inputs folder at startup and reads it back - so every run
+            //rewrote a shared file (concurrently, in a campaign) and a hand-edited table was silently replaced.
+            EnsureFuelModelTable(inputs, o.ElmfireExe, Log);
 
+            //---------------------------------------------------------------- 9. Namelist
+            //Regenerated on every build, so the scenario's [ElmfireNamelist] settings, its stop time and the case's
+            //layers are what the namelist says: a namelist kept from the first build made later edits in the
+            //Hazards tab do nothing at all. A namelist edited by hand is not destroyed - it is set aside with a
+            //timestamp - and the way to run a hand-tuned namelist is [ELMFIRE] NamelistTemplate, which is used
+            //verbatim.
             result.NamelistPath = Path.Combine(o.OutputDirectory, "elmfire.data");
-            if (File.Exists(result.NamelistPath) && !o.OverwriteExistingLayers)
+            if (IsSameFile(o.TemplateNamelistPath, result.NamelistPath))
             {
-                Log($"Keeping the case's own namelist, {Path.GetFileName(result.NamelistPath)}.");
+                //The scenario runs this very file as its template, which is the instruction to leave it alone.
                 result.Reused.Add("elmfire.data");
-                WarnIfNamelistLacksFuelModel(result, Log);
+                result.NamelistSha256 = ReadManifestValue(o.OutputDirectory, GeneratedNamelistKey);
+                Log($"Keeping {Path.GetFileName(result.NamelistPath)}: the scenario names it as its NamelistTemplate.");
             }
             else
             {
-                File.WriteAllLines(result.NamelistPath, BuildNamelist(o, result));
+                string[] namelist = BuildNamelist(o, result);
+                SetAsideHandEditedNamelist(o, result, Log);
+                File.WriteAllLines(result.NamelistPath, namelist);
+                result.NamelistSha256 = ElmfireFingerprint.HashFile(result.NamelistPath);
                 Log($"Wrote {result.NamelistPath}");
             }
 
@@ -547,9 +571,8 @@ namespace PREACT.Utility
 
             //---------------------------------------------------------------- 9b. Provenance
             //What each raster was made from, which the namelist cannot say: its *_FILENAME keys name stems
-            //inside inputs/ ('cc'), not the source those stems were warped out of. So once a case was built the
-            //provenance was gone, and the editor could not show - or restore - which layers a case had come
-            //from. Written beside the namelist so the case describes itself.
+            //inside inputs/ ('cc'), not the source those stems were warped out of. Written beside the namelist
+            //so the case describes itself - and so the next build can tell its own namelist from a hand edit.
             WriteSourceManifest(o, result, Log);
 
             //---------------------------------------------------------------- 10. Validate
@@ -561,9 +584,391 @@ namespace PREACT.Utility
             return result;
         }
 
+        /// <summary>Where a case keeps its ERA5 archive: <c>climatology/&lt;scenario name&gt;_era5_hourly.csv</c>.</summary>
+        /// <remarks>
+        /// One rule for the case build, the GUI and the campaign. The campaign used to name it after the .wui file
+        /// instead of <c>[Simulation] Name</c>, so a scenario saved as <c>mati_v2.wui</c> re-downloaded 26 years
+        /// of ERA5 next to the one it already had.
+        /// </remarks>
+        public static string ArchivePath(string caseDirectory, string scenarioName)
+        {
+            return Path.Combine(caseDirectory, "climatology", scenarioName + "_era5_hourly.csv");
+        }
+
+        /// <summary>Where the rasters of a replaced grid are kept, inside inputs/.</summary>
+        public const string PreviousGridFolder = "_previous_grid";
+
         /// <summary>
-        /// Layers a case may or may not carry: validated for registration when present, not missed when absent.
+        /// Why an existing dem.tif is not the grid this build asks for, or null when it is: it must cover the
+        /// padded domain (to within a cell) at the requested cell size.
         /// </summary>
+        private static string DescribeGridMismatch(MasterGrid existing, Options o, Vector2d southWest, Vector2d northEast)
+        {
+            double cs = existing.Header.CellSize;
+            if (System.Math.Abs(cs - o.CellSizeMetres) > 0.01 * o.CellSizeMetres)
+            {
+                return $"its cells are {cs:F1} m and the scenario asks for {o.CellSizeMetres:F1} m";
+            }
+
+            if (string.IsNullOrEmpty(existing.Epsg))
+            {
+                return "its CRS cannot be identified";
+            }
+
+            (double xMin, double yMin, double xMax, double yMax) = RasterHarmonizer.ProjectBounds(
+                existing.Epsg, southWest.x, southWest.y, northEast.x, northEast.y);
+
+            //One cell of slack: the warp snaps the requested extent to whole cells.
+            double tolerance = cs;
+            var shortfalls = new List<string>();
+            if (existing.XMin > xMin + tolerance) shortfalls.Add($"{existing.XMin - xMin:F0} m short on the west");
+            if (existing.XMax < xMax - tolerance) shortfalls.Add($"{xMax - existing.XMax:F0} m short on the east");
+            if (existing.YMin > yMin + tolerance) shortfalls.Add($"{existing.YMin - yMin:F0} m short on the south");
+            if (existing.YMax < yMax - tolerance) shortfalls.Add($"{yMax - existing.YMax:F0} m short on the north");
+
+            if (shortfalls.Count == 0) return null;
+
+            return $"it is {existing.Header.Ncols}x{existing.Header.Nrows} and does not cover the domain padded by "
+                   + $"{o.PaddingMetres:F0} m ({string.Join(", ", shortfalls)})";
+        }
+
+        /// <summary>
+        /// Moves every raster of the old grid out of inputs/ into <see cref="PreviousGridFolder"/>, so nothing
+        /// kept can disagree with the new grid, and returns that folder.
+        /// </summary>
+        /// <remarks>
+        /// Only the stems a case is built from are moved. Anything else in inputs/ - a scenario's own landscape
+        /// raster, a hand-made variant of a layer - is left where it is, since the scenario may point at it.
+        /// </remarks>
+        private static string SetAsidePreviousGrid(string inputs, Action<string> log)
+        {
+            string previous = Path.Combine(inputs, PreviousGridFolder);
+            if (Directory.Exists(previous))
+            {
+                try { Directory.Delete(previous, recursive: true); } catch { }
+            }
+            Directory.CreateDirectory(previous);
+
+            var moved = new List<string>();
+            foreach (string stem in KnownStems().Concat(new[] { ElmfireStems.WuiArea }).Distinct())
+            {
+                string path = ElmfireStems.Tif(inputs, stem);
+                if (!File.Exists(path)) continue;
+
+                File.Move(path, ElmfireStems.Tif(previous, stem));
+                string aux = path + ".aux.xml";
+                if (File.Exists(aux)) { try { File.Delete(aux); } catch { } }
+                moved.Add(stem);
+            }
+
+            log($"  moved {moved.Count} raster(s) of the old grid to inputs/{PreviousGridFolder}: {string.Join(", ", moved)}");
+            return previous;
+        }
+
+        /// <summary>
+        /// The DEM to cut the grid from: the one named with --dem, the case's cached download, one of the
+        /// caller's candidates that covers the padded domain, or a fresh OpenTopography download.
+        /// </summary>
+        private static async Task<string> ResolveSourceDem(Options o, string inputs, Vector2d southWest, Vector2d northEast,
+            string previousGridDirectory, Action<string> log)
+        {
+            string rawDem = Path.Combine(inputs, "dem_source.tif");
+
+            if (!string.IsNullOrEmpty(o.LocalDemPath))
+            {
+                if (!File.Exists(o.LocalDemPath)) throw new FileNotFoundException("No such DEM: " + o.LocalDemPath);
+                log($"Using local DEM {o.LocalDemPath}.");
+                File.Copy(o.LocalDemPath, rawDem, overwrite: true);
+                return rawDem;
+            }
+
+            if (File.Exists(rawDem))
+            {
+                //A downloaded DEM is reused even under --force: --force is about writing into a non-empty case
+                //folder, not about re-fetching data that cannot have changed. Only if it covers the domain,
+                //though - a download cut for a smaller padding is the same shrunken grid again.
+                if (Covers(rawDem, southWest, northEast))
+                {
+                    log("Reusing the previously downloaded DEM.");
+                    return rawDem;
+                }
+                log("The previously downloaded DEM does not cover the padded domain; not using it.");
+            }
+
+            foreach (string candidate in o.CandidateDemPaths)
+            {
+                if (string.IsNullOrEmpty(candidate) || !File.Exists(candidate)) continue;
+                if (!Covers(candidate, southWest, northEast))
+                {
+                    log($"  {candidate} does not cover the padded domain, so it is not used for the grid.");
+                    continue;
+                }
+
+                log($"Using the scenario's DEM {candidate}, which covers the padded domain.");
+                File.Copy(candidate, rawDem, overwrite: true);
+                return rawDem;
+            }
+
+            if (string.IsNullOrEmpty(o.OpenTopographyApiKey))
+            {
+                throw new Exception(
+                    (previousGridDirectory != null
+                        ? "The case's grid has to be cut again to cover the padded domain, "
+                        : "A DEM is needed and there is none in the case, ")
+                    + "so one has to be downloaded - but no OpenTopography key was found, and no local DEM covering "
+                    + "the padded domain was given. Put the key in "
+                    + "WUInity/Assets/Resources/OpenTopography/OpenTopographyConfiguration.txt or set "
+                    + "OPENTOPOGRAPHY_API_KEY, or point the build at a DEM (build-case --dem) that covers "
+                    + $"{southWest.x:F4},{southWest.y:F4} to {northEast.x:F4},{northEast.y:F4}.");
+            }
+
+            log($"Downloading {o.DemType} DEM from OpenTopography...");
+            await OpenTopographyDownloader.Download(southWest, northEast, o.OpenTopographyApiKey, rawDem, o.DemType);
+            return rawDem;
+        }
+
+        /// <summary>Whether a raster's extent contains the lat/lon box (to about 1e-4 degrees).</summary>
+        private static bool Covers(string path, Vector2d southWest, Vector2d northEast)
+        {
+            if (!RasterHarmonizer.TryGetWgs84Bounds(path, out double s, out double w, out double n, out double e))
+            {
+                return false;
+            }
+
+            const double slack = 1e-4;
+            return s <= southWest.x + slack && w <= southWest.y + slack
+                   && n >= northEast.x - slack && e >= northEast.y - slack;
+        }
+
+        /// <summary>
+        /// Says how much of the padded domain the source DEM actually covers, when it does not cover all of it.
+        /// </summary>
+        /// <remarks>
+        /// The grid is the padded domain either way; what the DEM does not cover is nodata elevation, which
+        /// every downstream layer reads as ground with nothing on it. That is right for sea and wrong for land,
+        /// and only the user knows which it is - so it is said, with the numbers, rather than refused.
+        /// </remarks>
+        private static void ReportDemCoverage(string rawDem, Vector2d southWest, Vector2d northEast, Result result,
+            Action<string> log)
+        {
+            if (Covers(rawDem, southWest, northEast)) return;
+
+            if (!RasterHarmonizer.TryGetWgs84Bounds(rawDem, out double s, out double w, out double n, out double e))
+            {
+                return;
+            }
+
+            string message = $"the source DEM covers {s:F4},{w:F4} to {n:F4},{e:F4}, less than the padded domain "
+                             + $"{southWest.x:F4},{southWest.y:F4} to {northEast.x:F4},{northEast.y:F4}; the rest of "
+                             + "the grid has no elevation, and the fire cannot spread there unless other layers say "
+                             + "otherwise";
+            result.Fallbacks.Add("DEM: " + message);
+            log("  WARNING " + message + ". Use a larger DEM to give the fire the whole padding.");
+        }
+
+        /// <summary>Warps one source raster onto the grid and scrubs its non-finite values.</summary>
+        private static void WarpLayer(Options o, Result result, MasterGrid grid, string stem, string source,
+            string destination, Action<string> log)
+        {
+            string method = o.CategoricalStems.Contains(stem) ? "near" : "bilinear";
+            log($"  {stem}: warping onto the master grid ({method}).");
+            RasterHarmonizer.WarpToGrid(source, destination, grid, method);
+
+            //Scrubbed here, on the way in, because ELMFIRE traps on floating-point invalid and one NaN aborts the
+            //whole run with a message naming an unrelated line. External products are exactly where NaN comes
+            //from - several declare no nodata value at all. 0 means "none of this here" for every layer ingested
+            //through this path: no canopy, no buildings, not in the mask.
+            long scrubbed = RasterScrubber.ReplaceNonFinite(destination, 0f, log);
+            if (scrubbed > 0)
+            {
+                long cells = (long)grid.Header.Ncols * grid.Header.Nrows;
+                log($"    {stem}: {scrubbed} non-finite cell(s) replaced with 0 "
+                    + $"({100.0 * scrubbed / System.Math.Max(1, cells):F1} % of the grid).");
+                result.Fallbacks.Add($"{stem}: {scrubbed} non-finite cells replaced with 0");
+            }
+
+            if (!result.Written.Contains(stem)) result.Written.Add(stem);
+        }
+
+        /// <summary>
+        /// Warps the layers the old grid had and this build did not produce onto the new grid.
+        /// </summary>
+        /// <remarks>
+        /// Terrain (dem, slp, asp, adj, phi) and weather are derived again rather than carried, since they are
+        /// functions of the grid; the painted masks are exported again from the painting. Everything else - the
+        /// layers a user brought - is carried.
+        /// </remarks>
+        private static void CarryPreviousGridLayers(Options o, Result result, MasterGrid grid, string inputs,
+            string previous, Action<string> log)
+        {
+            var derived = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ElmfireStems.Dem, ElmfireStems.Slope, ElmfireStems.Aspect, ElmfireStems.Adj, ElmfireStems.Phi,
+            };
+            foreach (string stem in ElmfireStems.Weather) derived.Add(stem);
+
+            foreach (string path in Directory.GetFiles(previous, "*.tif"))
+            {
+                string stem = Path.GetFileNameWithoutExtension(path);
+                if (derived.Contains(stem) || result.Written.Contains(stem)) continue;
+                if (File.Exists(ElmfireStems.Tif(inputs, stem))) continue;
+
+                WarpLayer(o, result, grid, stem, path, ElmfireStems.Tif(inputs, stem), log);
+                result.Carried.Add(stem);
+            }
+
+            if (result.Carried.Count > 0)
+            {
+                log($"  carried onto the new grid from the old one: {string.Join(", ", result.Carried)}.");
+            }
+        }
+
+        /// <summary>
+        /// Why the case's weather cannot be kept for this fire, or null when it can: all five rasters present,
+        /// with one band count, and either one band (which ELMFIRE holds for any duration) or enough bands to
+        /// cover the stop time.
+        /// </summary>
+        public static string DescribeKeptWeather(string weatherDirectory, double tstopSeconds, double secondsPerBand)
+        {
+            int bands = -1;
+            foreach (string stem in ElmfireStems.Weather)
+            {
+                string path = ElmfireStems.Tif(weatherDirectory, stem);
+                if (!File.Exists(path)) return $"{stem}.tif is missing";
+
+                int n = AscRaster.GetBandCount(path);
+                if (n <= 0) return $"{stem}.tif cannot be read";
+                if (bands < 0) bands = n;
+                else if (n != bands) return $"the weather rasters disagree on band count ({bands} vs {n} in {stem}.tif)";
+            }
+
+            if (bands > 1 && tstopSeconds > 0 && bands * secondsPerBand < tstopSeconds)
+            {
+                return $"the weather covers {bands * secondsPerBand / 3600.0:F0} h ({bands} bands) and the fire runs "
+                       + $"{tstopSeconds / 3600.0:F0} h";
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Makes sure <c>fuel_models.csv</c> exists in <paramref name="directory"/>, copying ELMFIRE's own default
+        /// table when it does not. Returns whether it exists afterwards.
+        /// </summary>
+        /// <remarks>
+        /// The default is <c>build/source/fuel_models.csv</c> in the ELMFIRE source tree beside the executable - the
+        /// same table ELMFIRE writes from WRITE_FUEL_MODEL_TABLE when none is named. A table already there is
+        /// never replaced: it may be hand-edited, and when it is not it is this same table.
+        /// </remarks>
+        public static bool EnsureFuelModelTable(string directory, string elmfireExe, Action<string> log)
+        {
+            string table = Path.Combine(directory, ElmfireStems.FuelModelTable);
+            if (File.Exists(table)) return true;
+
+            string source = DefaultFuelModelTable(elmfireExe ?? ElmfireCoupling.ResolveExecutable(null, null));
+            if (source == null)
+            {
+                log?.Invoke($"  fuel table: no {ElmfireStems.FuelModelTable} in the case and ELMFIRE's default could "
+                            + "not be found beside the executable; ELMFIRE will write its built-in table itself.");
+                return false;
+            }
+
+            File.Copy(source, table);
+            log?.Invoke($"  fuel table: {ElmfireStems.FuelModelTable} copied from ELMFIRE's default ({source}).");
+            return true;
+        }
+
+        /// <summary>ELMFIRE's shipped fuel model table for an executable in <c>build/&lt;os&gt;/bin</c>, or null.</summary>
+        public static string DefaultFuelModelTable(string elmfireExe)
+        {
+            if (string.IsNullOrEmpty(elmfireExe)) return null;
+
+            try
+            {
+                string bin = Path.GetDirectoryName(Path.GetFullPath(elmfireExe));
+                string candidate = Path.GetFullPath(Path.Combine(bin, "..", "..", "source", ElmfireStems.FuelModelTable));
+                return File.Exists(candidate) ? candidate : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static bool IsSameFile(string a, string b)
+        {
+            if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return false;
+            try
+            {
+                return string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static string[] ReadTemplate(string path)
+        {
+            if (string.IsNullOrEmpty(path) || !File.Exists(path)) return null;
+            try { return File.ReadAllLines(path); }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// Moves the case's elmfire.data aside when it is not the namelist the last build wrote - an edit by hand,
+        /// or a case built before the builder recorded what it wrote - so regenerating it destroys nothing.
+        /// </summary>
+        private static void SetAsideHandEditedNamelist(Options o, Result result, Action<string> log)
+        {
+            string path = result.NamelistPath;
+            if (!File.Exists(path)) return;
+
+            string recorded = ReadManifestValue(o.OutputDirectory, GeneratedNamelistKey);
+            string current = ElmfireFingerprint.HashFile(path);
+            if (recorded != null && string.Equals(recorded, current, StringComparison.OrdinalIgnoreCase)) return;
+
+            string aside = path + ".kept-" + DateTime.Now.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture);
+            File.Move(path, aside);
+            result.KeptNamelistPath = aside;
+
+            string why = recorded == null
+                ? "the build that wrote it did not record it (built before namelists were regenerated)"
+                : "it was edited since the last build";
+            log($"  namelist: {Path.GetFileName(path)} is regenerated from the scenario on every build; the existing "
+                + $"one was kept as {Path.GetFileName(aside)} because {why}. To run a hand-tuned namelist, set "
+                + "[ELMFIRE] NamelistTemplate to it.");
+            result.Fallbacks.Add($"namelist: previous {Path.GetFileName(path)} kept as {Path.GetFileName(aside)}");
+        }
+
+        /// <summary>The manifest key the builder records its own namelist's hash under.</summary>
+        private const string GeneratedNamelistKey = "GeneratedNamelistSha256";
+
+        /// <summary>One value from the case's <see cref="SourceManifestName"/>, or null.</summary>
+        private static string ReadManifestValue(string caseDirectory, string key)
+        {
+            string path = Path.Combine(caseDirectory, SourceManifestName);
+            if (!File.Exists(path)) return null;
+
+            try
+            {
+                foreach (string raw in File.ReadAllLines(path))
+                {
+                    string line = raw.Trim();
+                    if (line.StartsWith("#")) continue;
+                    int eq = line.IndexOf('=');
+                    if (eq <= 0) continue;
+                    if (string.Equals(line.Substring(0, eq).Trim(), key, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return line.Substring(eq + 1).Trim();
+                    }
+                }
+            }
+            catch { }
+
+            return null;
+        }
+
         /// <summary>The manifest's filename, beside the namelist in the case root.</summary>
         public const string SourceManifestName = "case_sources.txt";
 
@@ -595,6 +1000,9 @@ namespace PREACT.Utility
                     "CellSizeMetres=" + o.CellSizeMetres.ToString(CultureInfo.InvariantCulture),
                     "PaddingMetres=" + o.PaddingMetres.ToString(CultureInfo.InvariantCulture),
                     "CanopyInRealUnits=" + (result.CanopyInRealUnits ? "true" : "false"),
+                    //What this build wrote as elmfire.data. The next build regenerates it and uses this to tell
+                    //its own namelist from one edited by hand, which it keeps aside rather than overwriting.
+                    GeneratedNamelistKey + "=" + (result.NamelistSha256 ?? string.Empty),
                 };
 
                 if (!string.IsNullOrWhiteSpace(o.CanopyDatasetFolder))
@@ -676,14 +1084,10 @@ namespace PREACT.Utility
             yield return "phi";
 
             //Weather, the five that must agree on band count.
-            yield return "ws";
-            yield return "wd";
-            yield return "m1";
-            yield return "m10";
-            yield return "m100";
+            foreach (string s in ElmfireStems.Weather) yield return s;
 
             //Fuel, either standard.
-            foreach (string s in FuelStems) yield return s;
+            foreach (string s in ElmfireStems.Fuel) yield return s;
 
             //Canopy.
             yield return "cc";
@@ -755,6 +1159,9 @@ namespace PREACT.Utility
             }
         }
 
+        /// <summary>
+        /// Layers a case may or may not carry: validated for registration when present, not missed when absent.
+        /// </summary>
         private static IEnumerable<string> OptionalStems()
         {
             yield return "cc";
@@ -812,65 +1219,128 @@ namespace PREACT.Utility
         /// are left for the campaign driver (PREACTcli converge-trigger) to patch in.
         /// </summary>
         /// <summary>
-        /// Brings masks painted in Unity into the case: the random-ignition area becomes
-        /// <c>ignition_mask.tif</c>, the WUI area becomes <c>wui_area.tif</c> (what k-PERIL's
-        /// <c>WuiAreaFile</c> should point at), and a painted initial ignition becomes an explicit
-        /// <c>X_IGN</c>/<c>Y_IGN</c> point in the namelist instead of a random draw.
-        ///
-        /// A painted mask that is entirely empty is treated as "not painted" rather than as "ignite
-        /// nowhere" — an all-false mask is what an untouched painter produces, and honouring it
-        /// literally would give ELMFIRE no valid ignition cell at all.
+        /// Brings masks painted in Unity into the case: the random-ignition area becomes <c>ignition_mask.tif</c>,
+        /// the WUI area becomes <c>wui_area.tif</c> (what k-PERIL's <c>WuiAreaFile</c> points at), and a painted
+        /// initial ignition becomes an explicit <c>X_IGN</c>/<c>Y_IGN</c> point in the namelist.
         /// </summary>
-        private static void ApplyPaintedMasks(Options o, Result result, string inputs, MasterGrid grid, Action<string> log)
+        /// <remarks>
+        /// <para>
+        /// Contract C2. The painting carries a cell count and no georeferencing, so the grid it was painted on is
+        /// recognised by its dimensions: the case grid first (the grid of record, which the GUI paints on once the
+        /// case exists), then the grid this build replaced, then the landscape raster (legacy: paintings made
+        /// before the case had a grid). A painting that matches none of them is refused and the build fails -
+        /// placing it on a grid of the wrong shape shears it into a different community, and silently skipping it
+        /// left the case with no WUI area and the campaign failing hundreds of realizations later.
+        /// </para>
+        /// <para>
+        /// A painted mask that is entirely empty is treated as "not painted" rather than as "ignite nowhere" - an
+        /// all-false mask is what an untouched painter produces.
+        /// </para>
+        /// </remarks>
+        private static void ApplyPaintedMasks(Options o, Result result, string inputs, MasterGrid grid,
+            string previousGridDirectory, Action<string> log)
         {
             if (string.IsNullOrEmpty(o.PaintedMasksPath)) return;
 
             if (!File.Exists(o.PaintedMasksPath))
             {
-                result.Fallbacks.Add("painted masks: file not found, " + o.PaintedMasksPath);
-                log("  painted: file not found, skipping.");
-                return;
+                throw new FileNotFoundException(
+                    "The scenario's painted areas (GraphicalFireInputFile) are not there: " + o.PaintedMasksPath);
             }
 
-            if (string.IsNullOrEmpty(o.PaintedMasksGridPath) || !File.Exists(o.PaintedMasksGridPath))
+            PaintedMaskExporter.Masks masks = PaintedMaskExporter.Load(o.PaintedMasksPath);
+            MasterGrid painted = ResolvePaintedGrid(masks, grid, previousGridDirectory, o.PaintedMasksGridPath,
+                                     out string paintedOn);
+
+            if (painted == null)
             {
-                result.Fallbacks.Add("painted masks: no landscape raster given for their georeferencing");
-                log("  painted: --painted-grid is required (the landscape raster the painting was done against); skipping.");
-                return;
+                string landscape = string.IsNullOrEmpty(o.PaintedMasksGridPath) || !File.Exists(o.PaintedMasksGridPath)
+                    ? "no landscape raster"
+                    : "the landscape raster " + Path.GetFileName(o.PaintedMasksGridPath) + " is "
+                      + DescribeDimensions(o.PaintedMasksGridPath);
+                throw new InvalidDataException(
+                    $"The painted areas in {Path.GetFileName(o.PaintedMasksPath)} are {masks.Ncols}x{masks.Nrows} cells, "
+                    + $"but the fire-case grid is {grid.Header.Ncols}x{grid.Header.Nrows} and {landscape}, so there is "
+                    + "no telling which ground they were painted on. Repaint the ignition and WUI areas on the "
+                    + "fire-case grid (load the case's dem.tif as the landscape), then build again.");
             }
 
+            log($"  painted: {masks.Ncols}x{masks.Nrows} painting placed via {paintedOn}.");
+
+            if (masks.Any(masks.RandomIgnition))
+            {
+                PaintedMaskExporter.Export(masks.RandomIgnition, masks, painted, grid,
+                    ElmfireStems.Tif(inputs, ElmfireStems.IgnitionMask));
+                if (!result.Written.Contains(ElmfireStems.IgnitionMask)) result.Written.Add(ElmfireStems.IgnitionMask);
+                log($"  painted: ignition area -> ignition_mask.tif ({masks.Count(masks.RandomIgnition)} painted cells).");
+            }
+
+            if (masks.Any(masks.WuiArea))
+            {
+                string wui = ElmfireStems.Tif(inputs, ElmfireStems.WuiArea);
+                PaintedMaskExporter.Export(masks.WuiArea, masks, painted, grid, wui);
+                if (!result.Written.Contains(ElmfireStems.WuiArea)) result.Written.Add(ElmfireStems.WuiArea);
+                result.WuiAreaFile = wui;
+                log($"  painted: WUI area -> wui_area.tif ({masks.Count(masks.WuiArea)} painted cells).");
+            }
+
+            if (masks.Any(masks.InitialIgnition) &&
+                PaintedMaskExporter.TryGetIgnitionPoint(masks.InitialIgnition, masks, painted, grid, out double ix, out double iy))
+            {
+                result.Ignitions.Add(new PlacedIgnition { X = ix, Y = iy, TimeSeconds = 0.0 });
+                log($"  painted: initial ignition -> X_IGN/Y_IGN ({ix:F1}, {iy:F1}), random ignition disabled.");
+            }
+        }
+
+        /// <summary>The grid a painting of this shape was made on, per the rule in <see cref="ApplyPaintedMasks"/>.</summary>
+        private static MasterGrid ResolvePaintedGrid(PaintedMaskExporter.Masks masks, MasterGrid caseGrid,
+            string previousGridDirectory, string landscapePath, out string paintedOn)
+        {
+            paintedOn = null;
+
+            if (masks.Ncols == caseGrid.Header.Ncols && masks.Nrows == caseGrid.Header.Nrows)
+            {
+                paintedOn = "the fire-case grid";
+                return caseGrid;
+            }
+
+            if (previousGridDirectory != null)
+            {
+                string previousDem = ElmfireStems.Tif(previousGridDirectory, ElmfireStems.Dem);
+                if (File.Exists(previousDem))
+                {
+                    MasterGrid previous = MasterGrid.FromRasterFile(previousDem);
+                    if (masks.Ncols == previous.Header.Ncols && masks.Nrows == previous.Header.Nrows)
+                    {
+                        paintedOn = "the case grid this build replaced";
+                        return previous;
+                    }
+                }
+            }
+
+            if (!string.IsNullOrEmpty(landscapePath) && File.Exists(landscapePath))
+            {
+                MasterGrid landscape = MasterGrid.FromRasterFile(landscapePath);
+                if (masks.Ncols == landscape.Header.Ncols && masks.Nrows == landscape.Header.Nrows)
+                {
+                    paintedOn = "the landscape raster " + Path.GetFileName(landscapePath) + " (painted before the case grid existed)";
+                    return landscape;
+                }
+            }
+
+            return null;
+        }
+
+        private static string DescribeDimensions(string rasterPath)
+        {
             try
             {
-                PaintedMaskExporter.Masks masks = PaintedMaskExporter.Load(o.PaintedMasksPath);
-                MasterGrid painted = MasterGrid.FromRasterFile(o.PaintedMasksGridPath);
-
-                if (masks.Any(masks.RandomIgnition))
-                {
-                    PaintedMaskExporter.Export(masks.RandomIgnition, masks, painted, grid, Path.Combine(inputs, "ignition_mask.tif"));
-                    if (!result.Written.Contains("ignition_mask")) result.Written.Add("ignition_mask");
-                    log($"  painted: ignition area -> ignition_mask.tif ({masks.Count(masks.RandomIgnition)} painted cells).");
-                }
-
-                if (masks.Any(masks.WuiArea))
-                {
-                    PaintedMaskExporter.Export(masks.WuiArea, masks, painted, grid, Path.Combine(inputs, "wui_area.tif"));
-                    result.Written.Add("wui_area");
-                    result.WuiAreaFile = Path.Combine(inputs, "wui_area.tif");
-                    log($"  painted: WUI area -> wui_area.tif ({masks.Count(masks.WuiArea)} painted cells) - " +
-                        "point the .wui's [kPERIL] WuiAreaFile at it.");
-                }
-
-                if (masks.Any(masks.InitialIgnition) &&
-                    PaintedMaskExporter.TryGetIgnitionPoint(masks.InitialIgnition, masks, painted, grid, out double ix, out double iy))
-                {
-                    result.Ignitions.Add(new PlacedIgnition { X = ix, Y = iy, TimeSeconds = 0.0 });
-                    log($"  painted: initial ignition -> X_IGN/Y_IGN ({ix:F1}, {iy:F1}), random ignition disabled.");
-                }
+                MasterGrid g = MasterGrid.FromRasterFile(rasterPath);
+                return $"{g.Header.Ncols}x{g.Header.Nrows}";
             }
             catch (Exception e)
             {
-                result.Fallbacks.Add("painted masks: " + e.Message);
-                log("  painted: could not apply (" + e.Message + ").");
+                return "unreadable (" + e.Message + ")";
             }
         }
 
@@ -960,10 +1430,10 @@ namespace PREACT.Utility
         /// </summary>
         private static void RestrictIgnitionMask(Options o, Result result, string inputs, MasterGrid grid, Action<string> log)
         {
-            //The same stem the namelist will reference, so the restriction is applied against the fuel
-            //model the run will actually use - reading a fixed fbfm13.tif meant this quietly did nothing
-            //on every case whose fuel raster is fbfm40.tif.
-            string fuelStem = ResolveStem(result, FuelStems);
+            //The stem the run will burn (the template's FBFM_FILENAME, else the case's own), so the restriction is
+            //applied against the fuel model ELMFIRE will actually use - reading a fixed fbfm13.tif meant this
+            //quietly did nothing on every case whose fuel raster is fbfm40.tif.
+            string fuelStem = result.FuelStem;
             if (fuelStem == null) return;
 
             string fuelPath = Path.Combine(inputs, fuelStem + ".tif");
@@ -986,7 +1456,7 @@ namespace PREACT.Utility
                     bool wasIgnitable = mask[x, y] > 0f;
                     if (wasIgnitable) ++before;
 
-                    if (wasIgnitable && !IsBurnable(fuel[x, y], o.NonBurnableFuelCodes))
+                    if (wasIgnitable && !ElmfireStems.IsBurnable(fuel[x, y], o.NonBurnableFuelCodes))
                     {
                         mask[x, y] = 0f;
                     }
@@ -1010,30 +1480,6 @@ namespace PREACT.Utility
                 $"({100.0 * after / System.Math.Max(1, before):F0} %).");
         }
 
-        /// <summary>
-        /// Whether a fuel code can carry fire. The 91-99 block is non-burnable in both Anderson
-        /// FBFM13 and Scott &amp; Burgan FBFM40 (urban, snow, agriculture, water, barren), as is 0
-        /// and anything negative — which covers NoData, the case that matters most here since a
-        /// clipped domain is padded with it.
-        /// </summary>
-        private static bool IsBurnable(float code, HashSet<int> nonBurnable)
-        {
-            if (float.IsNaN(code) || code <= 0f) return false;
-            int c = (int)System.Math.Round(code);
-            if (c >= 91 && c <= 99) return false;
-            return !nonBurnable.Contains(c);
-        }
-
-        /// <summary>
-        /// Says so when a kept namelist has no fuel model set but the case has one to offer.
-        /// </summary>
-        /// <remarks>
-        /// A namelist the case already has is kept rather than rebuilt, which is right - it is where the
-        /// physics is tuned. But it also means a namelist generated by an earlier, wrong version of this
-        /// builder survives the fix to that version. That is how it went here: the fuel stem was hardcoded
-        /// to <c>fbfm13</c>, cases carrying <c>fbfm40.tif</c> got the key written as a comment, and simply
-        /// correcting the builder left every such case still broken and still silent about it.
-        /// </remarks>
         /// <summary>
         /// Says so when the wind field the case is keeping is spatially flat.
         ///
@@ -1076,30 +1522,6 @@ namespace PREACT.Utility
                 "than terrain-resolved wind. Turn RebuildExistingLayers on (or delete inputs/ws.tif and " +
                 "inputs/wd.tif) to have WindNinja write it.");
         }
-
-        private static void WarnIfNamelistLacksFuelModel(Result result, Action<string> log)
-        {
-            if (result.FuelStem == null) return;
-
-            foreach (string line in File.ReadAllLines(result.NamelistPath))
-            {
-                string trimmed = line.TrimStart();
-                if (trimmed.StartsWith("!") || trimmed.Length == 0) continue;
-                if (trimmed.StartsWith("FBFM_FILENAME", StringComparison.OrdinalIgnoreCase)) return;
-            }
-
-            result.Fallbacks.Add("namelist: kept, but FBFM_FILENAME is not set in it");
-            log($"  WARNING the case's own {Path.GetFileName(result.NamelistPath)} does not set FBFM_FILENAME, "
-                + $"so ELMFIRE will refuse to start. The case has {result.FuelStem}.tif: add "
-                + $"FBFM_FILENAME = '{result.FuelStem}' to its &INPUTS group, or delete the namelist to have "
-                + "one written.");
-        }
-
-        /// <summary>
-        /// The stems ELMFIRE's <c>FBFM_FILENAME</c> may point at, in the order they are preferred.
-        /// Scott &amp; Burgan's 40 classes first: a case carrying both is carrying the finer one on purpose.
-        /// </summary>
-        private static readonly string[] FuelStems = { "fbfm40", "fbfm13" };
 
         /// <summary>
         /// The ELMFIRE-WUINITY fork's urban-spread inputs. All five have to be present for the

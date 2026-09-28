@@ -102,8 +102,9 @@ namespace PREACT.Utility
 
             l.Add($"! ELMFIRE case '{c.Name}', written by WUInity from the scenario's ELMFIRE settings.");
             l.Add("! Every value below except the filenames, the time base and the ignitions comes from the");
-            l.Add("! Hazards tab of the scenario editor. Editing this file directly works, but the next build");
-            l.Add("! keeps it rather than rewriting it - see docs/elmfire-case-automation.md.");
+            l.Add("! Hazards tab of the scenario editor. Every build writes it again from the scenario; an edited");
+            l.Add("! copy is set aside as elmfire.data.kept-<time>. To run a hand-tuned namelist, name it in");
+            l.Add("! [ELMFIRE] NamelistTemplate, which is used as it is.");
             l.Add("!");
             l.Add("! Static layers are on the master grid defined by dem.tif; ELMFIRE reads the domain, CRS and");
             l.Add("! cell size from that file's own georeferencing, so it is the grid of record.");
