@@ -16,6 +16,31 @@ namespace PREACT.Tests
             runner.Add("cli: converge-trigger arguments are parsed strictly", ArgumentParsing);
             runner.Add("cli: the newest campaign folder is found, replaced ones are not", LatestCampaign);
             runner.Add("cli: every realization's evacuation runs on its own reproducible seed", EvacuationSeeds);
+            runner.Add("cli: progress lines carry decile areas only for a realization with a boundary", ProgressAreas);
+        }
+
+        private static void ProgressAreas()
+        {
+            string Line(string status, double[] area)
+            {
+                TextWriter was = Console.Out;
+                var w = new StringWriter();
+                try
+                {
+                    Console.SetOut(w);
+                    ConvergenceAggregator.EmitProgressJson("0000002", status, 1, 1, 0, 0, 20, false, area, new double?[10]);
+                }
+                finally
+                {
+                    Console.SetOut(was);
+                }
+                return w.ToString();
+            }
+
+            var area = new double[] { 9, 8, 7, 6, 5, 4, 3, 2, 1, 0.5 };
+            Assert.True(Line(CampaignLayout.StatusOk, area).Contains("\"area\":[9,8,7"), "an ok realization reports the field");
+            Assert.True(!Line(CampaignLayout.StatusNotThreatened, null).Contains("\"area\""), "a not-threatened one leaves it out");
+
         }
 
         /// <summary>A campaign with just what writing a realization's scenario reads.</summary>

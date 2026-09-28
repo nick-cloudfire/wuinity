@@ -165,8 +165,10 @@ namespace PREACTcli.Campaigns
                     Console.WriteLine($"[{result.Id}] {status}: {result.Message}");
                 }
 
+                //The decile areas only with a boundary: a not-threatened or failed realization leaves the field as
+                //it was, and a row of zeros for it made the GUI's table drop to nothing after each one (e2e F6).
                 EmitProgressJson(result.Id, status, nOk, nNotThreatened, nFailed, streak, o.Streak, converged,
-                    insideCount != null ? area : null, delta);
+                    status == CampaignLayout.StatusOk ? area : null, delta);
 
                 if (converged && pending.Count > 0 && !_stopping)
                 {
@@ -310,7 +312,7 @@ namespace PREACTcli.Campaigns
         /// One JSON object per realization on stdout, for the GUI window. Hand-built (one fixed shape, no JSON
         /// dependency) with invariant formatting so a comma-decimal locale cannot produce malformed JSON.
         /// </summary>
-        private static void EmitProgressJson(string id, string status, int nOk, int nNotThreatened, int nFailed,
+        internal static void EmitProgressJson(string id, string status, int nOk, int nNotThreatened, int nFailed,
             int streak, int streakTarget, bool converged, double[] area, double?[] delta)
         {
             var sb = new StringBuilder(CampaignLayout.ProgressJsonTag);
