@@ -916,7 +916,8 @@ namespace WUInity
 
             _input.WildfireModule.Data.ReloadLandscape(_input.Simulation, _input.WildfireModule, _input.Landscape, _input.RootFolder);
             _painter.SetLCPData(_input.WildfireModule.Data.LandscapeData);
-            _painter.ResetForScenario();
+            //The same scenario: strokes not saved yet stay unsaved (and are asked about), whatever the grid does.
+            _painter.ResetGrid();
         }
 
         /// <summary>
@@ -925,7 +926,7 @@ namespace WUInity
         /// have moved - a load, or the area of interest changed in Place and time, which used to move the
         /// simulation grid and leave all of these where they were.
         /// </summary>
-        public void RefreshScenarioView()
+        public void RefreshScenarioView(bool sameScenario = false)
         {
             if (_input == null)
             {
@@ -935,8 +936,10 @@ namespace WUInity
 
             //A different scenario is a different grid. The painter used to keep the first grid it resolved
             //for the whole session, textures and group ownership included, and wrote the next scenario's
-            //masks with the previous one's cell count.
-            _painter.ResetForScenario();
+            //masks with the previous one's cell count. The same scenario with its area moved keeps what was
+            //painted and not saved.
+            if (sameScenario) _painter.ResetGrid();
+            else _painter.ResetForScenario();
 
             //A different scenario is a different network, in a different frame. Dropped rather than reused,
             //which would draw the previous scenario's roads at this one's origin.

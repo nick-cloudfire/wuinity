@@ -278,8 +278,8 @@ namespace WUInity
             if (expected != _gridReference)
             {
                 Engine.Message(null, Engine.LogType.Log, "The paint grid is now " + expected + " rather than "
-                    + _gridReference + "; painting starts again from the scenario's saved areas on the new grid.");
-                ResetForScenario();
+                    + _gridReference + "; painting goes on on the new grid.");
+                ResetGrid();
             }
         }
 
@@ -506,6 +506,7 @@ namespace WUInity
             int cells = fireDataCellCount.x * fireDataCellCount.y;
             if (_evacGroupCells == null || _evacGroupCells.Length != cells)
             {
+                DropGroupStrokesFromOtherGrid(fireDataCellCount);
                 _evacGroupCells = new int[cells];
                 for (int i = 0; i < cells; ++i) _evacGroupCells[i] = -1;
             }
@@ -580,6 +581,47 @@ namespace WUInity
             return loaded;
         }
 
+        /// <summary>Group strokes on a grid of another size cannot be kept; said, and no longer counted as unsaved.</summary>
+        private void DropGroupStrokesFromOtherGrid(Vector2int cellCount)
+        {
+            if (UnsavedGroupStrokes && _evacGroupCells != null && _evacGroupCells.Length != cellCount.x * cellCount.y)
+            {
+                Engine.Message(null, Engine.LogType.Warning, "Evacuation group areas painted on the previous grid and not "
+                    + $"saved could not be carried onto this {cellCount.x} x {cellCount.y} grid, and are dropped. The groups' "
+                    + "saved masks are unchanged.");
+                UnsavedGroupStrokes = false;
+            }
+        }
+
+        /// <summary>The paint grid's size in cells as last resolved, or (0, 0) when there is none. Resolves nothing.</summary>
+        public Vector2int PaintGridSize { get => _haveFireGrid ? fireDataCellCount : new Vector2int(0, 0); }
+
+        /// <summary>The group names the painter's cell ownership indices refer to, in index order.</summary>
+        public string[] EvacGroupNames { get => (string[])_evacGroupNames.Clone(); }
+
+        /// <summary>
+        /// Writes the painted fire areas to <paramref name="path"/> without changing anything else: the scenario still
+        /// names its own file and the strokes still count as unsaved in it (Copy scenario to writes them into the
+        /// copy this way). False, with a warning, when there is no grid or nothing painted.
+        /// </summary>
+        public bool WritePaintedFireAreasTo(string path)
+        {
+            if (_manager == null || _manager.PREACTInput == null || (!_haveFireGrid && !ResolveFireGrid()))
+            {
+                return false;
+            }
+
+            PREACT.Input.WildfireData fireData = _manager.PREACTInput.WildfireModule.Data;
+            int cells = fireDataCellCount.x * fireDataCellCount.y;
+            if (fireData.WuiArea == null || fireData.WuiArea.Length != cells)
+            {
+                return false;
+            }
+
+            GraphicalFireInput.SaveGraphicalFireInput(path, fireData, fireDataCellCount.x, fireDataCellCount.y);
+            return true;
+        }
+
         /// <summary>True once the scenario's group masks have been read for the current grid.</summary>
         public bool EvacGroupMasksLoaded { get => _evacGroupMasksLoaded; }
 
@@ -630,6 +672,37 @@ namespace WUInity
             if (_manager != null && _manager.FireDomainVisualizer != null)
             {
                 _manager.FireDomainVisualizer.SetVisibility(false);
+            }
+        }
+
+        /// <summary>
+        /// Forgets the grid and the textures built on it, as <see cref="ResetForScenario"/> does, but keeps what was
+        /// painted and not saved - for the same scenario whose terrain or case was re-read (a case build, "Use the
+        /// case terrain", a changed fire module). The strokes live in the scenario's masks (and, for groups, here),
+        /// and they still count as unsaved: a later close or quit asks about them.
+        /// </summary>
+        /// <remarks>
+        /// Clearing the flags here is how strokes "stopped counting as unsaved" after a build: the build reads the
+        /// painted areas from their file, so with "Don't save" the strokes were neither built nor saved nor asked
+        /// about again. When the new grid has another size they cannot be kept, and the painter says so when it
+        /// next builds a texture (see <see cref="CheckDataResources"/>) - unless they were carried onto it first.
+        /// </remarks>
+        public void ResetGrid()
+        {
+            bool fire = UnsavedFireStrokes;
+            bool groups = UnsavedGroupStrokes;
+            int[] groupCells = _evacGroupCells;
+            bool groupMasksLoaded = _evacGroupMasksLoaded;
+
+            ResetForScenario();
+
+            UnsavedFireStrokes = fire;
+            if (groups)
+            {
+                //Kept, and not read again from the masks on disk, which would replace them.
+                UnsavedGroupStrokes = true;
+                _evacGroupCells = groupCells;
+                _evacGroupMasksLoaded = groupMasksLoaded;
             }
         }
 
@@ -1046,6 +1119,16 @@ namespace WUInity
                 //reallocation below silently discards them. Said out loud, because the user sees a blank
                 //map for a scenario that does have painted areas, and the cause is not on screen: the
                 //grid changed under them - a landscape was added, or the imported fire was replaced.
+                //Strokes painted on another grid and never saved cannot be carried onto this one either, and until now
+                //still counted as unsaved; they are said to be gone, and stop counting.
+                if (UnsavedFireStrokes && fireData.WuiArea != null && fireData.WuiArea.Length != cells)
+                {
+                    Engine.Message(null, Engine.LogType.Warning, "Fire areas painted on the previous grid and not saved "
+                        + $"could not be carried onto this {cellCount.x} x {cellCount.y} grid, and are dropped. What was saved is "
+                        + "still in " + (_manager.PREACTInput.WildfireModule.GraphicalFireInputFile ?? "its file") + ".");
+                    UnsavedFireStrokes = false;
+                }
+
                 if (fireData.PaintedCellCount.x > 0
                     && (fireData.PaintedCellCount.x != cellCount.x || fireData.PaintedCellCount.y != cellCount.y))
                 {
@@ -1097,6 +1180,7 @@ namespace WUInity
                             //discard what has already been painted.
                             if (_evacGroupCells == null || _evacGroupCells.Length != cellCount.x * cellCount.y)
                             {
+                                DropGroupStrokesFromOtherGrid(cellCount);
                                 _evacGroupCells = new int[cellCount.x * cellCount.y];
                                 for (int i = 0; i < _evacGroupCells.Length; ++i)
                                 {
@@ -1164,6 +1248,13 @@ namespace WUInity
             //The brush follows the pointer wherever it is, so without this it paints through the
             //windows on top of the map - including through the button that ends the painting.
             if (ImGui.GetIO().WantCaptureMouse)
+            {
+                return;
+            }
+
+            //Not while a data step, a run or a campaign is at work: a build replaces the grid and the masks under the
+            //brush, and a run reads them from another thread. The session puts the brush down when that starts.
+            if (Assets.WUInity.GUI.DearIMGUI.ScenarioSession.IsBusy)
             {
                 return;
             }

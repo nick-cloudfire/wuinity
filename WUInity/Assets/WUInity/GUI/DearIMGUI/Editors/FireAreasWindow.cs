@@ -219,15 +219,18 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
 
             if (!Painting)
             {
-                ImGui.BeginDisabled(movable);
+                //Not while a campaign runs either (editing is locked for a run or a data step already).
+                bool busy = ScenarioSession.IsBusy;
+                ImGui.BeginDisabled(movable || busy);
                 if (ImGui.Button("Start painting"))
                 {
                     StartPainting();
                 }
                 ImGui.EndDisabled();
-                if (movable && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                if ((movable || busy) && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
                 {
-                    ImGui.SetTooltip("Move the saved painting onto this grid first: until then it cannot be shown or added to.");
+                    ImGui.SetTooltip(busy ? ScenarioSession.BusyTooltip
+                        : "Move the saved painting onto this grid first: until then it cannot be shown or added to.");
                 }
             }
             else if (ImGui.Button("Stop painting"))

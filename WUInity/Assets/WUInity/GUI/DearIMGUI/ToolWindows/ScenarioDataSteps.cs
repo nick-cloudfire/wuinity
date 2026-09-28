@@ -1086,7 +1086,63 @@ namespace Assets.WUInity.GUI.DearIMGUI
             {
                 CarryPaintingOntoCaseGrid(ctx, painting);
             }
+
+            //Strokes not saved (the save question was answered "Don't save") are in the scenario's masks on the grid the
+            //painter had. A re-cut grid would drop them; they are carried onto it too, and stay unsaved.
+            if (painting != null && painting.UnsavedStrokeGrid.x > 0)
+            {
+                Vector2int strokes = painting.UnsavedStrokeGrid;
+                string setAsideGrid = ScenarioFiles.CaseInput(ctx.Input, PREACT.Utility.ElmfireCaseBuilder.PreviousGridFolder + "/dem.tif");
+                string caseGrid = ScenarioFiles.CaseInput(ctx.Input, "dem.tif");
+                ctx.Then(() => CarryUnsavedStrokes(ctx.Input, strokes, setAsideGrid, caseGrid));
+            }
             return Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// On the main thread after a build: when the case grid changed under unsaved fire strokes, and the grid they
+        /// were painted on is the one the build set aside, moves them onto the new grid in memory.
+        /// </summary>
+        private static void CarryUnsavedStrokes(PREACTInput input, Vector2int strokeGrid, string previousGrid, string currentGrid)
+        {
+            global::WUInity.Painter painter = PreactGUI.WUInity?.Painter;
+            if (input == null || input != ScenarioSession.Input || painter == null || !painter.UnsavedFireStrokes) return;
+
+            PREACT.Input.WildfireData data = input.WildfireModule.Data;
+            int cells = strokeGrid.x * strokeGrid.y;
+            if (data.WuiArea == null || data.WuiArea.Length != cells) return;
+
+            try
+            {
+                var to = PREACT.Utility.PaintedMaskResampler.Grid.FromRaster(GuiFiles.Resolve(input.RootFolder, currentGrid));
+                if (to.Ncols == strokeGrid.x && to.Nrows == strokeGrid.y) return;
+
+                string previousPath = GuiFiles.Resolve(input.RootFolder, previousGrid);
+                if (previousPath == null || !File.Exists(previousPath))
+                {
+                    return;
+                }
+                var from = PREACT.Utility.PaintedMaskResampler.Grid.FromRaster(previousPath);
+                if (from.Ncols != strokeGrid.x || from.Nrows != strokeGrid.y) return;
+
+                var masks = new PREACT.Utility.PaintedMaskResampler.Masks
+                {
+                    Ncols = from.Ncols, Nrows = from.Nrows, WuiArea = data.WuiArea, RandomIgnition = data.RandomIgnition,
+                    InitialIgnition = data.InitialIgnition, ManualTriggerBuffer = data.ManualTriggerBuffer,
+                };
+                var moved = PREACT.Utility.PaintedMaskResampler.Resample(masks, from, to, out bool _);
+                data.WuiArea = moved.WuiArea;
+                data.RandomIgnition = moved.RandomIgnition;
+                data.InitialIgnition = moved.InitialIgnition;
+                data.ManualTriggerBuffer = moved.ManualTriggerBuffer;
+                data.PaintedCellCount = new Vector2int(to.Ncols, to.Nrows);
+                Engine.Message(null, Engine.LogType.Log, $"The fire areas painted and not saved were carried from the old "
+                    + $"{from.Ncols} x {from.Nrows} case grid onto the new {to.Ncols} x {to.Nrows} one; they are still unsaved.");
+            }
+            catch (Exception e)
+            {
+                Engine.Message(null, Engine.LogType.Warning, "Could not carry the unsaved fire strokes onto the new case grid: " + e.Message);
+            }
         }
 
         /// <summary>The name of an elmfire.data.kept-&lt;time&gt; the builder set aside at or after <paramref name="since"/>, or null.</summary>
@@ -1120,12 +1176,21 @@ namespace Assets.WUInity.GUI.DearIMGUI
             public string File;
             public readonly List<string> Grids = new List<string>();
 
+            /// <summary>The paint grid's size when fire strokes are unsaved, else (0, 0).</summary>
+            public Vector2int UnsavedStrokeGrid;
+
             public static PaintingFacts Capture(PREACTInput input)
             {
-                string file = input?.WildfireModule?.GraphicalFireInputFile;
-                if (string.IsNullOrEmpty(file)) return null;
+                if (input == null) return null;
+                global::WUInity.Painter painter = PreactGUI.WUInity?.Painter;
+                var facts = new PaintingFacts
+                {
+                    File = input.WildfireModule?.GraphicalFireInputFile,
+                    UnsavedStrokeGrid = painter != null && painter.UnsavedFireStrokes ? painter.PaintGridSize : new Vector2int(0, 0),
+                };
+                string file = facts.File;
+                if (string.IsNullOrEmpty(file)) return facts;
 
-                var facts = new PaintingFacts { File = file };
                 //The grid a re-cut sets aside is the newest, so it comes first.
                 facts.Grids.Add(ScenarioFiles.CaseInput(input, PREACT.Utility.ElmfireCaseBuilder.PreviousGridFolder + "/dem.tif"));
                 string landscape = input.Landscape?.GetReferenceFile();
@@ -1142,6 +1207,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
         /// </summary>
         private static void CarryPaintingOntoCaseGrid(StepContext ctx, PaintingFacts painting)
         {
+            if (string.IsNullOrEmpty(painting.File)) return;
             string gfi = GuiFiles.Resolve(ctx.Root, painting.File);
             string caseDem = GuiFiles.Resolve(ctx.Root, ScenarioFiles.CaseInput(ctx.Input, "dem.tif"));
             if (gfi == null || !File.Exists(gfi) || caseDem == null || !File.Exists(caseDem))
@@ -1167,7 +1233,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
                     LogStep($"The painting ({header.Width} x {header.Height}) was on the grid of {candidate}, and the case is now "
                         + $"{caseGrid.Ncols} x {caseGrid.Nrows}; moving it onto the case grid too.");
-                    MovePainting(ctx, painting.File, candidate, ScenarioFiles.CaseInput(ctx.Input, "dem.tif"));
+                    //Unsaved strokes are newer than the file, and are carried on their own (CarryUnsavedStrokes).
+                    MovePainting(ctx, painting.File, candidate, ScenarioFiles.CaseInput(ctx.Input, "dem.tif"),
+                        replaceUnsavedStrokes: false);
                     return;
                 }
 
@@ -1197,13 +1265,13 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             RunStep("Moving the painting onto the fire-case grid", WorkflowStepId.FireAreas, c =>
             {
-                MovePainting(c, painting, sourceGrid, targetGrid);
+                MovePainting(c, painting, sourceGrid, targetGrid, replaceUnsavedStrokes: true);
                 return Task.CompletedTask;
             });
         }
 
         /// <summary>On the worker: the move itself, and the scenario's reference to the new file once it has succeeded.</summary>
-        private static void MovePainting(StepContext ctx, string painting, string sourceGrid, string targetGrid)
+        private static void MovePainting(StepContext ctx, string painting, string sourceGrid, string targetGrid, bool replaceUnsavedStrokes)
         {
             string gfi = GuiFiles.Resolve(ctx.Root, painting);
             string target = GuiFiles.Resolve(ctx.Root, targetGrid);
@@ -1221,7 +1289,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             string folder = Path.GetDirectoryName(painting.Replace('\\', '/'))?.Replace('\\', '/');
             string relative = string.IsNullOrEmpty(folder) ? Path.GetFileName(output) : folder + "/" + Path.GetFileName(output);
             ctx.Set(i => i.WildfireModule.GraphicalFireInputFile = relative);
-            ctx.Then(() => ReloadPaintedAreas(ctx.Input));
+            ctx.Then(() => ReloadPaintedAreas(ctx.Input, replaceUnsavedStrokes));
             LogStep("The scenario now names " + relative + " as its painted areas; save the scenario to keep that.");
         }
 
@@ -1229,9 +1297,11 @@ namespace Assets.WUInity.GUI.DearIMGUI
         /// On the main thread: the scenario's painted areas read again from the file it names, and the painter's
         /// fire textures dropped so they are drawn from them.
         /// </summary>
-        private static void ReloadPaintedAreas(PREACTInput input)
+        private static void ReloadPaintedAreas(PREACTInput input, bool replaceUnsavedStrokes)
         {
             if (input == null || input != ScenarioSession.Input) return;
+            global::WUInity.Painter painter = PreactGUI.WUInity?.Painter;
+            if (!replaceUnsavedStrokes && painter != null && painter.UnsavedFireStrokes) return;
 
             string path = GuiFiles.Resolve(input.RootFolder, input.WildfireModule.GraphicalFireInputFile);
             if (path == null || !File.Exists(path)) return;

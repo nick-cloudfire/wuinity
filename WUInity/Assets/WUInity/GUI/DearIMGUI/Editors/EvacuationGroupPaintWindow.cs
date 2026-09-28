@@ -200,9 +200,16 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             ImGui.BeginDisabled(ScenarioSession.EditingLocked);
             if (!Painting)
             {
+                //Not while a campaign runs either; the brush is put down when anything starts.
+                ImGui.BeginDisabled(ScenarioSession.IsBusy);
                 if (ImGui.Button("Start painting"))
                 {
                     StartPainting();
+                }
+                ImGui.EndDisabled();
+                if (ScenarioSession.IsBusy && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                {
+                    ImGui.SetTooltip(ScenarioSession.BusyTooltip);
                 }
                 if (_startFailed)
                 {

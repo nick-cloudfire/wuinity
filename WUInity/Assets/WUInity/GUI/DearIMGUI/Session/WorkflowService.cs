@@ -364,8 +364,24 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 case WorkflowAction.OpenFireAreas: Editors.FireAreasWindow.Open(); break;
                 case WorkflowAction.MovePaintingToCaseGrid: MovePainting(); break;
                 case WorkflowAction.ApplyFireAreasToCase:
-                    ConfirmPrompt.AskToSave("applying the painted areas to the case", ScenarioDataSteps.ApplyPaintedAreasToCase);
-                    break;
+                    {
+                        //The build reads the painted areas from their file, so applying strokes that are not saved would
+                        //apply the old ones: here the only choice is to save first, or not to apply.
+                        global::WUInity.Painter painter = PreactGUI.WUInity?.Painter;
+                        if (painter != null && painter.UnsavedFireStrokes)
+                        {
+                            ConfirmPrompt.AskToConfirm("The painted areas have strokes that are not saved, and the case is built from "
+                                + "the saved file. Save the scenario (and the painted areas) and apply them?", "Save and apply", () =>
+                                {
+                                    if (ScenarioSession.Save()) ScenarioDataSteps.ApplyPaintedAreasToCase();
+                                });
+                        }
+                        else
+                        {
+                            ConfirmPrompt.AskToSave("applying the painted areas to the case", ScenarioDataSteps.ApplyPaintedAreasToCase);
+                        }
+                        break;
+                    }
 
                 case WorkflowAction.OpenDestinations: SettingsPageWindow.Open(SettingsPage.Destinations); break;
                 case WorkflowAction.OpenCurves: SettingsPageWindow.Open(SettingsPage.ResponseCurves); break;

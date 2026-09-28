@@ -348,6 +348,28 @@ namespace Assets.WUInity.GUI.DearIMGUI
             if (_input == null || string.IsNullOrEmpty(destinationParent)) return;
             if (!CheckNotBusy("copy the scenario")) return;
 
+            //Painted group strokes live in the painter until their masks are written into the scenario folder, which
+            //is what the copy is made from; they are not carried into it, so that is asked rather than lost.
+            global::WUInity.Painter painter = PreactGUI.WUInity?.Painter;
+            if (painter != null && painter.UnsavedGroupStrokes)
+            {
+                ConfirmPrompt.AskChoice("Evacuation group areas were painted and not saved. The copy is made from the scenario's "
+                    + "files, and those strokes are only on screen.", "Save them here, then copy", () =>
+                    {
+                        Editors.EvacuationGroupPaintWindow.SaveMasksFor(_input);
+                        CopyToNow(destinationParent, includeOutputs);
+                    },
+                    "Copy without them", () => CopyToNow(destinationParent, includeOutputs));
+                return;
+            }
+
+            CopyToNow(destinationParent, includeOutputs);
+        }
+
+        private static void CopyToNow(string destinationParent, bool includeOutputs)
+        {
+            if (_input == null || !CheckNotBusy("copy the scenario")) return;
+
             string source = Path.GetFullPath(_input.RootFolder);
             string destination = Path.Combine(destinationParent, new DirectoryInfo(source).Name);
             if (SameFolder(destination, source) || Path.GetFullPath(destination).StartsWith(source + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
@@ -361,9 +383,38 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 return;
             }
 
+            //Painted fire strokes not saved yet go with the copy: written to a temporary file here, on the main
+            //thread, and put into the copy after its folder is copied - never into this scenario's folder.
+            global::WUInity.Painter painter = PreactGUI.WUInity?.Painter;
+            string paintedName = null, paintedTemp = null;
+            string previousPainted = _input.WildfireModule.GraphicalFireInputFile;
+            if (painter != null && painter.UnsavedFireStrokes)
+            {
+                paintedTemp = Path.Combine(Path.GetTempPath(), "wuinity_copy_" + Guid.NewGuid().ToString("N") + ".gfi");
+                if (painter.WritePaintedFireAreasTo(paintedTemp))
+                {
+                    paintedName = CopiedPaintingName(source, previousPainted, painter.PaintGridSize);
+                }
+                else
+                {
+                    paintedTemp = null;
+                    Engine.Message(null, Engine.LogType.Warning, "The painted fire areas not saved yet could not be written "
+                        + "into the copy; it has the saved ones.");
+                }
+            }
+
             //What the copy's .wui will say: the scenario as it stands, unsaved edits included, serialised
             //here on the main thread so the worker never reads the live scenario.
-            string[] lines = PREACTInputWriter.Write(_input);
+            string[] lines;
+            try
+            {
+                if (paintedName != null) _input.WildfireModule.GraphicalFireInputFile = paintedName;
+                lines = PREACTInputWriter.Write(_input);
+            }
+            finally
+            {
+                _input.WildfireModule.GraphicalFireInputFile = previousPainted;
+            }
             string fileName = Path.GetFileName(FilePath ?? (DisplayName + ".wui"));
 
             foreach (string path in AbsoluteOrParentPaths(lines))
@@ -374,19 +425,65 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             ScenarioDataSteps.RunUtility("Copying the scenario", () =>
             {
-                int files = CopyFolder(source, destination, includeOutputs);
-                File.WriteAllLines(Path.Combine(destination, fileName), lines);
-                ScenarioDataSteps.LogStep($"Copied {files} file(s) into {destination}.");
-                return Path.Combine(destination, fileName);
+                try
+                {
+                    int files = CopyFolder(source, destination, includeOutputs);
+                    if (paintedTemp != null)
+                    {
+                        string target = Path.Combine(destination, paintedName);
+                        string folder = Path.GetDirectoryName(target);
+                        if (!string.IsNullOrEmpty(folder)) Directory.CreateDirectory(folder);
+                        File.Copy(paintedTemp, target, true);
+                        ScenarioDataSteps.LogStep("The painted fire areas not saved yet are in the copy as " + paintedName + ".");
+                    }
+                    File.WriteAllLines(Path.Combine(destination, fileName), lines);
+                    ScenarioDataSteps.LogStep($"Copied {files} file(s) into {destination}.");
+                    return Path.Combine(destination, fileName);
+                }
+                finally
+                {
+                    try { if (paintedTemp != null && File.Exists(paintedTemp)) File.Delete(paintedTemp); } catch { }
+                }
             }, copied =>
             {
-                //The original's unsaved state went with the copy, so nothing is lost by switching to it.
+                //The original's unsaved state went with the copy - settings and painted fire areas - so nothing is
+                //lost by switching to it.
                 _settingsDirty = false;
                 Load(copied);
             });
         }
 
-        private static readonly string[] NotCopied = { "_output", "_elmfire", "scratch", ".checklist-recheck.wui.tmp" };
+        /// <summary>
+        /// The name the unsaved painting takes in a copy: the scenario's own painted-areas file, unless that one is on
+        /// another grid (then it is kept in the copy too, and the painting goes beside it).
+        /// </summary>
+        private static string CopiedPaintingName(string sourceFolder, string current, PREACT.Math.Vector2int grid)
+        {
+            string name = string.IsNullOrEmpty(current) ? PREACT.GraphicalFireInput.DefaultFileName : current.Replace('\\', '/');
+            string existing = Path.Combine(sourceFolder, name);
+            try
+            {
+                if (File.Exists(existing))
+                {
+                    using (var br = new BinaryReader(File.OpenRead(existing)))
+                    {
+                        if (br.ReadInt32() != grid.x || br.ReadInt32() != grid.y)
+                        {
+                            string fresh = PREACT.Utility.PaintedMaskResampler.NewFileName(existing, grid.x, grid.y);
+                            string folder = Path.GetDirectoryName(name)?.Replace('\\', '/');
+                            return string.IsNullOrEmpty(folder) ? Path.GetFileName(fresh) : folder + "/" + Path.GetFileName(fresh);
+                        }
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                //Unreadable: replaced in the copy, as a save would.
+            }
+            return name;
+        }
+
+        private static readonly string[] NotCopied = { "_output", "_elmfire", "scratch" };
 
         private static int CopyFolder(string from, string to, bool includeOutputs)
         {
@@ -664,7 +761,25 @@ namespace Assets.WUInity.GUI.DearIMGUI
         {
             Poll(false);
             UpdateQuit();
+            PutTheBrushDownWhileBusy();
             HandleShortcuts();
+        }
+
+        /// <summary>
+        /// A data step, a run or a campaign has started: the brush goes down (the painter also ignores the mouse
+        /// while anything runs). A build replaces the grid and masks under it, and a run reads them from its thread.
+        /// </summary>
+        private static void PutTheBrushDownWhileBusy()
+        {
+            global::WUInity.WUInityManager manager = PreactGUI.WUInity;
+            if (manager == null || !manager.IsPainterActive()) return;
+
+            string busy = BusyReason;
+            if (busy != null)
+            {
+                manager.StopPainter();
+                Engine.Message(null, Engine.LogType.Log, "Painting stopped: " + busy + ". What was painted is kept.");
+            }
         }
 
         private static void HandleShortcuts()
