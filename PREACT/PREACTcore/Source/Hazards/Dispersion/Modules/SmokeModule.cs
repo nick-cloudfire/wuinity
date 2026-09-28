@@ -37,6 +37,21 @@ namespace PREACT.Dispersion
         /// <param name="latLon"></param>
         /// <returns></returns>
         public abstract float GetSootDensityAtCoordinate(Vector2d latLon);
+
+        /// <summary>
+        /// Mass-specific extinction coefficient of smoke, m2/kg, for converting a soot density into an extinction
+        /// coefficient (Mulholland &amp; Croarkin: 8700 m2/kg for flaming combustion).
+        /// </summary>
+        public const float MassSpecificExtinction = 8700f;
+
+        /// <summary>
+        /// Light extinction coefficient in 1/m at a simulation position - what visibility and the SUMO speed
+        /// reduction are expressed in. By default the soot density times <see cref="MassSpecificExtinction"/>.
+        /// </summary>
+        public virtual float GetExtinctionCoefficientAtPos(Vector2d pos)
+        {
+            return GetSootDensityAtPos(pos) * MassSpecificExtinction;
+        }
     }
 
 }

@@ -70,6 +70,27 @@ namespace PREACT.Traffic
     public class SumoNetwork
     {
         public Math.Vector2d UTMOffset;
+
+        /// <summary>The network's projection as netconvert recorded it (<c>location/@projParameter</c>).</summary>
+        public string ProjParameter = string.Empty;
+
+        /// <summary>
+        /// The network's UTM zone as an EPSG code (326zz / 327zz), or 0 when its projection is not a UTM zone
+        /// (a hand-made or already-projected network).
+        /// </summary>
+        public int UtmEpsgCode
+        {
+            get
+            {
+                var match = System.Text.RegularExpressions.Regex.Match(ProjParameter ?? string.Empty, @"\+zone=(\d+)");
+                if (!match.Success || (ProjParameter ?? string.Empty).IndexOf("+proj=utm", StringComparison.Ordinal) < 0)
+                {
+                    return 0;
+                }
+                int zone = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+                return (ProjParameter.Contains("+south") ? 32700 : 32600) + zone;
+            }
+        }
         public Dictionary<string, SumoEdge> Edges = new Dictionary<string, SumoEdge>();
         public Dictionary<string, SumoLane> Lanes = new Dictionary<string, SumoLane>();
 
@@ -105,6 +126,12 @@ namespace PREACT.Traffic
             {
                 throw new Exception("Could not find location in file.");
             }
+            XmlAttribute projParameter = location.Attributes["projParameter"];
+            if (projParameter != null)
+            {
+                ProjParameter = projParameter.Value;
+            }
+
             XmlAttribute netOffset = location.Attributes["netOffset"];
             if(netOffset != null)
             {
@@ -120,6 +147,7 @@ namespace PREACT.Traffic
             }
 
             //do edges
+            var missingShapes = new List<SumoEdge>();
             XmlNodeList edgeNodes = root.SelectNodes("//edge");
             foreach (XmlNode edgeNode in edgeNodes)
             {
@@ -178,6 +206,48 @@ namespace PREACT.Traffic
 
                     Lanes[laneId] = lane;
                     edge.Lanes.Add(laneId);
+                }
+
+                //netconvert writes an edge-level shape only when the edge bends; a straight edge has none, and
+                //was then never assigned to the fire cells it crosses, so fire could not close it. The first
+                //lane's shape follows the same line (offset by half a lane width), which is what a cell test needs.
+                if (edge.Shape.Count < 2)
+                {
+                    foreach (string laneId in edge.Lanes)
+                    {
+                        if (Lanes.TryGetValue(laneId, out SumoLane lane) && lane.Shape.Count >= 2)
+                        {
+                            edge.Shape = new List<(double x, double y)>(lane.Shape);
+                            break;
+                        }
+                    }
+                }
+                if (edge.Shape.Count < 2 && edge.From != null && edge.To != null)
+                {
+                    missingShapes.Add(edge);
+                }
+            }
+
+            //Last resort: the straight line between the edge's junctions.
+            if (missingShapes.Count > 0)
+            {
+                var junctions = new Dictionary<string, (double x, double y)>();
+                foreach (XmlNode junction in root.SelectNodes("//junction"))
+                {
+                    XmlAttribute id = junction.Attributes["id"], x = junction.Attributes["x"], y = junction.Attributes["y"];
+                    if (id != null && x != null && y != null
+                        && double.TryParse(x.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double jx)
+                        && double.TryParse(y.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double jy))
+                    {
+                        junctions[id.Value] = (jx, jy);
+                    }
+                }
+                foreach (SumoEdge edge in missingShapes)
+                {
+                    if (junctions.TryGetValue(edge.From, out var from) && junctions.TryGetValue(edge.To, out var to))
+                    {
+                        edge.Shape = new List<(double x, double y)> { from, to };
+                    }
                 }
             }
         }

@@ -29,7 +29,14 @@ namespace PREACT.Utility
         /// <param name="sumoBinFolder">
         /// SUMO's bin folder. When empty, netconvert is looked up on PATH and via SUMO_HOME.
         /// </param>
-        public static string Build(string osmFilePath, string outputFolder, string sumoBinFolder, Action<string> log = null)
+        /// <param name="utmEpsgCode">
+        /// The simulation's UTM zone as an EPSG code (326zz north, 327zz south; the scenario's
+        /// <c>Simulation.Data.UtmEpsgCode</c>). When given, the network is projected into exactly that zone. When 0,
+        /// netconvert picks the zone of the extract's centre, which for a domain near a zone boundary (Mati, at the
+        /// 24 E boundary) can be the neighbouring one - and then every planar SUMO position is some 500 km off
+        /// the simulation's, which the engine now reports at start-up.
+        /// </param>
+        public static string Build(string osmFilePath, string outputFolder, string sumoBinFolder, Action<string> log = null, int utmEpsgCode = 0)
         {
             if (!File.Exists(osmFilePath))
             {
@@ -58,6 +65,13 @@ namespace PREACT.Utility
                 //set rather than assumed - the same trap WindNinja's runner hit.
                 WorkingDirectory = outputFolder
             };
+
+            string projection = UtmProjection(utmEpsgCode);
+            if (projection != null)
+            {
+                psi.ArgumentList.Add("--proj");
+                psi.ArgumentList.Add(projection);
+            }
 
             psi.ArgumentList.Add("--osm-files");
             psi.ArgumentList.Add(Path.GetFullPath(osmFilePath));
@@ -123,6 +137,23 @@ namespace PREACT.Utility
             Report(log, "Wrote " + ConfigurationFileName + ".");
 
             return configurationPath;
+        }
+
+        /// <summary>
+        /// The PROJ string for a WGS84 UTM zone given as its EPSG code, or null when it is not one.
+        /// </summary>
+        public static string UtmProjection(int utmEpsgCode)
+        {
+            bool north = utmEpsgCode >= 32601 && utmEpsgCode <= 32660;
+            bool south = utmEpsgCode >= 32701 && utmEpsgCode <= 32760;
+            if (!north && !south)
+            {
+                return null;
+            }
+
+            int zone = utmEpsgCode % 100;
+            return "+proj=utm +zone=" + zone.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                   + (south ? " +south" : string.Empty) + " +ellps=WGS84 +datum=WGS84 +units=m +no_defs";
         }
 
         /// <summary>

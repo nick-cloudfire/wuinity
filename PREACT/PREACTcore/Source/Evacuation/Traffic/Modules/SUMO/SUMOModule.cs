@@ -34,9 +34,18 @@ namespace PREACT.Traffic
 
         private SumoConfig _sumoConfig;
 
+        /// <summary>
+        /// Starts SUMO for this simulation.
+        /// </summary>
+        /// <remarks>
+        /// libsumo allows one instance per process, so any failure after the start closes it again; it used to stay
+        /// open, and the next run in the same GUI session could not start SUMO at all. An instance left over from a
+        /// run that did not close it is closed first.
+        /// </remarks>
         public SUMOModule(Simulation simulation, out bool success) : base(simulation)
         {
             success = true;
+            bool started = false;
             try
             {
                 _sumoVehicles = new Dictionary<string, SUMOVehicle>();
@@ -64,8 +73,16 @@ namespace PREACT.Traffic
                     //and will be wrong again next time it is opened.
                     Engine.Message(_simulation, Engine.LogType.Warning, explanation);
                 }
-                //see here for options https://sumo.dlr.de/docs/sumo.html, setting input file, start and end time
-                LIBSUMO.Simulation.start(new LIBSUMO.StringVector(new String[] { "sumo", "-c", configFile, "-b", "0.0", "-e", _simulation.Time.SimulationEndTime.ToString() }));
+                CloseLeftoverInstance();
+
+                //see here for options https://sumo.dlr.de/docs/sumo.html, setting input file, start and end time.
+                //SUMO's own step is the simulation's, so Simulation.step(t) lands exactly on each PREACT step (SUMO's
+                //default of 1 s would silently round a 0.5 s step), and every number is written culture-invariant.
+                var invariant = System.Globalization.CultureInfo.InvariantCulture;
+                LIBSUMO.Simulation.start(new LIBSUMO.StringVector(new String[] { "sumo", "-c", configFile, "-b", "0.0",
+                    "-e", _simulation.Time.SimulationEndTime.ToString("R", invariant),
+                    "--step-length", ((double)_simulation.Input.Simulation.DeltaTime).ToString("R", invariant) }));
+                started = true;
 
                 //check if destinations are valid, if not abort
                 ValidateDestinations(simulation.Evacuation.Destinations, out bool allValid);
@@ -76,6 +93,7 @@ namespace PREACT.Traffic
                 }
 
                 _sumoConfig = new SumoConfig(configFile, _simulation.Input.WildfireModule.Enabled);
+                CheckNetworkZone();
 
                 //need to use UTM projection in SUMO and WUInity to overlay data
                 Vector2d sumoUTM = -_sumoConfig.Network.UTMOffset;// new Vector2d(-_simulation.Input.TrafficModule.SumoInput.UTMoffset.x, -_simulation.Input.TrafficModule.SumoInput.UTMoffset.y);
@@ -113,7 +131,62 @@ namespace PREACT.Traffic
             {
                 success = false;
                 Engine.Message(_simulation, Engine.LogType.SimulationError, "Could not start SUMO, aborting. " + e.Message + ". " + e.InnerException);
-            }            
+            }
+            finally
+            {
+                if (!success && started)
+                {
+                    Stop();
+                }
+            }
+        }
+
+        /// <summary>SUMO has its own clock; it is stepped every step even with no car in it (see Simulation.Step).</summary>
+        public override bool StepWhenDone { get => true; }
+
+        private void CloseLeftoverInstance()
+        {
+            try
+            {
+                if (LIBSUMO.Simulation.isLoaded())
+                {
+                    Engine.Message(_simulation, Engine.LogType.Warning, "A SUMO instance from an earlier run was still open; closing it first.");
+                    LIBSUMO.Simulation.close();
+                }
+            }
+            catch (Exception)
+            {
+                //isLoaded throws when nothing is loaded on some libsumo versions; nothing to close then.
+            }
+        }
+
+        /// <summary>
+        /// Says loudly when the network is projected into a different UTM zone than the simulation measures in.
+        /// </summary>
+        /// <remarks>
+        /// Car injection converts through lat/lon and is unaffected, but everything planar - which road runs through
+        /// which fire cell, redirecting a vehicle, the traffic heat map - assumes the network and the simulation
+        /// share a zone. netconvert picks the zone of the extract's centre unless told (SumoNetworkBuilder now
+        /// tells it), so a domain across a zone boundary could be off by some 500 km with nothing visibly wrong.
+        /// Reported, not refused, so existing campaigns keep running; rebuild the network to fix it.
+        /// </remarks>
+        private void CheckNetworkZone()
+        {
+            int networkZone = _sumoConfig.Network.UtmEpsgCode;
+            int simulationZone = _simulation.Input.Simulation.Data.UtmEpsgCode;
+            if (networkZone == 0)
+            {
+                Engine.Message(_simulation, Engine.LogType.Warning, "The SUMO network does not record a UTM projection ("
+                    + (string.IsNullOrEmpty(_sumoConfig.Network.ProjParameter) ? "no projParameter" : _sumoConfig.Network.ProjParameter)
+                    + "); road positions are assumed to be in the simulation's zone, EPSG:" + simulationZone + ".");
+            }
+            else if (networkZone != simulationZone)
+            {
+                Engine.Message(_simulation, Engine.LogType.Warning, $"The SUMO network is projected in EPSG:{networkZone} but the simulation "
+                    + $"measures in EPSG:{simulationZone}. Fire road closures, vehicle redirection and the traffic maps will be misplaced "
+                    + "(car injection is not affected). Rebuild the network from the scenario (Prepare data > roads), which now "
+                    + "projects it into the simulation's zone.");
+            }
         }
 
         private void ValidateDestinations(List<EvacuationDestination> destinations, out bool allValid)
@@ -142,10 +215,30 @@ namespace PREACT.Traffic
             LIBSUMO.Simulation.close();
         }*/
 
+        /// <summary>
+        /// Speed multiplier in smoke, <c>1 - alpha * exp(beta / K)</c> with K the extinction coefficient in 1/m
+        /// (alpha in [0, 1], beta &lt; 0 so the reduction grows with K), clamped to [0.05, 1].
+        /// </summary>
+        /// <remarks>
+        /// K = 0 (clear air) is no reduction; the formula used to be evaluated there as well, where beta / 0 is
+        /// infinite - NaN for beta = 0 and minus infinity for beta &gt; 0, both handed to SUMO as a speed factor.
+        /// </remarks>
         float GetSmokeSpeedReductionFactor(Vector2d pos)
         {
             float extCoeff = _simulation.Hazards.GetExtinctionCoefficientAtPos(pos);
-            return 1f - _simulation.Input.TrafficModule.SumoInput.SmokeAlpha * Mathf.Exp(_simulation.Input.TrafficModule.SumoInput.SmokeBeta / extCoeff);
+            float alpha = _simulation.Input.TrafficModule.SumoInput.SmokeAlpha;
+            float beta = _simulation.Input.TrafficModule.SumoInput.SmokeBeta;
+            if (!(extCoeff > 0f) || alpha == 0f)
+            {
+                return 1f;
+            }
+
+            float factor = 1f - alpha * Mathf.Exp(beta / extCoeff);
+            if (float.IsNaN(factor))
+            {
+                return 1f;
+            }
+            return Mathf.Clamp(factor, 0.05f, 1f);
         }
 
         public override void Step(double currentTime, double deltaTime)
@@ -237,7 +330,7 @@ namespace PREACT.Traffic
             for (int i = 0; i < _simulation.Evacuation.Destinations.Count; ++i)
             {
                 EvacuationDestination destination = _simulation.Evacuation.Destinations[i];
-                dataLine.Append(System.FormattableString.Invariant($",{destination.CurrentPeople},{destination.Vehicles.Count},{destination.CurrentVehicleFlow}"));
+                dataLine.Append(System.FormattableString.Invariant($",{destination.CurrentPeople},{destination.Vehicles.Count},{destination.GetVehicleFlow(currentTime + deltaTime)}"));
             }
             output.Add(dataLine.ToString());
         }
@@ -659,8 +752,15 @@ namespace PREACT.Traffic
             throw new NotImplementedException();
         }
 
+        private bool _closed;
+
         public override void Stop()
         {
+            if (_closed)
+            {
+                return;
+            }
+            _closed = true;
             try
             {
                 LIBSUMO.Simulation.close();

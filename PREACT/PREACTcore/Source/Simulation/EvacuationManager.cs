@@ -95,30 +95,34 @@ namespace PREACT.Evacuation
         }
 
 
+        /// <summary>
+        /// Creates the pedestrian and traffic modules, each on its own.
+        /// </summary>
+        /// <remarks>
+        /// This used to return as soon as there was no pedestrian module, so a traffic-only scenario never
+        /// created its traffic module.
+        /// </remarks>
         public List<SimulationModule> CreateModules(WeatherManager weather, TimeManager time, out bool success)
         {
             List<SimulationModule> createdModules = new List<SimulationModule>();
 
-            CreatePedestrianModule(_simulation, _input, weather, time, out success);
-            if(success && _pedestrianModule != null)
+            CreatePedestrianModule(_simulation, _input, weather, time, out bool pedestrianOk);
+            if (pedestrianOk && _pedestrianModule != null)
             {
                 createdModules.Add(_pedestrianModule);
             }
-            else
+
+            bool trafficOk = false;
+            if (pedestrianOk)
             {
-                return createdModules;
+                CreateTrafficModule(_simulation, _input, weather, time, out trafficOk);
+                if (trafficOk && _trafficModule != null)
+                {
+                    createdModules.Add(_trafficModule);
+                }
             }
 
-            CreateTrafficModule(_simulation, _input, weather, time, out success);
-            if (success && _trafficModule != null)
-            {
-                createdModules.Add(_trafficModule);
-            }
-            else
-            {
-                return createdModules;
-            }
-
+            success = pedestrianOk && trafficOk;
             return createdModules;
         }
 

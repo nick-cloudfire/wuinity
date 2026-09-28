@@ -91,9 +91,8 @@ namespace PREACT.Traffic
         {
             Dictionary<CellIndex, HashSet<SumoEdge>> grid = new Dictionary<CellIndex, HashSet<SumoEdge>>();
 
-            const int maxCells = 4096;
-            int[] xs = new int[maxCells];
-            int[] ys = new int[maxCells];
+            int[] xs = new int[4096];
+            int[] ys = new int[4096];
 
             double maxXPos = minXPos + xDim * cellSizeX;
             double maxYPos = minYPos + yDim * cellSizeY;
@@ -123,11 +122,25 @@ namespace PREACT.Traffic
                         continue;
                     }
 
+                    //A long straight segment crosses more cells than a fixed buffer holds; it used to overflow it.
+                    int needed = System.Math.Abs((int)Floor((x1 - minXPos) / cellSizeX) - (int)Floor((x0 - minXPos) / cellSizeX))
+                                 + System.Math.Abs((int)Floor((y1 - minYPos) / cellSizeY) - (int)Floor((y0 - minYPos) / cellSizeY)) + 1;
+                    if (needed > xs.Length)
+                    {
+                        xs = new int[needed];
+                        ys = new int[needed];
+                    }
+
                     int visited = TraverseCells(x0, y0, x1, y1, cellSizeX, cellSizeY, minXPos, minYPos, xs, ys);
 
                     int c = 0;
                     while (c < visited)
                     {
+                        if (xs[c] < 0 || ys[c] < 0 || xs[c] >= xDim || ys[c] >= yDim)
+                        {
+                            c++;
+                            continue; //outside the fire grid: no fire can ever burn there
+                        }
                         CellIndex ci = new CellIndex(xs[c], ys[c]);
 
                         HashSet<SumoEdge> set;

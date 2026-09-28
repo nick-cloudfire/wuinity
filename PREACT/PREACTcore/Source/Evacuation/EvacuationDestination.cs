@@ -97,13 +97,29 @@ namespace PREACT.Evacuation
             _blocked = true;
         }
 
+        /// <summary>The window the reported flow is averaged over, in seconds.</summary>
+        public const double FlowWindowSeconds = 300.0;
+
+        //Arrival times inside the flow window, oldest first, and the token bucket MaxFlow is enforced with.
+        private readonly Queue<double> _recentArrivals = new Queue<double>();
+        private double _flowTokens = double.NaN;
+        private double _flowTokensTime;
+
         /// <summary>
         /// Checks flow and returns true if car arrives at goal, returns false if the car have to wait.
         /// </summary>
-        /// <param name="arrivingVehicle"></param>
-        /// <param name="simulationTime"></param>
-        /// <param name="deltaTime"></param>
-        /// <returns></returns>
+        /// <remarks>
+        /// <see cref="MaxFlow"/> (vehicles per hour, &lt;= 0 for unlimited) is enforced as a token bucket: capacity
+        /// accrues at MaxFlow / 3600 per second, up to one minute's worth (at least one vehicle), and each arrival
+        /// spends one. So a steady stream is held to MaxFlow while a car arriving after a lull is never refused.
+        /// This used to compare against the flow computed at the previous arrival, which after one burst stayed
+        /// above the limit for good (it only changed when a car was let in) - every later car was refused.
+        ///
+        /// <see cref="CurrentVehicleFlow"/> is the arrival rate over the last <see cref="FlowWindowSeconds"/>, in
+        /// vehicles per hour.
+        /// </remarks>
+        /// <param name="simulationTime">Simulation time of the arrival, in seconds.</param>
+        /// <param name="deltaTime">The simulation's time step, in seconds.</param>
         public bool TryToArrive(TrafficModuleVehicle arrivingVehicle, double simulationTime, double deltaTime)
         {
             //can vehicle arrive at all (either closed by fire or event, or if shelter at capacity)?
@@ -112,55 +128,76 @@ namespace PREACT.Evacuation
                 return false;
             }
             
-            //now we need to see if there is any restriciton on flow
-            if (_maxFlow <= 0 || _currentVehicleFlow < _maxFlow)
+            //now we need to see if there is any restriction on flow
+            if (_maxFlow > 0f)
             {
-                //add new cars and people that has arrived during timestep
-                ++_timeStepVehicles;
-                _vehicles.Add(arrivingVehicle);
-                _currentPeople += arrivingVehicle.NumberOfPeople;               
-                _totalTravelTime += arrivingVehicle.TotalTravelTime;
-                _averageTravelTime = _totalTravelTime / _vehicles.Count;
+                double ratePerSecond = _maxFlow / 3600.0;
+                double burst = System.Math.Max(1.0, ratePerSecond * 60.0);
+                if (double.IsNaN(_flowTokens))
+                {
+                    _flowTokens = burst;
+                }
+                else
+                {
+                    _flowTokens = System.Math.Min(burst, _flowTokens + ratePerSecond * System.Math.Max(0.0, simulationTime - _flowTokensTime));
+                }
+                _flowTokensTime = simulationTime;
 
-                UpdateFlow(simulationTime, deltaTime);
-                UpdateCapacity();
-
-                return true;
+                if (_flowTokens < 1.0)
+                {
+                    return false;
+                }
+                _flowTokens -= 1.0;
             }
-            else
-            {
-                return false;
-            }            
-        }
 
-        private void UpdateFlow(double simulationTime, double deltaTime)
-        {
-            //same timestep?
+            //add new cars and people that has arrived during timestep
             if (_currentSimulationTime != simulationTime)
             {
                 _currentSimulationTime = simulationTime;
                 _timeStepVehicles = 0;
             }
-
-            //calc current flow
             if (_vehicles.Count == 0)
             {
                 _firstArrivalTime = simulationTime;
-                _currentVehicleFlow = 0f;
             }
-            else
+            ++_timeStepVehicles;
+            _vehicles.Add(arrivingVehicle);
+            _currentPeople += arrivingVehicle.NumberOfPeople;               
+            _totalTravelTime += arrivingVehicle.TotalTravelTime;
+            _averageTravelTime = _totalTravelTime / _vehicles.Count;
+
+            UpdateFlow(simulationTime);
+            UpdateCapacity();
+
+            return true;
+        }
+
+        /// <summary>
+        /// Arrivals over the <see cref="FlowWindowSeconds"/> before <paramref name="simulationTime"/>, in vehicles per
+        /// hour - the flow as of now, falling back to zero after arrivals stop (<see cref="CurrentVehicleFlow"/> is
+        /// as of the last arrival).
+        /// </summary>
+        public double GetVehicleFlow(double simulationTime)
+        {
+            int count = 0;
+            foreach (double arrival in _recentArrivals)
             {
-                double timestepFlow = _timeStepVehicles / deltaTime;
-                if (simulationTime == _firstArrivalTime)
+                if (arrival > simulationTime - FlowWindowSeconds && arrival <= simulationTime)
                 {
-                    _currentVehicleFlow = timestepFlow;
+                    ++count;
                 }
-                else
-                {
-                    _currentVehicleFlow = _vehicles.Count / (simulationTime - _firstArrivalTime);
-                }
-                _currentVehicleFlow = Mathd.Max(timestepFlow, _currentVehicleFlow) * 3600f;
             }
+            return count * 3600.0 / FlowWindowSeconds;
+        }
+
+        private void UpdateFlow(double simulationTime)
+        {
+            _recentArrivals.Enqueue(simulationTime);
+            while (_recentArrivals.Count > 0 && _recentArrivals.Peek() <= simulationTime - FlowWindowSeconds)
+            {
+                _recentArrivals.Dequeue();
+            }
+            _currentVehicleFlow = _recentArrivals.Count * 3600.0 / FlowWindowSeconds;
         }
 
         void UpdateCapacity()
