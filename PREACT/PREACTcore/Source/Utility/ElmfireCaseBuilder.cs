@@ -188,6 +188,12 @@ namespace PREACT.Utility
             /// </summary>
             public List<string> CandidateDemPaths = new List<string>();
 
+            /// <summary>
+            /// Every file the scenario names (its <c>...File</c> keys, resolved), which the build must never rewrite: a
+            /// raster a namelist names that is also one of these is re-cut into a copy, not in place (review RC-MI-2).
+            /// </summary>
+            public List<string> ScenarioFiles = new List<string>();
+
             /// <summary>Copied into &amp;MISCELLANEOUS PATH_TO_GDAL so ELMFIRE's own shell-outs
             /// resolve to a known-good GDAL rather than whatever is first on PATH.</summary>
             public string PathToGdal;
@@ -930,6 +936,8 @@ namespace PREACT.Utility
             {
                 string stem = Path.GetFileNameWithoutExtension(path);
                 if (derived.Contains(stem) || result.Written.Contains(stem)) continue;
+                //What a build that died while re-cutting a namelist's raster left half-written; the original is beside it.
+                if (path.EndsWith(RecutSuffix, StringComparison.OrdinalIgnoreCase)) continue;
                 if (File.Exists(ElmfireStems.Tif(inputs, stem))) continue;
 
                 WarpLayer(o, result, grid, stem, path, ElmfireStems.Tif(inputs, stem), log);
@@ -1227,10 +1235,12 @@ namespace PREACT.Utility
             if (rasters == null || rasters.Count == 0) return;
 
             var scenarioFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (string f in o.CandidateDemPaths.Concat(o.UserRasters.Values)
+            foreach (string f in o.CandidateDemPaths.Concat(o.UserRasters.Values).Concat(o.ScenarioFiles)
                          .Concat(new[] { o.PaintedMasksGridPath, o.LocalDemPath }))
             {
-                if (!string.IsNullOrEmpty(f)) scenarioFiles.Add(Path.GetFullPath(f));
+                if (string.IsNullOrEmpty(f)) continue;
+                try { scenarioFiles.Add(Path.GetFullPath(f)); }
+                catch { }
             }
 
             foreach (ElmfireStems.NamelistRaster r in rasters)
@@ -1238,14 +1248,34 @@ namespace PREACT.Utility
                 string path = ElmfireStems.Tif(inputs, r.Stem);
                 if (!File.Exists(path) || IsOnGrid(path, grid)) continue;
 
+                //A file the scenario itself reads - its landscape's slope, a source layer - is never rewritten: the
+                //scenario would read a different raster than it names (review RC-MI-2). The namelist gets a re-cut copy
+                //beside it instead, under a name that says which grid it is on, and is told to use it.
                 if (scenarioFiles.Contains(Path.GetFullPath(path)))
                 {
-                    string why = $"{r.Key} = '{r.Stem}' is not on the case grid, but the scenario also reads {path}, so it "
-                                 + "was not re-cut; point the namelist at a copy";
+                    string copyStem = r.Stem + "_" + grid.Header.Ncols.ToString(CultureInfo.InvariantCulture) + "x"
+                                      + grid.Header.Nrows.ToString(CultureInfo.InvariantCulture);
+                    string copy = ElmfireStems.Tif(inputs, copyStem);
+                    if (!File.Exists(copy) || !IsOnGrid(copy, grid))
+                    {
+                        if (r.Categorical) o.CategoricalStems.Add(copyStem);
+                        RecutInto(o, result, grid, copyStem, path, copy, log);
+                    }
+                    string why = $"{r.Key} = '{r.Stem}' is not on the case grid, and the scenario itself reads {path}, so that "
+                                 + $"file was left as it is; its copy on the case grid is inputs/{copyStem}.tif. Set {r.Key} = "
+                                 + $"'{copyStem}' in the namelist that names '{r.Stem}' to run it";
                     result.Fallbacks.Add(why);
                     log("  WARNING " + why + ".");
                     continue;
                 }
+
+                if (r.Categorical) o.CategoricalStems.Add(r.Stem);
+
+                //Re-cut into a file of its own first, and only then the original moved aside and the copy put in its
+                //place: moving it aside first meant a warp that failed (a GDAL error, a full disk) left inputs/ without
+                //the raster, and the next build - finding nothing to carry - left it at that (review RC-MI-1).
+                string recut = Path.Combine(inputs, r.Stem + RecutSuffix);
+                RecutInto(o, result, grid, r.Stem, path, recut, log);
 
                 string previous = Path.Combine(inputs, PreviousGridFolder);
                 Directory.CreateDirectory(previous);
@@ -1258,13 +1288,43 @@ namespace PREACT.Utility
                 File.Move(path, aside);
                 string aux = path + ".aux.xml";
                 if (File.Exists(aux)) { try { File.Delete(aux); } catch { } }
+                File.Move(recut, path);
 
-                if (r.Categorical) o.CategoricalStems.Add(r.Stem);
                 log($"  {r.Stem}: named by the namelist ({r.Key}) and not on the case grid; re-cut onto it, the original "
                     + $"kept as inputs/{PreviousGridFolder}/{Path.GetFileName(aside)}.");
-                WarpLayer(o, result, grid, r.Stem, aside, path, log);
                 if (!result.Carried.Contains(r.Stem)) result.Carried.Add(r.Stem);
             }
+        }
+
+        /// <summary>The temporary name a raster is re-cut under before it replaces the original (never a stem a namelist names).</summary>
+        private const string RecutSuffix = ".recut-in-progress.tif";
+
+        /// <summary>
+        /// Warps <paramref name="source"/> onto the grid as <paramref name="destination"/>, leaving nothing at the
+        /// destination if the warp fails - and the source untouched either way.
+        /// </summary>
+        private static void RecutInto(Options o, Result result, MasterGrid grid, string stem, string source,
+            string destination, Action<string> log)
+        {
+            void Remove()
+            {
+                foreach (string f in new[] { destination, destination + ".aux.xml" })
+                {
+                    try { if (File.Exists(f)) File.Delete(f); } catch { }
+                }
+            }
+
+            Remove();
+            try
+            {
+                WarpLayer(o, result, grid, stem, source, destination, log);
+            }
+            catch
+            {
+                Remove();
+                throw;
+            }
+            try { if (File.Exists(destination + ".aux.xml")) File.Delete(destination + ".aux.xml"); } catch { }
         }
 
         /// <summary>Whether a raster has the grid's size, origin and cell size (to a tenth of a cell).</summary>

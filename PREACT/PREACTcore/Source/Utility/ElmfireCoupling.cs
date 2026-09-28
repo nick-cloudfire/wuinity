@@ -691,6 +691,18 @@ namespace PREACT.Utility
                 });
             }
 
+            //Every file the scenario names, so the build never rewrites one in place (review RC-MI-2): a kept namelist
+            //that names SLP_FILENAME = 'mati_slope' would otherwise re-cut the scenario's own [Landscape] SlopeFile.
+            foreach (string line in PREACTInputWriter.Write(input))
+            {
+                int eq = line.IndexOf('=');
+                if (eq <= 0 || !line.Substring(0, eq).EndsWith("File", StringComparison.Ordinal)) continue;
+                string named = line.Substring(eq + 1).Trim();
+                if (named.Length == 0) continue;
+                string resolved = ResolveFile(input.RootFolder, named);
+                if (resolved != null) options.ScenarioFiles.Add(resolved);
+            }
+
             //The scenario's own DEM, when it has one: used for the grid if it covers the padded domain, so the
             //case needs no second download. Not the case's own dem.tif, which is the grid being checked.
             string landscapeDem = input.Landscape == null ? null : ResolveFile(input.RootFolder, input.Landscape.ElevationFile);

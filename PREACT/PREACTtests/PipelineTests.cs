@@ -28,6 +28,90 @@ namespace PREACT.Tests
             runner.Add("builder: the building spread model gets ELMFIRE's building fuel table, or the build and the run are refused", BuildingFuelTable);
             runner.Add("coupling: a single ELMFIRE run gives k-PERIL the case's own dem/slp/asp, which cover the whole fire grid", FireTerrainForKperil);
             runner.Add("cli: build-case prints the keys to put in the .wui; --update-wui writes exactly those and nothing else", BuildCaseUpdatesWui);
+            runner.Add("builder: a namelist's raster whose re-cut fails is still in inputs, as it was", FailedRecutKeepsOriginal);
+            runner.Add("builder: a raster both a namelist and the scenario name is re-cut into a copy, never in place", ScenarioRasterNotRecutInPlace);
+        }
+
+        /// <summary>
+        /// Review RC-MI-1: the carry moved an off-grid raster a namelist names into _previous_grid before warping the re-cut
+        /// copy, so a warp that failed (a GDAL error, a full disk) left inputs/ without it, and the next build had nothing to
+        /// carry. The warp is made into a file of its own first.
+        /// </summary>
+        private static void FailedRecutKeepsOriginal()
+        {
+            using (var c = new SyntheticCase())
+            {
+                string caseDir = Path.Combine(c.Folder, "case");
+                string inputs = Path.Combine(caseDir, "inputs");
+                ElmfireCaseBuilder.Build(c.Options(caseDir, 150.0, new List<string>())).GetAwaiter().GetResult();
+
+                //A raster the namelist names that GDAL cannot warp: the re-cut fails every time.
+                string bad = ElmfireStems.Tif(inputs, "fbfm40_bad");
+                File.WriteAllText(bad, "not a GeoTIFF");
+                string namelist = Path.Combine(caseDir, "elmfire.data");
+                File.WriteAllLines(namelist, ElmfireNamelist.SetKeyInGroup(File.ReadAllLines(namelist),
+                    ElmfireNamelistKeys.InputsGroup, "FBFM_FILENAME", "fbfm40_bad", quoted: true));
+
+                var log = new List<string>();
+                Exception failed = null;
+                try { ElmfireCaseBuilder.Build(c.Options(caseDir, 150.0, log)).GetAwaiter().GetResult(); }
+                catch (Exception e) { failed = e; }
+                Assert.True(failed != null && log.Any(l => l.Contains("fbfm40_bad: warping onto the master grid")),
+                    "the build tried to re-cut it and failed: " + failed?.Message);
+                Assert.True(File.Exists(bad) && File.ReadAllText(bad) == "not a GeoTIFF", "the raster is still in inputs/, as it was");
+                Assert.True(!Directory.GetFiles(inputs).Any(f => f.Contains("recut")), "and no half-written re-cut is left beside it");
+                Assert.True(!File.Exists(ElmfireStems.Tif(Path.Combine(inputs, ElmfireCaseBuilder.PreviousGridFolder), "fbfm40_bad")),
+                    "nor was it moved aside");
+            }
+        }
+
+        /// <summary>
+        /// Review RC-MI-2: a kept or template namelist naming SLP_FILENAME = 'mati_slope', where the scenario's [Landscape]
+        /// SlopeFile is elmfire/inputs/mati_slope.tif, would have moved the scenario's raster aside and replaced it with a
+        /// re-cut copy, so the scenario read another raster than the one it names.
+        /// </summary>
+        private static void ScenarioRasterNotRecutInPlace()
+        {
+            using (var c = new SyntheticCase())
+            {
+                string caseDir = Path.Combine(c.Folder, "case");
+                string inputs = Path.Combine(caseDir, "inputs");
+                ElmfireCaseBuilder.Build(c.Options(caseDir, 150.0, new List<string>())).GetAwaiter().GetResult();
+                MasterGrid grid = MasterGrid.FromRasterFile(ElmfireStems.Tif(inputs, ElmfireStems.Dem));
+
+                //The scenario's own slope, in the case's inputs and on another grid (Nick's mati_slope.tif is 616x590).
+                var other = new MasterGrid
+                {
+                    Header = new AscRaster.Header { Ncols = 10, Nrows = 10, CellSize = 30, CellSizeY = 30, XllCorner = grid.XMin + 300, YllCorner = grid.YMin + 300, NoDataValue = -9999 },
+                    Epsg = grid.Epsg,
+                };
+                var values = new float[10, 10];
+                for (int x = 0; x < 10; ++x) for (int y = 0; y < 10; ++y) values[x, y] = 7f;
+                string slope = ElmfireStems.Tif(inputs, "mati_slope");
+                GeoTiffRasterWriter.WriteBand(other, values, slope);
+                string before = ElmfireFingerprint.HashFile(slope);
+
+                File.WriteAllLines(Path.Combine(caseDir, "hand.data"), ElmfireNamelist.SetKeyInGroup(File.ReadAllLines(Path.Combine(caseDir, "elmfire.data")),
+                    ElmfireNamelistKeys.InputsGroup, "SLP_FILENAME", "mati_slope", quoted: true));
+                string wui = c.WriteScenario("case", 150.0, "NamelistTemplate=hand.data", "", "[Landscape]", "ElevationFile=source_dem.tif",
+                    "SlopeFile=case/inputs/mati_slope.tif");
+                Input.PREACTInput input = Input.PREACTInput.LoadFromDisk(wui, out bool _);
+
+                var log = new List<string>();
+                ElmfireCaseBuilder.Options o = ElmfireCoupling.CreateBuildOptions(input, input.WildfireModule.ElmfireInput, caseDir, m => log.Add(m));
+                o.LocalDemPath = c.DemPath;
+                o.Weather.UseClimatology = false;
+                o.Weather.WindNinjaExe = Path.Combine(c.Folder, "no-windninja-here");
+                Assert.True(o.ScenarioFiles.Any(f => f.EndsWith("mati_slope.tif", StringComparison.Ordinal)), "the scenario's files are known to the build");
+                ElmfireCaseBuilder.Result r = ElmfireCaseBuilder.Build(o).GetAwaiter().GetResult();
+
+                string copyStem = $"mati_slope_{grid.Header.Ncols}x{grid.Header.Nrows}";
+                Assert.Equal(before, ElmfireFingerprint.HashFile(slope), "the scenario's mati_slope.tif is byte for byte what it was");
+                MasterGrid copy = MasterGrid.FromRasterFile(ElmfireStems.Tif(inputs, copyStem));
+                Assert.True(copy.Header.Ncols == grid.Header.Ncols && copy.Header.Nrows == grid.Header.Nrows, "its copy is on the case grid");
+                Assert.True(r.Fallbacks.Any(f => f.Contains($"Set SLP_FILENAME = '{copyStem}'")) && log.Any(l => l.Contains("WARNING") && l.Contains(copyStem)),
+                    "and the build says which key to point at it: " + string.Join(" | ", r.Fallbacks));
+            }
         }
 
         /// <summary>
