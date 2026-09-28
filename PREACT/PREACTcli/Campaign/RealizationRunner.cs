@@ -59,9 +59,11 @@ namespace PREACTcli.Campaigns
             {
                 File.WriteAllLines(tempWui, lines);
                 File.WriteAllLines(Path.Combine(dir, CampaignLayout.RealizationScenarioCopy),
-                    new[] { "# The scenario PREACT.exe ran for this realization, written as " + Path.GetFileName(tempWui)
-                            + " beside " + Path.GetFileName(c.BaseWuiPath) + "; its paths are relative to that folder." }
-                        .Concat(lines));
+                    new[]
+                    {
+                        "# The scenario PREACT.exe ran for this realization (as " + Path.GetFileName(tempWui) + " beside "
+                        + Path.GetFileName(c.BaseWuiPath) + "), with its paths made relative to this folder so it opens here.",
+                    }.Concat(RebasePaths(lines, c.ScenarioDir, dir)));
 
                 //Anything an interrupted earlier attempt left under this name would otherwise be read as this run's.
                 RemoveOutputs(outputDir, name);
@@ -93,6 +95,53 @@ namespace PREACTcli.Campaigns
             {
                 try { File.Delete(tempWui); } catch { }
             }
+        }
+
+        /// <summary>
+        /// A scenario's lines with every relative path - the value of any key ending in File, Folder, Directory or Exe,
+        /// and PathToGdal - rewritten from <paramref name="fromDir"/> to <paramref name="toDir"/>, with forward slashes.
+        /// Absolute paths, and NamelistTemplate (which is looked for in the case folder first), are left as they are.
+        /// </summary>
+        /// <remarks>
+        /// The copy of a realization's scenario kept in its folder used to carry the base scenario's paths unchanged, so
+        /// opening it there reported the population, the network, the groups and the fire as missing (e2e F8).
+        /// </remarks>
+        internal static string[] RebasePaths(IReadOnlyList<string> lines, string fromDir, string toDir)
+        {
+            var result = new string[lines.Count];
+            for (int i = 0; i < lines.Count; ++i)
+            {
+                string line = lines[i];
+                result[i] = line;
+
+                string trimmed = line.TrimStart();
+                int eq = trimmed.IndexOf('=');
+                if (eq <= 0 || trimmed.StartsWith("#", StringComparison.Ordinal) || trimmed.StartsWith("[", StringComparison.Ordinal)) continue;
+
+                string key = trimmed.Substring(0, eq).Trim();
+                bool pathKey = key.EndsWith("File", StringComparison.Ordinal) || key.EndsWith("Folder", StringComparison.Ordinal)
+                               || key.EndsWith("Directory", StringComparison.Ordinal) || key.EndsWith("Exe", StringComparison.Ordinal)
+                               || key == "PathToGdal";
+                if (!pathKey) continue;
+
+                string value = trimmed.Substring(eq + 1);
+                string comment = string.Empty;
+                int hash = value.IndexOf(" #", StringComparison.Ordinal);
+                if (hash >= 0)
+                {
+                    comment = value.Substring(hash);
+                    value = value.Substring(0, hash);
+                }
+
+                //A Windows drive path is absolute on every platform, though only Windows says so.
+                string normalised = PREACT.Input.PREACTInput.NormalisePath(value);
+                bool drive = normalised.Length > 2 && char.IsLetter(normalised[0]) && normalised[1] == ':' && normalised[2] == '/';
+                if (normalised.Length == 0 || drive || Path.IsPathRooted(normalised)) continue;
+
+                string full = Path.GetFullPath(Path.Combine(fromDir, normalised));
+                result[i] = key + "=" + CampaignLayout.RelativeForWui(toDir, full) + comment;
+            }
+            return result;
         }
 
         /// <summary>What is added to the campaign seed to seed a realization's evacuation, apart from its fire's

@@ -17,6 +17,33 @@ namespace PREACT.Tests
             runner.Add("cli: the newest campaign folder is found, replaced ones are not", LatestCampaign);
             runner.Add("cli: every realization's evacuation runs on its own reproducible seed", EvacuationSeeds);
             runner.Add("cli: progress lines carry decile areas only for a realization with a boundary", ProgressAreas);
+            runner.Add("cli: a realization's archived scenario opens where it is kept", ArchivedScenarioOpensInPlace);
+        }
+
+        private static void ArchivedScenarioOpensInPlace()
+        {
+            using var s = new FormatTests.Scenario();
+            var baseLines = new List<string>(FormatTests.Scenario.Lines) { "", "[kPERIL]", "OutputName=b.asc", "WuiAreaFile=C:/elsewhere/wui.tif" };
+            Campaign c = MinimalCampaign(s.Folder, 12345, baseLines.ToArray());
+            string id = CampaignLayout.RealizationId(4);
+            string dir = c.RealizationDir(id);
+            Directory.CreateDirectory(Path.Combine(dir, "outputs"));
+
+            var record = new RealizationRecord { Toa = "outputs/toa.tif", Ros = "outputs/vs.tif", Sd = "outputs/sd.tif", Mfws = "outputs/mfws.tif" };
+            string[] ran = RealizationRunner.ScenarioLines(c, 4, id, dir, record);
+            string[] kept = RealizationRunner.RebasePaths(ran, s.Folder, dir);
+
+            Assert.True(kept.Contains("PopulationFile=../../../../pop.csv"), "the population, from the realization's folder: "
+                        + kept.FirstOrDefault(l => l.StartsWith("PopulationFile")));
+            Assert.True(kept.Contains("TimeOfArrivalFile=outputs/toa.tif"), "the realization's own fire, from its folder: "
+                        + kept.FirstOrDefault(l => l.StartsWith("TimeOfArrivalFile")));
+            Assert.True(kept.Contains("Name=base_01234567_0000004"), "other keys are untouched");
+            Assert.True(kept.Contains("WuiAreaFile=C:/elsewhere/wui.tif"), "an absolute (drive) path is left alone");
+
+            Input.PREACTInput input = Input.PREACTInput.LoadFromLines(kept, dir, out bool _);
+            Assert.Equal(3, input.Population.Data.Households.Length, "the population loads from there");
+            Assert.True(!Input.PREACTInput.Requirements.Any(r => r.Key.Contains("PopulationFile") || r.Key.Contains("MaskFile")),
+                "nothing the base scenario had is missing: " + string.Join("; ", Input.PREACTInput.Requirements.Select(r => r + ": " + r.Message)));
         }
 
         private static void ProgressAreas()
