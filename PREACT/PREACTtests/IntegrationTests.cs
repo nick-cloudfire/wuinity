@@ -21,6 +21,7 @@ namespace PREACT.Tests
             runner.Add("seam: a run leaves the scenario exactly as it was loaded (C4)", RunLeavesScenarioAlone);
             runner.Add("seam: the run's fire weather codes are the archive's derivation, at local noon", FireWeatherCodes);
             runner.Add("seam: an imported fire resolves backslash paths and keeps rectangular cells", ImportedFireGrid);
+            runner.Add("seam: a new scenario's response curve survives its first save (no destinations or groups yet)", NewScenarioKeepsCurve);
         }
 
         private static bool Windows => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
@@ -219,6 +220,34 @@ namespace PREACT.Tests
             //used to advance them at 12:00 of the simulation clock.
             Assert.Near(daily[12], daily[19], 1e-9, "the daily FFMC is unchanged from 12:00 to 19:00");
             Assert.True(System.Math.Abs(daily[20] - daily[19]) > 1e-6, "it moves at 20:00, local noon");
+        }
+
+        /// <summary>
+        /// A scenario as the New scenario dialog writes it: curves and demographics, but no destinations or groups
+        /// yet, and no [Evacuation] header (the writer omits it, since it holds nothing current). The parser used to
+        /// return before reading the curves in that case, so the first save dropped them.
+        /// </summary>
+        private static void NewScenarioKeepsCurve()
+        {
+            using var s = new FormatTests.Scenario();
+            var lines = new List<string>();
+            string section = null;
+            foreach (string line in FormatTests.Scenario.Lines)
+            {
+                if (line.StartsWith("[")) section = line;
+                if (section == "[Destination]" || section == "[EvacuationGroup]") continue;
+                lines.Add(line);
+            }
+            Assert.True(!lines.Contains("[Evacuation]"), "no [Evacuation] header, as the writer leaves it out");
+
+            PREACTInput input = s.Load(lines, out bool _);
+            Assert.Equal(1, input.Evacuation.ResponseCurves.Count, "the curve is read");
+            Assert.True(PREACTInput.Requirements.Any(r => r.Critical && r.Key == "EvacuationGroup"),
+                "what is missing is named: the groups");
+
+            PREACTInput again = s.Load(PREACTInputWriter.Write(input), out bool _);
+            Assert.Equal(1, again.Evacuation.ResponseCurves.Count, "and still there after a save and reload");
+            Assert.Equal(1, again.Population.Demographics.Count, "as are the demographics");
         }
 
         private static void ImportedFireGrid()

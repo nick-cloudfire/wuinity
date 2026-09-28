@@ -422,20 +422,14 @@ namespace PREACT.Input
                 //evacuation
                 ReadSection(nameof(Evacuation), false, () =>
                 {
-                    bool needed = newInput.PedestrianModule.Enabled || newInput.TrafficModule.Enabled;
-                    int lineindex = -1;
-                    if (!headerLineIndices.TryGetValue(nameof(Evacuation), out lineindex))
+                    //Destinations, response curves and groups are their own sections, and the [Evacuation] header
+                    //holds nothing current - the writer omits it - so its absence is not a problem, and the
+                    //lists are read either way; Parse names whichever of them a module needs and lacks. Returning
+                    //early here when there were no destinations or groups yet (every new scenario) skipped the
+                    //response curves too, so the first save deleted the standard curve a new scenario starts with.
+                    if (!headerLineIndices.TryGetValue(nameof(Evacuation), out int lineindex))
                     {
                         lineindex = -1;
-                        //Destinations, response curves and groups are their own sections; the [Evacuation]
-                        //header itself holds nothing any more, so its absence only matters when there is
-                        //nothing to read at all.
-                        if (needed && destinationLineIndices.Count == 0 && groupLineIndices.Count == 0)
-                        {
-                            Engine.Message(null, Engine.LogType.InputError, nameof(Evacuation) + " header not found but pedestrian and/or traffic modules are enabled." + pleaseCheckInput);
-                            AddRequirement("[Evacuation]", "Required by the pedestrian/traffic modules, and not in the file.", true);
-                            return false;
-                        }
                     }
                     newInput.Evacuation.Parse(inputLines, lineindex, newInput.Simulation, newInput.Population, newInput.PedestrianModule, newInput.TrafficModule, destinationLineIndices, responseLineIndices, groupLineIndices, rootFolder, out bool ok);
                     return ok;
