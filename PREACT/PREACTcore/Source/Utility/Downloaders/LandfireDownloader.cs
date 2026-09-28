@@ -104,63 +104,86 @@ namespace PREACT.Tools
             throw new Exception("Job submission failed.");
         }
 
+        /// <summary>
+        /// Waits for the LFPS job and downloads its result. Throws when the job fails, when the status cannot be
+        /// had <see cref="MAX_RETRIES"/> times in a row, or when it takes longer than <see cref="MAX_TOTAL_MINUTES"/>.
+        /// </summary>
+        /// <remarks>
+        /// Any error used to be logged and swallowed, the job's own failure included, so the caller saw a
+        /// download that finished without writing anything and could only say that no raster appeared.
+        /// </remarks>
         static async Task PollUntilCompleteAsync(string jobId, string downloadFolder)
         {
             string statusUrl = $"https://lfps.usgs.gov/api/job/status?JobId={jobId}";
             string outputZip = Path.Combine(downloadFolder, $"{jobId}.zip");
 
             DateTime start = DateTime.UtcNow;
+            int consecutiveErrors = 0;
 
             while (true)
             {
                 if ((DateTime.UtcNow - start).TotalMinutes > MAX_TOTAL_MINUTES)
                 {
-                    throw new TimeoutException("LFPS job exceeded max runtime.");
-                }                    
+                    throw new TimeoutException($"The LANDFIRE (LFPS) job {jobId} did not finish within {MAX_TOTAL_MINUTES} minutes.");
+                }
 
+                string json;
                 try
                 {
                     var response = await client.GetAsync(statusUrl);
                     response.EnsureSuccessStatusCode();
-
-                    string json = await response.Content.ReadAsStringAsync();
-                    using var doc = JsonDocument.Parse(json);
-
-                    string status;
-                    if (doc.RootElement.TryGetProperty("jobStatus", out JsonElement js))
-                    {
-                        status = js.GetString();
-                    }
-                    else if (doc.RootElement.TryGetProperty("status", out JsonElement s))
-                    {
-                        status = s.GetString();
-                    }
-                    else
-                    {
-                        throw new Exception(
-                            "LFPS status response contains neither 'jobStatus' nor 'status'.\n" + json);
-                    }
-
-                    int queue = doc.RootElement.GetProperty("queuePosition").GetInt32();
-                    Engine.Message(null, Engine.LogType.Log, $"Job status: {status}, queue position: {queue}");
-
-                    if (status == "Succeeded")
-                    {
-                        string downloadUrl = doc.RootElement.GetProperty("outputFile").GetString();
-
-                        await DownloadWithRetryAsync(downloadUrl, outputZip);
-                        Engine.Message(null, Engine.LogType.Log, $"Landscape downloaded: {outputZip}");
-                        return;
-                    }
-
-                    if (status == "Failed")
-                    {
-                        throw new Exception("LFPS job failed.");
-                    }
+                    json = await response.Content.ReadAsStringAsync();
+                    consecutiveErrors = 0;
                 }
                 catch (Exception ex)
                 {
-                    Engine.Message(null, Engine.LogType.Log, $"Status check error: {ex.Message}");
+                    //The network or the service having a moment is worth waiting out; not for ever.
+                    if (++consecutiveErrors >= MAX_RETRIES)
+                    {
+                        throw new Exception($"Could not get the status of LANDFIRE (LFPS) job {jobId} ({MAX_RETRIES} tries): {ex.Message}", ex);
+                    }
+                    Engine.Message(null, Engine.LogType.Log, $"Status check error: {ex.Message}; trying again.");
+                    await Task.Delay(TimeSpan.FromSeconds(POLL_SECONDS));
+                    continue;
+                }
+
+                string status;
+                string downloadUrl = null;
+                using (JsonDocument doc = JsonDocument.Parse(json))
+                {
+                    JsonElement root = doc.RootElement;
+                    if (root.TryGetProperty("jobStatus", out JsonElement js))
+                    {
+                        status = js.GetString();
+                    }
+                    else if (root.TryGetProperty("status", out JsonElement st))
+                    {
+                        status = st.GetString();
+                    }
+                    else
+                    {
+                        throw new Exception("The LANDFIRE (LFPS) status response names no status: " + json);
+                    }
+
+                    string queue = root.TryGetProperty("queuePosition", out JsonElement q) ? q.ToString() : "?";
+                    Engine.Message(null, Engine.LogType.Log, $"Job status: {status}, queue position: {queue}");
+
+                    if (status == "Failed")
+                    {
+                        string why = root.TryGetProperty("message", out JsonElement m) ? m.ToString() : json;
+                        throw new Exception($"The LANDFIRE (LFPS) job {jobId} failed: {why}");
+                    }
+
+                    if (status == "Succeeded")
+                    {
+                        downloadUrl = root.GetProperty("outputFile").GetString();
+                    }
+                }
+
+                if (downloadUrl != null)
+                {
+                    await DownloadWithRetryAsync(downloadUrl, outputZip);
+                    Engine.Message(null, Engine.LogType.Log, $"Landscape downloaded: {outputZip}");
                     return;
                 }
 

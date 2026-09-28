@@ -75,8 +75,10 @@ namespace PREACT.Utility
         /// affected.
         /// </summary>
         /// <remarks>
-        /// Contract C3. The GUI's stop/close is expected to call this; ELMFIRE otherwise runs to completion in
-        /// the background after the simulation that wanted it has gone.
+        /// Contract C3. <see cref="Engine.CloseSimulations"/> calls this - the GUI's Stop and every way of quitting
+        /// go through it - because ELMFIRE otherwise runs to completion in the background after the simulation that
+        /// wanted it has gone. A run cancelled before its process started is caught too: see
+        /// <see cref="ElmfireProcesses.Register(System.Diagnostics.Process, long)"/>.
         /// </remarks>
         public static void CancelAll()
         {
