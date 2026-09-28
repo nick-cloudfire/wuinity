@@ -718,7 +718,10 @@ namespace Assets.WUInity.GUI.DearIMGUI
             {
                 StopRunningWorkForQuit();
                 var clock = System.Diagnostics.Stopwatch.StartNew();
-                //A data step's completion is posted to the main thread, which is this one: run it while waiting.
+                //A data step's completion is posted to the main thread, which is this one: run it while waiting. A run is
+                //waited for on its worker (EditingLocked counts SimulationWorking, not SimulationActive): the run's task
+                //completes in a continuation for Unity's player loop, which this loop blocks, so waiting for the task
+                //used to sit out the full 20 s after the worker had stopped and then refuse to save (review R1).
                 while (EditingLocked && clock.Elapsed.TotalSeconds < 20.0)
                 {
                     System.Threading.Thread.Sleep(100);
@@ -733,9 +736,10 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             if (EditingLocked)
             {
+                string still = SimulationWorking ? "a simulation is still running" : BusyReason;
                 UnityEditor.EditorUtility.DisplayDialog("Unsaved changes are lost",
                     $"\"{DisplayName}\" has unsaved changes ({DirtySummary}), and they cannot be saved: after 20 s of "
-                    + $"stopping, {BusyReason}. File > Quit, which waits for it, is the way to leave with them saved.", "OK");
+                    + $"stopping, {still}. File > Quit, which waits for it, is the way to leave with them saved.", "OK");
                 return;
             }
 
@@ -822,6 +826,16 @@ namespace Assets.WUInity.GUI.DearIMGUI
             get { return PreactGUI.WUInity != null && PreactGUI.WUInity.IsSimulationActive; }
         }
 
+        /// <summary>
+        /// The engine's worker is still running a GUI-started simulation: the part of <see cref="SimulationActive"/> that
+        /// reads the scenario. Turns false on the worker's own thread, so it can be waited on from the main thread,
+        /// which <see cref="SimulationActive"/> cannot (its task completes only in the next frame).
+        /// </summary>
+        public static bool SimulationWorking
+        {
+            get { return PreactGUI.WUInity != null && PreactGUI.WUInity.IsSimulationWorking; }
+        }
+
         /// <summary>A data-preparation step or chain is running on its worker.</summary>
         public static bool StepActive { get => ScenarioDataSteps.Busy; }
 
@@ -833,9 +847,11 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
         /// <summary>
         /// Something is running that reads or writes the scenario in memory, so it must not be edited. The
-        /// campaign is not in this list: it runs as its own process on the .wui on disk.
+        /// campaign is not in this list: it runs as its own process on the .wui on disk. A run counts while its
+        /// worker runs (<see cref="SimulationWorking"/>), not until its task has completed, which in a blocked main
+        /// thread it never does.
         /// </summary>
-        public static bool EditingLocked { get => SimulationActive || StepActive; }
+        public static bool EditingLocked { get => SimulationWorking || StepActive; }
 
         /// <summary>What is running, as a phrase ("a simulation is running"), or null when nothing is.</summary>
         public static string BusyReason

@@ -372,6 +372,14 @@ namespace WUInity
         /// <summary>A run started from the GUI has not finished yet, however it is going to finish.</summary>
         public bool IsSimulationActive { get => _runTask != null && !_runTask.IsCompleted; }
 
+        /// <summary>
+        /// The engine's worker is still running the simulation - the part of <see cref="IsSimulationActive"/> that reads
+        /// the scenario. Set and cleared by the worker, so it also turns false while the main thread is blocked, when the
+        /// run's task cannot complete (its completion waits for Unity's player loop); see
+        /// <see cref="Engine.IsRunningSimulations"/>.
+        /// </summary>
+        public bool IsSimulationWorking { get => IsSimulationActive && _engine != null && _engine.IsRunningSimulations; }
+
         /// <summary>Whether the last GUI run ended in an error, or null when there has been none.</summary>
         public bool? LastRunFailed { get; private set; }
 
