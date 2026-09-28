@@ -29,8 +29,10 @@ A complete example is [`Examples/NFDRS4_Behave/Roxborough/Roxborough_no_smoke.wu
   new path.
 - Each section is read on its own: a problem in one is reported against that section and the rest of the file
   is still read.
-- **A key or section the parser does not know** is ignored without a message, and a GUI save drops it. Check
-  the spelling against the tables below.
+- **A key or section the parser does not know**, a retired one, and a line that is not `Key=Value` are reported
+  once when the file is read — with the line, how many times it occurs, and the closest known name when there is
+  one (`[Simulation] Deltatime (line 5) is not a key of [Simulation] - did you mean DeltaTime?`). They are
+  ignored, never critical, and not written when the scenario is saved. Keys are case-sensitive.
 
 ## Required, optional and critical
 
@@ -294,7 +296,8 @@ How ELMFIRE is run. Every key is optional: a scenario that only says `Module=ELM
 the repository on a case in an `elmfire/` folder beside the `.wui`. What has to exist (the executable, the case,
 its rasters) is checked when the run starts. [ELMFIRE cases](elmfire-cases.md) describes the case this builds.
 The section is read whatever the fire module is, because it also describes the case that Data > Build fire case,
-`PREACTcli build-case` and a campaign build.
+`PREACTcli build-case` and a campaign build. A value that cannot be read (`SimulationTstopHours=24h`) is reported
+and keeps its default.
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
@@ -349,7 +352,7 @@ optional; without the section, ELMFIRE's defaults apply except where the case ma
 correct one. Edit them on the Fire > Fire behaviour (namelist) page, which groups them as ELMFIRE does and
 disables what the current choices make inert; Fire > Preview namelist shows the file they produce. The Fire model
 settings page's **Read this case into the editor** fills them from a case's existing namelist. A value that
-cannot be read is critical.
+cannot be read is reported on the checklist and keeps its default; it does not stop the run.
 
 Groups covered: `&INPUTS`, `&OUTPUTS`, `&SIMULATOR`, `&TIME_CONTROL`, `&MONTE_CARLO`, `&SPOTTING`,
 `&SUPPRESSION`, `&SMOKE`, `&CALIBRATION`, `&WUI`, `&MISCELLANEOUS`. Frequently changed:
@@ -425,10 +428,17 @@ Tolerated when read, reported once, and not written again:
 | `[WUIShow]` | the whole section | The streaming output was removed. |
 | `[Evacuation]` | `UseTriggerBufferEvacuation`, `TriggerBufferFile`, `EvacuationOrderStart` | Never read by the engine. Use each group's `EvacuationOrderDateTime`. |
 | `[Weather]` | `DesiredLatLon` | Read but never used; ignored. |
+| `[Weather]` | `HasWeatherAnchor` | Only restated whether `WeatherAnchorDateTime` is set. |
 | `[TrafficModule]` | `VisibilityAffectsSpeed` | Ignored; smoke acts through `[SUMO] SmokeAlpha/SmokeBeta`. |
+| `[SUMO]` | `UTMoffset` | Ignored; the SUMO network carries its own offset. |
 | `[kPERIL]` | `WindBand` | Ignored; the band is chosen per cell from the arrival time. |
 | `[kPERIL]` | `MidflameWindspeed`, `CalculateROSFromBehave`, `InitialFuelMoistureFile`, `FuelModelsFile` | Ignored; the rate of spread always comes from the fire module. |
 | `[ELMFIRE]` | `SimulationTstopSeconds` | Read (÷ 3600) when `SimulationTstopHours` is absent; the next save writes hours. |
+| `[ELMFIRE]` | `IgnitionPointsFile` | The CSV is not read; ignition points are `[IgnitionPoint]` sections (Fire > Ignition points). |
+| `[SimpleWildfireCA]`, `[ElmClone]`, `[CellParticleHybrid]`, `[FireCell]` | the whole section | The cell-based fire models were removed; use `ELMFIRE`, or `AscImport` for a fire computed elsewhere. |
+| `[Behave]`, `[Rothermel]` | the whole section | The rate of spread always comes from the fire module. |
+| `[AdvectDiffuse3D]`, `[AdvectDiffuseMixingLayer]` | the whole section | Removed; `GlobalSmoke` is the smoke module. |
+| `[CityFlow]`, `[MacroTrafficSim]` | the whole section | Removed; `SUMO` is the traffic module. |
 | `[WildfireModule]` | `Module=ElmClone` / `CellSpread` | The cell-based model is gone; choose `ELMFIRE` or `AscImport`. |
 
 ---

@@ -33,6 +33,74 @@ namespace PREACT.Tests
             runner.Add("format: a [WildfireModule] without Enabled keeps its ignition points, painting and [ELMFIRE]", MissingEnabledKeepsFire);
             runner.Add("format: a module's sections survive a save when it is off, another option is chosen, or its header is missing", ModuleSectionsKept);
             runner.Add("format: only a selected imported fire decides the simulation's UTM zone", StaleAscImportDoesNotPin);
+            runner.Add("format: what no parser reads is reported once, and nothing in it stops the run", IgnoredContentReported);
+        }
+
+        /// <summary>
+        /// docs.md 3.6: an unknown key or section was dropped without a word, so a typo in a hand edit simply did not
+        /// happen and the next GUI save deleted it. Unreadable [ELMFIRE] values were dropped the same way, and an
+        /// unreadable [ElmfireNamelist] value was critical although it has a default (docs.md 3.5).
+        /// </summary>
+        private static void IgnoredContentReported()
+        {
+            using var s = new Scenario();
+            s.Load(Scenario.Lines, out bool _);
+            Assert.True(!PREACTInput.Requirements.Any(r => r.Message.Contains("saving the scenario does not write it")),
+                "the base scenario has nothing ignored");
+
+            var lines = new List<string>(Scenario.Lines);
+            lines.Insert(0, "junk before any section");
+            lines.Insert(lines.IndexOf("DeltaTime=1") + 1, "Deltatime=2");
+            lines.Insert(lines.IndexOf("CullOutsideGroups=false") + 1, "a line with no equals sign");
+            foreach (int at in lines.Select((l, i) => l == "Type=Exit" ? i : -1).Where(i => i >= 0).Reverse().ToList())
+            {
+                lines.Insert(at + 1, "Colour=1,0,0");
+            }
+            lines.AddRange(new[]
+            {
+                "", "[Destinaton]", "Name=typo",
+                "", "[Weather]", "DesiredLatLon=38,23",
+                "", "[Behave]", "FuelModelsFile=x.csv",
+                "", "[WildfireModule]", "Enabled=true", "Module=ELMFIRE",
+                "", "[ELMFIRE]", "SimulationTstopHours=24h",
+                "", "[ElmfireNamelist]", "SEEED=5", "LH_MOISTURE_CONTENT=6O",
+            });
+
+            Program.Log.Take();
+            PREACTInput input = s.Load(lines, out bool runnable);
+            List<string> log = Program.Log.Take();
+            Assert.True(runnable, "nothing ignored or unreadable stops the run; critical: " + Critical());
+
+            PREACTInput.InputRequirement Item(string section, string key)
+            {
+                PREACTInput.InputRequirement r = PREACTInput.Requirements.FirstOrDefault(x => x.Section == section && x.Key == key);
+                Assert.True(r != null, $"[{section}] {key} is on the checklist: " + string.Join(" | ", PREACTInput.Requirements.Select(x => x.Section + "/" + x.Key)));
+                Assert.True(!r.Critical, $"[{section}] {key} is not critical");
+                return r;
+            }
+
+            Assert.True(Item("Simulation", "Deltatime").Message.Contains("did you mean DeltaTime?"), "a key differing in case is named");
+            Assert.True(Item("Simulation", "Deltatime").Message.Contains("saving the scenario does not write it"), "and the consequence said");
+            Assert.True(Item("Destinaton", "[Destinaton]").Message.Contains("did you mean [Destination]?"), "a mistyped section is named");
+            string colour = Item("Destination", "Colour").Message;
+            Assert.True(colour.Contains("and 1 more"), "a key in both destinations is one item: " + colour);
+            Assert.Equal(1, log.Count(m => m.Contains("[Destination] Colour")), "and one log line");
+            Assert.True(Item("Population", "line " + (lines.IndexOf("a line with no equals sign") + 1)).Message.Contains("not a Key=Value line"), "a stray line");
+            Assert.True(Item("Scenario", "line 1").Message.Contains("before the first [section]"), "a line before any section");
+            Assert.True(Item("Weather", "DesiredLatLon").Message.Contains("no longer used"), "a retired key says so");
+            Assert.True(Item("Behave", "[Behave]").Message.Contains("rate of spread now always comes from the fire module"), "a removed module's section");
+            Assert.True(Item("ElmfireNamelist", "SEEED").Message.Contains("did you mean SEED?"), "a mistyped namelist key");
+            Assert.True(Item(ElmfireInput.NamelistSection, "LH_MOISTURE_CONTENT").Message.Contains("60 is used instead"), "an unreadable namelist value keeps its default");
+            Assert.True(Item("ELMFIRE", "SimulationTstopHours").Message.Contains("8 is used instead"), "an unreadable [ELMFIRE] value is said, not dropped");
+            Assert.Near(8.0, input.WildfireModule.ElmfireInput.SimulationTstopHours, 1e-9, "and the default is what is used");
+
+            //None of it is written, so the saved scenario reads clean.
+            string[] saved = PREACTInputWriter.Write(input);
+            Assert.True(!saved.Any(l => l.StartsWith("Deltatime") || l.StartsWith("Colour") || l == "[Destinaton]" || l.StartsWith("SEEED")),
+                "ignored content is not written");
+            PREACTInput.LoadFromLines(saved, s.Folder, out bool _);
+            Assert.True(!PREACTInput.Requirements.Any(r => r.Message.Contains("saving the scenario does not write it")),
+                "the saved scenario has nothing ignored: " + string.Join(" | ", PREACTInput.Requirements.Where(r => r.Message.Contains("does not write")).Select(r => r.Message)));
         }
 
         private static List<string> FireSections(params string[] wildfireModuleKeys)

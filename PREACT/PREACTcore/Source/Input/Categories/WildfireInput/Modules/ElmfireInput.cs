@@ -397,6 +397,8 @@ namespace PREACT.Input
 
             if (headerLineIndex != null && headerLineIndex.TryGetValue(NamelistSection, out int namelistIndex))
             {
+                //So what the namelist reports is filed under its own section, not [ELMFIRE].
+                PREACTInput.ReadingInputMessage(NamelistSection);
                 newInput.Namelist = ElmfireNamelistInput.Parse(inputLines, namelistIndex);
             }
 
@@ -405,9 +407,10 @@ namespace PREACT.Input
 
         public static ElmfireInput Parse(string[] inputLines, int startIndex, string rootFolder, out bool success)
         {
-            //Nothing here is critical. Every value has a usable default, and what actually has to exist -
-            //the executable, the case, its rasters - cannot be judged from the file: it is checked when the
-            //module is created, where the paths have been resolved and the reason can be specific.
+            //Nothing here is critical. Every value has a usable default - a value that cannot be read is said and
+            //the default kept, as everywhere else in the format - and what actually has to exist - the executable,
+            //the case, its rasters - cannot be judged from the file: it is checked when the module is created, where
+            //the paths have been resolved and the reason can be specific.
             success = true;
 
             var newInput = new ElmfireInput();
@@ -458,10 +461,17 @@ namespace PREACT.Input
                 layer.Set(newInput, path);
             }
 
-            if (inputToParse.TryGetValue(nameof(FuelModelStandard), out userInput)
-                && System.Enum.TryParse(userInput, true, out FuelModelStandards parsedStandard))
+            if (inputToParse.TryGetValue(nameof(FuelModelStandard), out userInput))
             {
-                newInput.FuelModelStandard = parsedStandard;
+                if (System.Enum.TryParse(userInput, true, out FuelModelStandards parsedStandard)
+                    && System.Enum.IsDefined(typeof(FuelModelStandards), parsedStandard))
+                {
+                    newInput.FuelModelStandard = parsedStandard;
+                }
+                else
+                {
+                    PREACTInput.CouldNotInterpretInputMessage(nameof(FuelModelStandard), userInput, false, newInput.FuelModelStandard.ToString());
+                }
             }
 
             ReadDouble(inputToParse, nameof(SimulationTstopHours), ref newInput.SimulationTstopHours);
@@ -519,21 +529,39 @@ namespace PREACT.Input
             }
         }
 
+        //An unreadable value keeps the default and says so; it used to be dropped without a word, so a scenario whose
+        //SimulationTstopHours=24h burned for the default 8 hours.
         private static void ReadDouble(Dictionary<string, string> input, string key, ref double field)
         {
-            if (input.TryGetValue(key, out string userInput)
-                && double.TryParse(userInput, System.Globalization.NumberStyles.Float,
-                    System.Globalization.CultureInfo.InvariantCulture, out double parsed))
+            if (!input.TryGetValue(key, out string userInput))
+            {
+                return;
+            }
+
+            if (InputParse.Double(userInput, out double parsed))
             {
                 field = parsed;
+            }
+            else
+            {
+                PREACTInput.CouldNotInterpretInputMessage(key, userInput, false, InputParse.Format(field));
             }
         }
 
         private static void ReadBool(Dictionary<string, string> input, string key, ref bool field)
         {
-            if (input.TryGetValue(key, out string userInput) && bool.TryParse(userInput, out bool parsed))
+            if (!input.TryGetValue(key, out string userInput))
+            {
+                return;
+            }
+
+            if (InputParse.Bool(userInput, out bool parsed))
             {
                 field = parsed;
+            }
+            else
+            {
+                PREACTInput.CouldNotInterpretInputMessage(key, userInput, false, field ? "true" : "false");
             }
         }
     }

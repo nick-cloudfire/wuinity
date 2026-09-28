@@ -17,12 +17,6 @@ namespace PREACT.Input
         public Dictionary<string, ResponseCurve> ResponseCurves = new Dictionary<string, ResponseCurve>(5);        
         public Dictionary<string, EvacuationGroupInput> EvacuationGroupInputs = new Dictionary<string, EvacuationGroupInput>(5);
 
-        /// <summary>
-        /// <c>[Evacuation]</c> keys that were once part of the format and are now only tolerated on read.
-        /// <c>UseTriggerBufferEvacuation</c>/<c>TriggerBufferFile</c> were never consumed by the engine.
-        /// </summary>
-        private static readonly string[] RetiredKeys = { "UseTriggerBufferEvacuation", "TriggerBufferFile", "EvacuationOrderStart" };
-
         public EvacuationInput()
         {
         }
@@ -44,16 +38,12 @@ namespace PREACT.Input
             bool traffic = trafficInput.Enabled;
             success = true;
 
+            //The header holds no current key. Read all the same, so the scenario check knows it was: its retired
+            //keys (UseTriggerBufferEvacuation, TriggerBufferFile, EvacuationOrderStart - never consumed by the
+            //engine) are reported there with every other key no parser reads.
             if (startIndex >= 0)
             {
-                Dictionary<string, string> inputToParse = PREACTInput.GetHeaderInput(inputLines, startIndex);
-                foreach (string retired in RetiredKeys)
-                {
-                    if (inputToParse.ContainsKey(retired))
-                    {
-                        PREACTInput.InputWarning(retired, "is no longer used and is ignored; it is not written when the scenario is saved.");
-                    }
-                }
+                PREACTInput.GetHeaderInput(inputLines, startIndex);
             }
 
             using (PREACTInput.SoftRequirements(!traffic))

@@ -140,6 +140,11 @@ longer downloads a year of weather on every run.
   selected (the `[ELMFIRE]` of a scenario switched to `AscImport`, a `[GlobalSmoke]` with smoke set to `None`), and a
   module's sections are read even when its own header is missing. `[ELMFIRE]` is read whatever the fire module,
   so `build-case` and a campaign use the scenario's case settings, not the defaults, when the fire is off.
+- **Nothing in a `.wui` is ignored without a word.** An unknown key or section, a retired one and a line that is
+  not `Key=Value` are reported once when the scenario is read, with the closest known name, and are not written on
+  save; they used to vanish silently. An unreadable `[ELMFIRE]` value (it was dropped silently) and an unreadable
+  `[ElmfireNamelist]` value (it was critical) are both reported and keep their default. The examples no longer
+  carry the retired `DesiredLatLon` and `VisibilityAffectsSpeed`.
 - A run stops on its first error, with the modules closed, instead of carrying on and logging every step.
 - A run whose cars mostly cannot be put into SUMO stops with an error instead of evacuating nobody.
 - A case build is refused while a campaign of the same scenario runs.

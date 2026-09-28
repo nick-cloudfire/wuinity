@@ -13,7 +13,6 @@ ZoomLevel=13
 
 [Weather]
 WeatherFile=Lytton_weather.csv
-DesiredLatLon=50.228701345102586, -121.54306201686576
 
 [Population]
 PopulationFile=population/worldpop_population_clipped.csv
@@ -83,7 +82,6 @@ WalkingDistanceModifier=1.0
 [TrafficModule]
 Enabled=true
 Module=SUMO
-VisibilityAffectsSpeed=false
 
 [SUMO]
 ConfigurationFile=sumo/osm.sumocfg

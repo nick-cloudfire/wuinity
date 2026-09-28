@@ -36,7 +36,8 @@ Details: [Building](building.md).
 | `<section> gives <key> more than once; the first value (…) is used and the one on line N (…) is ignored.` | Delete one of them. A GUI save keeps the first. |
 | `[<section>] is ignored. … It will not be written when the scenario is saved.` | A retired section; see [Retired keys and sections](input-file-format.md#retired-keys-and-sections). |
 | `Refers to "<name>", which does not exist.` | A group names a destination, response curve or demographics that no section defines. Names are case-sensitive. |
-| A key you added seems to have no effect | The parser ignores keys and sections it does not know, without a message, and a GUI save drops them. Check the spelling against [the input format](input-file-format.md). |
+| `[<section>] <key> (line N) is not a key of [<section>] - did you mean <Key>? It is ignored, and saving the scenario does not write it.` | A misspelt key (keys are case-sensitive) or one from another section. Correct it by hand; a GUI save drops it. The same message names an unknown `[section]`, and a line that is not `Key=Value`. |
+| `[<section>] <key> (line N) is no longer used: … It is ignored, and saving the scenario does not write it.` | A retired key; see [Retired keys and sections](input-file-format.md#retired-keys-and-sections). Delete it, or let the next save drop it. |
 | `PREACT.exe`: `The scenario did not load as runnable; see the items listed above.` (exit 1) | Fix the critical items listed above it. The GUI's Scenario > Check scenario gives the same list, filed under the workflow's steps. |
 | A file named in the scenario is found in another folder | A file that has moved is looked for by name nearby; the scenario check says which copy it used, and a save records the new path. |
 

@@ -334,6 +334,31 @@ namespace PREACT.Input
         }
 
         /// <summary>
+        /// The keys a section of type <paramref name="t"/> is written with: the same members <see cref="Section"/>
+        /// writes, whatever their values.
+        /// </summary>
+        /// <remarks>
+        /// The reader's list of known keys (<see cref="PREACTInput"/> reports every other key as ignored), so that
+        /// what can be read and what is written are one list. The parsers look their keys up by
+        /// <c>nameof(member)</c> of the same members.
+        /// </remarks>
+        internal static IEnumerable<string> FileKeys(Type t)
+        {
+            foreach (FieldInfo f in t.GetFields(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (Skip(f.Name, f.FieldType) || f.IsDefined(typeof(NotInFileAttribute), true)) continue;
+                yield return f.Name;
+            }
+
+            foreach (PropertyInfo p in t.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (!p.CanRead || !p.CanWrite || p.GetIndexParameters().Length > 0) continue;
+                if (Skip(p.Name, p.PropertyType) || p.IsDefined(typeof(NotInFileAttribute), true)) continue;
+                yield return p.Name;
+            }
+        }
+
+        /// <summary>
         /// Members that are not part of the file: derived runtime state, the root folder (implied
         /// by where the file is), and anything not expressible as a single value.
         /// </summary>
