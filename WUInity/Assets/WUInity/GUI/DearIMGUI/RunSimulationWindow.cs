@@ -53,6 +53,13 @@ namespace Assets.WUInity.GUI.DearIMGUI
         {
             if (_subscribed) return;
             _subscribed = true;
+            //The last run's result is the previous scenario's once another is opened.
+            ScenarioSession.ScenarioChanged += () =>
+            {
+                _lastResult = string.Empty;
+                _lastRefusal.Clear();
+                _runAnyway = false;
+            };
             if (PreactGUI.WUInity != null)
             {
                 PreactGUI.WUInity.RunFinished += OnRunFinished;

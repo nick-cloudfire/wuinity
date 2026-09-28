@@ -34,6 +34,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
         private static readonly List<int> _warningOrWorse = new List<int>();
         private static readonly List<int> _errors = new List<int>();
         private static int _indexed;
+        private static int _indexedClearCount;
 
         public static bool IsOpen { get => _open; }
 
@@ -59,9 +60,11 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
         private static void IndexNewLines(IReadOnlyList<string> messages)
         {
-            //Cleared underneath us.
-            if (messages.Count < _indexed)
+            //Cleared underneath us - by this window's Clear or View > Clear console, possibly with new lines since,
+            //so the count alone cannot tell.
+            if (messages.Count < _indexed || _indexedClearCount != PreactGUI.ClearCount)
             {
+                _indexedClearCount = PreactGUI.ClearCount;
                 _indexed = 0;
                 _warningOrWorse.Clear();
                 _errors.Clear();
@@ -123,6 +126,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
             {
                 PreactGUI.ClearMessages();
                 _status = null;
+                //Re-indexed at once: the filter below would otherwise read indices into the list just emptied.
+                IndexNewLines(messages);
             }
 
             ImGui.SameLine();

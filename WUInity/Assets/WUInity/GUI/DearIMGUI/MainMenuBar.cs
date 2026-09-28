@@ -473,9 +473,11 @@ namespace Assets.WUInity.GUI.DearIMGUI
         {
             string text;
             Vector4 colour;
-            if (ScenarioSession.IsBusy)
+            //Read once: the campaign's state is written from its output thread, so the reason can go between two reads.
+            string busy = ScenarioSession.BusyReason;
+            if (!string.IsNullOrEmpty(busy))
             {
-                text = char.ToUpperInvariant(ScenarioSession.BusyReason[0]) + ScenarioSession.BusyReason.Substring(1);
+                text = char.ToUpperInvariant(busy[0]) + busy.Substring(1);
                 colour = new Vector4(0.35f, 0.6f, 0.95f, 1f);
             }
             else if (ScenarioSession.HasInput && ScenarioSession.IsDirty)

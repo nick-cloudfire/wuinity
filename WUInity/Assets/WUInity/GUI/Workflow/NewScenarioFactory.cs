@@ -44,8 +44,11 @@ namespace WUInity.Workflow
     /// </remarks>
     public static class NewScenarioFactory
     {
-        /// <summary>What is wrong with the settings, or null when a scenario can be made from them.</summary>
-        public static string Validate(NewScenarioSettings s)
+        /// <summary>
+        /// What is wrong with the settings, or null when a scenario can be made from them. <paramref name="exists"/>
+        /// answers whether a file is there (the GUI passes its cached probe, since the dialog asks every frame).
+        /// </summary>
+        public static string Validate(NewScenarioSettings s, Func<string, bool> exists = null)
         {
             if (string.IsNullOrWhiteSpace(s.Folder)) return "Choose a folder for the scenario.";
             if (string.IsNullOrWhiteSpace(s.Name)) return "Give the scenario a name: every file prepared for it is named after it.";
@@ -55,7 +58,7 @@ namespace WUInity.Workflow
             if (s.UpperRightLatLon.x <= s.LowerLeftLatLon.x || s.UpperRightLatLon.y <= s.LowerLeftLatLon.y)
                 return "The area of interest has no size: its north-east corner must be north and east of its south-west one.";
             if (s.End <= s.Start) return "The simulation has to end after it starts.";
-            if (File.Exists(ScenarioPath(s))) return ScenarioPath(s) + " already exists; open it instead, or choose another name.";
+            if ((exists ?? File.Exists)(ScenarioPath(s))) return ScenarioPath(s) + " already exists; open it instead, or choose another name.";
             return null;
         }
 

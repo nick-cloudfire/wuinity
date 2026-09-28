@@ -59,6 +59,12 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                         PreactGUI.CloseWindow(Draw);
                     }
                 };
+                //Groups added, removed or renamed while this is open: the order the painter's indices refer to is
+                //taken again, or a mask would be saved for the wrong group.
+                ScenarioSession.Edited += () =>
+                {
+                    if (_isOpen && !SameGroups()) RebuildOrder();
+                };
             }
 
             _inputs = inputs;
@@ -113,6 +119,18 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             PushGroupsToPainter();
         }
 
+        /// <summary>Whether the snapshot still holds exactly the scenario's groups, under the same names.</summary>
+        private static bool SameGroups()
+        {
+            if (_inputs == null) return _ordered.Count == 0;
+            if (_inputs.Count != _ordered.Count) return false;
+            foreach (EvacuationGroupInput g in _ordered)
+            {
+                if (!_inputs.TryGetValue(g.Name, out EvacuationGroupInput current) || current != g) return false;
+            }
+            return true;
+        }
+
         private static void PushGroupsToPainter()
         {
             var names = new string[_ordered.Count];
@@ -155,10 +173,13 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             ImGui.SeparatorText("Group being painted");
             for (int i = 0; i < _ordered.Count; ++i)
             {
+                //By index: a group's name is only a label, and one containing "##" or named like the Erase item
+                //would otherwise share its ID.
+                ImGui.PushID(i);
                 PREACTColor c = _ordered[i].Color;
                 ImGui.TextColored(new Vector4(c.r, c.g, c.b, 1f), "@@@");
                 ImGui.SameLine();
-                if (ImGui.RadioButton(_ordered[i].Name, _selected == i))
+                if (ImGui.RadioButton(_ordered[i].Name.Replace("#", " ") + "###group", _selected == i))
                 {
                     _selected = i;
                     if (Painting)
@@ -166,11 +187,12 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                         SelectForPainting();
                     }
                 }
+                ImGui.PopID();
             }
 
             //Erasing needs its own selection: with exclusive ownership there is otherwise no way to
             //take a cell out of every group again.
-            if (ImGui.RadioButton("Erase (no group)", _selected == _ordered.Count))
+            if (ImGui.RadioButton("Erase (no group)###erasegroup", _selected == _ordered.Count))
             {
                 _selected = _ordered.Count;
                 if (Painting)
@@ -353,32 +375,35 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                 return;
             }
 
-            //The painter's indices follow the order it was last given, which is this window's order when it
-            //has been opened for this scenario, and the dictionary's order otherwise.
-            var ordered = new List<EvacuationGroupInput>(input.Evacuation.EvacuationGroupInputs.Values);
-            if (_inputs == input.Evacuation.EvacuationGroupInputs && _ordered.Count == ordered.Count)
-            {
-                ordered = new List<EvacuationGroupInput>(_ordered);
-            }
-
+            //The painter's indices refer to the names it was last given, so each mask goes to the group of that
+            //name - not to whichever group is at that position now, which after a group was added, removed or
+            //renamed is another one.
+            string[] names = PreactGUI.WUInity.Painter.EvacGroupNames;
             string[] written = PreactGUI.WUInity.Painter.ExportEvacGroupMasks(input.RootFolder);
             if (written == null)
             {
                 return;
             }
 
-            for (int i = 0; i < written.Length && i < ordered.Count; ++i)
+            for (int i = 0; i < written.Length && i < names.Length; ++i)
             {
                 if (string.IsNullOrEmpty(written[i]))
                 {
                     continue;
                 }
 
-                ordered[i].MaskFile = written[i];
+                if (!input.Evacuation.EvacuationGroupInputs.TryGetValue(names[i], out EvacuationGroupInput group))
+                {
+                    PREACT.Engine.Message(null, PREACT.Engine.LogType.Warning, $"{written[i]} was painted for group {names[i]}, "
+                        + "which the scenario no longer has; it is written but no group names it.");
+                    continue;
+                }
+
+                group.MaskFile = written[i];
                 //Cleared so there is no question which of the two defines the area. The parser
                 //prefers the mask anyway, but leaving a stale shapefile behind invites the reader to
                 //believe it still matters.
-                ordered[i].ShapeFile = string.Empty;
+                group.ShapeFile = string.Empty;
             }
 
             ScenarioSession.NotifyEdited("group masks");

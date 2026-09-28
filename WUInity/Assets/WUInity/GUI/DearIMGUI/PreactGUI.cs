@@ -5,6 +5,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
 using UImGui;
 using UnityEngine;
 using WUInity;
@@ -89,21 +90,72 @@ namespace Assets.WUInity.GUI.DearIMGUI
             WorkflowService.Tick();
 
             MainDock();
-            MainMenuBar.Draw();      
-            ConsoleWindow.Draw(_messages);
+            Guarded(MainMenuBar.Draw);
+            Guarded(DrawConsole);
 
-            //windows
+            //windows, each on its own: one that throws is reported and closed off, and the rest still draw
             if(Windows != null)
             {
-                Windows.Invoke();
+                foreach (Delegate window in Windows.GetInvocationList())
+                {
+                    Guarded((Action)window);
+                }
             }
 
             //Drawn here rather than by whichever window started a step, so it stays up (and keeps updating)
             //when that window is closed.
-            ScenarioDataSteps.DrawProgressWindow();
+            Guarded(ScenarioDataSteps.DrawProgressWindow);
 
             //Last, so the modal question sits on top of everything.
-            ConfirmPrompt.Draw();
+            Guarded(ConfirmPrompt.Draw);
+        }
+
+        private static void DrawConsole()
+        {
+            ConsoleWindow.Draw(_messages);
+        }
+
+        //What cimgui exports to close every window, child, popup, ID, colour, style var and disabled block left open,
+        //back to the frame's fallback window. With ImGui's asserts compiled out (the shipped cimgui) an exception
+        //inside a window otherwise leaves them open, and UImGui renders the frame anyway, in a finally.
+        [DllImport("cimgui", CallingConvention = CallingConvention.Cdecl)]
+        private static extern void igErrorCheckEndFrameRecover(IntPtr logCallback, IntPtr userData);
+
+        private static bool _recoverUnavailable;
+        private static readonly HashSet<string> _reportedDrawErrors = new HashSet<string>();
+
+        /// <summary>
+        /// Draws one window. An exception is reported (once per window and message, not every frame) and the ImGui
+        /// state it left open is closed, so it takes neither the other windows nor the frame with it.
+        /// </summary>
+        private static void Guarded(Action draw)
+        {
+            try
+            {
+                draw();
+            }
+            catch (Exception e)
+            {
+                string key = draw.Method.DeclaringType?.Name + "." + draw.Method.Name + ": " + e.Message;
+                if (_reportedDrawErrors.Add(key))
+                {
+                    _messages.Add("[" + DateTime.Now.ToLongTimeString() + "] EXCEPTION: drawing " + key
+                        + " (reported once; the rest of the GUI goes on)");
+                    Debug.LogException(e);
+                }
+
+                if (!_recoverUnavailable)
+                {
+                    try
+                    {
+                        igErrorCheckEndFrameRecover(IntPtr.Zero, IntPtr.Zero);
+                    }
+                    catch (Exception recover) when (recover is EntryPointNotFoundException || recover is DllNotFoundException)
+                    {
+                        _recoverUnavailable = true;
+                    }
+                }
+            }
         }
 
         /// <summary>Kept for windows that still float and refuse to dock (the campaign window uses it).</summary>
@@ -185,6 +237,11 @@ namespace Assets.WUInity.GUI.DearIMGUI
         {
             _wuinityManager = wuinityManager;
             _engine = engine;
+            //Before WUInityManager.Start reopens the last scenario, so the workflow takes the findings of that load
+            //too (it subscribed on its first frame, which comes after it).
+            WorkflowService.EnsureSubscribed();
+            //A position being picked on the map belongs to the scenario that asked for it.
+            ScenarioSession.ScenarioChanged += () => _wuinityManager?.CancelPick();
             //The workflow panel is where every session starts; the welcome window that used to open here is
             //Help > External tools and keys now.
             ScenarioWorkflowWindow.Register();
@@ -218,7 +275,11 @@ namespace Assets.WUInity.GUI.DearIMGUI
         public static void ClearMessages()
         {
             _messages.Clear();
+            ++ClearCount;
         }
+
+        /// <summary>How many times the console has been cleared, so an index into it can tell it is stale.</summary>
+        public static int ClearCount { get; private set; }
 
         //Work handed to the main thread: path writes from data steps, campaign status, anything that
         //touches the scenario, ImGui or a UnityEngine object. Run in order, once each, at the start of the

@@ -53,6 +53,15 @@ namespace Assets.WUInity.GUI.DearIMGUI
             Invalidate();
         }
 
+        /// <summary>
+        /// Subscribes to the session's events; from start-up (PreactGUI.SetManager), so the scenario reopened before
+        /// the first frame has its load-time findings too.
+        /// </summary>
+        public static void EnsureSubscribed()
+        {
+            Subscribe();
+        }
+
         private static void Subscribe()
         {
             if (_subscribed) return;

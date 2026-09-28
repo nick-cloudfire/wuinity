@@ -1258,6 +1258,26 @@ namespace WUInity
             _onClicks = null;
         }
 
+        /// <summary>
+        /// Abandons a position or area being picked, without calling back: the scenario it was for is no longer the
+        /// one open (another was opened meanwhile), so neither placing it nor reopening its editor would be right.
+        /// </summary>
+        public void CancelPick()
+        {
+            if (!_pickingPos && !_pickingBoundingBox)
+            {
+                return;
+            }
+
+            _pickingPos = false;
+            _onClick = null;
+            _pickingBoundingBox = false;
+            _onClicks = null;
+            _onPickCancelled = null;
+            if (_boundingBoxRenderer != null) _boundingBoxRenderer.gameObject.SetActive(false);
+            NewLogMessage("Picking on the map was cancelled: another scenario was opened.");
+        }
+
         public void PickPosOnMap(System.Action<PREACT.Math.Vector2d> onClick, System.Action cancelled = null)
         {
             _pickingPos = true;
