@@ -133,7 +133,6 @@ WalkingDistanceModifier=1.0
 [TrafficModule]
 Enabled=true
 Module=SUMO
-VisibilityAffectsSpeed=false
 
 [SUMO]
 ConfigurationFile=sumo/rox.sumocfg

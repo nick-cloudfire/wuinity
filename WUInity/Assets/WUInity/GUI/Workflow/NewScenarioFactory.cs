@@ -122,7 +122,7 @@ namespace WUInity.Workflow
                     Default = true,
                 };
 
-                //Everyone away within an hour and a half of the order, most of them between 60 and 90 minutes:
+                //10 % of households away 60 minutes after the order, 60 % by 80 minutes and everyone by 100:
                 //a starting point to replace with the town's own, not a finding.
                 var points = new List<ResponseDataPoint>
                 {

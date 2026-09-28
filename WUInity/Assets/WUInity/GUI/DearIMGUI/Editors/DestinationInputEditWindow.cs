@@ -150,7 +150,9 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             ImGui.InputFloat("Max arrival flow (cars/hour, -1 for no limit)", ref _input.MaxFlow);
             if (ImGui.IsItemHovered())
             {
-                ImGui.SetTooltip("Vehicles beyond this rate wait rather than arriving. It does not turn them away.");
+                ImGui.SetTooltip("A car that reaches the destination above this rate is not counted as arrived: it is put\n"
+                                 + "back into traffic on its route to the same destination and tries again when it gets\n"
+                                 + "there. No car is turned away.");
             }
 
             if(_input.Type == DestinationTypes.Shelter)

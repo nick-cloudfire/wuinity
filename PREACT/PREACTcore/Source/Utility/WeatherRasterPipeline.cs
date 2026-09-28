@@ -11,8 +11,8 @@ using PREACT.Wildfire;
 namespace PREACT.Utility
 {
     /// <summary>
-    /// The history-based weather chain from docs/probabilistic-trigger-convergence.md's "Reference
-    /// pipeline (WindNinja + Nelson), per realization": ERA5 climatology → a sampled historical
+    /// The history-based weather chain (docs/elmfire-cases.md, "Weather"; per realization,
+    /// docs/trigger-campaigns.md, "Weather per realization"): ERA5 climatology → a sampled historical
     /// peak fire-weather day → WindNinja terrain wind + Nelson dead fuel moisture → the five
     /// weather rasters (<c>ws</c>/<c>wd</c>/<c>m1</c>/<c>m10</c>/<c>m100</c>) ELMFIRE reads.
     ///
@@ -115,6 +115,9 @@ namespace PREACT.Utility
             /// product would miss and run systematically wetter, i.e. less conservative for a
             /// trigger boundary.
             ///
+            /// Local hours of the sampled day (<see cref="StartTimeZone"/>); they were read as UTC hours, which put
+            /// California's "10 to 18" at 03:00 to 11:00.
+            ///
             /// Taking the minimum over a window rather than the value at one instant also matters
             /// for a reason that only shows up on real data: ERA5 routinely reports a trace of
             /// drizzle (a few tenths of a mm, an area-average over ~9 km rather than rain that
@@ -157,8 +160,21 @@ namespace PREACT.Utility
             /// fire starting at 13:00 gets the sampled day's 13:00 in band 1 and walks forward from there
             /// through real consecutive archive hours, so a multi-day run follows a real sequence of days
             /// rather than looping one day back onto itself.
+            ///
+            /// Local civil time at the domain, as a scenario states it (<see cref="StartTimeZone"/>); the archive
+            /// is UTC, and the band schedule converts.
             /// </remarks>
             public DateTime SimulationStartDateTime = new DateTime(2020, 7, 1, 12, 0, 0);
+
+            /// <summary>
+            /// The civil time zone <see cref="SimulationStartDateTime"/> and the burning period are stated in: the
+            /// scenario's, at its south-west corner, as the simulation clock reads it. Null looks it up at
+            /// <see cref="LatLon"/>.
+            /// </summary>
+            public TimeZoneInfo StartTimeZone;
+
+            /// <summary>The zone the start is stated in, looked up when none was given.</summary>
+            public TimeZoneInfo Zone() => StartTimeZone ?? LocalTime.ZoneAt(LatLon.x, LatLon.y);
 
             public double SimulationTstopSeconds = 28800.0;
 
@@ -352,8 +368,8 @@ namespace PREACT.Utility
             public int BandCount;
 
             /// <summary>
-            /// The moment in the record band 1 was written from — the sampled day at the simulation's own hour
-            /// of day. Default when no day was drawn.
+            /// The moment in the record band 1 was written from — the sampled day at the simulation's own (local)
+            /// hour of day, as the UTC instant the archive is indexed by. Default when no day was drawn.
             /// </summary>
             /// <remarks>
             /// Carried out of here so the simulation's weather can be read at the same instant the fire's
@@ -652,6 +668,12 @@ namespace PREACT.Utility
         /// walking forward through consecutive hours.
         /// </summary>
         /// <remarks>
+        /// The times are the archive's, UTC. The sampled day is the day it is where the fire is (the local date of
+        /// its fire-weather noon row), and the start hour is the scenario's local civil hour, so band 1 is that local
+        /// hour of that local day converted to UTC - 13:00 at Mati in August is 10:00 UTC, in California 20:00 UTC.
+        /// It used to add the local hour to the UTC date, so every band read the record 3 hours late at Mati in
+        /// summer and 7 hours early in California: a 13:00 fire burned under the drawn day's early morning there.
+        ///
         /// Walking real consecutive hours, rather than cycling one day, is what makes a multi-day run
         /// coherent: hour 30 of a three-day ensemble realization is the second night of an actual historical
         /// sequence, with its actual overnight recovery, instead of the first day replayed.
@@ -660,7 +682,7 @@ namespace PREACT.Utility
         /// day's summary values rather than dropping the band, because a gap in the record must not change
         /// how many bands the five rasters have.
         /// </remarks>
-        private static List<DateTime> BuildBandSchedule(Options o, AnnualMaximaDay? day,
+        internal static List<DateTime> BuildBandSchedule(Options o, AnnualMaximaDay? day,
             List<HourlyWeatherRow> rows, Action<string> log)
         {
             double seconds = o.SecondsPerBand > 0 ? o.SecondsPerBand : 3600.0;
@@ -697,9 +719,14 @@ namespace PREACT.Utility
 
             //No sampled day means no archive to walk; the schedule then exists only to give the uniform
             //fallbacks the right number of bands.
-            DateTime anchor = day.HasValue
-                ? day.Value.Date.Date.AddHours(o.SimulationStartDateTime.Hour)
-                : o.SimulationStartDateTime;
+            DateTime anchor = o.SimulationStartDateTime;
+            TimeZoneInfo zone = null;
+            if (day.HasValue)
+            {
+                zone = o.Zone();
+                DateTime localDay = LocalTime.FromUtc(day.Value.Date, zone).Date;
+                anchor = LocalTime.ToUtc(localDay.AddHours(o.SimulationStartDateTime.Hour), zone);
+            }
 
             var times = new List<DateTime>(count);
             for (int b = 0; b < count; ++b)
@@ -707,10 +734,14 @@ namespace PREACT.Utility
                 times.Add(anchor.AddSeconds(b * seconds));
             }
 
-            if (day.HasValue && rows != null && count > 1)
+            if (day.HasValue && rows != null)
             {
-                log($"  weather: {count} bands of {seconds / 3600.0:F0} h from {times[0]:yyyy-MM-dd HH:mm} " +
-                    $"to {times[count - 1]:yyyy-MM-dd HH:mm}.");
+                DateTime local = LocalTime.FromUtc(times[0], zone);
+                TimeSpan offset = zone.GetUtcOffset(local);
+                string utcOffset = (offset < TimeSpan.Zero ? "-" : "+") + offset.Duration().ToString(@"hh\:mm", System.Globalization.CultureInfo.InvariantCulture);
+                log($"  weather: {count} band{(count == 1 ? "" : "s")} of {seconds / 3600.0:F0} h from {times[0]:yyyy-MM-dd HH:mm} UTC "
+                    + $"({local:HH:mm} local, UTC{utcOffset})"
+                    + (count > 1 ? $" to {times[count - 1]:yyyy-MM-dd HH:mm} UTC." : "."));
             }
 
             return times;
@@ -962,8 +993,8 @@ namespace PREACT.Utility
                 //Naming the probe matters: the fix for "not found" is to install it or set WindNinjaExe, and
                 //neither is guessable from a message that only says the stage was skipped.
                 result.Fallbacks.Add("WindNinja: not found");
-                log("  wind: no WindNinja_cli.exe found (looked at WINDNINJA_CLI, PATH, C:\\WindNinja and "
-                    + "Program Files); writing a uniform field, so the trigger boundary will be circular.");
+                log($"  wind: no {WindNinjaRunner.ExecutableNames[0]} found (looked at {WindNinjaRunner.SearchDescription}); "
+                    + "writing a uniform field, so the trigger boundary will be circular.");
             }
 
             //Still the full band count, even though every band holds the same value: the five rasters are
@@ -1058,8 +1089,11 @@ namespace PREACT.Utility
             int[,] canopy = ReadTerrain(o, "cc.tif", 0, 100, required: false)
                             ?? new int[o.Grid.Header.Ncols, o.Grid.Header.Nrows];
 
-            DateTime burnStart = day.Date.Date.AddHours(o.BurningPeriodStartHour);
-            DateTime burnEnd = day.Date.Date.AddHours(o.BurningPeriodEndHour);
+            //Local hours of the day it is where the fire is, as UTC instants the archive is indexed by.
+            TimeZoneInfo zone = o.Zone();
+            DateTime localDay = LocalTime.FromUtc(day.Date, zone).Date;
+            DateTime burnStart = LocalTime.ToUtc(localDay.AddHours(o.BurningPeriodStartHour), zone);
+            DateTime burnEnd = LocalTime.ToUtc(localDay.AddHours(o.BurningPeriodEndHour), zone);
 
             //The march has to reach the last band, which the burning period does not necessarily contain: the
             //fire can start before 10:00 or run past 18:00, and a multi-day run leaves that window entirely.

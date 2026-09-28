@@ -41,6 +41,7 @@ Magnitudes are from the Mati (Greece) case and the shipped examples, measured on
 | What | Before v1 | In v1 | Size of the change |
 |---|---|---|---|
 | Fire-weather index of the ERA5 archive | Computed from the wind in m/s, the noon hour's rain alone, at 12:00 UTC. The weather pool was biased toward drought and away from wind. | km/h wind, the rain of the preceding 24 h, 12:00 local standard time. Old archives are re-derived once. | Mati archive: maximum DC 3049 → 928, BUI 609 → 257, FWI 42.9 → 81.1. The fitted pool's mean wind 4.99 → 7.49 m/s. |
+| Fire-weather season | The FWI was set to 0 for January and October to December everywhere, and the drought codes used the day lengths of 46° N: south of the equator the fire season's peak days could never be drawn, nor the autumn wind events of all-year fire climates such as California's. | Derived all year; south of the equator the DMC and DC use the southern day lengths of Lawson and Armitage (2008), as the `cffdrs` package does. Northern codes are unchanged. Archives are re-derived once (`archive_format=3`). | Mati archive: no annual peak and no pool day changes. A campaign's settings identity changes with the archive format, so it starts a new campaign folder. |
 | Burn probability | Counted only over realizations that produced a boundary. | Over every completed fire. | Lower wherever fires often missed the WUI area. |
 | Fires that never reach the WUI area | Counted as failed, after a full evacuation run. | `not-threatened`: no evacuation run, left out of the trigger probability, counted in the fire statistics. | The trigger probability's denominator is unchanged. |
 | Each realization's evacuation seed | The base scenario's `RandomSeed` (often 0, a clock seed). | `seed + 2,000,000 + index`, recorded per realization. | Evacuations are now reproducible. |
@@ -58,6 +59,8 @@ Magnitudes are from the Mati (Greece) case and the shipped examples, measured on
 | Namelist | Kept between builds, hand edits included. | Written again from the scenario's settings on every build; a hand-edited one is set aside as `elmfire.data.kept-<time>`. | Hand edits no longer apply unless moved into Fire behaviour or a `NamelistTemplate`. |
 | Class layers carried over a re-cut | Interpolated. | Nearest neighbour. | Rebuilt cases with building, WUI, barrier or pyrome layers. |
 | Non-square GeoTIFF pixels | Read as square. | Kept. | Mati's DEM (27.592 × 27.616 m): about 14 m across the grid. |
+| Sun on the terrain in Nelson's dead fuel moisture | The sun position was computed for the mirrored longitude (east read as west): 3.2 h late at Mati, and in the Americas below the horizon at local noon, so the sticks there got no terrain factor in daylight. | At the domain's longitude, on the archive's UTC hour. | Mati, 3 h from 12:35 on 2007-08-25: domain-mean 1-h moisture +0.02 point, its spread across the domain (standard deviation) 0.075 → 0.046 point. Larger in the Americas; not measured (no US archive on the test bench). |
+| Hour of day of a historical-day weather series | The scenario's local start hour was read as a UTC hour of the ERA5 archive: every band 3 h late at Mati in summer (2 h in winter), 7–8 h early in California, where a 13:00 fire burned under the drawn day's early morning. The logged burning period was on UTC too. | The local start hour, daylight saving included, converted to UTC with the domain's time zone; band 1 of a 13:00 start is 10:00 UTC at Mati in August. The recorded weather anchor is that UTC instant. | Mati, 3 h from 12:35 on 2007-08-25: bands 12–14 → 09–11 UTC, mean dead moisture 4.4/7.3/10.3 → 5.9/9.2/11.0 % (1/10/100 h). Rebuild a case's weather (`--rebuild`, or Update the case with Rebuild existing layers) to pick it up. A historical-day campaign gets a new settings identity. |
 
 **Imported fires (`AscImport`)**
 
@@ -68,8 +71,10 @@ Magnitudes are from the Mati (Greece) case and the shipped examples, measured on
 | Grid edge | Positions up to one cell west or south of the grid counted as inside. | Outside. |
 
 **Weather shown during a run** (does not drive the fire or the evacuation): the FWI codes now use km/h wind
-and local noon, the weather CSV's latitude is read (it was always 0), and a scenario without a `WeatherFile` no
-longer downloads a year of weather on every run.
+and local noon, the weather CSV's latitude is read (it was always 0), a scenario without a `WeatherFile` no
+longer downloads a year of weather on every run, and the record (UTC) is read at the hour the scenario's local
+clock stands for — it was read at the same number, 3 h later in the day at Mati in summer and 7 h earlier in
+California.
 
 ### Actions required after upgrading
 
@@ -83,6 +88,9 @@ longer downloads a year of weather on every run.
 3. **Rebuild existing ELMFIRE cases** (workflow step 5, *Update the case*). A grid that does not cover the padded
    domain is re-cut. If you edited `elmfire.data` by hand, the build sets it aside as `elmfire.data.kept-<time>`
    and says so: move the edits into Fire > Fire behaviour, or name the file as `[ELMFIRE] NamelistTemplate`.
+   *Update the case* keeps a case's existing weather; to give it weather on the corrected clock and sun (see the
+   ELMFIRE cases table), delete `inputs/ws.tif`, `wd.tif`, `m1.tif`, `m10.tif` and `m100.tif` first — only the
+   weather is then made again. The case's ERA5 archive is re-derived once (`archive_format=3`) when next read.
 4. **Paintings made on an older grid**: step 6 offers **Move painting onto the fire-case grid**, which writes a
    new `.gfi` beside the old one.
 5. **Campaigns before v1 cannot be resumed**: their folder layout, seeds and settings identity are new. Run them
@@ -120,7 +128,10 @@ longer downloads a year of weather on every run.
 - **Build scripts** `build.ps1` and `build.sh`.
 - **New scenario keys**: `[MacroHouseholdSim] ReactToFire`, `FireReactionDistance`, `FireReactionUpdateInterval`;
   `[AscImport] MidflameWindSpeedFile`; `[kPERIL] WindBandSeconds`; `[ELMFIRE] SimulationTstopHours` (hours
-  everywhere a user sees a fire duration). The `.gfi` painting may record where its grid lies.
+  everywhere a user sees a fire duration). A `.gfi` painting records the grid it was painted on (the GUI writes
+  it on every save, move and copy), and a painting of the right size recorded elsewhere is refused by the build,
+  a run and the painter; one without the record is matched by size, as before.
+- **View > Map layers > Fire grid outline** draws the edge of the fire-case grid on the map.
 - **New outputs**: a `.prj` beside every boundary and campaign raster; the boundary always ends in `.asc`;
   `outputs/run.data` and `outputs/run.fingerprint` in the case. See
   [Output files](docs/output-files.md).
@@ -131,9 +142,42 @@ longer downloads a year of weather on every run.
   allows comments after a `#`, reads each section on its own so that one bad value no longer loses the rest of the
   file, reports duplicate keys and sections, and a save no longer drops sections of a disabled module. See
   [the input format](docs/input-file-format.md).
+- The `[ELMFIRE]` source layers `SuppressionDifficultyFile`, `LandValueFile`, `PopulationDensityFile`,
+  `RealEstateValueFile`, `EnergyReleaseComponentFile` and `PyromesFile` are read back when a scenario is opened.
+  They used to be saved and then lost, so the next save dropped them.
+- A `[WildfireModule]` without an `Enabled` line, or with `Enabled=false`, keeps its ignition points, its
+  painted-areas reference, its `Module` and its `[ELMFIRE]` settings through a load and a save (a missing `Enabled`
+  means off, with a note); they used to be lost. A save also keeps the section of a module option that is not
+  selected (the `[ELMFIRE]` of a scenario switched to `AscImport`, a `[GlobalSmoke]` with smoke set to `None`), and a
+  module's sections are read even when its own header is missing. `[ELMFIRE]` is read whatever the fire module,
+  so `build-case` and a campaign use the scenario's case settings, not the defaults, when the fire is off.
+- **Nothing in a `.wui` is ignored without a word.** An unknown key or section, a retired one and a line that is
+  not `Key=Value` are reported once when the scenario is read, with the closest known name, and are not written on
+  save; they used to vanish silently. An unreadable `[ELMFIRE]` value (it was dropped silently) and an unreadable
+  `[ElmfireNamelist]` value (it was critical) are both reported and keep their default. The examples no longer
+  carry the retired `DesiredLatLon` and `VisibilityAffectsSpeed`.
 - A run stops on its first error, with the modules closed, instead of carrying on and logging every step.
 - A run whose cars mostly cannot be put into SUMO stops with an error instead of evacuating nobody.
 - A case build is refused while a campaign of the same scenario runs.
+- **Stopping a case build** (Stop, or quitting) kills its WindNinja and starts no other: the build writes no wind
+  at all (it used to finish on a uniform field), leaves the scenario as it was, and the next build carries on. A
+  stopped or converged campaign starts no further WindNinja band. A build that fails after re-cutting the grid
+  leaves `inputs/_previous_grid/carry_pending.txt`, and the next build carries the old grid's layers.
+- The Results window lists the rasters, not the `.prj`, `.aux.xml` or `.ovr` beside them; it marks a boundary
+  without a `.prj` as from an earlier version, and step 13 and the Results window say when a campaign predates
+  v1's k-PERIL fix and evacuation seeds - such a campaign is not reused. Renaming an evacuation group keeps its
+  painted cells. Painted areas and `.lcp` landscapes open read-only. The GUI finds the case folder and a relative
+  `NamelistTemplate` the way the engine does.
+- `.gitignore` covers `WUInity/imgui.ini` (each user's window layout), ImGui's `imgui_log.txt`, Mono's
+  `mono_crash.*`, `*.tmp`, `*.partial` and the realization scenarios a killed campaign leaves beside the `.wui`.
+- WindNinja is found on Linux and macOS as `WindNinja_cli` (on `PATH`, `/opt/WindNinja`, `/usr/local/WindNinja` or
+  `~/WindNinja`); the search looked for `WindNinja_cli.exe` only, so there only `WINDNINJA_CLI` or `--windninja`
+  found it. The "not found" message names where it looked on the platform it runs on.
+- Messages name the menus the GUI has: *Data > Build fire case (ELMFIRE)* and *Data > Roads* instead of *Prepare
+  data*, *Fire > Fire areas* and *Fire > Fire behaviour* instead of the *Hazards tab*. The header of a generated
+  `elmfire.data` says so too, so the first run after a case is rebuilt computes its fire again instead of reusing
+  the earlier output (the namelist's text is part of what a reuse compares). The destination editor's *Max arrival
+  flow* tooltip says what happens to a car over the limit: it is put back into traffic to the same destination.
 - Paths are stored with `/` and resolve on every platform; a file that has moved is found by name nearby.
 - On Windows the engine prepends its folders to `PATH` instead of replacing it, so SUMO, the GDAL tools and ELMFIRE
   are found as installed. SUMO is found through `SUMO_HOME` or `PATH`.
@@ -159,28 +203,15 @@ longer downloads a year of weather on every run.
 The Windows GUI's acceptance check is the [manual test](docs/manual-test-v1.md); the head-less paths were run
 end to end on Linux.
 
-- **Six `[ELMFIRE]` source-layer keys are not read back from the file**: `SuppressionDifficultyFile`,
-  `LandValueFile`, `PopulationDensityFile`, `RealEstateValueFile`, `EnergyReleaseComponentFile` and `PyromesFile`.
-  They are saved, but lost when the scenario is opened again. Set them again after opening the scenario, before
-  building the case.
-- **A `[WildfireModule]` section without an `Enabled` line** loses its ignition points, its painted-areas reference
-  and its `[ELMFIRE]` settings when read, and a save then drops them. The GUI always writes `Enabled`; a
-  hand-written file should too.
-- **Case weather is anchored in UTC.** A case's historical-day weather walks the ERA5 archive, which is on UTC,
-  from the scenario's start hour, which is local time; v1 does not convert between them. In the western US a
-  13:00 start reads the drawn day's early-morning hours.
-- **Southern hemisphere fire seasons.** The fire-weather codes set October to January to an FWI of 0, a northern
-  hemisphere winter. In the southern hemisphere those months are the fire season, so its peak days are never
-  drawn.
 - **k-PERIL** does not cap the length-to-breadth ratio, evaluates the spread ellipse at its parametric angle (so
   wind barely shapes the boundary above about 3 mi/h), and subtracts an upslope wind from the slope term rather
   than adding it. These are for k-PERIL's author; see [Modules](docs/modules.md#trigger-boundary).
 - **Linux**: the committed SUMO C# bindings match the Windows SUMO build only
-  ([regenerate them](docs/building.md#regenerating-the-sumo-c-glue-on-linux)); WindNinja is found only through
-  `WINDNINJA_CLI` or `--windninja`; on the test bench the NFDRS4 library did not load, so dead and live fuel
-  moisture fell back to uniform values.
+  ([regenerate them](docs/building.md#regenerating-the-sumo-c-glue-on-linux)).
 - **FOFEM**: the committed `FOFEM.dll` is a Debug build that needs Visual Studio's debug runtime. Nothing calls
   it yet.
 - **Evacuation group masks** are placed on the fire grid by cell and carry no georeference.
-- Some messages still name menus that were renamed: *Prepare data* means the Data menu and workflow steps 2–5,
-  and *Hazards tab* means Fire > Fire model settings.
+- **Fire-weather day lengths north of the equator** are the standard 46° N ones at every latitude, as before v1:
+  the `cffdrs` package uses flatter factors for the DMC south of 30° N (a constant below 10° N) and a constant for
+  the DC south of 20° N (southern Florida and Texas, Hawaii, Mexico). v1 applies its latitude bands only south of
+  the equator, so as not to change northern results.

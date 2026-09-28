@@ -29,8 +29,10 @@ A complete example is [`Examples/NFDRS4_Behave/Roxborough/Roxborough_no_smoke.wu
   new path.
 - Each section is read on its own: a problem in one is reported against that section and the rest of the file
   is still read.
-- **A key or section the parser does not know** is ignored without a message, and a GUI save drops it. Check
-  the spelling against the tables below.
+- **A key or section the parser does not know**, a retired one, and a line that is not `Key=Value` are reported
+  once when the file is read — with the line, how many times it occurs, and the closest known name when there is
+  one (`[Simulation] Deltatime (line 5) is not a key of [Simulation] - did you mean DeltaTime?`). They are
+  ignored, never critical, and not written when the scenario is saved. Keys are case-sensitive.
 
 ## Required, optional and critical
 
@@ -47,10 +49,14 @@ switched off are still read in full and kept when the scenario is saved, but not
 The GUI writes the file back from what it read (`PREACTInputWriter`):
 
 - a section that only restates its defaults is left out, unless a module sub-section follows it;
-- only the sub-section of the **selected** module is written: `[AscImport]` or `[ELMFIRE]` for the fire,
-  `[GlobalSmoke]` for smoke, `[kPERIL]` for the trigger boundary — a section for the module not chosen is dropped;
-- `[ElmfireNamelist]` is written only when the fire module is `ELMFIRE`;
+- the sub-section of the **selected** module is always written — `[AscImport]` or `[ELMFIRE]` for the fire,
+  `[GlobalSmoke]` for smoke, `[kPERIL]` for the trigger boundary — and the section of a module option that is
+  not selected is written too when it holds anything but defaults, so switching modules loses no setting;
+- `[ElmfireNamelist]` is written when the fire module is `ELMFIRE`, or when it holds anything but defaults;
 - paths are written with `/`; retired keys and sections are not written.
+
+A module's sections are read whether or not it is enabled, whichever option it selects, and even when its own
+header (`[WildfireModule]`, `[TrafficModule]`, ...) is missing: without the header the module is off.
 
 ---
 
@@ -108,7 +114,7 @@ trigger boundary.
 | Key | Type | Default | Notes |
 |---|---|---|---|
 | `WeatherFile` | path | – | Hourly CSV in the Open-Meteo layout ([below](#weather-csv)). Not set: no weather is reported and nothing is downloaded. Set but missing, or not covering the run: a run downloads what it needs from Open-Meteo and caches it. Building an ELMFIRE case points it at the case's ERA5 archive. |
-| `WeatherAnchorDateTime` | date | unset | The moment in the record that the simulation's start reads from, so a scenario dated today reports the historical day its fire was computed against. Set by the case build. Unset: the record is read at the scenario's own dates. |
+| `WeatherAnchorDateTime` | date | unset | The moment in the record (UTC) that the simulation's start reads from, so a scenario dated today reports the historical day its fire was computed against. Set by the case build. Unset: the record is read at the scenario's own dates, at the UTC hour its local clock stands for (13:00 at Mati in June reads the record's 10:00). |
 | `StartFFMC` | number | `85` | Fine fuel moisture code at the first local noon. |
 | `StartDMC` | number | `6` | Duff moisture code. |
 | `StartDC` | number | `15` | Drought code. |
@@ -250,7 +256,7 @@ Every key is optional; an unreadable value keeps the default and says so.
 
 | Key | Type | Default | Critical | Notes |
 |---|---|---|---|---|
-| `Enabled` | bool | – | – | Always write it. Without it v1 does not read the rest of the section, the `[IgnitionPoint]`s or `[ELMFIRE]`, and a save drops them — a [known issue](../CHANGELOG.md#known-issues). |
+| `Enabled` | bool | `false` | – | Missing or unreadable means off, with a note. The rest of the section, the `[IgnitionPoint]`s and the module's sections are read (and kept) either way. |
 | `Module` | `ELMFIRE` \| `AscImport` | – | yes, when enabled | `ELMFIRE` runs ELMFIRE on the scenario's case; `AscImport` reads a fire computed elsewhere. `None` with the module enabled is critical. `ElmClone`/`CellSpread` (the removed cell-based model) are reported as removed. |
 | `GraphicalFireInputFile` | `.gfi` path | – | – | The painted WUI area, ignition area and initial ignition ([below](#painted-areas-gfi)). Kept even when the file is missing, so a save does not lose the reference. |
 
@@ -289,6 +295,9 @@ all on one grid. A campaign writes this section into every realization's scenari
 How ELMFIRE is run. Every key is optional: a scenario that only says `Module=ELMFIRE` runs the ELMFIRE build in
 the repository on a case in an `elmfire/` folder beside the `.wui`. What has to exist (the executable, the case,
 its rasters) is checked when the run starts. [ELMFIRE cases](elmfire-cases.md) describes the case this builds.
+The section is read whatever the fire module is, because it also describes the case that Data > Build fire case,
+`PREACTcli build-case` and a campaign build. A value that cannot be read (`SimulationTstopHours=24h`) is reported
+and keeps its default.
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
@@ -302,7 +311,7 @@ its rasters) is checked when the run starts. [ELMFIRE cases](elmfire-cases.md) d
 | `BuildCase` | bool | `false` | Build the case before each run. The GUI's Build fire case does it on demand instead. |
 | `RebuildExistingLayers` | bool | `false` | Replace every layer the case already has (re-warp sources, redraw the weather). Canopy with no source named is refilled with zeros. |
 | `PathToGdal` | folder | found | GDAL tools for ELMFIRE (`gdal_translate`, `gdalinfo`, `gdalsrsinfo`). Found on `PATH`, in QGIS, OSGeo4W or `SUMO_HOME`. |
-| `WindNinjaExe` | path | found | `WINDNINJA_CLI`, `PATH`, `C:\WindNinja`, Program Files. |
+| `WindNinjaExe` | path | found | `WINDNINJA_CLI`, `PATH`, `C:\WindNinja`, Program Files (on Linux `WindNinja_cli` on `PATH`, `/opt/WindNinja`, `/usr/local/WindNinja`, `~/WindNinja`). |
 | `CanopyDatasetFolder` | folder | – | The FIRE-RES pan-European canopy rasters (`panEu_canopyCover.tif`, `panEu_canopyHeight.tif`, `panEu_cbh.tif`, `panEu_cbd.tif`), for any canopy layer not named below. Real units: the LANDFIRE scaling flags are forced off. |
 
 **Source layers.** Fuel, canopy and buildings have no global download, so they are named here. Any CRS and
@@ -333,9 +342,6 @@ fuel and canopy keys.
 | `EnergyReleaseComponentFile` | `erc` | For `USE_ERC`. |
 | `PyromesFile` | `pyromes` | For `USE_PYROMES` and the per-pyrome tables. |
 
-In v1 the last six keys (`SuppressionDifficultyFile` to `PyromesFile`) are saved but not read back when the
-scenario is opened again — a [known issue](../CHANGELOG.md#known-issues).
-
 Without canopy the case gets zero canopy — surface fire only, no crown fire — and the build says so.
 
 ### `[ElmfireNamelist]` — when `Module=ELMFIRE`
@@ -346,7 +352,7 @@ optional; without the section, ELMFIRE's defaults apply except where the case ma
 correct one. Edit them on the Fire > Fire behaviour (namelist) page, which groups them as ELMFIRE does and
 disables what the current choices make inert; Fire > Preview namelist shows the file they produce. The Fire model
 settings page's **Read this case into the editor** fills them from a case's existing namelist. A value that
-cannot be read is critical.
+cannot be read is reported on the checklist and keeps its default; it does not stop the run.
 
 Groups covered: `&INPUTS`, `&OUTPUTS`, `&SIMULATOR`, `&TIME_CONTROL`, `&MONTE_CARLO`, `&SPOTTING`,
 `&SUPPRESSION`, `&SMOKE`, `&CALIBRATION`, `&WUI`, `&MISCELLANEOUS`. Frequently changed:
@@ -422,10 +428,17 @@ Tolerated when read, reported once, and not written again:
 | `[WUIShow]` | the whole section | The streaming output was removed. |
 | `[Evacuation]` | `UseTriggerBufferEvacuation`, `TriggerBufferFile`, `EvacuationOrderStart` | Never read by the engine. Use each group's `EvacuationOrderDateTime`. |
 | `[Weather]` | `DesiredLatLon` | Read but never used; ignored. |
+| `[Weather]` | `HasWeatherAnchor` | Only restated whether `WeatherAnchorDateTime` is set. |
 | `[TrafficModule]` | `VisibilityAffectsSpeed` | Ignored; smoke acts through `[SUMO] SmokeAlpha/SmokeBeta`. |
+| `[SUMO]` | `UTMoffset` | Ignored; the SUMO network carries its own offset. |
 | `[kPERIL]` | `WindBand` | Ignored; the band is chosen per cell from the arrival time. |
 | `[kPERIL]` | `MidflameWindspeed`, `CalculateROSFromBehave`, `InitialFuelMoistureFile`, `FuelModelsFile` | Ignored; the rate of spread always comes from the fire module. |
 | `[ELMFIRE]` | `SimulationTstopSeconds` | Read (÷ 3600) when `SimulationTstopHours` is absent; the next save writes hours. |
+| `[ELMFIRE]` | `IgnitionPointsFile` | The CSV is not read; ignition points are `[IgnitionPoint]` sections (Fire > Ignition points). |
+| `[SimpleWildfireCA]`, `[ElmClone]`, `[CellParticleHybrid]`, `[FireCell]` | the whole section | The cell-based fire models were removed; use `ELMFIRE`, or `AscImport` for a fire computed elsewhere. |
+| `[Behave]`, `[Rothermel]` | the whole section | The rate of spread always comes from the fire module. |
+| `[AdvectDiffuse3D]`, `[AdvectDiffuseMixingLayer]` | the whole section | Removed; `GlobalSmoke` is the smoke module. |
+| `[CityFlow]`, `[MacroTrafficSim]` | the whole section | Removed; `SUMO` is the traffic module. |
 | `[WildfireModule]` | `Module=ElmClone` / `CellSpread` | The cell-based model is gone; choose `ELMFIRE` or `AscImport`. |
 
 ---
@@ -459,8 +472,9 @@ Time,Temperature_2m [°C],Relativehumidity_2m [%],Precipitation [mm],Windspeed_1
 ```
 
 Times are UTC. The case's ERA5 archive (`<case>/climatology/<Name>_era5_hourly.csv`) is the same layout with
-`archive_format=2` appended to the header line, marking codes derived at local noon from km/h wind and 24 h rain;
-an older archive is re-derived once when it is next read.
+`archive_format=3` appended to the header line, marking codes derived at local noon from km/h wind and 24 h rain,
+all year, with the drought codes' day lengths for the archive's latitude; an older archive is re-derived once, from
+its own hourly columns, when it is next read.
 
 ### Extinction ramp (`.exc`)
 

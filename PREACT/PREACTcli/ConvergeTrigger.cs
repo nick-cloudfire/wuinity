@@ -10,7 +10,7 @@ namespace PREACTcli
 {
     /// <summary>
     /// <c>PREACTcli converge-trigger</c>: a convergence-driven probabilistic trigger boundary
-    /// (docs/probabilistic-trigger-convergence.md).
+    /// (docs/trigger-campaigns.md; the options in docs/command-line-tools.md).
     /// </summary>
     /// <remarks>
     /// Each realization is one draw of the whole scenario - an ignition from the case's mask, its own weather,

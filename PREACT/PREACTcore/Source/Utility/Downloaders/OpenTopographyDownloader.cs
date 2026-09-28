@@ -8,8 +8,8 @@ using PREACT.Math;
 namespace PREACT.Tools
 {
     /// <summary>
-    /// Global DEM downloader (docs/probabilistic-trigger-convergence.md, "Topography / DEM
-    /// downloader") — replaces LANDFIRE (US-only) outside the US via OpenTopography's Global DEM
+    /// Global DEM downloader (docs/elmfire-cases.md, "Building a case, step by step") — replaces
+    /// LANDFIRE (US-only) outside the US via OpenTopography's Global DEM
     /// API, which serves Copernicus GLO-30 and SRTM (among others) for any location on Earth.
     /// The API key is a caller-supplied parameter, the same as every other downloader in this
     /// folder — wiring it to a stored setting (the way WUInity already does for its Mapbox

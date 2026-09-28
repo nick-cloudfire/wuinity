@@ -184,7 +184,9 @@ namespace PREACT
                 return false;
             }
 
-            AscImportInput asc = input.WildfireModule.AscImportInput.Clone();
+            //A fresh one, not the scenario's [AscImport]: a scenario that switched from an imported fire to ELMFIRE
+            //keeps that section (a save no longer drops it), and nothing of the imported fire belongs in this one.
+            var asc = new AscImportInput();
             asc.StartDateTime = input.Simulation.StartDateTime;
 
             //ELMFIRE writes the simulation clock straight into time_of_arrival, in seconds. The reader's other

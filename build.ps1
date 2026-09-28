@@ -3,8 +3,8 @@
     Builds everything the Unity project and the command line need from PREACT, in Release.
 
 .DESCRIPTION
-    PREACTcore -> WUInity\Assets\PREACT\Release\netstandard2.1\   engine DLLs, native wrappers and
-                                                                  templates that the Unity project uses
+    PREACTcore -> WUInity\Assets\PREACT\Release\netstandard2.1\   engine DLLs and native wrappers that the
+                                                                  Unity project uses
     PREACT     -> PREACT\PREACTexecute\bin\Release\net8.0\         PREACT.exe, the head-less scenario runner
     PREACTcli  -> PREACT\PREACTcli\bin\Release\net8.0\             PREACTcli.exe (build-case, converge-trigger, ...)
 

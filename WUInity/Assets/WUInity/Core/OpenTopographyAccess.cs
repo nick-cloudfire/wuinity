@@ -9,8 +9,8 @@ namespace WUInity
     }
 
     /// <summary>
-    /// Reads the OpenTopography API key (docs/probabilistic-trigger-convergence.md, "Topography /
-    /// DEM downloader") the same way WUInity already reads its Mapbox access token
+    /// Reads the OpenTopography API key (docs/getting-started.md, "Keys and external tools"; the case's DEM
+    /// in docs/elmfire-cases.md, "Building a case, step by step") the same way WUInity already reads its Mapbox access token
     /// (<see cref="Mapbox.Unity.MapboxAccess"/>): a gitignored JSON file under a Resources folder,
     /// loaded via <see cref="Resources.Load{T}"/>. Copy
     /// <c>Assets/Resources/OpenTopography/OpenTopographyConfigurationTemplate.txt</c> to

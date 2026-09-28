@@ -36,7 +36,8 @@ Details: [Building](building.md).
 | `<section> gives <key> more than once; the first value (…) is used and the one on line N (…) is ignored.` | Delete one of them. A GUI save keeps the first. |
 | `[<section>] is ignored. … It will not be written when the scenario is saved.` | A retired section; see [Retired keys and sections](input-file-format.md#retired-keys-and-sections). |
 | `Refers to "<name>", which does not exist.` | A group names a destination, response curve or demographics that no section defines. Names are case-sensitive. |
-| A key you added seems to have no effect | The parser ignores keys and sections it does not know, without a message, and a GUI save drops them. Check the spelling against [the input format](input-file-format.md). |
+| `[<section>] <key> (line N) is not a key of [<section>] - did you mean <Key>? It is ignored, and saving the scenario does not write it.` | A misspelt key (keys are case-sensitive) or one from another section. Correct it by hand; a GUI save drops it. The same message names an unknown `[section]`, and a line that is not `Key=Value`. |
+| `[<section>] <key> (line N) is no longer used: … It is ignored, and saving the scenario does not write it.` | A retired key; see [Retired keys and sections](input-file-format.md#retired-keys-and-sections). Delete it, or let the next save drop it. |
 | `PREACT.exe`: `The scenario did not load as runnable; see the items listed above.` (exit 1) | Fix the critical items listed above it. The GUI's Scenario > Check scenario gives the same list, filed under the workflow's steps. |
 | A file named in the scenario is found in another folder | A file that has moved is looked for by name nearby; the scenario check says which copy it used, and a save records the new path. |
 
@@ -49,9 +50,11 @@ Details: [Building](building.md).
 | `Outside the US there is no fuel download here: name a fuel model raster of your own, …` | LANDFIRE covers the US only. Name your own fuel raster under Fuels, canopy and buildings > Source layers. |
 | `The LANDFIRE (LFPS) job <id> failed: …` / `… did not finish within N minutes.` | LANDFIRE's service; try again later. |
 | `No canopy: it is filled with zeros, so the fire is surface fire only - no crown fire.` | Add canopy rasters (LANDFIRE in the US), or accept a surface fire. |
-| `No WindNinja: the case gets one wind value for the whole domain, so a trigger boundary comes out circular.` | Install WindNinja, or set `WINDNINJA_CLI` to `WindNinja_cli.exe`, or `[ELMFIRE] WindNinjaExe`. Then rebuild the case's weather. |
+| `No WindNinja: the case gets one wind value for the whole domain, so a trigger boundary comes out circular.` | Install WindNinja, or set `WINDNINJA_CLI` to the executable (`WindNinja_cli.exe`, `WindNinja_cli` on Linux), or `[ELMFIRE] WindNinjaExe`. Then rebuild the case's weather. |
 | `No GDAL command-line tools were found. ELMFIRE shells out to them, and fails its own DEM check without them.` | Install QGIS or OSGeo4W (found by themselves), or set `[ELMFIRE] PathToGdal` to a folder holding `gdal_translate`. |
 | `The areas were painted on a W x H grid (…); the fire grid … is …` (step 6) | The painting belongs to another grid. Use **Move painting onto the fire-case grid** in step 6; it writes a new file. |
+| `The painted areas in <file> are W x H cells, but the fire-case grid is … so there is no telling which ground they were painted on. …` (a build) | As above: move the painting in step 6, or repaint on the case grid. The same refusal, with how the grids differ (`starts 300 m west of the grid the painting was made on`), is given for a painting of the right size whose record puts it elsewhere. |
+| `… STOPPED: The case build was stopped while its weather was being made: no wind was written …` | You pressed Stop (or quit) during the build. Nothing is half-written: no wind, not even a uniform field, and the scenario is unchanged. Build again; it carries on from what the stopped build kept. |
 | `The painted areas are newer than the case's ignition_mask.tif / wui_area.tif: apply them to the case.` | Step 6 > **Apply to case**. |
 | `a trigger campaign is running (…) and every one of its realizations reads this case's rasters, …` | A case build is refused while a campaign of this scenario runs. Wait for it, or cancel it. |
 
@@ -114,6 +117,6 @@ each needs, are in [Trigger campaigns](trigger-campaigns.md#before-you-start). T
 |---|---|
 | `The type initializer for 'OSGeo.OSR.OsrPINVOKE' threw an exception.` (or `…GdalPINVOKE…`), with `Unable to load shared library '…_wrap' or one of its dependencies` beneath it | GDAL 3.10 (`libgdal.so.36`) is not on `LD_LIBRARY_PATH`. |
 | `Unable to find an entry point named '?' in shared library 'libsumocs'` | The committed SUMO bindings are for Windows. [Regenerate them](building.md#regenerating-the-sumo-c-glue-on-linux) in a local copy. |
-| No WindNinja found although it is installed | The search on `PATH` looks for `WindNinja_cli.exe`. Set `WINDNINJA_CLI` to the executable, or pass `--windninja`. |
+| No WindNinja found although it is installed | The search looks for `WindNinja_cli` on `PATH` and under `/opt/WindNinja`, `/usr/local/WindNinja` and `~/WindNinja`, and names where it looked. Set `WINDNINJA_CLI` to the executable, or pass `--windninja`. |
 
 The Linux setup is in [Building: Linux](building.md#linux).

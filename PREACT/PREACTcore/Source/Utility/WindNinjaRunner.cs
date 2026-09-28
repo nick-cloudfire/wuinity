@@ -7,10 +7,10 @@ using System.Linq;
 namespace PREACT.Utility
 {
     /// <summary>
-    /// Runs <c>WindNinja_cli</c> to turn a single domain-average wind (speed + direction, as the
+    /// Runs <c>WindNinja_cli</c> (<c>WindNinja_cli.exe</c> on Windows) to turn a single domain-average wind (speed + direction, as the
     /// climatology sampler draws it from a historical peak fire-weather day) into terrain-resolved
-    /// wind rasters on the case's master grid — step 3 of the reference pipeline in
-    /// docs/probabilistic-trigger-convergence.md. ERA5 wind is far too coarse to resolve a valley
+    /// wind rasters on the case's master grid — the wind step of the case weather in
+    /// docs/elmfire-cases.md, "Weather". ERA5 wind is far too coarse to resolve a valley
     /// or a ridge; WindNinja is what puts the terrain back in.
     ///
     /// WindNinja is invoked directly rather than through WildfireAV's <c>conda run</c> wrapper:
@@ -23,8 +23,8 @@ namespace PREACT.Utility
         private const double NoDataThreshold = -9000.0;
 
         /// <summary>
-        /// Finds the Windows installer's <c>WindNinja_cli.exe</c> so the terrain-wind stage works
-        /// without being pointed at it.
+        /// Finds <c>WindNinja_cli</c> so the terrain-wind stage works without being pointed at it: the Windows
+        /// installer's <c>WindNinja_cli.exe</c>, or on Linux and macOS a <c>WindNinja_cli</c> built or installed there.
         ///
         /// This lives here, in core, rather than in the CLI that first needed it. It was a private
         /// helper in <c>PREACTcli</c>, which meant the CLI resolved the executable and the GUI could
@@ -33,33 +33,48 @@ namespace PREACT.Utility
         /// wind then silently differed depending on which front end prepared the case.
         ///
         /// Probed in order of how specifically each names an install: an explicit environment
-        /// variable, then <c>PATH</c>, then the standard install roots.
+        /// variable, then <c>PATH</c>, then the standard install roots. It used to look for
+        /// <c>WindNinja_cli.exe</c> alone, so on Linux only <c>WINDNINJA_CLI</c> or an explicit path found it.
         /// </summary>
         public static string FindExecutable()
         {
+            return FindExecutable(Environment.GetEnvironmentVariable("WINDNINJA_CLI"),
+                Environment.GetEnvironmentVariable("PATH"), InstallRoots(), ExecutableNames);
+        }
+
+        /// <summary>The probe itself, over the given environment, <c>PATH</c>, install roots and file names.</summary>
+        internal static string FindExecutable(string fromEnv, string path,
+            System.Collections.Generic.IEnumerable<string> roots, string[] names)
+        {
             try
             {
-                string fromEnv = Environment.GetEnvironmentVariable("WINDNINJA_CLI");
                 if (!string.IsNullOrEmpty(fromEnv) && File.Exists(fromEnv)) return fromEnv;
 
-                string path = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-                foreach (string dir in path.Split(Path.PathSeparator))
+                foreach (string dir in (path ?? string.Empty).Split(Path.PathSeparator))
                 {
                     if (dir.Length == 0) continue;
-                    string candidate;
-                    try { candidate = Path.Combine(dir.Trim('"'), "WindNinja_cli.exe"); }
-                    catch { continue; } //an unparseable PATH entry is not worth failing detection over
-                    if (File.Exists(candidate)) return candidate;
+                    foreach (string name in names)
+                    {
+                        string candidate;
+                        try { candidate = Path.Combine(dir.Trim('"'), name); }
+                        catch { continue; } //an unparseable PATH entry is not worth failing detection over
+                        if (File.Exists(candidate)) return candidate;
+                    }
                 }
 
-                foreach (string root in InstallRoots())
+                foreach (string root in roots)
                 {
                     if (!Directory.Exists(root)) continue;
-                    //Installs are versioned (WindNinja-3.12.1\bin\...), so take the newest by name.
-                    string[] hits = Directory.GetFiles(root, "WindNinja_cli.exe", SearchOption.AllDirectories);
-                    if (hits.Length == 0) continue;
-                    Array.Sort(hits, StringComparer.OrdinalIgnoreCase);
-                    return hits[hits.Length - 1];
+                    foreach (string name in names)
+                    {
+                        //Installs are versioned (WindNinja-3.12.1\bin\...), so take the newest by name.
+                        string[] hits;
+                        try { hits = Directory.GetFiles(root, name, SearchOption.AllDirectories); }
+                        catch { continue; } //an unreadable folder under the root
+                        if (hits.Length == 0) continue;
+                        Array.Sort(hits, StringComparer.OrdinalIgnoreCase);
+                        return hits[hits.Length - 1];
+                    }
                 }
             }
             catch { }
@@ -67,8 +82,28 @@ namespace PREACT.Utility
             return null;
         }
 
+        private static bool OnWindows => Path.DirectorySeparatorChar == '\\';
+
+        /// <summary>The file name of the command-line solver on this platform.</summary>
+        public static string[] ExecutableNames => OnWindows ? new[] { "WindNinja_cli.exe" } : new[] { "WindNinja_cli" };
+
+        /// <summary>Where <see cref="FindExecutable()"/> looks, for a message that says so when it finds nothing.</summary>
+        public static string SearchDescription => OnWindows
+            ? "WINDNINJA_CLI, PATH, C:\\WindNinja and Program Files"
+            : "WINDNINJA_CLI, PATH, /opt/WindNinja, /usr/local/WindNinja and ~/WindNinja";
+
         private static System.Collections.Generic.IEnumerable<string> InstallRoots()
         {
+            if (!OnWindows)
+            {
+                //A source build installs to /usr/local/bin, which PATH covers; these are the other usual homes.
+                yield return "/opt/WindNinja";
+                yield return "/usr/local/WindNinja";
+                string home = Environment.GetEnvironmentVariable("HOME");
+                if (!string.IsNullOrEmpty(home)) yield return Path.Combine(home, "WindNinja");
+                yield break;
+            }
+
             yield return @"C:\WindNinja";
 
             //Read from the environment rather than hardcoded: on a 64-bit machine the installer lands

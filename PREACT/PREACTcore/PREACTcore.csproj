@@ -18,6 +18,12 @@
     <WarningsNotAsErrors>$(WarningsNotAsErrors);NU1901;NU1902;NU1903;NU1904</WarningsNotAsErrors>
   </PropertyGroup>
 
+  <!-- The regression tests check a few engine internals directly (the case weather's band schedule, the keys a
+       section is written with) rather than widening the public surface Unity sees. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="PREACTtests" />
+  </ItemGroup>
+
   <ItemGroup>
     <Content Include="Source\Evacuation\Traffic\Modules\SUMO\Build_notes.txt" />
     <Content Include="Source\Evacuation\Traffic\Modules\SUMO\version_info.txt" />

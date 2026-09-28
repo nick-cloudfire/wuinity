@@ -21,7 +21,7 @@ is refused while a trigger campaign of the same scenario is running, because eve
 | `case_sources.txt` | What each raster was made from, the grid settings, and the hash of the namelist the build wrote. The GUI's **Read this case into the editor** reads the source fields back from it. |
 | `inputs/` | The rasters, one per ELMFIRE stem, all on the grid of `dem.tif`; `fuel_models.csv` (and `building_fuel_models.csv` when given). |
 | `inputs/dem_source.tif` | The DEM the grid was cut from (a download, or a copy of a local one). |
-| `inputs/_previous_grid/` | The rasters of a grid a later build replaced, and originals of rasters it re-cut. |
+| `inputs/_previous_grid/` | The rasters of a grid a later build replaced, and originals of rasters it re-cut. While it holds `carry_pending.txt`, a build that set the grid aside failed before carrying its layers, and the next build carries them; a second re-cut then keeps that grid and puts what the failed build left in `_previous_grid/superseded_<time>/`. |
 | `climatology/<Name>_era5_hourly.csv` | The ERA5 hourly archive the weather is drawn from, downloaded once. |
 | `outputs/` | The last single run's rasters, its namelist `run.data` and its `run.fingerprint`. |
 | `scratch/` | ELMFIRE's intermediates. |
@@ -55,7 +55,9 @@ is refused while a trigger campaign of the same scenario is running, because eve
    `_previous_grid/` onto the new grid (the new padding is nodata: no fuel). So is every raster a namelist in force
    names — the case's `elmfire.data`, its `elmfire.data.kept-*` and the scenario's `NamelistTemplate` — when it
    sits in `inputs/` and is not on the grid; the original is kept in `_previous_grid/`. Terrain and weather are
-   derived again rather than carried.
+   derived again rather than carried. A build that fails after setting the old grid aside (no DEM for the new one,
+   say) leaves `_previous_grid/carry_pending.txt`, and the next build carries from that grid; a finished build
+   removes the marker.
 6. **Canopy** layers nobody supplied are written as zeros: ELMFIRE refuses to start without them, and zero means
    surface fire only — no crown fire. The build says so.
 7. **Painted areas** become `ignition_mask.tif`, `wui_area.tif` and an explicit ignition ([below](#painted-areas)).
@@ -124,14 +126,17 @@ has to exist before painting.
 At build time the painting is placed on:
 
 1. the case grid, when the painting has its size (and, when the file records where its grid lies, its position,
-   cell size and CRS);
+   cell size and CRS — the GUI records it in every painting it saves, moves or copies);
 2. otherwise the grid this build is replacing, when it re-cut the grid;
 3. otherwise the `[Landscape]` reference raster — a painting made before the case existed.
 
-If none fits, the build fails: `The painted areas in <file> are 616x590 cells, but the fire-case grid is
-704x680 and ..., so there is no telling which ground they were painted on. Repaint the ignition and WUI areas on
-the fire-case grid (load the case's dem.tif as the landscape), then build again.` A painting placed on the wrong
-grid would shear into different ground, and skipping it silently would leave the case with no WUI area.
+If none fits, the build fails: `The painted areas in <file> are 566x541 cells, but the fire-case grid is
+706x681 and the landscape raster mati_dem.tif is 616x590, so there is no telling which ground they were painted
+on. Move the painting onto the fire-case grid (the GUI's workflow step 6 offers it when it knows the grid it was
+painted on) or repaint the ignition and WUI areas on it, then build again.` A painting of the right size whose
+record puts it elsewhere is refused the same way, with how the grids differ (`... starts 300 m west of ...`), by
+the build, the painter and a run. A painting placed on the wrong grid would shear into different ground, and
+skipping it silently would leave the case with no WUI area.
 
 **Moving a painting onto the case grid.** When step 6 finds the painting on another grid it can locate (the
 `[Landscape]` raster, `inputs/_previous_grid/dem.tif`, the scenario's downloaded DEM), it offers **Move painting
@@ -198,23 +203,25 @@ A case's weather is a **historical peak fire-weather day**:
 1. **ERA5.** Hourly ERA5 reanalysis for the domain centre from Open-Meteo, 2000 to the last complete year,
    downloaded once into `climatology/` and reused. Fire-weather codes are derived for every hour: the Canadian
    FWI system's daily codes at 12:00 local standard time (from the longitude: 10:00 UTC at Mati, 17:00–20:00 UTC
-   across the continental US), from km/h wind and the rain of the preceding 24 hours. Days from October to
-   January get an FWI of 0, a northern-hemisphere fire season; see the [changelog's known
-   issues](../CHANGELOG.md#known-issues) for what that means south of the equator.
+   across the continental US), from km/h wind and the rain of the preceding 24 hours, every day of the year —
+   there is no off-season, so an autumn wind event in California counts as much as a summer day, and south of
+   the equator the drought codes dry out in the southern summer (the DMC and DC day lengths of the archive's
+   latitude).
 2. **The day.** Each year's highest-FWI noon; one is drawn (`--weather-seed`, default 0) or named
    (`--weather-date`).
 3. **Bands.** One per `DT_METEOROLOGY` (3600 s) for the fire's `SimulationTstopHours`, walking consecutive
    archive hours from the drawn day at the scenario's start hour — so hour 30 of a three-day fire is the second
-   night of a real sequence, not the first day replayed. The archive is on UTC and the start hour is the
-   scenario's local time; v1 does not convert between them (a [known issue](../CHANGELOG.md#known-issues)), so in
-   the western US a 13:00 start reads the drawn day's early-morning hours.
+   night of a real sequence, not the first day replayed. The start hour is the scenario's local time, daylight
+   saving included, with the time zone looked up from the domain's coordinates; the archive is on UTC, so band 1
+   of a 13:00 start is 10:00 UTC at Mati in August and 20:00 UTC in California in October. The build's log gives
+   both (`weather: 8 bands of 1 h from 2007-08-25 10:00 UTC (13:00 local, UTC+03:00) ...`).
 4. **Wind.** A WindNinja solve per band from that hour's archive wind (`fine` mesh, `grass` vegetation), giving a
    terrain-resolved speed and direction on the grid; the edge cells outside WindNinja's mesh take the domain
    value. A failed solve carries the previous band forward. Without WindNinja: one wind value over the whole
    domain, which leaves k-PERIL no terrain variation — the build says which it did.
 5. **Dead fuel moisture.** Nelson's model marched hourly over the 20 conditioning days before the day and
    through the fire, one stick per terrain class (elevation, slope, aspect, canopy cover), so moisture varies with
-   the ground. Without it (it needs NFDRS4, which did not load on the Linux bench): uniform values.
+   the ground. Without it (it needs the NFDRS4 native library): uniform values.
 
 Each stage falls back to uniform values on its own (`--wind`, `--wind-dir`, `--m1/--m10/--m100`) and says so;
 `--no-climatology` writes uniform weather deliberately.
@@ -259,8 +266,12 @@ exits non-zero, or writes no arrival raster. A fire of **0 acres** is reported a
 ignition most likely landed on non-burnable fuel)`. A fire stopped by `MAX_RUNTIME` is reported as truncated.
 
 **Stopping.** The GUI's Stop and every way of quitting kill the ELMFIRE and WindNinja process trees at once. A
-case build whose WindNinja was killed can still finish, on uniform wind; the GUI reports that step as stopped —
-build the case again.
+case build stops at its next safe point — before the grid is decided, after a new case's first DEM, before the
+weather, before each WindNinja solve — and then writes no wind at all (not even a uniform field) and does not
+write `elmfire.data` again. The data step reports `… STOPPED: The case build was stopped while its weather was
+being made: no wind was written …`, the scenario is left as it was, and the next build carries on from what the
+stopped one kept. A stop that comes after the wind was written is too late to take: the rest of the build is quick,
+so it finishes and says so. A stopped or converged campaign starts no further WindNinja band.
 
 ## The midflame wind
 

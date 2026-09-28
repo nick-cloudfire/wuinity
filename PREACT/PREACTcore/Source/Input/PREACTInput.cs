@@ -135,6 +135,73 @@ namespace PREACT.Input
         {
             { "Events", "The events feature (BlockGoalEventFiles) was never implemented - its file reader was an empty stub - and has been removed." },
             { "WUIShow", "WUIShow streaming has been removed." },
+            { "SimpleWildfireCA", RemovedFireModel }, { "ElmClone", RemovedFireModel }, { "CellParticleHybrid", RemovedFireModel },
+            { "FireCell", RemovedFireModel },
+            { "Behave", RemovedSpreadTable }, { "Rothermel", RemovedSpreadTable },
+            { "AdvectDiffuse3D", RemovedSmokeModel }, { "AdvectDiffuseMixingLayer", RemovedSmokeModel },
+            { "CityFlow", RemovedTrafficModel }, { "MacroTrafficSim", RemovedTrafficModel },
+        };
+
+        private const string RemovedFireModel = "It configured a cell-based fire spread model, which has been removed; use ELMFIRE, or AscImport for a fire computed elsewhere.";
+        private const string RemovedSpreadTable = "The rate of spread now always comes from the fire module.";
+        private const string RemovedSmokeModel = "That smoke model has been removed; GlobalSmoke is the one smoke module.";
+        private const string RemovedTrafficModel = "That traffic model has been removed; SUMO is the one traffic module.";
+
+        /// <summary>
+        /// The sections the parser reads, each with the input type whose writable members are its keys
+        /// (<see cref="PREACTInputWriter.FileKeys"/>): what the file may say is what a save writes. Anything else in a
+        /// section, and any other section, is reported once when the scenario is read (<see cref="ReportIgnored"/>),
+        /// because a save does not write it - a typo in a hand edit used to vanish without a word.
+        /// </summary>
+        private static readonly Dictionary<string, System.Type> SectionTypes = new Dictionary<string, System.Type>
+        {
+            { nameof(Simulation), typeof(SimulationInput) },
+            { nameof(Map), typeof(MapInput) },
+            { nameof(Landscape), typeof(LandscapeInput) },
+            { nameof(Weather), typeof(WeatherInput) },
+            { nameof(Population), typeof(PopulationInput) },
+            { "Demographics", typeof(DemographicsInput) },
+            { nameof(Evacuation), typeof(EvacuationInput) },
+            { "ResponseCurve", typeof(ResponseCurve) },
+            { "Destination", typeof(EvacuationDestinationInput) },
+            { "EvacuationGroup", typeof(EvacuationGroupInput) },
+            { nameof(PedestrianModule), typeof(PedestrianModuleInput) },
+            { nameof(PedestrianModuleInput.PedestrianModules.MacroHouseholdSim), typeof(MacroHouseholdSimInput) },
+            { nameof(TrafficModule), typeof(TrafficModuleInput) },
+            { nameof(TrafficModuleInput.TrafficModules.SUMO), typeof(SUMOInput) },
+            { nameof(WildfireModule), typeof(WildfireModuleInput) },
+            { nameof(WildfireModuleInput.WildfireModules.AscImport), typeof(AscImportInput) },
+            { nameof(WildfireModuleInput.WildfireModules.ELMFIRE), typeof(ElmfireInput) },
+            { ElmfireInput.NamelistSection, typeof(ElmfireNamelistInput) },
+            { "IgnitionPoint", typeof(Wildfire.IgnitionPointInput) },
+            { nameof(SmokeModule), typeof(SmokeInput) },
+            { nameof(SmokeInput.SmokeModules.GlobalSmoke), typeof(GlobalSmokeInput) },
+            { nameof(TriggerBufferModule), typeof(TriggerBufferModuleInput) },
+            { nameof(TriggerBufferModuleInput.TriggerBufferModules.kPERIL), typeof(kPERILInput) },
+        };
+
+        /// <summary>Keys a parser reads under an older name and writes under the new one (it says so itself).</summary>
+        private static readonly HashSet<string> ConvertedKeys = new HashSet<string>
+        {
+            "ELMFIRE|SimulationTstopSeconds",
+        };
+
+        /// <summary>Keys that used to be part of the format and are now ignored, <c>Section|Key</c> to what became of them.</summary>
+        private static readonly Dictionary<string, string> RetiredKeys = new Dictionary<string, string>
+        {
+            { "Evacuation|UseTriggerBufferEvacuation", "it was never read by the engine." },
+            { "Evacuation|TriggerBufferFile", "it was never read by the engine." },
+            { "Evacuation|EvacuationOrderStart", "it was never read by the engine; each [EvacuationGroup] has its own EvacuationOrderDateTime." },
+            { "Weather|DesiredLatLon", "it was read but never used." },
+            { "Weather|HasWeatherAnchor", "it only restated whether WeatherAnchorDateTime is set." },
+            { "TrafficModule|VisibilityAffectsSpeed", "smoke acts on traffic through [SUMO] SmokeAlpha and SmokeBeta." },
+            { "SUMO|UTMoffset", "the SUMO network carries its own offset." },
+            { "kPERIL|WindBand", "each cell takes the band covering the time the fire reached it." },
+            { "kPERIL|MidflameWindspeed", "the rate of spread comes from the fire module, and the midflame wind from the fire." },
+            { "kPERIL|CalculateROSFromBehave", "the rate of spread always comes from the fire module." },
+            { "kPERIL|InitialFuelMoistureFile", "the rate of spread always comes from the fire module." },
+            { "kPERIL|FuelModelsFile", "the rate of spread always comes from the fire module." },
+            { "ELMFIRE|IgnitionPointsFile", "ignition points are [IgnitionPoint] sections now (Fire > Ignition points); the CSV is not read." },
         };
 
         private static string RemoveSpace(string input)
@@ -208,6 +275,13 @@ namespace PREACT.Input
             _softDepth = 0;
             _duplicateKeysReported = new HashSet<string>();
 
+            //Every header in file order, and the ones given twice (reported as duplicates, never read), for the
+            //report of what no parser read.
+            var allHeaders = new List<int>();
+            var duplicateHeaders = new HashSet<int>();
+            _sectionsRead = new HashSet<int>();
+            _parsingLines = inputLines;
+
             List<int> destinationLineIndices = new List<int>();
             List<int> responseLineIndices = new List<int>();
             List<int> groupLineIndices = new List<int>();
@@ -227,6 +301,7 @@ namespace PREACT.Input
                     }
 
                     string name = line.Trim('[', ']');
+                    allHeaders.Add(i);
                     switch (name)
                     {
                         case "Destination": destinationLineIndices.Add(i); break;
@@ -244,6 +319,7 @@ namespace PREACT.Input
                                     $"[{name}] appears more than once (lines {first + 1} and {i + 1}); only the first is read.");
                                 AddRequirement("[" + name + "]",
                                     $"Given more than once (lines {first + 1} and {i + 1}); only the first is read and saved.", false);
+                                duplicateHeaders.Add(i);
                             }
                             else
                             {
@@ -333,7 +409,8 @@ namespace PREACT.Input
                 //pedestrian module
                 ReadSection(nameof(PedestrianModule), false, () =>
                 {
-                    if (headerLineIndices.TryGetValue(nameof(PedestrianModule), out int lineindex))
+                    if (ModuleHeader(headerLineIndices, nameof(PedestrianModule), out int lineindex,
+                        nameof(PedestrianModuleInput.PedestrianModules.MacroHouseholdSim)))
                     {
                         newInput.PedestrianModule.Parse(inputLines, lineindex, headerLineIndices, out bool ok);
                         return ok;
@@ -345,7 +422,8 @@ namespace PREACT.Input
                 //traffic module
                 ReadSection(nameof(TrafficModule), false, () =>
                 {
-                    if (headerLineIndices.TryGetValue(nameof(TrafficModule), out int lineindex))
+                    if (ModuleHeader(headerLineIndices, nameof(TrafficModule), out int lineindex,
+                        nameof(TrafficModuleInput.TrafficModules.SUMO)))
                     {
                         newInput.TrafficModule.Parse(inputLines, lineindex, headerLineIndices, rootFolder, out bool ok);
                         return ok;
@@ -357,7 +435,10 @@ namespace PREACT.Input
                 //wildfire module
                 ReadSection(nameof(WildfireModule), false, () =>
                 {
-                    if (headerLineIndices.TryGetValue(nameof(WildfireModule), out int lineindex))
+                    if (ModuleHeader(headerLineIndices, nameof(WildfireModule), out int lineindex,
+                            nameof(WildfireModuleInput.WildfireModules.AscImport), nameof(WildfireModuleInput.WildfireModules.ELMFIRE),
+                            ElmfireInput.NamelistSection)
+                        || ignitionPointLineIndices.Count > 0)
                     {
                         //A switched-off fire module cannot make the run fail, so nothing it reports is critical.
                         using (SoftRequirements(!PeekBool(inputLines, lineindex, nameof(WildfireModuleInput.Enabled))))
@@ -373,7 +454,8 @@ namespace PREACT.Input
                 //smoke module
                 ReadSection(nameof(SmokeModule), false, () =>
                 {
-                    if (headerLineIndices.TryGetValue(nameof(SmokeModule), out int lineindex))
+                    if (ModuleHeader(headerLineIndices, nameof(SmokeModule), out int lineindex,
+                        nameof(SmokeInput.SmokeModules.GlobalSmoke)))
                     {
                         newInput.SmokeModule.Parse(inputLines, lineindex, headerLineIndices, newInput.Weather, rootFolder, out bool ok);
                         return ok;
@@ -385,7 +467,8 @@ namespace PREACT.Input
                 //trigger buffer
                 ReadSection(nameof(TriggerBufferModule), false, () =>
                 {
-                    if (headerLineIndices.TryGetValue(nameof(TriggerBufferModule), out int lineindex))
+                    if (ModuleHeader(headerLineIndices, nameof(TriggerBufferModule), out int lineindex,
+                        nameof(TriggerBufferModuleInput.TriggerBufferModules.kPERIL)))
                     {
                         newInput.TriggerBufferModule.Parse(inputLines, lineindex, headerLineIndices, newInput.Simulation, rootFolder, out bool ok);
                         return ok;
@@ -434,6 +517,13 @@ namespace PREACT.Input
                     newInput.Evacuation.Parse(inputLines, lineindex, newInput.Simulation, newInput.Population, newInput.PedestrianModule, newInput.TrafficModule, destinationLineIndices, responseLineIndices, groupLineIndices, rootFolder, out bool ok);
                     return ok;
                 });
+
+                //Last, once every parser has had its sections: what the file says that none of them read.
+                ReadSection("Scenario", false, () =>
+                {
+                    ReportIgnored(inputLines, allHeaders, duplicateHeaders);
+                    return true;
+                });
             }
             catch (System.Exception e)
             {
@@ -449,6 +539,8 @@ namespace PREACT.Input
             _published = _collecting;
             _collecting = null;
             _duplicateKeysReported = null;
+            _sectionsRead = null;
+            _parsingLines = null;
             success = RequirementsMet;
             return newInput;
         }
@@ -479,6 +571,34 @@ namespace PREACT.Input
             {
                 SectionIncomplete(name, alwaysCritical);
             }
+        }
+
+        /// <summary>
+        /// Whether a module has anything in the file: its own header (<paramref name="headerIndex"/> is its line) or,
+        /// without one, any of its <paramref name="subSections"/> (<paramref name="headerIndex"/> is -1, and the module
+        /// reads as switched off).
+        /// </summary>
+        /// <remarks>
+        /// A <c>[SUMO]</c> or an <c>[ELMFIRE]</c> under no module header used to be skipped, and the next save
+        /// dropped it without a word. It is now read as the settings of a module that is off, and kept.
+        /// </remarks>
+        private static bool ModuleHeader(Dictionary<string, int> headerLineIndices, string module, out int headerIndex,
+            params string[] subSections)
+        {
+            if (headerLineIndices.TryGetValue(module, out headerIndex))
+            {
+                return true;
+            }
+
+            headerIndex = -1;
+            foreach (string sub in subSections)
+            {
+                if (headerLineIndices.ContainsKey(sub))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         /// <summary>
@@ -570,8 +690,19 @@ namespace PREACT.Input
         /// The imported fire's arrival time raster, read straight from the lines rather than from the
         /// parsed input because the wildfire section has not been read yet at the point this is needed.
         /// </summary>
+        /// <remarks>
+        /// Only when the fire module is <c>AscImport</c>: a scenario that switched to ELMFIRE keeps its old
+        /// <c>[AscImport]</c> section, and that raster says nothing about the grid the scenario is on now.
+        /// </remarks>
         private static string FireDataReferenceFile(string[] inputLines, Dictionary<string, int> headerLineIndices)
         {
+            if (!headerLineIndices.TryGetValue(nameof(WildfireModule), out int moduleIndex)
+                || !GetHeaderInput(inputLines, moduleIndex, false, false).TryGetValue(nameof(WildfireModuleInput.Module), out string module)
+                || module != nameof(WildfireModuleInput.WildfireModules.AscImport))
+            {
+                return string.Empty;
+            }
+
             if (!headerLineIndices.TryGetValue("AscImport", out int lineIndex))
             {
                 return string.Empty;
@@ -594,7 +725,187 @@ namespace PREACT.Input
         /// rows of a ramp or a response curve) under the key <c>dataLine&lt;index&gt;</c>.</param>
         public static Dictionary<string, string> GetHeaderInput(string[] inputLines, int startIndex, bool collectPureDataLines = false)
         {
+            //A section a parser asked for is a section that was read (see ReportIgnored).
+            if (_sectionsRead != null && ReferenceEquals(inputLines, _parsingLines))
+            {
+                _sectionsRead.Add(startIndex);
+            }
             return GetHeaderInput(inputLines, startIndex, collectPureDataLines, true);
+        }
+
+        /// <summary>
+        /// Reports, once each, what the file says that no parser read - so a save will not write it: a section the
+        /// parser does not know, a known section nothing read, a key that is not one of its section's, a retired key,
+        /// and a line that is not <c>Key=Value</c>. Never critical: the scenario is what the rest of the file says.
+        /// </summary>
+        /// <remarks>
+        /// These used to be dropped without a word, so a mistyped key in a hand edit - <c>enabled=true</c>,
+        /// <c>SimulationTstopHour=24</c> - simply did not happen, and the next save from the GUI deleted it. A key is
+        /// known when the writer writes it (<see cref="PREACTInputWriter.FileKeys"/> of the section's type, the members
+        /// every parser looks its keys up by), so the two cannot disagree about what the format holds.
+        /// </remarks>
+        private static void ReportIgnored(string[] inputLines, List<int> headers, HashSet<int> duplicates)
+        {
+            var keyCache = new Dictionary<string, HashSet<string>>();
+            //section|key (or section| for a whole section) -> first line and how many times, in file order.
+            var found = new Dictionary<string, int[]>();
+            var order = new List<string>();
+            var messages = new Dictionary<string, string[]>();
+
+            //What is reported, and where the first one is: "[Weather] DesiredLatLon (line 16) is no longer used: ...".
+            void Note(string id, int line, string section, string key, string subject, string predicate)
+            {
+                if (found.TryGetValue(id, out int[] seen))
+                {
+                    ++seen[1];
+                    return;
+                }
+                found[id] = new[] { line, 1 };
+                order.Add(id);
+                messages[id] = new[] { section, key, subject, predicate };
+            }
+
+            int firstHeader = headers.Count > 0 ? headers[0] : inputLines.Length;
+            for (int i = 0; i < firstHeader; ++i)
+            {
+                if ((inputLines[i] ?? string.Empty).Length > 0)
+                {
+                    Note("|line" + i, i, "Scenario", "line " + (i + 1), $"\"{Shorten(inputLines[i])}\"",
+                        "comes before the first [section], so nothing reads it.");
+                }
+            }
+
+            for (int h = 0; h < headers.Count; ++h)
+            {
+                int start = headers[h];
+                int end = h + 1 < headers.Count ? headers[h + 1] : inputLines.Length;
+                string name = inputLines[start].Trim('[', ']');
+
+                if (duplicates.Contains(start) || RetiredSections.ContainsKey(name))
+                {
+                    continue; //said when the headers were read
+                }
+
+                if (!SectionTypes.TryGetValue(name, out System.Type type))
+                {
+                    Note(name + "|", start, name, "[" + name + "]", "[" + name + "]",
+                        "is not a section PREACT reads" + Suggest(name, SectionTypes.Keys, "[{0}]"));
+                    continue;
+                }
+
+                if (!_sectionsRead.Contains(start))
+                {
+                    Note(name + "|", start, name, "[" + name + "]", "[" + name + "]",
+                        "was not read by any part of the scenario.");
+                    continue;
+                }
+
+                if (!keyCache.TryGetValue(name, out HashSet<string> known))
+                {
+                    known = new HashSet<string>(PREACTInputWriter.FileKeys(type));
+                    keyCache[name] = known;
+                }
+
+                for (int i = start + 1; i < end; ++i)
+                {
+                    string line = inputLines[i] ?? string.Empty;
+                    if (line.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    int equals = line.IndexOf('=');
+                    if (equals <= 0)
+                    {
+                        //A response curve's rows are its data.
+                        if (name == "ResponseCurve" && line.IndexOf(',') > 0)
+                        {
+                            continue;
+                        }
+                        Note(name + "|line" + i, i, name, "line " + (i + 1), $"[{name}] \"{Shorten(line)}\"",
+                            "is not a Key=Value line.");
+                        continue;
+                    }
+
+                    string key = line.Substring(0, equals);
+                    if (known.Contains(key) || ConvertedKeys.Contains(name + "|" + key))
+                    {
+                        continue;
+                    }
+
+                    if (RetiredKeys.TryGetValue(name + "|" + key, out string reason))
+                    {
+                        Note(name + "|" + key, i, name, key, $"[{name}] {key}", "is no longer used: " + reason);
+                    }
+                    else
+                    {
+                        Note(name + "|" + key, i, name, key, $"[{name}] {key}", $"is not a key of [{name}]" + Suggest(key, known, "{0}"));
+                    }
+                }
+            }
+
+            foreach (string id in order)
+            {
+                int[] where = found[id];
+                string[] m = messages[id];
+                string times = where[1] > 1 ? $" (line {where[0] + 1}, and {where[1] - 1} more)" : $" (line {where[0] + 1})";
+                string text = m[2] + times + " " + m[3] + " It is ignored, and saving the scenario does not write it.";
+                Engine.Message(null, Engine.LogType.Warning, text);
+                _currentSection = m[0];
+                AddRequirement(m[1], text, false);
+            }
+        }
+
+        private static string Shorten(string line)
+        {
+            return line.Length <= 40 ? line : line.Substring(0, 37) + "...";
+        }
+
+        /// <summary>
+        /// " - did you mean X?" for the known name closest to <paramref name="name"/> (written with
+        /// <paramref name="format"/>), or ".".
+        /// </summary>
+        /// <remarks>The keys are case-sensitive, so a key that differs only in case is the likeliest typo of all.</remarks>
+        private static string Suggest(string name, IEnumerable<string> known, string format)
+        {
+            string best = null;
+            int bestDistance = int.MaxValue;
+            foreach (string candidate in known)
+            {
+                int distance = string.Equals(candidate, name, System.StringComparison.OrdinalIgnoreCase)
+                    ? 0
+                    : EditDistance(name.ToLowerInvariant(), candidate.ToLowerInvariant());
+                if (distance < bestDistance)
+                {
+                    best = candidate;
+                    bestDistance = distance;
+                }
+            }
+
+            int allowed = System.Math.Max(1, System.Math.Min(3, name.Length / 4));
+            return best != null && bestDistance <= allowed
+                ? " - did you mean " + string.Format(System.Globalization.CultureInfo.InvariantCulture, format, best) + "?"
+                : ".";
+        }
+
+        private static int EditDistance(string a, string b)
+        {
+            var previous = new int[b.Length + 1];
+            var current = new int[b.Length + 1];
+            for (int j = 0; j <= b.Length; ++j) previous[j] = j;
+            for (int i = 1; i <= a.Length; ++i)
+            {
+                current[0] = i;
+                for (int j = 1; j <= b.Length; ++j)
+                {
+                    int cost = a[i - 1] == b[j - 1] ? 0 : 1;
+                    current[j] = System.Math.Min(System.Math.Min(current[j - 1] + 1, previous[j] + 1), previous[j - 1] + cost);
+                }
+                int[] swap = previous;
+                previous = current;
+                current = swap;
+            }
+            return previous[b.Length];
         }
 
         private static Dictionary<string, string> GetHeaderInput(string[] inputLines, int startIndex, bool collectPureDataLines, bool reportDuplicates)
@@ -695,6 +1006,9 @@ namespace PREACT.Input
         [System.ThreadStatic] private static string _currentSection;
         [System.ThreadStatic] private static int _softDepth;
         [System.ThreadStatic] private static HashSet<string> _duplicateKeysReported;
+        //The header lines a parser asked for during this parse, and the lines being parsed (see ReportIgnored).
+        [System.ThreadStatic] private static HashSet<int> _sectionsRead;
+        [System.ThreadStatic] private static string[] _parsingLines;
         private static volatile List<InputRequirement> _published = new List<InputRequirement>();
 
         /// <summary>What the last read scenario still needs. Rebuilt (replaced) by every load.</summary>

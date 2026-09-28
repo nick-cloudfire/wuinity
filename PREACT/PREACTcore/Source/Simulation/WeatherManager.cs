@@ -74,7 +74,7 @@ namespace PREACT
 
             //Before the weather is loaded, because the offset decides which span of the record has to be
             //covered - and so whether the file on disk is usable at all.
-            SetAnchor(_anchor, time.StartDateTime);
+            SetAnchor(_anchor, time);
 
             LoadOrDownloadWeather(time);
             DeriveFireWeatherCodes(time);
@@ -126,8 +126,8 @@ namespace PREACT
             }
 
             Input.WeatherInput seeds = _simulation.Input.Weather;
-            _codes = Utility.ClimatologySampler.DeriveFireWeatherCodes(hours, _weatherData.Longitude,
-                new Wildfire.FireWeatherIndex(seeds.StartFFMC, seeds.StartDMC, seeds.StartDC),
+            _codes = Utility.ClimatologySampler.DeriveFireWeatherCodes(hours, _weatherData.Latitude, _weatherData.Longitude,
+                new Wildfire.FireWeatherIndex(seeds.StartFFMC, seeds.StartDMC, seeds.StartDC, _weatherData.Latitude),
                 new Wildfire.HourlyFFMC(seeds.StartHourlyFFMC));
             _codesFirstRow = first;
             _currentCodes = _codes.Length > 0 ? _codes[0] : default;
@@ -149,8 +149,12 @@ namespace PREACT
         /// How far the weather record is offset from the simulation's own clock.
         /// </summary>
         /// <remarks>
-        /// Zero for a scenario that reads weather at its own dates. Non-zero when the fire was computed against
-        /// a historical day drawn out of the record — see <see cref="Input.WeatherInput.WeatherAnchorDateTime"/>.
+        /// The record is UTC (every weather CSV and the ERA5 archive are) and the simulation clock is local civil
+        /// time, so a scenario that reads weather at its own dates is offset by its UTC offset: at Mati in summer,
+        /// 13:00 reads the record's 10:00. It used to be zero there, so the weather reported was the record's 13:00
+        /// UTC - three hours later in the day. With an anchor the offset takes the simulation start to the anchor,
+        /// the UTC instant the fire's first weather band was written from (see
+        /// <see cref="Input.WeatherInput.WeatherAnchorDateTime"/>).
         /// </remarks>
         private TimeSpan _weatherOffset = TimeSpan.Zero;
 
@@ -160,9 +164,11 @@ namespace PREACT
             return simulationTime + _weatherOffset;
         }
 
-        private void SetAnchor(DateTime anchor, DateTime simulationStart)
+        private void SetAnchor(DateTime anchor, TimeManager time)
         {
-            _weatherOffset = anchor == default ? TimeSpan.Zero : anchor - simulationStart;
+            _weatherOffset = anchor == default
+                ? time.StartUTCDateTime - time.StartDateTime
+                : anchor - time.StartDateTime;
         }
 
         /// <summary>
@@ -192,7 +198,7 @@ namespace PREACT
                 return;
             }
 
-            SetAnchor(anchor, time.StartDateTime);
+            SetAnchor(anchor, time);
             _anchor = anchor;
 
             bool reload = !string.IsNullOrEmpty(weatherFile)
@@ -484,7 +490,7 @@ namespace PREACT
                                 });
                             }
                             Utility.ClimatologySampler.DerivedCodes[] codes =
-                                Utility.ClimatologySampler.DeriveFireWeatherCodes(raw, weatherStream.Longitude);
+                                Utility.ClimatologySampler.DeriveFireWeatherCodes(raw, weatherStream.Latitude, weatherStream.Longitude);
 
                             for (int i = 0; i < hourly.Time.Length; i++)
                             {

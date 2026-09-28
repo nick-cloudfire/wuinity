@@ -195,7 +195,7 @@ Unity GUI is supported on Windows only. What Linux needs beyond the .NET 8 SDK:
 | GDAL command-line tools | ELMFIRE's shell-outs. | Any recent version on `PATH`, or in `/usr/bin`, `/usr/local/bin` or `/opt/homebrew/bin`. |
 | `PROJ_DATA` (and `GDAL_DATA`) | So GDAL finds a `proj.db` that matches it. | e.g. `/usr/share/proj`; the engine falls back to `/usr/share/proj` when neither `PROJ_DATA` nor `PROJ_LIB` is set. |
 | SUMO 1.22 with the C# bindings | Traffic. | Built from source, with the Linux glue swapped in (below). `SUMO_HOME` pointing at it. |
-| WindNinja | Terrain wind. | The probe on `PATH` looks for `WindNinja_cli.exe`, so on Linux set `WINDNINJA_CLI` to the executable, or pass `--windninja`. |
+| WindNinja | Terrain wind. | A `WindNinja_cli` built from source: found through `WINDNINJA_CLI`, on `PATH` (a source build installs to `/usr/local/bin`), or under `/opt/WindNinja`, `/usr/local/WindNinja` or `~/WindNinja`; or pass `--windninja`. |
 | ELMFIRE | Fires. | [ELMFIRE on Linux](#elmfire-on-linux) above. |
 
 The engine registers its own native-library resolver on Linux (for the GDAL, NFDRS4 and FOFEM wrappers and
@@ -214,9 +214,10 @@ dotnet PREACT/PREACTcli/bin/Release/net8.0/PREACTcli.dll converge-trigger --wui 
 `PREACTcli` finds the `PREACT` apphost in `PREACT/PREACTexecute/bin/Release/net8.0/` by the platform's name, as
 on Windows.
 
-On the Linux test bench the NFDRS4 library did not load, so the live fuel moisture march and Nelson fell back to
-uniform values, and there was no WindNinja. A campaign there needs `--allow-uniform-weather` (it otherwise
-stops before its first fire); the results are then not terrain-resolved and should be treated as a pipeline test.
+On the Linux test bench the NFDRS4 library loads through the engine's resolver (Nelson's dead fuel moisture and
+the live fuel moisture march both ran), but there was no WindNinja. A campaign there needs
+`--allow-uniform-weather` (it otherwise stops before its first fire); its wind is then not terrain-resolved and the
+results should be treated as a pipeline test.
 
 Each realization with SUMO needs several GB of memory; on a 7 GB machine two at once were killed by the
 out-of-memory killer (exit 137, recorded as failed). Use `--parallel 1` on small machines.

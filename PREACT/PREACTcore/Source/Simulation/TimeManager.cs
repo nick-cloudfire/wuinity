@@ -1,5 +1,4 @@
-﻿using GeoTimeZone;
-using System;
+﻿using System;
 
 namespace PREACT
 {    
@@ -25,6 +24,13 @@ namespace PREACT
         public DateTime EndDateTime { get => _endDateTime; }
         public DateTime CurrentDateTime { get => _currentDateTime; }
         public DateTime CurrentUTCDateTime { get => _currentUTCDateTime; }
+
+        /// <summary>The UTC instant of <see cref="StartDateTime"/>, which is local civil time at the domain.</summary>
+        public DateTime StartUTCDateTime { get => _startUTCDateTime; }
+
+        /// <summary>The civil time zone the scenario's dates are stated in.</summary>
+        public TimeZoneInfo TimeZone { get => _timeZone; }
+        private TimeZoneInfo _timeZone;
         //public string StartDateISO8601 { get => _startDateISO8601; }
         //public string EndDateISO8601 { get => _endDateISO8601; }
 
@@ -32,9 +38,10 @@ namespace PREACT
         {
             _simulationTime = 0;
 
-            TimeZoneResult iana = TimeZoneLookup.GetTimeZone(simulation.Input.Simulation.LowerLeftLatLon.x, simulation.Input.Simulation.LowerLeftLatLon.y);
-            string windows = TimeZoneConverter.TZConvert.IanaToWindows(iana.Result);
-            TimeZoneInfo tz = TimeZoneInfo.FindSystemTimeZoneById(windows);
+            //The zone the scenario's dates are stated in, looked up the one way the case weather and the weather
+            //report look it up too (Utility.LocalTime), so all three agree on which UTC hour a local time is.
+            TimeZoneInfo tz = Utility.LocalTime.ZoneAt(simulation.Input.Simulation.LowerLeftLatLon.x, simulation.Input.Simulation.LowerLeftLatLon.y);
+            _timeZone = tz;
             DateTimeOffset dto = new DateTimeOffset(input.Simulation.StartDateTime, tz.GetUtcOffset(input.Simulation.StartDateTime));
 
             _startDateTime = dto.DateTime;

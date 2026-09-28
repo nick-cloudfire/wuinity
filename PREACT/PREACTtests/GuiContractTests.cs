@@ -14,6 +14,49 @@ namespace PREACT.Tests
             runner.Add("painting: a read-only .gfi loads, with its grid record; one without the record still loads", ReadOnlyPainting);
             runner.Add("results: a boundary or campaign raster is a result, the .prj/.aux.xml/.ovr beside it is not", ResultNames);
             runner.Add("campaign: one made before per-realization evacuation seeds is told apart, one made now is not", EarlierCampaign);
+            runner.Add("gui: messages and the generated namelist name the menus the GUI has, not the retired ones", CurrentMenuNames);
+        }
+
+        /// <summary>
+        /// docs.md 3.7: messages still sent the user to "Prepare data" and the "Hazards tab" (and "Run/edit > Hazards"),
+        /// which the v1 GUI does not have; the Hazards one was written into every generated elmfire.data.
+        /// </summary>
+        private static List<string> CurrentMenuNames()
+        {
+            var warnings = new List<string>();
+            string[] header = ElmfireNamelistBuilder.Build(new Input.ElmfireNamelistInput(), new ElmfireNamelistBuilder.CaseFacts());
+            Assert.True(header.Take(8).Any(l => l.Contains("Fire > Fire behaviour")), "the namelist header names the Fire behaviour page");
+
+            string repo = Program.FindRepositoryRoot();
+            if (repo == null)
+            {
+                warnings.Add("the repository was not found; the source scan was skipped");
+                return warnings;
+            }
+
+            string[] retired = { "Prepare data", "Hazards tab", "Run/edit", "Hazards >" };
+            var found = new List<string>();
+            foreach (string root in new[] { Path.Combine(repo, "PREACT"), Path.Combine(repo, "WUInity", "Assets", "WUInity") })
+            {
+                foreach (string file in Directory.GetFiles(root, "*.cs", SearchOption.AllDirectories))
+                {
+                    string rel = Path.GetRelativePath(repo, file).Replace('\\', '/');
+                    if (rel.Contains("/bin/") || rel.Contains("/obj/") || rel.StartsWith("PREACT/PREACTtests/")) continue;
+                    string[] lines = File.ReadAllLines(file);
+                    for (int i = 0; i < lines.Length; ++i)
+                    {
+                        string code = lines[i].TrimStart();
+                        if (code.StartsWith("//")) continue; //a comment may say what a thing used to be called
+                        foreach (string name in retired)
+                        {
+                            int at = code.IndexOf(name, StringComparison.Ordinal);
+                            if (at > 0 && code.LastIndexOf('"', at) >= 0) found.Add($"{rel}:{i + 1} \"{name}\"");
+                        }
+                    }
+                }
+            }
+            Assert.True(found.Count == 0, "strings still name retired menus: " + string.Join(", ", found));
+            return warnings;
         }
 
         private static void EarlierCampaign()

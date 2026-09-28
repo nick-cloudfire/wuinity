@@ -16,10 +16,10 @@ namespace PREACT.Weather
         /// Adapted from Farsite FMC-FE2.cpp, returns W/m2. Added latitude and longitide as that was not included (lat got it through reference, long was set to 0 for some reason, equator?)
         /// </summary>
         /// <param name="latitude">Degrees north.</param>
-        /// <param name="longitude">Degrees east.</param>
+        /// <param name="longitude">Degrees east, as WGS84 and every weather record here give it.</param>
         /// <param name="dayOfYear">1-366.</param>
         /// <param name="hour">
-        /// Time of day as <b>HHMM</b>, not hours 0-23 — 2 pm is 1400. The implementation below
+        /// Time of day in <b>UTC</b> (the weather record's clock), as <b>HHMM</b>, not hours 0-23 — 2 pm is 1400. The implementation below
         /// takes <c>(int)hour / 100</c> in integer arithmetic, so an hour-of-day argument silently
         /// collapses to midnight and the function returns 0 for every terrain, at every time of
         /// year. Nothing in the signature hints at this, so it is spelled out here.
@@ -67,7 +67,12 @@ namespace PREACT.Weather
             }
 
             jdate = CDT_JulianDate(2000, (int)month, (int)days, (int)hour / 100, 0, 0, 0);
-            Rad = CDT_SolarRadiation(jdate, longitude, latitude, 0.0, (double)slope, (double)aspect, (double)elev / 3.2808, atmTransparency, cloudTransmittance, canopyTransmittance);
+            //The CDT library measures longitude west of Greenwich as positive (its local sidereal time is GMST minus
+            //lambda / 15), and the hour here is UTC (gmtDiff 0). East-positive longitude went in as it was, so the sun
+            //stood where it stands at the mirrored longitude: 3.2 h late at Mati (the flat-ground peak at 14:00 UTC
+            //rather than about 10:20) and some 16 h out in California, where it was below the horizon at local noon -
+            //so Nelson's sticks got no terrain factor there in daylight, and a wrong one at Mati.
+            Rad = CDT_SolarRadiation(jdate, -longitude, latitude, 0.0, (double)slope, (double)aspect, (double)elev / 3.2808, atmTransparency, cloudTransmittance, canopyTransmittance);
 
             return Rad *= 1370.0;       //W/m2
         }

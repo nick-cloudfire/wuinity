@@ -211,16 +211,20 @@ A single run is the quickest check that the evacuation works before a campaign.
 
 ### 12. Results
 
-**Results** lists what the last run and campaign wrote. Results > Show on map draws a result raster over the
-map: the fire's arrival, the trigger boundary, and a campaign's trigger probability, burn probability and arrival
-percentiles. [Output files](output-files.md) says what each file holds.
+**Results** lists what the last run and campaign wrote — the rasters, not the `.prj`, `.aux.xml` or `.ovr` files
+beside them. A boundary without a `.prj` is marked *(earlier version)*, and a campaign made before v1's k-PERIL fix
+gets a line saying so. Results > Show on map draws a result raster over the map: the fire's arrival, the trigger
+boundary, and a campaign's trigger probability, burn probability and arrival percentiles. [Output
+files](output-files.md) says what each file holds.
 
 ### 13. Trigger campaign
 
 **Campaign...** sets up and starts a campaign: many fires, each from a drawn ignition under drawn weather, each
 with its evacuation and its trigger boundary, aggregated until the probability raster stops changing. It needs
-the case built, the painted areas applied, and the trigger boundary on. The window, its fields and what happens
-on Run: [Trigger campaigns](trigger-campaigns.md#in-the-gui).
+the case built, the painted areas applied, and the trigger boundary on. A campaign folder made before v1 (its
+realizations predate v1's k-PERIL orientation fix and per-realization evacuation seeds) is not reused: the step
+warns, and Run starts a new campaign beside it. The window, its fields and what happens on Run: [Trigger
+campaigns](trigger-campaigns.md#in-the-gui).
 
 ## Finding things
 
@@ -235,7 +239,7 @@ The menus hold the same actions as the workflow, grouped the same way:
 | **Evacuation** | Modules (pedestrian, traffic), Destinations, Response curves, Demographics, Evacuation groups, Paint group areas. |
 | **Run** | Run simulation (F5), Pause / Resume, Stop, Trigger campaign (opens at any time, to set one up or to watch and cancel the one running). |
 | **Results** | Live output; Show on map (fire arrival, trigger boundary, trigger and burn probability, arrival p10/p50/p90, evacuation groups, the case's WUI area, Hide result); Results of the last run and campaign; Open output folder. |
-| **View** | Map layers (population density, road network, markers, result overlay), Console, Clear console, Theme, Reset window layout. |
+| **View** | Map layers (population density, road network, fire grid outline, markers, result overlay), Console, Clear console, Theme, Reset window layout. |
 | **Help** | Getting started, Troubleshooting, External tools and keys, About. |
 
 Scenario > Check scenario parses the scenario as it stands, unsaved edits included, and files what it finds

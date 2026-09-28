@@ -904,8 +904,10 @@ namespace PREACT.Input
         /// whose names are exactly the keys, a hand-written parser is ninety chances to typo a key into
         /// something that silently never loads - and the writer that produces these lines is already
         /// reflection-driven, so this is the same walk in the other direction. Nothing here is critical:
-        /// every field has a working default, so an unreadable value is reported and skipped rather than
-        /// failing the scenario.
+        /// every field has a working default, so an unreadable value is reported on the checklist, with the
+        /// default it keeps, rather than failing the scenario - the format's one rule, since the run can proceed.
+        /// It used to be reported as critical, against this comment, so one mistyped number in a hand edit
+        /// refused the whole run. A key that is not one of these fields is reported by the scenario check.
         /// </remarks>
         public static ElmfireNamelistInput Parse(string[] inputLines, int startIndex)
         {
@@ -925,11 +927,27 @@ namespace PREACT.Input
                 }
                 else
                 {
-                    PREACTInput.CouldNotInterpretInputMessage(field.Name, userInput);
+                    PREACTInput.CouldNotInterpretInputMessage(field.Name, userInput, false, Describe(field.GetValue(newInput)));
                 }
             }
 
             return newInput;
+        }
+
+        /// <summary>A default as the <c>.wui</c> writes it, for the message that keeps it.</summary>
+        private static string Describe(object value)
+        {
+            switch (value)
+            {
+                case null: return "none";
+                case bool b: return b ? "true" : "false";
+                case double d: return InputParse.Format(d);
+                case System.Collections.IEnumerable list when !(value is string):
+                    var parts = new List<string>();
+                    foreach (object item in list) parts.Add(Describe(item));
+                    return parts.Count == 0 ? "none" : string.Join(",", parts);
+                default: return Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture);
+            }
         }
 
         /// <summary>

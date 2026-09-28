@@ -9,8 +9,8 @@ using PREACT.Utility;
 namespace PREACTcli
 {
     /// <summary>
-    /// <c>PREACTcli build-case</c> - builds the ELMFIRE case for a scenario: the same build the GUI's Prepare data
-    /// does, from the same <c>.wui</c> keys.
+    /// <c>PREACTcli build-case</c> - builds the ELMFIRE case for a scenario: the same build the GUI's Data > Build fire
+    /// case (ELMFIRE) does, from the same <c>.wui</c> keys.
     /// </summary>
     /// <remarks>
     /// The scenario is read with the real parser and turned into builder options by
@@ -250,10 +250,10 @@ namespace PREACTcli
             }
 
             //The CLI does not rewrite the scenario (a round trip through the writer is not faithful). The GUI's
-            //Prepare data records these itself; from here they are said.
+            //Build fire case records these itself; from here they are said.
             string inputs = r.InputsDirectory;
             Console.WriteLine();
-            Console.WriteLine("For the scenario (the GUI's Prepare data sets these itself):");
+            Console.WriteLine("For the scenario (the GUI's Build fire case sets these itself):");
             Console.WriteLine($"  [Landscape] ElevationFile={CampaignLayout.RelativeForWui(root, ElmfireStems.Tif(inputs, ElmfireStems.Dem))}");
             Console.WriteLine($"  [Landscape] SlopeFile={CampaignLayout.RelativeForWui(root, ElmfireStems.Tif(inputs, ElmfireStems.Slope))}");
             Console.WriteLine($"  [Landscape] AspectFile={CampaignLayout.RelativeForWui(root, ElmfireStems.Tif(inputs, ElmfireStems.Aspect))}");
@@ -269,7 +269,7 @@ namespace PREACTcli
         public static void PrintUsage()
         {
             Console.WriteLine("  PREACTcli build-case --wui <scenario.wui> [--out <case dir>] [options]");
-            Console.WriteLine("      Builds the scenario's ELMFIRE case exactly as the GUI's Prepare data does: the domain, cell size,");
+            Console.WriteLine("      Builds the scenario's ELMFIRE case exactly as the GUI's Build fire case does: the domain, cell size,");
             Console.WriteLine("      padding, fire duration, source layers, ignition points and painted areas all come from the .wui.");
             Console.WriteLine("      --out <dir>        where to build (default: the scenario's [ELMFIRE] CaseDirectory)");
             Console.WriteLine("      --hours <h>        fire duration, 1-240 h (default: [ELMFIRE] SimulationTstopHours)");
@@ -287,7 +287,7 @@ namespace PREACTcli
             Console.WriteLine("      --weather-date <date>          use this historical day instead of sampling one");
             Console.WriteLine("      --weather-seed <n>             seeds which peak day is drawn");
             Console.WriteLine("      --conditioning-days <n>        Nelson spin-up window (default 20)");
-            Console.WriteLine("      --burning-from/-to <0-23>      burning period the moisture minimum is reported over");
+            Console.WriteLine("      --burning-from/-to <0-23>      burning period (local hours) the moisture minimum is reported over");
             Console.WriteLine("      --windninja <exe>  --wn-mesh coarse|medium|fine  --wn-vegetation grass|brush|trees");
             Console.WriteLine("      --no-climatology               uniform rasters from the fallbacks below");
             Console.WriteLine("      --wind <m/s> --wind-dir <deg> --m1/--m10/--m100 <%>   fallbacks where a stage cannot run");
