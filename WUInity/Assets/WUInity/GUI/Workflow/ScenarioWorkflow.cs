@@ -268,7 +268,7 @@ namespace WUInity.Workflow
                 case WorkflowStepId.TriggerBoundary: return "Trigger boundary (k-PERIL)";
                 case WorkflowStepId.RunSimulation: return "Run one simulation";
                 case WorkflowStepId.Results: return "Results";
-                case WorkflowStepId.Campaign: return "Probabilistic campaign";
+                case WorkflowStepId.Campaign: return "Trigger campaign";
                 default: return id.ToString();
             }
         }
@@ -510,7 +510,7 @@ namespace WUInity.Workflow
 
                 if (_ctx.Tools.Probed && !_ctx.Tools.HaveSumo)
                 {
-                    s.Warn("SUMO was not found on the machine PATH; building the network needs its netconvert.",
+                    s.Warn("SUMO was not found (SUMO_HOME, or a folder on PATH); building the network needs its netconvert.",
                         WorkflowAction.OpenExternalTools, "External tools");
                 }
             }
@@ -650,7 +650,16 @@ namespace WUInity.Workflow
             }
             else if (!fuelSource && caseFuel == null)
             {
-                s.Info("Name a fuel model raster (any CRS; it is warped onto the case grid), or download LANDFIRE's for a US domain.");
+                Vector2d at = _in.Simulation.LowerLeftLatLon;
+                Vector2d size = PREACT.Population.LocalGPWData.SizeToDegrees(at, _in.Simulation.DomainSize);
+                bool us = ScenarioFiles.IsInLandfireCoverage(at, new Vector2d(at.x + size.y, at.y + size.x));
+                s.Info(us
+                    ? "Name a fuel model raster (any CRS; it is warped onto the case grid), or download LANDFIRE's."
+                    : "Outside the US there is no fuel download here: name a fuel model raster of your own, coded as Scott & "
+                      + "Burgan 40 (or Anderson 13, with FuelModelStandard set to match) - a national or European fuel map "
+                      + "translated to those codes. Any CRS; it is warped onto the case grid. Canopy can come from the FIRE-RES "
+                      + "folder (CanopyDatasetFolder).",
+                    WorkflowAction.OpenSourceLayers, "Source layers");
             }
 
             //Canopy: a source, or a case that already has it.
@@ -1364,17 +1373,18 @@ namespace WUInity.Workflow
                 else protectedOk = true;
             }
 
-            //The wind k-PERIL takes. For an ELMFIRE fire it is the fire's own; a path pinned into the scenario by a
-            //run that was then saved overrides that.
-            if (IsElmfire && !string.IsNullOrEmpty(k.WindSpeedFile))
+            //The wind k-PERIL takes. For an ELMFIRE fire it is the fire's own midflame wind and direction, and the
+            //scenario's two wind files are not used (EvacuationManager.ResolveTriggerWind says so in the log).
+            if (IsElmfire && (!string.IsNullOrEmpty(k.WindSpeedFile) || !string.IsNullOrEmpty(k.WindDirectionFile)))
             {
-                bool pinned = k.WindSpeedFile.Replace('\\', '/').EndsWith("inputs/ws.tif");
+                bool pinned = (k.WindSpeedFile ?? string.Empty).Replace('\\', '/').EndsWith("inputs/ws.tif");
                 //A run no longer writes these into the scenario (contract C4); this catches a .wui saved after an
                 //older run that did.
-                s.Warn(pinned
-                    ? $"WindSpeedFile names {k.WindSpeedFile} - pinned by an earlier run that was then saved. It overrides the fire's own wind; clear it."
-                    : $"WindSpeedFile ({k.WindSpeedFile}) overrides the wind of the fire itself.",
-                    WorkflowAction.ClearPinnedWind, "Clear it");
+                s.Info((pinned
+                        ? $"WindSpeedFile names {k.WindSpeedFile} - pinned by an earlier run that was then saved. "
+                        : "[kPERIL] names wind rasters of its own. ")
+                    + "An ELMFIRE fire brings its own midflame wind and direction, which k-PERIL takes instead, so they are "
+                    + "not used; clearing them says so.", WorkflowAction.ClearPinnedWind, "Clear them");
             }
 
             if (IsElmfire && _in.WildfireModule.ElmfireInput.SimulationTstopHours < 24.0)

@@ -733,7 +733,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 throw new FileNotFoundException("Download the OSM data first.", osmPath);
             }
 
-            //The engine already locates SUMO's bin folder from the machine PATH, so the builder is
+            //The engine already locates SUMO's bin folder (SUMO_HOME, then PATH), so the builder is
             //given that before it starts looking for netconvert itself. The network is projected into the
             //simulation's own UTM zone (netconvert --proj): left to itself netconvert picks the zone of the
             //OSM data's centre, which for a domain pinned to a neighbouring zone, or straddling a boundary, is

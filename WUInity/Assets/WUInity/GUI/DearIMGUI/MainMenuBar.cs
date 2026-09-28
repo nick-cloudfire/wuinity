@@ -287,7 +287,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             Tooltip(ScenarioSession.SimulationActive ? "Stops the run." : "No simulation is running.");
 
             ImGui.Separator();
-            Item("Probabilistic trigger campaign...", WorkflowAction.OpenCampaign, WorkflowStepId.Campaign,
+            Item("Trigger campaign...", WorkflowAction.OpenCampaign, WorkflowStepId.Campaign,
                 "One fire, evacuation and trigger boundary per realization, aggregated into a probability raster.");
 
             ImGui.EndMenu();
@@ -348,7 +348,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 ? "Not written yet: run the simulation (Run > Run simulation, step 11)."
                 : kind == ResultsWindow.Kind.WuiArea
                 ? "The case has no wui_area.tif yet (steps 5 and 6)."
-                : "Not written yet: run a campaign (Run > Probabilistic trigger campaign, step 13).");
+                : "Not written yet: run a campaign (Run > Trigger campaign, step 13).");
         }
 
         // ------------------------------------------------------------------ View

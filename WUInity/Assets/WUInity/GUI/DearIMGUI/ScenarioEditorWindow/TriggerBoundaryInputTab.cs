@@ -74,25 +74,27 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
 
             ImGui.SeparatorText("Wind");
 
-            //Not marked required: running ELMFIRE fills these in from the case's own ws/wd, which is the
-            //arrangement that cannot disagree with the fire.
+            //What EvacuationManager.ResolveTriggerWind does: the fire's own wind whenever it has one.
+            Fields.Hint("An ELMFIRE fire brings its own wind, and k-PERIL takes it: the midflame wind speed ELMFIRE",
+                        "writes (mfws, ft/min, converted to mi/h) and the wind direction the fire ran on. The two",
+                        "files below are then not used, and the console says so.");
+
             Fields.Path("WindSpeedFile", () => peril.WindSpeedFile, v => peril.WindSpeedFile = v,
                 filter: FileBrowser.geoTiffFilter);
             Fields.Path("WindDirectionFile", () => peril.WindDirectionFile, v => peril.WindDirectionFile = v,
                 filter: FileBrowser.geoTiffFilter);
+            Fields.Hint("Only for a fire with no wind of its own - an imported fire without [AscImport]",
+                        "MidflameWindSpeedFile. Speed in MILES PER HOUR, read AS midflame wind: k-PERIL's",
+                        "length-to-breadth correlation is defined for it, and a 10 m wind makes every ellipse too",
+                        "long. Direction in degrees. Both on the fire grid.");
 
-            if (string.IsNullOrEmpty(peril.WindSpeedFile) || string.IsNullOrEmpty(peril.WindDirectionFile))
-            {
-                Fields.Hint("Left empty, the ELMFIRE case's own ws.tif / wd.tif are used - the same wind the",
-                            "fire was computed with. Set them only to override that.");
-            }
-
-            Fields.Hint("Speed in MILES PER HOUR, direction in degrees, on the fire grid. The unit matters:",
-                        "the speed goes into Anderson's length-to-breadth correlation, defined for mi/h.");
+            Fields.Real("WindBandSeconds", ref peril.WindBandSeconds,
+                "Seconds each band of those two rasters covers (3600 for hourly). An ELMFIRE fire's own rasters come "
+                + "with their own band length.");
+            if (peril.WindBandSeconds <= 0.0) peril.WindBandSeconds = kPERILInput.DefaultWindBandSeconds;
 
             ImGui.SeparatorText("What is not set here");
-            Fields.Hint("Wind band: the rasters hold one band per hour, and each cell takes the band covering",
-                        "the hour the fire actually reached it. The console reports the distribution.",
+            Fields.Hint("Wind band: each cell takes the band covering the time the fire actually reached it.",
                         "Rate of spread: from the fire module's own output - for ELMFIRE its vs and spread_dir.",
                         "Required egress time: measured from the run, as the last-arrival evacuation time.");
         }

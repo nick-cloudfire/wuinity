@@ -362,6 +362,11 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
             Fields.Hint("The arrival time raster also defines the grid everything is painted on, and the one",
                         "k-PERIL computes a trigger boundary on.");
 
+            Fields.Path("MidflameWindSpeedFile", () => asc.MidflameWindSpeedFile, v => asc.MidflameWindSpeedFile = v,
+                filter: FileBrowser.geoTiffFilter);
+            Fields.Hint("The fire's midflame wind speed in ft/min (ELMFIRE's mfws), for k-PERIL. Without it k-PERIL",
+                        "falls back to [kPERIL] WindSpeedFile and reads that as midflame wind, with a warning.");
+
             Fields.Path("FuelModelFile", () => asc.FuelModelFile, v => asc.FuelModelFile = v,
                 filter: FileBrowser.geoTiffFilter);
             Fields.Hint("Display only - an imported fire brings its own behaviour and needs no fuel to spread.");

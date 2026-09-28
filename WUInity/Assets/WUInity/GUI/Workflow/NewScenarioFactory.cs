@@ -87,6 +87,15 @@ namespace WUInity.Workflow
             input.WildfireModule.Enabled = s.Wildfire;
             input.WildfireModule.Module = s.Wildfire ? s.FireModule : WildfireModuleInput.WildfireModules.None;
 
+            //Long enough for the fire to reach what it is going to reach while people leave: the time window, and never
+            //under the day below which the trigger boundary step warns (the engine's default is 8 h, which made every
+            //new scenario start with that warning). A campaign sets its own duration.
+            if (input.WildfireModule.Module == WildfireModuleInput.WildfireModules.ELMFIRE)
+            {
+                double window = (s.End - s.Start).TotalHours;
+                input.WildfireModule.ElmfireInput.SimulationTstopHours = Math.Min(240.0, Math.Max(24.0, Math.Ceiling(window)));
+            }
+
             input.SmokeModule.Enabled = s.Smoke && s.Wildfire;
             input.SmokeModule.Module = input.SmokeModule.Enabled ? SmokeInput.SmokeModules.GlobalSmoke : SmokeInput.SmokeModules.None;
 
