@@ -31,7 +31,8 @@ namespace PREACT.Input
         /// This is the wind k-PERIL's length-to-breadth ratio is defined for, and when it is set the trigger
         /// boundary uses it instead of <c>[kPERIL] WindSpeedFile</c>. A campaign realization gets it from its own
         /// ELMFIRE run. A fire imported from elsewhere usually has none, and then k-PERIL falls back to the 10 m
-        /// wind and says so loudly, because 10 m wind read as midflame over-elongates every spread ellipse.
+        /// wind and says so loudly, because 10 m wind read as midflame overstates every spread ellipse's
+        /// length-to-breadth ratio (the boundary itself changes little above about 3 mi/h of midflame wind).
         /// </remarks>
         public string MidflameWindSpeedFile = string.Empty;
 
