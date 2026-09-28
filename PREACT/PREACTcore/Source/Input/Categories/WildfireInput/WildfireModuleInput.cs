@@ -67,7 +67,6 @@ namespace PREACT.Input
         public void Parse(string[] inputLines, int startIndex, SimulationInput simulationInput, WeatherInput weatherInput, LandscapeInput landscapeInput, Dictionary<string, int> headerLineIndex, List<int> ignitionPointLineIndices, string rootFolder, out bool success)
         {
             success = false;
-            int issues = 0;
             Dictionary<string, string> inputToParse = PREACTInput.GetHeaderInput(inputLines, startIndex);
             string nameOfInput, userInput;
 

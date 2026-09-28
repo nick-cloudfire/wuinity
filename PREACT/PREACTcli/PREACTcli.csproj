@@ -4,7 +4,9 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
+    <!-- Off like PREACTcore, whose API it calls: the code is not null-annotated, so "enable" only produced
+         a warning per null check. -->
+    <Nullable>disable</Nullable>
     <AssemblyName>PREACTcli</AssemblyName>
     <RollForward>LatestMajor</RollForward>
   </PropertyGroup>

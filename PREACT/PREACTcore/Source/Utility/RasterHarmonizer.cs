@@ -66,33 +66,8 @@ namespace PREACT.Utility
                 ? "EPSG:" + targetEpsgCode
                 : UtmUtility.GetUtmEpsg(centreLat, centreLon);
 
-            var wgs84 = new SpatialReference("");
-            wgs84.ImportFromEPSG(4326);
-            //lat/lon in that order, matching how the corners are passed in below, instead of
-            //EPSG:4326's official axis order.
-            wgs84.SetAxisMappingStrategy(AxisMappingStrategy.OAMS_TRADITIONAL_GIS_ORDER);
-
-            var utm = new SpatialReference("");
-            utm.ImportFromEPSG(int.Parse(epsg.Replace("EPSG:", "")));
-            utm.SetAxisMappingStrategy(AxisMappingStrategy.OAMS_TRADITIONAL_GIS_ORDER);
-
-            var transform = new CoordinateTransformation(wgs84, utm);
-
-            double xMin = double.MaxValue, yMin = double.MaxValue;
-            double xMax = double.MinValue, yMax = double.MinValue;
-            foreach ((double lon, double lat) in new[]
-                     { (westLongitude, southLatitude), (eastLongitude, southLatitude),
-                       (westLongitude, northLatitude), (eastLongitude, northLatitude) })
-            {
-                double[] p = { lon, lat, 0 };
-                transform.TransformPoint(p);
-                xMin = System.Math.Min(xMin, p[0]); xMax = System.Math.Max(xMax, p[0]);
-                yMin = System.Math.Min(yMin, p[1]); yMax = System.Math.Max(yMax, p[1]);
-            }
-
-            transform.Dispose();
-            wgs84.Dispose();
-            utm.Dispose();
+            (double xMin, double yMin, double xMax, double yMax) =
+                ProjectBounds(epsg, southLatitude, westLongitude, northLatitude, eastLongitude);
 
             var args = new List<string>
             {
@@ -111,6 +86,92 @@ namespace PREACT.Utility
 
             Warp(sourcePath, destPath, args.ToArray());
             return MasterGrid.FromRasterFile(destPath);
+        }
+
+        /// <summary>
+        /// The bounding box, in <paramref name="epsg"/>, of a lat/lon box - all four corners transformed, since a
+        /// lat/lon box is not a rectangle in a projected CRS. The same arithmetic the master grid is cut with.
+        /// </summary>
+        public static (double XMin, double YMin, double XMax, double YMax) ProjectBounds(string epsg,
+            double southLatitude, double westLongitude, double northLatitude, double eastLongitude)
+        {
+            var wgs84 = new SpatialReference("");
+            wgs84.ImportFromEPSG(4326);
+            wgs84.SetAxisMappingStrategy(AxisMappingStrategy.OAMS_TRADITIONAL_GIS_ORDER);
+
+            var target = new SpatialReference("");
+            target.ImportFromEPSG(int.Parse(epsg.Replace("EPSG:", ""), CultureInfo.InvariantCulture));
+            target.SetAxisMappingStrategy(AxisMappingStrategy.OAMS_TRADITIONAL_GIS_ORDER);
+
+            var transform = new CoordinateTransformation(wgs84, target);
+
+            double xMin = double.MaxValue, yMin = double.MaxValue;
+            double xMax = double.MinValue, yMax = double.MinValue;
+            foreach ((double lon, double lat) in new[]
+                     { (westLongitude, southLatitude), (eastLongitude, southLatitude),
+                       (westLongitude, northLatitude), (eastLongitude, northLatitude) })
+            {
+                double[] p = { lon, lat, 0 };
+                transform.TransformPoint(p);
+                xMin = System.Math.Min(xMin, p[0]); xMax = System.Math.Max(xMax, p[0]);
+                yMin = System.Math.Min(yMin, p[1]); yMax = System.Math.Max(yMax, p[1]);
+            }
+
+            transform.Dispose();
+            wgs84.Dispose();
+            target.Dispose();
+            return (xMin, yMin, xMax, yMax);
+        }
+
+        /// <summary>
+        /// A raster's extent in WGS84 (south, west, north, east), or false when it cannot be read. Corners are
+        /// transformed, so for a projected raster this is the lat/lon box around it.
+        /// </summary>
+        public static bool TryGetWgs84Bounds(string path, out double south, out double west, out double north, out double east)
+        {
+            south = west = double.MaxValue;
+            north = east = double.MinValue;
+
+            try
+            {
+                Gdal.AllRegister();
+                using (Dataset ds = Gdal.Open(path, Access.GA_ReadOnly))
+                {
+                    if (ds == null) return false;
+
+                    double[] gt = new double[6];
+                    ds.GetGeoTransform(gt);
+
+                    string wkt = ds.GetProjection();
+                    if (string.IsNullOrEmpty(wkt)) return false;
+
+                    using (var source = new SpatialReference(wkt))
+                    using (var wgs84 = new SpatialReference(""))
+                    {
+                        source.SetAxisMappingStrategy(AxisMappingStrategy.OAMS_TRADITIONAL_GIS_ORDER);
+                        wgs84.ImportFromEPSG(4326);
+                        wgs84.SetAxisMappingStrategy(AxisMappingStrategy.OAMS_TRADITIONAL_GIS_ORDER);
+
+                        using (var transform = new CoordinateTransformation(source, wgs84))
+                        {
+                            foreach ((double px, double py) in new[]
+                                     { (0.0, 0.0), (ds.RasterXSize, 0.0), (0.0, ds.RasterYSize),
+                                       ((double)ds.RasterXSize, (double)ds.RasterYSize) })
+                            {
+                                double[] p = { gt[0] + px * gt[1] + py * gt[2], gt[3] + px * gt[4] + py * gt[5], 0 };
+                                transform.TransformPoint(p);
+                                west = System.Math.Min(west, p[0]); east = System.Math.Max(east, p[0]);
+                                south = System.Math.Min(south, p[1]); north = System.Math.Max(north, p[1]);
+                            }
+                        }
+                    }
+                }
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         /// <summary>

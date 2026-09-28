@@ -1103,6 +1103,16 @@ namespace PREACT.Input
                 return true;
             }
 
+            //Plain strings - SPOTTING_DISTRIBUTION_TYPE and the calibration table filenames. Missing, every save
+            //of an ELMFIRE scenario wrote SPOTTING_DISTRIBUTION_TYPE=LOGNORMAL and the reload refused it as a
+            //critical "could not be interpreted", so PREACT.exe would not run a scenario the GUI had just saved.
+            //Quotes are the namelist's syntax, not the value's.
+            if (type == typeof(string))
+            {
+                value = text.Trim().Trim('\'', '"').Trim();
+                return true;
+            }
+
             if (type == typeof(bool))
             {
                 if (!bool.TryParse(text, out bool b)) return false;

@@ -230,9 +230,18 @@ namespace PREACT.Utility
                 p.OutputDataReceived += (_, e) => Take(e.Data);
                 p.ErrorDataReceived += (_, e) => Take(e.Data);
                 p.Start();
-                p.BeginOutputReadLine();
-                p.BeginErrorReadLine();
-                p.WaitForExit();
+                //So a cancelled build or campaign stops the solve too, rather than leaving it running.
+                ElmfireProcesses.Register(p);
+                try
+                {
+                    p.BeginOutputReadLine();
+                    p.BeginErrorReadLine();
+                    p.WaitForExit();
+                }
+                finally
+                {
+                    ElmfireProcesses.Unregister(p);
+                }
 
                 lock (sync) tail = string.Join(" | ", lines);
                 return p.ExitCode;

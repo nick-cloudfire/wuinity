@@ -24,6 +24,18 @@ namespace PREACT.Input
         public string FirelineIntensityFile = string.Empty;
 
         /// <summary>
+        /// Midflame wind speed in <b>ft/min</b> on the fire grid, as ELMFIRE writes it to <c>mfws_*.tif</c>
+        /// (<c>DUMP_MIDFLAME_WINDSPEED</c>): valid where the fire spread, nodata elsewhere. Optional.
+        /// </summary>
+        /// <remarks>
+        /// This is the wind k-PERIL's length-to-breadth ratio is defined for, and when it is set the trigger
+        /// boundary uses it instead of <c>[kPERIL] WindSpeedFile</c>. A campaign realization gets it from its own
+        /// ELMFIRE run. A fire imported from elsewhere usually has none, and then k-PERIL falls back to the 10 m
+        /// wind and says so loudly, because 10 m wind read as midflame over-elongates every spread ellipse.
+        /// </remarks>
+        public string MidflameWindSpeedFile = string.Empty;
+
+        /// <summary>
         /// Fuel model raster on the same grid, for display only. Optional, and read by nothing that computes.
         /// </summary>
         /// <remarks>
@@ -58,80 +70,43 @@ namespace PREACT.Input
 
         }
 
+        /// <summary>A copy, so a run can fill in the rasters it produced without touching the scenario's own.</summary>
+        public AscImportInput Clone()
+        {
+            return (AscImportInput)MemberwiseClone();
+        }
+
         public static AscImportInput Parse(string[] inputLines, int startIndex, string rootFolder, out bool success)
         {
-            success = false;
-            int issues = 0;            
             AscImportInput newInput = new AscImportInput();
             Dictionary<string, string> inputToParse = PREACTInput.GetHeaderInput(inputLines, startIndex);
             string nameOfInput, userInput;
+
+            //Every key is read even after a problem, and the section fails at the end: returning at the first
+            //problem dropped every key after it, and saving the scenario then wrote the section without them.
+            bool ok = true;
 
             //critical
             nameOfInput = nameof(StartDateTime);
             if (inputToParse.TryGetValue(nameOfInput, out userInput))
             {
-                 success = DateTime.TryParse(userInput, out newInput.StartDateTime);
+                if (!DateTime.TryParse(userInput, System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.None, out newInput.StartDateTime))
+                {
+                    ok = false;
+                    PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
+                }
             }
             else
             {
-                success = false;
-                PREACTInput.InputNotFoundMessage(nameOfInput);
-            }
-            if (!success)
-            {
-                return newInput;
+                ok = false;
+                PREACTInput.InputNotFoundMessage(nameOfInput, true);
             }
 
-            //critical
-            nameOfInput = nameof(TimeOfArrivalFile);
-            if (inputToParse.TryGetValue(nameOfInput, out userInput))
-            {
-                newInput.TimeOfArrivalFile = userInput;
-                PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.TimeOfArrivalFile, rootFolder, out success);                
-            }
-            else
-            {
-                success = false;
-                PREACTInput.InputNotFoundMessage(nameOfInput);
-            }
-            if (!success)
-            {
-                return newInput;
-            }
-
-            //critical only for k-PERIL
-            nameOfInput = nameof(RateOfSpreadFile);
-            if (inputToParse.TryGetValue(nameOfInput, out userInput))
-            {
-                newInput.RateOfSpreadFile = userInput;
-                PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.RateOfSpreadFile, rootFolder, out success);                
-            }
-            else
-            {
-                success = false;
-                PREACTInput.InputNotFoundMessage(nameOfInput);
-            }
-            if (!success)
-            {
-                return newInput;
-            }
-
-            //critical only for k-PERIL
-            nameOfInput = nameof(SpreadDirectionFile);
-            if (inputToParse.TryGetValue(nameOfInput, out userInput))
-            {
-                newInput.SpreadDirectionFile = userInput;
-                PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.SpreadDirectionFile, rootFolder, out success);                
-            }
-            else
-            {
-                success = false;
-                PREACTInput.InputNotFoundMessage(nameOfInput);
-            }
-            if (!success)
-            {
-                return newInput;
-            }
+            //critical: the fire itself; rate of spread and spread direction are what k-PERIL runs on
+            ok &= ReadRequiredFile(inputToParse, nameof(TimeOfArrivalFile), ref newInput.TimeOfArrivalFile, rootFolder);
+            ok &= ReadRequiredFile(inputToParse, nameof(RateOfSpreadFile), ref newInput.RateOfSpreadFile, rootFolder);
+            ok &= ReadRequiredFile(inputToParse, nameof(SpreadDirectionFile), ref newInput.SpreadDirectionFile, rootFolder);
 
             //Not critical: the default is seconds, which is what ELMFIRE writes and what the rest of the
             //platform works in. A scenario importing a .asc from FARSITE, FlamMap or Prometheus has to say
@@ -149,16 +124,32 @@ namespace PREACT.Input
                 }
             }
 
-            //not critical
+            //not critical: without it fireline intensity reads as 0
             nameOfInput = nameof(FirelineIntensityFile);
-            if (inputToParse.TryGetValue(nameOfInput, out userInput))
+            if (inputToParse.TryGetValue(nameOfInput, out userInput) && userInput.Length > 0)
             {
                 newInput.FirelineIntensityFile = userInput;
-                PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.FirelineIntensityFile, rootFolder,out success);
+                PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.FirelineIntensityFile, rootFolder, out _, critical: false);
             }
             else
             {
                 PREACTInput.InputNotFoundMessage(nameOfInput);
+            }
+
+            //Not critical: without it k-PERIL falls back to [kPERIL] WindSpeedFile and warns. Named but missing is
+            //said here, since the fallback would otherwise hide a wrong path.
+            nameOfInput = nameof(MidflameWindSpeedFile);
+            if (inputToParse.TryGetValue(nameOfInput, out userInput) && userInput.Length > 0)
+            {
+                newInput.MidflameWindSpeedFile = userInput;
+                PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.MidflameWindSpeedFile, rootFolder,
+                    out bool midflameExists, critical: false);
+                if (!midflameExists)
+                {
+                    Engine.Message(null, Engine.LogType.Warning,
+                        nameOfInput + " was specified but not found; k-PERIL will fall back to the 10 m wind: " + userInput);
+                    newInput.MidflameWindSpeedFile = string.Empty;
+                }
             }
 
             //Not critical, and silent when absent: it is a display layer, so its absence costs one output
@@ -176,8 +167,22 @@ namespace PREACT.Input
                 }
             }
 
-            success = true;
+            success = ok;
             return newInput;
+        }
+
+        private static bool ReadRequiredFile(Dictionary<string, string> inputToParse, string nameOfInput, ref string field,
+                                             string rootFolder)
+        {
+            if (!inputToParse.TryGetValue(nameOfInput, out string userInput) || userInput.Length == 0)
+            {
+                PREACTInput.InputNotFoundMessage(nameOfInput, true);
+                return false;
+            }
+
+            field = userInput;
+            PREACTInput.CheckIfFileExist(nameOfInput, ref field, rootFolder, out bool exists);
+            return exists;
         }
     }
 }

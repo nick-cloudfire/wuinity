@@ -302,6 +302,19 @@ namespace PREACT.Utility
             public double FallbackM1Percent = 6.0, FallbackM10Percent = 7.0, FallbackM100Percent = 8.0;
 
             public Action<string> Log;
+
+            /// <summary>
+            /// The archive already parsed by the caller, used instead of reading <see cref="ArchiveCsvPath"/>. The
+            /// campaign parses the archive once at startup; every realization re-parsing its quarter of a million
+            /// rows was the most expensive thing a fitted-weather realization did before ELMFIRE started.
+            /// </summary>
+            public List<HourlyWeatherRow> PreloadedRows;
+
+            /// <summary>A shallow copy, for per-realization settings derived from a campaign's own.</summary>
+            public Options Clone()
+            {
+                return (Options)MemberwiseClone();
+            }
         }
 
         public class Result
@@ -361,7 +374,7 @@ namespace PREACT.Utility
             {
                 try
                 {
-                    rows = await LoadArchive(o, Log);
+                    rows = o.PreloadedRows ?? await LoadArchive(o, Log);
                 }
                 catch (Exception e)
                 {
@@ -705,11 +718,16 @@ namespace PREACT.Utility
         }
 
         /// <summary>
-        /// Downloads the hourly ERA5 record once and reuses it. A cached file is accepted only if
-        /// it actually spans the requested years — a truncated or half-written archive would
-        /// otherwise silently narrow the climatology to whatever happened to be in it.
+        /// Downloads the hourly ERA5 record once and reuses it. A cached file is accepted if it spans the requested
+        /// years, and is first brought to the current archive format (its fire weather index re-derived from its own
+        /// raw columns when an older version wrote it).
         /// </summary>
-        private static async Task<List<HourlyWeatherRow>> LoadArchive(Options o, Action<string> log)
+        /// <remarks>
+        /// With no end year asked for, a cached archive is pinned to the complete years it holds. The default used
+        /// to be "last complete calendar year", so every January the cache was rejected, 26 years of ERA5 were
+        /// downloaded again, and the same seed drew different weather.
+        /// </remarks>
+        public static async Task<List<HourlyWeatherRow>> LoadArchive(Options o, Action<string> log)
         {
             int endYear = o.ArchiveEndYear > 0 ? o.ArchiveEndYear : DateTime.UtcNow.Year - 1;
             if (endYear < o.ArchiveStartYear) endYear = o.ArchiveStartYear;
@@ -722,12 +740,22 @@ namespace PREACT.Utility
             {
                 try
                 {
+                    ClimatologySampler.EnsureArchiveFormat(o.ArchiveCsvPath, log);
+
                     List<HourlyWeatherRow> cached = ClimatologySampler.ParseOpenMeteoCsv(o.ArchiveCsvPath);
-                    if (cached.Count > 0 && cached[0].Time <= start.AddDays(1) && cached[cached.Count - 1].Time >= end.AddDays(-1))
+                    if (cached.Count > 0 && cached[0].Time <= start.AddDays(1))
                     {
-                        log($"  climatology: reusing cached archive ({cached.Count} hourly rows, " +
-                            $"{cached[0].Time:yyyy-MM-dd} to {cached[cached.Count - 1].Time:yyyy-MM-dd}).");
-                        return cached;
+                        DateTime last = cached[cached.Count - 1].Time;
+                        bool coversAsked = last >= end.AddDays(-1);
+                        bool pinned = o.ArchiveEndYear <= 0 && last >= new DateTime(o.ArchiveStartYear, 12, 30);
+
+                        if (coversAsked || pinned)
+                        {
+                            log($"  climatology: reusing cached archive ({cached.Count} hourly rows, " +
+                                $"{cached[0].Time:yyyy-MM-dd} to {last:yyyy-MM-dd})" +
+                                (!coversAsked ? $"; pinned to the years it holds (ask for --climatology-to {endYear} to extend it)." : "."));
+                            return cached;
+                        }
                     }
                     usable = cached.Count > 0;
                 }
@@ -738,7 +766,14 @@ namespace PREACT.Utility
                 (usable ? " (cached archive does not cover the requested range)" : "") + "...");
 
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(o.ArchiveCsvPath)));
+            DateTime before = File.Exists(o.ArchiveCsvPath) ? File.GetLastWriteTimeUtc(o.ArchiveCsvPath) : DateTime.MinValue;
             await OpenMeteoDownloader.Download(o.LatLon, start, end, o.ArchiveCsvPath);
+
+            if (!File.Exists(o.ArchiveCsvPath) || File.GetLastWriteTimeUtc(o.ArchiveCsvPath) == before)
+            {
+                throw new Exception("the ERA5 download returned nothing (Open-Meteo unreachable, or the dates are out "
+                                    + "of range); see the log above. Nothing was written to " + o.ArchiveCsvPath);
+            }
 
             return ClimatologySampler.ParseOpenMeteoCsv(o.ArchiveCsvPath);
         }

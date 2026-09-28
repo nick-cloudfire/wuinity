@@ -25,10 +25,10 @@ namespace PREACT.Utility
     /// that name the wrong thing.
     /// </para>
     /// <para>
-    /// Four output keys are forced regardless of what was asked for -
-    /// <c>DUMP_TIME_OF_ARRIVAL</c>, <c>DUMP_SPREAD_RATE</c>, <c>DUMP_SPREAD_DIRECTION</c> and
-    /// <c>SPREAD_RATE_IN_M</c>. The reader needs all four, and the last is the one that is not an error
-    /// anywhere when wrong: without it ELMFIRE dumps ft/min and the fire simply spreads 3.28 times too fast.
+    /// The output keys in <see cref="ElmfireNamelistKeys.RequiredOutputs"/> are forced regardless of what was
+    /// asked for: the three rasters the reader needs, <c>SPREAD_RATE_IN_M</c> (without it ELMFIRE dumps ft/min
+    /// and the fire spreads 3.28 times too fast, which is an error nowhere), and the midflame wind k-PERIL is
+    /// fed.
     /// </para>
     /// </remarks>
     public static class ElmfireNamelistBuilder
@@ -102,8 +102,9 @@ namespace PREACT.Utility
 
             l.Add($"! ELMFIRE case '{c.Name}', written by WUInity from the scenario's ELMFIRE settings.");
             l.Add("! Every value below except the filenames, the time base and the ignitions comes from the");
-            l.Add("! Hazards tab of the scenario editor. Editing this file directly works, but the next build");
-            l.Add("! keeps it rather than rewriting it - see docs/elmfire-case-automation.md.");
+            l.Add("! Hazards tab of the scenario editor. Every build writes it again from the scenario; an edited");
+            l.Add("! copy is set aside as elmfire.data.kept-<time>. To run a hand-tuned namelist, name it in");
+            l.Add("! [ELMFIRE] NamelistTemplate, which is used as it is.");
             l.Add("!");
             l.Add("! Static layers are on the master grid defined by dem.tif; ELMFIRE reads the domain, CRS and");
             l.Add("! cell size from that file's own georeferencing, so it is the grid of record.");
@@ -215,9 +216,9 @@ namespace PREACT.Utility
             l.Add(Bool("ROTATE_ASP", s.ROTATE_ASP));
             l.Add(Bool("ROTATE_WD", s.ROTATE_WD));
 
-            if (c.AvailableStems.Contains("ignition_mask"))
+            if (c.AvailableStems.Contains(ElmfireStems.IgnitionMask))
             {
-                l.Add(Str("IGNITION_MASK_FILENAME", "ignition_mask"));
+                l.Add(Str("IGNITION_MASK_FILENAME", ElmfireStems.IgnitionMask));
             }
 
             //The flag beside the file it reads. On only when the case actually has the raster: ELMFIRE reading
@@ -255,11 +256,12 @@ namespace PREACT.Utility
             l.Add("&OUTPUTS");
             l.Add(Str("OUTPUTS_DIRECTORY", "./outputs"));
             l.Add(Num("DTDUMP", s.DTDUMP));
-            l.Add("! The fire reader needs these four; they are not the scenario's to switch off.");
-            l.Add(Bool("DUMP_TIME_OF_ARRIVAL", true));
-            l.Add(Bool("DUMP_SPREAD_RATE", true));
-            l.Add(Bool("DUMP_SPREAD_DIRECTION", true));
-            l.Add(Bool("SPREAD_RATE_IN_M", true));
+            l.Add("! The fire reader and k-PERIL need these; they are not the scenario's to switch off.");
+            l.Add("! DUMP_MIDFLAME_WINDSPEED needs ELMFIRE-WUINITY a7fb9d6 or later.");
+            foreach ((string key, string value) in ElmfireNamelistKeys.RequiredOutputs)
+            {
+                l.Add($"{key,KeyWidth} = {value}");
+            }
             l.Add(Bool("CONVERT_TO_GEOTIFF", true));
             l.Add(Bool("DUMP_FLIN", s.DUMP_FLIN));
             l.Add(Bool("DUMP_CROWN_FIRE", s.DUMP_CROWN_FIRE));
@@ -813,7 +815,7 @@ namespace PREACT.Utility
             //fuels directory - the same folder - so this only makes the resolution explicit.
             if (c.HasFuelModelFile)
             {
-                l.Add(Str("FUEL_MODEL_FILE", "fuel_models.csv"));
+                l.Add(Str(ElmfireNamelistKeys.FuelModelFile, ElmfireStems.FuelModelTable));
                 l.Add(Str("MISCELLANEOUS_INPUTS_DIRECTORY", "./inputs"));
             }
             if (!string.IsNullOrEmpty(c.PathToGdal))

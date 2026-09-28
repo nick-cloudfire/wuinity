@@ -29,10 +29,13 @@ namespace PREACT.Utility
     {
         /// <summary>Layers ELMFIRE cannot run without, beyond the fuel model, which is resolved separately.</summary>
         private static readonly string[] RequiredStems =
-            { "dem", "slp", "asp", "adj", "phi", "ws", "wd", "m1", "m10", "m100" };
+        {
+            ElmfireStems.Dem, ElmfireStems.Slope, ElmfireStems.Aspect, ElmfireStems.Adj, ElmfireStems.Phi,
+            ElmfireStems.WindSpeed, ElmfireStems.WindDirection, ElmfireStems.M1, ElmfireStems.M10, ElmfireStems.M100,
+        };
 
         /// <summary>The weather series. These five must agree with each other on band count.</summary>
-        private static readonly string[] WeatherStems = { "ws", "wd", "m1", "m10", "m100" };
+        private static readonly string[] WeatherStems = ElmfireStems.Weather;
 
         public class Problem
         {
@@ -131,7 +134,7 @@ namespace PREACT.Utility
 
             CheckWeatherBandsAgree(report, bandCounts);
 
-            report.WeatherBands = bandCounts.TryGetValue("ws", out int wsBands) ? wsBands : 0;
+            report.WeatherBands = bandCounts.TryGetValue(ElmfireStems.WindSpeed, out int wsBands) ? wsBands : 0;
 
             if (log != null)
             {
