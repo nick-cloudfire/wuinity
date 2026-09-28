@@ -83,3 +83,6 @@ crashlytics-build.properties
 # data ends up with a meta file describing a directory they do not have.
 /[Aa]ssets/[Tt]hird[Pp]arty/LFMC/*
 /[Aa]ssets/[Tt]hird[Pp]arty/LFMC.meta
+
+# Unity 6 writes a .slnx beside the (already ignored) generated .csproj files
+*.slnx
