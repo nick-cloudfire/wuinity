@@ -76,29 +76,50 @@ namespace Assets.WUInity.GUI.DearIMGUI
         //for a key that should outlive the session and never reach the scenario file, which is meant to
         //be shared.
         //
-        //The two fallbacks below are for the case where that file has not been made yet, so the step is
-        //not simply unusable until someone finds the template.
+        //The fallback below is for the case where that file has not been made yet, so the step is not
+        //simply unusable until someone finds the template. The case build does not take a key from the
+        //GUI - the engine finds its own (PREACT.Utility.OpenTopographyKey: the environment, then the same
+        //file) - so a key typed here is put into this process's environment, where the build, and a
+        //campaign CLI started from here, find it. It never leaves the process.
         public static string OpenTopographyApiKeyOverride = string.Empty;
 
+        private const string OpenTopographyVariable = "OPENTOPOGRAPHY_API_KEY";
+
+        //What the environment held before anything typed here was put into it, and what was put in.
+        private static readonly string _environmentKeyAtStart = System.Environment.GetEnvironmentVariable(OpenTopographyVariable);
+        private static string _sessionKeyInEnvironment;
+
+        /// <summary>The environment's key, unless it is only the one typed in for this session.</summary>
+        private static string EnvironmentKey
+        {
+            get
+            {
+                string value = System.Environment.GetEnvironmentVariable(OpenTopographyVariable);
+                if (string.IsNullOrWhiteSpace(value)) return null;
+                if (_sessionKeyInEnvironment != null && value.Trim() == _sessionKeyInEnvironment) return null;
+                return value.Trim();
+            }
+        }
+
         /// <summary>
-        /// The key that will actually be used, and where it came from. The configuration file wins, so a
-        /// key typed here once cannot quietly shadow the one the file supplies from then on. Main thread
-        /// only (it reads a Unity resource).
+        /// The key that will actually be used, and where it came from, in the engine's order: the environment,
+        /// then the configuration file, then a key typed in for this session. Main thread only (it reads a
+        /// Unity resource).
         /// </summary>
         public static string EffectiveOpenTopographyApiKey
         {
             get
             {
+                string fromEnvironment = EnvironmentKey;
+                if (fromEnvironment != null)
+                {
+                    return fromEnvironment;
+                }
+
                 string fromFile = global::WUInity.OpenTopographyAccess.ApiKey;
                 if (!string.IsNullOrWhiteSpace(fromFile))
                 {
                     return fromFile.Trim();
-                }
-
-                string fromEnvironment = System.Environment.GetEnvironmentVariable("OPENTOPOGRAPHY_API_KEY");
-                if (!string.IsNullOrWhiteSpace(fromEnvironment))
-                {
-                    return fromEnvironment.Trim();
                 }
 
                 return OpenTopographyApiKeyOverride.Trim();
@@ -109,19 +130,51 @@ namespace Assets.WUInity.GUI.DearIMGUI
         {
             get
             {
+                if (EnvironmentKey != null)
+                {
+                    return "the OPENTOPOGRAPHY_API_KEY environment variable";
+                }
                 if (!string.IsNullOrWhiteSpace(global::WUInity.OpenTopographyAccess.ApiKey))
                 {
                     return "Resources/OpenTopography/OpenTopographyConfiguration.txt";
-                }
-                if (!string.IsNullOrWhiteSpace(System.Environment.GetEnvironmentVariable("OPENTOPOGRAPHY_API_KEY")))
-                {
-                    return "the OPENTOPOGRAPHY_API_KEY environment variable";
                 }
                 if (!string.IsNullOrWhiteSpace(OpenTopographyApiKeyOverride))
                 {
                     return "typed in for this session only";
                 }
                 return string.Empty;
+            }
+        }
+
+        /// <summary>
+        /// Puts the key typed in for this session where the engine looks for one - this process's environment -
+        /// when neither the environment nor the configuration file supplies one; clears it again when the field
+        /// is emptied. Called when the field changes and before a step that downloads terrain.
+        /// </summary>
+        public static void ApplySessionOpenTopographyKey()
+        {
+            string typed = OpenTopographyApiKeyOverride.Trim();
+            bool suppliedElsewhere = !string.IsNullOrWhiteSpace(_environmentKeyAtStart)
+                                     || !string.IsNullOrWhiteSpace(global::WUInity.OpenTopographyAccess.ApiKey);
+            if (suppliedElsewhere)
+            {
+                return;
+            }
+
+            string value = typed.Length == 0 ? null : typed;
+            if (value == _sessionKeyInEnvironment)
+            {
+                return;
+            }
+
+            try
+            {
+                System.Environment.SetEnvironmentVariable(OpenTopographyVariable, value);
+                _sessionKeyInEnvironment = value;
+            }
+            catch (Exception e)
+            {
+                Engine.Message(null, Engine.LogType.Warning, "Could not hand the OpenTopography key to the case build: " + e.Message);
             }
         }
 
@@ -1181,6 +1234,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
         public static void BuildElmfireCase(bool rebuildExisting = false)
         {
+            //The build downloads its terrain with the engine's key; a key typed in for this session is handed to it.
+            ApplySessionOpenTopographyKey();
             PaintingFacts painting = PaintingFacts.Capture(Input);
             RunStep(rebuildExisting ? "Rebuilding the fire case" : "Building the fire case", WorkflowStepId.FireCase,
                 c => DoBuildElmfireCase(c, rebuildExisting, painting));
@@ -1192,6 +1247,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
         /// </summary>
         public static void ApplyPaintedAreasToCase()
         {
+            ApplySessionOpenTopographyKey();
             PaintingFacts painting = PaintingFacts.Capture(Input);
             RunStep("Applying the painted areas to the fire case", WorkflowStepId.FireAreas, c => DoBuildElmfireCase(c, false, painting));
         }

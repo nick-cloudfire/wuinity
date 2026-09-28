@@ -143,6 +143,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
             {
                 ToolsService.KeyChanged();
             }
+            Fields.Hint("Used by the fire case build, a DEM download and a campaign started from here, until the",
+                        "application closes. Nothing writes it to the scenario or to disk.");
         }
     }
 }
