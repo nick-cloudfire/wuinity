@@ -20,6 +20,38 @@ namespace PREACT.Tests
             runner.Add("weather: a user's archive is never rewritten; the build works on a copy", ArchiveWorkingCopy);
             runner.Add("builder: the case grid covers the whole padded domain, in whole cells", GridCoversPaddedDomain);
             runner.Add("builder: a painting that records its grid is placed only on that grid, not on any of its size", PaintingPosition);
+            runner.Add("builder: a case is not rebuilt under a running campaign, from the GUI or the CLI", NoBuildUnderCampaign);
+        }
+
+        private static void NoBuildUnderCampaign()
+        {
+            using (var c = new SyntheticCase())
+            {
+                string wui = c.WriteScenario("case", 150.0);
+                string campaign = Path.Combine(c.Folder, CampaignLayout.OutputFolder, CampaignLayout.CampaignFolderName("synthetic", "0123abcd"));
+                Directory.CreateDirectory(campaign);
+
+                Input.PREACTInput input = Input.PREACTInput.LoadFromDisk(wui, out bool _);
+                input.WildfireModule.ElmfireInput.PathToGdal = GdalTools.FindBinDirectory() ?? string.Empty;
+
+                using (PREACTcli.Campaigns.CampaignLock held = PREACTcli.Campaigns.CampaignLock.Acquire(campaign, out string lockProblem))
+                {
+                    Assert.True(held != null, "the test holds the campaign's lock: " + lockProblem);
+
+                    bool built = ElmfireCoupling.BuildCaseOnly(input, null, out string problem);
+                    Assert.True(!built && problem != null && problem.Contains("campaign is running"), "the GUI's build is refused: " + problem);
+                    Assert.True(!Directory.Exists(Path.Combine(c.Folder, "case", "inputs")), "and nothing was written");
+
+                    (int exit, string output) = RunCli(c.Folder, "build-case", "--wui", wui, "--dem", c.DemPath, "--no-climatology");
+                    Assert.True(exit == 1 && output.Contains("campaign is running"), "build-case in another process is refused: " + Tail(output));
+                }
+
+                Assert.True(!CampaignLayout.IsLockHeld(campaign), "released with the campaign");
+                Assert.True(File.Exists(Path.Combine(campaign, CampaignLayout.LockFile)), "the file stays, and is no lock");
+                (int after, string said) = RunCli(c.Folder, "build-case", "--wui", wui, "--dem", c.DemPath, "--no-climatology",
+                    "--windninja", Path.Combine(c.Folder, "no-windninja-here"));
+                Assert.Equal(0, after, "once it has finished the case builds (" + Tail(said) + ")");
+            }
         }
 
         private static void PaintingPosition()

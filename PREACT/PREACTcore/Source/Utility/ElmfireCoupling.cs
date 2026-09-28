@@ -577,6 +577,13 @@ namespace PREACT.Utility
                 return false;
             }
 
+            string campaign = CampaignLayout.DescribeRunningCampaign(input.RootFolder);
+            if (campaign != null)
+            {
+                problem = "The case was not built: " + campaign;
+                return false;
+            }
+
             try
             {
                 ElmfireCaseBuilder.Options options = CreateBuildOptions(input, settings, caseDir, log);

@@ -164,23 +164,7 @@ namespace PREACTcli.Campaigns
         /// <summary>Why <paramref name="folder"/> cannot be taken over now, or null when no campaign process holds it.</summary>
         public static string HeldBy(string folder)
         {
-            string path = Path.Combine(folder, CampaignLayout.LockFile);
-            if (!File.Exists(path)) return null;
-            try
-            {
-                using (new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
-                {
-                    return null;
-                }
-            }
-            catch (IOException)
-            {
-                return Describe(folder);
-            }
-            catch (UnauthorizedAccessException e)
-            {
-                return $"the lock {path} cannot be opened ({e.Message}).";
-            }
+            return CampaignLayout.IsLockHeld(folder) ? Describe(folder) : null;
         }
 
         public static CampaignLock Acquire(string folder, out string problem)
@@ -219,12 +203,27 @@ namespace PREACTcli.Campaigns
                    + "Stop it first, or wait for it to finish.";
         }
 
+        /// <summary>
+        /// Releases the lock. The file stays: deleting it after closing it let a second process that opened it in
+        /// between keep a lock on a file no longer in the folder - on Linux an flock on an unlinked inode - so a third
+        /// could take the folder beside it (review NIT). A file nobody holds is no lock (<see cref="HeldBy"/>).
+        /// </summary>
         public void Dispose()
         {
             if (_stream == null) return;
+            try
+            {
+                _stream.SetLength(0);
+                byte[] text = System.Text.Encoding.UTF8.GetBytes(
+                    "released by pid " + Environment.ProcessId.ToString(CultureInfo.InvariantCulture) + " at "
+                    + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) + Environment.NewLine);
+                _stream.Write(text, 0, text.Length);
+            }
+            catch
+            {
+            }
             _stream.Dispose();
             _stream = null;
-            try { File.Delete(_path); } catch { }
         }
     }
 }
