@@ -57,6 +57,8 @@ namespace WUInity.Workflow
         OpenFireBehaviour,
         PreviewNamelist,
         DownloadDemOnly,
+        KeepCaseNamelist,
+        UseSetAsideNamelist,
 
         OpenFireAreas,
         ApplyFireAreasToCase,

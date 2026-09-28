@@ -258,7 +258,8 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                 if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
                 {
                     ImGui.SetTooltip(apply == null ? "" : !apply.Enabled ? apply.Tooltip
-                        : "Rebuilds the case keeping its layers, so these areas become its ignition_mask.tif and wui_area.tif.");
+                        : "Builds the case again so these areas become its ignition_mask.tif and wui_area.tif. Its other layers "
+                          + "are kept unless its grid has to be re-cut, and the namelist is written again from the scenario.");
                 }
             }
 

@@ -214,6 +214,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 case WorkflowAction.BuildFireCase:
                 case WorkflowAction.RebuildFireCase:
                 case WorkflowAction.AdoptCaseTerrain:
+                case WorkflowAction.KeepCaseNamelist:
+                case WorkflowAction.UseSetAsideNamelist:
                 case WorkflowAction.DownloadDemOnly:
                 case WorkflowAction.ApplyFireAreasToCase:
                 case WorkflowAction.MovePaintingToCaseGrid:
@@ -331,6 +333,26 @@ namespace Assets.WUInity.GUI.DearIMGUI
                     ScenarioDataSteps.AdoptCaseTerrain(input);
                     ScenarioSession.NotifyEdited("case terrain");
                     break;
+                case WorkflowAction.KeepCaseNamelist:
+                    //Resolved against the case folder first, and a template that is the case's own namelist is left
+                    //alone by every build.
+                    input.WildfireModule.ElmfireInput.NamelistTemplate = "elmfire.data";
+                    PREACT.Engine.Message(null, PREACT.Engine.LogType.Log, "[ELMFIRE] NamelistTemplate now names the case's own "
+                        + "elmfire.data, so builds keep it as it is and the Fire behaviour settings no longer reach it. Clear "
+                        + "NamelistTemplate (Fire model settings) to have it written from the scenario again.");
+                    ScenarioSession.NotifyEdited("namelist template");
+                    break;
+                case WorkflowAction.UseSetAsideNamelist:
+                    {
+                        string kept = _model.SetAsideNamelist;
+                        if (string.IsNullOrEmpty(kept)) break;
+                        input.WildfireModule.ElmfireInput.NamelistTemplate = kept;
+                        PREACT.Engine.Message(null, PREACT.Engine.LogType.Log, "[ELMFIRE] NamelistTemplate now names " + kept
+                            + ": runs use it as it is (only the grid, weather and ignition are filled in), and the Fire behaviour "
+                            + "settings no longer reach it.");
+                        ScenarioSession.NotifyEdited("namelist template");
+                        break;
+                    }
                 case WorkflowAction.OpenFireModelSettings: SettingsPageWindow.Open(SettingsPage.FireModel); break;
                 case WorkflowAction.OpenFireBehaviour: SettingsPageWindow.Open(SettingsPage.FireBehaviour); break;
                 case WorkflowAction.PreviewNamelist: Input.ElmfireNamelistPreviewWindow.Open(input.WildfireModule.ElmfireInput); break;

@@ -63,6 +63,12 @@ namespace WUInity.Workflow
         /// </summary>
         public string PaintedOnReference { get; private set; }
 
+        /// <summary>
+        /// The namelist the last case build set aside (elmfire.data.kept-&lt;time&gt;, relative to the case folder)
+        /// before writing a new one, while that is the build that wrote the current namelist; else null.
+        /// </summary>
+        public string SetAsideNamelist { get; private set; }
+
         /// <summary>The painted areas file, scenario-relative, or null.</summary>
         public string PaintedAreasFile { get => _paintedPath; }
 
@@ -120,6 +126,7 @@ namespace WUInity.Workflow
             PaintGridReference = null;
             PaintingOnOtherGrid = false;
             PaintedOnReference = null;
+            SetAsideNamelist = null;
             RefreshedAt = DateTime.Now;
 
             if (_in == null)
@@ -811,6 +818,8 @@ namespace WUInity.Workflow
                     }
                 }
 
+                NamelistProvenance(s, e, namelist);
+
                 //Sources changed since the build.
                 string built = Abs(namelist);
                 foreach (KeyValuePair<string, string> layer in e.GetSourceRasters())
@@ -859,14 +868,98 @@ namespace WUInity.Workflow
                 s.Summary = caseExists ? "Incomplete: " + string.Join(", ", missing) + " missing" : "Not built";
             }
 
-            s.Primary = new StepAction(WorkflowAction.BuildFireCase, done ? "Build missing layers" : "Build fire case",
-                "Builds only what the case does not already have. Takes minutes: a DEM, weather through WindNinja and Nelson, and the namelist.");
+            s.Primary = new StepAction(WorkflowAction.BuildFireCase, done ? "Update the case" : "Build fire case",
+                "Builds the layers the case does not have yet - a DEM, weather through WindNinja and Nelson - and keeps the "
+                + "ones it has, unless its grid no longer covers the domain (then it is re-cut and every layer carried "
+                + "onto it). The namelist is written again from the scenario every time; a hand-edited elmfire.data is "
+                + "set aside as elmfire.data.kept-<time>. Takes minutes.");
             s.Secondary.Add(new StepAction(WorkflowAction.RebuildFireCase, "Rebuild everything",
                 "Replaces every layer, the weather and the namelist - for a changed domain, cell size or source layer."));
             s.Secondary.Add(new StepAction(WorkflowAction.OpenFireModelSettings, "Fire model settings"));
             s.Secondary.Add(new StepAction(WorkflowAction.OpenFireBehaviour, "Fire behaviour"));
             s.Secondary.Add(new StepAction(WorkflowAction.PreviewNamelist, "Preview namelist"));
             return s;
+        }
+
+        /// <summary>
+        /// Whether the case's elmfire.data is the one its last build wrote, and whether that build set a
+        /// hand-edited one aside. Every build writes the namelist again from the scenario, so an edited one is
+        /// replaced - kept, not destroyed - unless it is named as the NamelistTemplate.
+        /// </summary>
+        private void NamelistProvenance(WorkflowStep s, ElmfireInput e, string namelist)
+        {
+            if (!string.IsNullOrEmpty(e.NamelistTemplate)) return;
+
+            string caseFolder = Abs(_case);
+            string namelistPath = Abs(namelist);
+            DateTime? written = _files.LastWriteUtc(namelistPath);
+
+            //The newest set-aside copy, when it was set aside by the build that wrote the namelist there now.
+            try
+            {
+                string newest = null;
+                DateTime newestAt = DateTime.MinValue;
+                if (_files.DirectoryExists(caseFolder))
+                {
+                    foreach (string kept in Directory.GetFiles(caseFolder, "elmfire.data.kept-*"))
+                    {
+                        string stamp = Path.GetFileName(kept).Substring("elmfire.data.kept-".Length);
+                        if (DateTime.TryParseExact(stamp, "yyyyMMdd_HHmmss", System.Globalization.CultureInfo.InvariantCulture,
+                                System.Globalization.DateTimeStyles.AssumeLocal, out DateTime at) && at > newestAt)
+                        {
+                            newestAt = at;
+                            newest = kept;
+                        }
+                    }
+                }
+                if (newest != null && written.HasValue && Math.Abs((written.Value.ToLocalTime() - newestAt).TotalMinutes) < 2.0)
+                {
+                    SetAsideNamelist = Path.GetFileName(newest);
+                    s.Info($"The last build set a namelist that had been edited by hand aside as {SetAsideNamelist}, and wrote "
+                        + "elmfire.data again from the scenario's settings. To run the hand-edited one as it is, name it as the "
+                        + "NamelistTemplate.", WorkflowAction.UseSetAsideNamelist, "Run " + SetAsideNamelist);
+                    return;
+                }
+            }
+            catch (Exception)
+            {
+                //A folder that cannot be listed says nothing either way.
+            }
+
+            //Not the namelist the last build wrote: the next build replaces it, and says so only in its log.
+            string recorded = ManifestValue(Abs(_case + "/" + PREACT.Utility.ElmfireCaseBuilder.SourceManifestName), "GeneratedNamelistSha256");
+            string current = _files.Read(namelistPath, "sha256", PREACT.Utility.ElmfireFingerprint.HashFile, null);
+            if (current == null || (recorded != null && string.Equals(recorded, current, StringComparison.OrdinalIgnoreCase)))
+            {
+                return;
+            }
+
+            s.Warn($"{namelist} is not the namelist the last build wrote ("
+                + (recorded == null ? "no build of this version recorded one" : "it was edited since") + "). The next build, "
+                + "Update the case or Apply to case writes it again from the scenario's settings and sets this one aside as "
+                + "elmfire.data.kept-<time>. To keep running it as it is, name it as the NamelistTemplate.",
+                WorkflowAction.KeepCaseNamelist, "Keep running it");
+        }
+
+        /// <summary>One key's value from a case manifest (key=value lines, # comments), or null.</summary>
+        private string ManifestValue(string path, string key)
+        {
+            if (path == null || !_files.Exists(path)) return null;
+            return _files.Read(path, "manifest:" + key, p =>
+            {
+                foreach (string raw in File.ReadAllLines(p))
+                {
+                    string line = raw.Trim();
+                    if (line.StartsWith("#")) continue;
+                    int eq = line.IndexOf('=');
+                    if (eq > 0 && string.Equals(line.Substring(0, eq).Trim(), key, StringComparison.OrdinalIgnoreCase))
+                    {
+                        string value = line.Substring(eq + 1).Trim();
+                        return value.Length == 0 ? null : value;
+                    }
+                }
+                return null;
+            }, null);
         }
 
         private WorkflowStep Terrain()
@@ -986,8 +1079,10 @@ namespace WUInity.Workflow
             if (IsElmfire)
             {
                 var apply = new StepAction(WorkflowAction.ApplyFireAreasToCase, "Apply to case",
-                    "Rebuilds the case keeping its layers, so the painted areas become its ignition_mask.tif and wui_area.tif. "
-                    + "The build reads the painted areas from their file, so unsaved strokes are offered a save first.");
+                    "Builds the case again so the painted areas become its ignition_mask.tif and wui_area.tif. Its other layers "
+                    + "are kept (unless its grid no longer covers the domain: then it is re-cut and they are carried onto it, "
+                    + "and so is the painting), and the namelist is written again from the scenario. The build reads the "
+                    + "painted areas from their file, so unsaved strokes are saved first.");
                 if (_painted == null && !_ctx.UnsavedFireStrokes) apply.Disable("Nothing painted yet.");
                 else if (_painted != null && !onGrid) apply.Disable(PaintedOnReference != null
                     ? "The painted areas are on another grid; move them onto the fire-case grid first."

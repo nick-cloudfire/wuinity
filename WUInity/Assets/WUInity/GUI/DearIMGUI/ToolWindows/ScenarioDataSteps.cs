@@ -981,6 +981,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             ctx.ChangedInPlace = true;
             bool ok;
             string problem;
+            DateTime started = DateTime.Now;
             try
             {
                 //Contract C1: on success this points [Landscape] at the case's dem/slp/asp, [kPERIL] WuiAreaFile at
@@ -1004,6 +1005,18 @@ namespace Assets.WUInity.GUI.DearIMGUI
             //main thread, after Finish has applied the step.
             ctx.Then(() => PreactGUI.WUInity?.ReloadLandscape());
 
+            //Every build writes the namelist again from the scenario. One edited by hand is set aside first, which the
+            //builder only says in its log; said where it is seen as well.
+            string setAside = NamelistSetAsideSince(GuiFiles.Resolve(ctx.Root, ScenarioFiles.CaseDirectory(ctx.Input)), started);
+            if (setAside != null)
+            {
+                string message = "A hand-edited namelist was set aside as " + setAside + ": the build wrote elmfire.data again from "
+                    + "the scenario's settings. To run the hand-edited one as it is, name it as [ELMFIRE] NamelistTemplate "
+                    + "(workflow step 5 offers to).";
+                LogStep(message);
+                ctx.Then(() => Engine.Message(null, Engine.LogType.Warning, message));
+            }
+
             //The build has just placed the painting on the case grid as ignition_mask.tif and wui_area.tif, through the
             //grid it was painted on; the painting file itself follows it there, or the next build (and the painter)
             //would be left with a painting on a grid nothing names any more.
@@ -1012,6 +1025,27 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 CarryPaintingOntoCaseGrid(ctx, painting);
             }
             return Task.CompletedTask;
+        }
+
+        /// <summary>The name of an elmfire.data.kept-&lt;time&gt; the builder set aside at or after <paramref name="since"/>, or null.</summary>
+        private static string NamelistSetAsideSince(string caseFolder, DateTime since)
+        {
+            if (string.IsNullOrEmpty(caseFolder) || !Directory.Exists(caseFolder)) return null;
+
+            string found = null;
+            DateTime foundAt = DateTime.MinValue;
+            foreach (string kept in Directory.GetFiles(caseFolder, "elmfire.data.kept-*"))
+            {
+                string stamp = Path.GetFileName(kept).Substring("elmfire.data.kept-".Length);
+                if (DateTime.TryParseExact(stamp, "yyyyMMdd_HHmmss", System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.AssumeLocal, out DateTime at)
+                    && at >= since.AddSeconds(-2) && at > foundAt)
+                {
+                    found = Path.GetFileName(kept);
+                    foundAt = at;
+                }
+            }
+            return found;
         }
 
         /// <summary>
@@ -1242,8 +1276,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
         }
 
         /// <summary>
-        /// Rebuilds the case keeping its layers, so newly painted masks become its ignition_mask.tif and
-        /// wui_area.tif ("Apply to case").
+        /// Builds the case again, keeping its layers (unless its grid has to be re-cut), so newly painted masks
+        /// become its ignition_mask.tif and wui_area.tif ("Apply to case"). The namelist is written again too.
         /// </summary>
         public static void ApplyPaintedAreasToCase()
         {

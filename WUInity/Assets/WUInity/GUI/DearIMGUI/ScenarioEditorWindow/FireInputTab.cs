@@ -127,10 +127,11 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
             {
                 ImGui.Indent();
 
-                Fields.Check("Build what the case is missing", ref elmfire.BuildCase,
-                    "Produces only the layers the case does not already have - a DEM if there is none, then "
-                    + "slope, aspect, adj/phi, the weather and a namelist. Safe on a prepared case: what is "
-                    + "already there is kept.");
+                Fields.Check("Build the case before each run", ref elmfire.BuildCase,
+                    "Before every run, builds the layers the case does not have yet - a DEM if there is none, then "
+                    + "slope, aspect, adj/phi and the weather - and writes the namelist again from these settings. "
+                    + "Layers the case has are kept, unless its dem.tif no longer covers the domain; then the grid is "
+                    + "re-cut and every layer carried onto it (the old ones are kept in inputs/_previous_grid).");
 
                 if (elmfire.BuildCase)
                 {
@@ -142,18 +143,16 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
                         //Worth spelling out rather than leaving to a tooltip: this replaces work that cannot
                         //always be redone. Canopy in particular has no global source, so a rebuild that is not
                         //handed canopy rasters fills them with zeros.
-                        Fields.Caution("This replaces the case's rasters, its weather and its namelist.",
+                        Fields.Caution("This replaces the case's rasters and its weather.",
                                        "Canopy with no source is refilled with zeros - surface fire only.",
                                        "Only needed when the domain or the cell size changed.");
                     }
-                    else
-                    {
-                        //The namelist is a layer for this purpose, and the one most likely to be stale: it is
-                        //kept like the rasters are, so changing a behaviour setting does nothing to a case that
-                        //already has one until this is on or the file is deleted.
-                        Fields.Warn("A case that already has elmfire.data keeps it, so the Fire behaviour",
-                                    "tab will not reach it. Turn this on, or delete the file, to rewrite it.");
-                    }
+
+                    //Not a kept layer: the builder writes the namelist on every build, so the Fire behaviour settings
+                    //always reach it - and an elmfire.data edited by hand is replaced (kept aside, not destroyed).
+                    Fields.Hint("The namelist is not kept like the rasters: every build writes elmfire.data again",
+                                "from the Fire behaviour settings. One edited by hand is set aside first as",
+                                "elmfire.data.kept-<time>; to run one as it is, name it as NamelistTemplate above.");
 
                     Fields.Real("CellSizeMetres", ref elmfire.CellSizeMetres);
                     Fields.Real("PaddingMetres", ref elmfire.PaddingMetres);
