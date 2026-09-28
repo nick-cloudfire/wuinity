@@ -14,6 +14,15 @@
          hit: they spawn PREACT.exe per realization, so the whole pipeline fails at the evacuation
          step while the CLI that launched it runs fine. -->
     <RollForward>LatestMajor</RollForward>
+    <!-- Warnings are errors: the build is warning-free and should stay so, since a warning left in a
+         build that has none is easy to see and one among hundreds is not. NuGet's vulnerability audit
+         (NU1901-NU1904) stays a warning: it reads an online advisory database that changes under a fixed
+         package set, so a new advisory would otherwise stop every build until the package is replaced. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);NU1901;NU1902;NU1903;NU1904</WarningsNotAsErrors>
+    <!-- The .NET analyzers' default rule set of the SDK this was checked with, so a newer SDK on the build
+         machine does not turn its new default rules into errors. -->
+    <AnalysisLevel>8.0</AnalysisLevel>
   </PropertyGroup>
 
   <ItemGroup>

@@ -22,12 +22,10 @@ namespace WUInity
         //whatever the zoom level.
         [SerializeField] float keyboardPanSpeed = 1.0f;
 
-        float maximumY;
         bool dragging = false;
         Vector3 startDragPos;
         Vector3 startMousePos;
         PREACT.Math.Vector2d _mapSize;
-        bool refreshClipPlanes = false;
         private PREACT.Input.PREACTInput _input;
         Engine _engine;
         WUInityManager _manager;
