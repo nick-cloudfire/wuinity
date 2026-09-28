@@ -244,6 +244,29 @@ namespace PREACT.Utility
         public const string WeatherRealizationsCsv = "weather_realizations.csv";
         public const string EnsemblePrefix = "ensemble";
 
+        /// <summary>
+        /// A file written beside a raster that is not a raster: the <c>.prj</c> the engine writes beside every
+        /// boundary and campaign raster (its CRS), and what GDAL or QGIS add on opening one - <c>.aux.xml</c>
+        /// statistics, <c>.ovr</c> overviews, <c>.tfw</c>/<c>.wld</c> world files. A results listing that matches by
+        /// name (<c>ensemble_burn_probability.*</c>) counted each of them as another result.
+        /// </summary>
+        public static bool IsRasterSidecar(string fileName)
+        {
+            string lower = Path.GetFileName(fileName ?? string.Empty).ToLowerInvariant();
+            foreach (string suffix in new[] { ".prj", ".aux.xml", ".ovr", ".tfw", ".wld", ".aux" })
+            {
+                if (lower.EndsWith(suffix, StringComparison.Ordinal)) return true;
+            }
+            return false;
+        }
+
+        /// <summary>A raster a result can be shown from, by its extension: <c>.asc</c>, <c>.tif</c> or <c>.tiff</c>.</summary>
+        public static bool IsRasterFile(string fileName)
+        {
+            string extension = Path.GetExtension(fileName ?? string.Empty).ToLowerInvariant();
+            return extension == ".asc" || extension == ".tif" || extension == ".tiff";
+        }
+
         /// <summary>Realization indices are always this wide, so names sort and never collide across paddings.</summary>
         public const int IndexWidth = 7;
 

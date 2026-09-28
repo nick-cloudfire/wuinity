@@ -66,7 +66,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             if (input == null) return;
 
             string output = Path.Combine(input.RootFolder, "_output");
-            string boundaryName = (input.TriggerBufferModule?.kPERILInput?.OutputName ?? kPERILInput.DefaultOutputName).ToLowerInvariant();
+            string boundaryName = input.TriggerBufferModule?.kPERILInput?.OutputName;
             string name = input.Simulation.Name.ToLowerInvariant();
 
             //A campaign keeps its results in its own folder; only a campaign from before that wrote them into
@@ -136,15 +136,22 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
         }
 
-        private static Kind? Classify(string lower, string name, string boundaryName)
+        /// <remarks>
+        /// The raster kinds take a raster only - .asc or .tif by the engine's rule, a boundary by the engine's own naming -
+        /// never the .prj the engine writes beside each one, nor GDAL's or QGIS's .aux.xml and .ovr: those were listed as
+        /// rasters of their own (ensemble_burn_probability.prj) and failed to read when shown.
+        /// </remarks>
+        private static Kind? Classify(string lower, string name, string outputName)
         {
+            if (PREACT.Utility.CampaignLayout.IsRasterSidecar(lower)) return null;
             if (lower == name + ".log") return Kind.RunLog;
             if (lower.StartsWith(name + "_") && lower.EndsWith("_arrivaldata.csv") && !lower.Contains("_prob_")) return Kind.Arrivals;
-            if (lower.Contains("_" + boundaryName) && !lower.EndsWith(".csv")) return Kind.TriggerBoundary;
-            if (lower.StartsWith("trigger_probability") && lower.EndsWith(".asc")) return Kind.TriggerProbability;
-            if (lower.StartsWith("ensemble_") && lower.Contains("burn_probability")) return Kind.BurnProbability;
-            if (lower.StartsWith("ensemble_") && lower.EndsWith(".asc")) return Kind.ArrivalStatistic;
-            if (lower == "trigger_convergence.csv") return Kind.Convergence;
+            if (PREACT.Evacuation.EvacuationManager.IsBoundaryFile(lower, outputName)) return Kind.TriggerBoundary;
+            if (lower == PREACT.Utility.CampaignLayout.ConvergenceCsv) return Kind.Convergence;
+            if (!PREACT.Utility.CampaignLayout.IsRasterFile(lower)) return null;
+            if (lower.StartsWith("trigger_probability")) return Kind.TriggerProbability;
+            if (lower.StartsWith(PREACT.Utility.CampaignLayout.EnsemblePrefix + "_") && lower.Contains("burn_probability")) return Kind.BurnProbability;
+            if (lower.StartsWith(PREACT.Utility.CampaignLayout.EnsemblePrefix + "_")) return Kind.ArrivalStatistic;
             return null;
         }
 

@@ -1150,6 +1150,24 @@ namespace PREACT.Evacuation
             return stem + (string.IsNullOrEmpty(groupLabel) ? string.Empty : "_" + groupLabel) + extension;
         }
 
+        /// <summary>
+        /// Whether <paramref name="fileName"/> is a trigger boundary written under <paramref name="outputName"/>:
+        /// <c>&lt;index&gt;_&lt;stem&gt;[_&lt;group&gt;]&lt;extension&gt;</c> as <see cref="BoundaryFileName"/> makes it (an older
+        /// campaign's <c>&lt;name&gt;_prob_&lt;n&gt;_0_&lt;stem&gt;</c> too), or one from before boundaries had an extension. Not
+        /// the <c>.prj</c> beside it, nor any other sidecar.
+        /// </summary>
+        public static bool IsBoundaryFile(string fileName, string outputName)
+        {
+            string lower = Path.GetFileName(fileName ?? string.Empty).ToLowerInvariant();
+            if (Utility.CampaignLayout.IsRasterSidecar(lower)) return false;
+
+            string written = BoundaryFileName(outputName).ToLowerInvariant();
+            string stem = Path.GetFileNameWithoutExtension(written);
+            string extension = Path.GetExtension(lower);
+            return lower.Contains("_" + stem) && (extension == Path.GetExtension(written) || extension.Length == 0
+                                                  || lower.EndsWith(stem, System.StringComparison.Ordinal));
+        }
+
         public void InsertNewCar(Vector2d startLatLon, EvacuationDestination evacuationGoal, uint numberOfPeopleInCar)
         {
             if (_trafficModule != null)

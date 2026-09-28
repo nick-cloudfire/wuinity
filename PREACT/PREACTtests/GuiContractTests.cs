@@ -12,6 +12,36 @@ namespace PREACT.Tests
         {
             runner.Add("painting: the grid the painter records is the one the case build and the resampler accept, and only it", PaintingRecordAgrees);
             runner.Add("painting: a read-only .gfi loads, with its grid record; one without the record still loads", ReadOnlyPainting);
+            runner.Add("results: a boundary or campaign raster is a result, the .prj/.aux.xml/.ovr beside it is not", ResultNames);
+        }
+
+        private static void ResultNames()
+        {
+            foreach (string sidecar in new[] { "0_trigger_boundary.prj", "ensemble_burn_probability.prj", "trigger_probability.asc.aux.xml",
+                         "ensemble_arrival_mean.asc.ovr", "dem.tfw", "TRIGGER_PROBABILITY.PRJ" })
+            {
+                Assert.True(CampaignLayout.IsRasterSidecar(sidecar), sidecar + " is a sidecar");
+                Assert.True(!Evacuation.EvacuationManager.IsBoundaryFile(sidecar, "trigger_boundary"), sidecar + " is no boundary");
+            }
+            foreach (string raster in new[] { "trigger_probability.asc", "ensemble_burn_probability.tif", "0_trigger_boundary.asc", "x.TIFF" })
+            {
+                Assert.True(CampaignLayout.IsRasterFile(raster) && !CampaignLayout.IsRasterSidecar(raster), raster + " is a raster");
+            }
+            Assert.True(!CampaignLayout.IsRasterFile("trigger_convergence.csv"), "the convergence CSV is not a raster");
+
+            //What EvacuationManager.BoundaryFileName writes, for the default name, one with an extension, and per group.
+            string single = "0_" + Evacuation.EvacuationManager.BoundaryFileName("trigger_boundary");
+            string group = "0_" + Evacuation.EvacuationManager.BoundaryFileName("trigger_boundary", "west");
+            string named = "3_" + Evacuation.EvacuationManager.BoundaryFileName("boundary.asc", "east");
+            Assert.True(Evacuation.EvacuationManager.IsBoundaryFile(single, "trigger_boundary"), single);
+            Assert.True(Evacuation.EvacuationManager.IsBoundaryFile(group, "trigger_boundary"), group + " (a group's)");
+            Assert.True(Evacuation.EvacuationManager.IsBoundaryFile(named, "boundary.asc"), named + " (OutputName with its extension)");
+            Assert.True(Evacuation.EvacuationManager.IsBoundaryFile("0_trigger_boundary.asc", null), "an empty OutputName is the default");
+            Assert.True(Evacuation.EvacuationManager.IsBoundaryFile("0_trigger_boundary", "trigger_boundary"), "a boundary from before they had .asc");
+            Assert.True(Evacuation.EvacuationManager.IsBoundaryFile("mati_prob_0000001_0_trigger_boundary", "trigger_boundary"),
+                "an old campaign's boundary in _output");
+            Assert.True(!Evacuation.EvacuationManager.IsBoundaryFile("0_trigger_boundary.csv", "trigger_boundary"), "not a CSV of it");
+            Assert.True(!Evacuation.EvacuationManager.IsBoundaryFile("0_boundary.asc", "trigger_boundary"), "not another name");
         }
 
         /// <summary>

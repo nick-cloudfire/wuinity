@@ -1629,19 +1629,34 @@ namespace WUInity.Workflow
         {
             string lower = file.ToLowerInvariant();
             string name = _name.ToLowerInvariant();
-            string output = (_in.TriggerBufferModule?.kPERILInput?.OutputName ?? "trigger_boundary").ToLowerInvariant();
             return lower == name + ".log"
                    || (lower.StartsWith(name + "_") && lower.EndsWith("_arrivaldata.csv") && !lower.Contains("_prob_"))
                    || (legacyCampaign && IsCampaignResult(lower))
-                   || lower.Contains("_" + output);
+                   || IsBoundary(lower);
         }
 
-        /// <summary>A file a campaign writes that is worth showing: its rasters and its convergence CSV.</summary>
+        /// <summary>A trigger boundary under the scenario's <c>[kPERIL] OutputName</c>, by the engine's own naming rule.</summary>
+        private bool IsBoundary(string file)
+        {
+            return PREACT.Evacuation.EvacuationManager.IsBoundaryFile(file, _in.TriggerBufferModule?.kPERILInput?.OutputName);
+        }
+
+        /// <summary>
+        /// A file a campaign writes that is worth showing: its rasters and its convergence CSV. Not the .prj the engine
+        /// writes beside each raster, nor what GDAL or QGIS add (.aux.xml, .ovr): those were listed and counted as rasters.
+        /// </summary>
         public static bool IsCampaignResult(string lower)
         {
-            return lower.StartsWith("trigger_probability")
-                   || lower.StartsWith(PREACT.Utility.CampaignLayout.EnsemblePrefix + "_")
-                   || lower == PREACT.Utility.CampaignLayout.ConvergenceCsv;
+            if (lower == PREACT.Utility.CampaignLayout.ConvergenceCsv) return true;
+            return IsCampaignRaster(lower);
+        }
+
+        /// <summary>A campaign's probability or ensemble raster (.asc or .tif), not a sidecar of one.</summary>
+        public static bool IsCampaignRaster(string lower)
+        {
+            return (lower.StartsWith("trigger_probability") || lower.StartsWith(PREACT.Utility.CampaignLayout.EnsemblePrefix + "_"))
+                   && PREACT.Utility.CampaignLayout.IsRasterFile(lower)
+                   && !PREACT.Utility.CampaignLayout.IsRasterSidecar(lower);
         }
 
         private static bool SameFolder(string a, string b)
@@ -1673,12 +1688,11 @@ namespace WUInity.Workflow
 
             int boundaries = 0, campaign = 0;
             bool log = false;
-            string output = (_in.TriggerBufferModule?.kPERILInput?.OutputName ?? "trigger_boundary").ToLowerInvariant();
             foreach (string f in files)
             {
                 string lower = Path.GetFileName(f).ToLowerInvariant();
-                if (lower.Contains("_" + output)) ++boundaries;
-                else if (lower.StartsWith("trigger_probability") || lower.StartsWith("ensemble_")) ++campaign;
+                if (IsBoundary(lower)) ++boundaries;
+                else if (IsCampaignRaster(lower)) ++campaign;
                 else if (lower.EndsWith(".log")) log = true;
             }
 
