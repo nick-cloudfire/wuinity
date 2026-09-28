@@ -8,7 +8,9 @@
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>disable</Nullable>
+    <!-- annotations: the vendored source uses ? annotations (CS8632 under disable) but was never written
+         against nullable flow analysis. -->
+    <Nullable>annotations</Nullable>
     <LangVersion>latest</LangVersion>
     <RootNamespace>kPERIL</RootNamespace>
     <AssemblyName>kPERILcore</AssemblyName>

@@ -5,7 +5,6 @@ namespace PREACT.Weather
     //https://wikifire.wsl.ch/tiki-index908f.html?page=Keetch-Byram+drought+index
     public class DailyKBDI
     {
-        static readonly double _cToF = 9.0 / 5.0 + 32;
         const double _mmToInches = 0.03937007874;
         const double P_lim_metric = 5; //mm
 

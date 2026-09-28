@@ -376,24 +376,14 @@ namespace PREACT.Traffic
                 Vector2d startLatLon = injectedCar.startLatLon;                
                 Vector2d destinationLatLon = evacuationGoal.LatLon;
 
-                //TODO: create input for this...
-                string vehicleType = "evacuation_car";
-
                 try
                 {
                     //IMPORTANT!!! Longitude then latitude in SUMO
                     LIBSUMO.TraCIRoadPosition startRoad = LIBSUMO.Simulation.convertRoad(startLatLon.y, startLatLon.x, true); //lon/lat
                     LIBSUMO.TraCIRoadPosition destinationRoad = LIBSUMO.Simulation.convertRoad(destinationLatLon.y, destinationLatLon.x, true); //lon/lat
-                    LIBSUMO.TraCIStage route;
-                    //TODO:do we find route based on empty network/pure speed limits or do we take into account current state of network
-                    if(true)
-                    {
-                        route = LIBSUMO.Simulation.findRoute(startRoad.edgeID, destinationRoad.edgeID);
-                    }
-                    else
-                    {
-                        route = LIBSUMO.Simulation.findRoute(startRoad.edgeID, destinationRoad.edgeID, "", -1, 1);
-                    }
+                    //Routed on the empty network's speed limits, as it always was (the alternative, routing on the
+                    //network's current state, was an unreachable else branch).
+                    LIBSUMO.TraCIStage route = LIBSUMO.Simulation.findRoute(startRoad.edgeID, destinationRoad.edgeID);
 
                     bool foundRoute = false;
                     if (route.edges.Count > 0)

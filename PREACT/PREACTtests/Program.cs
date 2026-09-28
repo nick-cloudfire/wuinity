@@ -6,7 +6,7 @@ namespace PREACT.Tests
     /// Console test runner for the engine.
     /// </summary>
     /// <remarks>
-    /// Usage: <c>PREACTtests [--no-examples] [--out &lt;dir&gt;] [--filter &lt;text&gt;] [file.wui ...]</c>
+    /// Usage: <c>PREACTtests [--no-examples] [--out &lt;dir&gt;] [--filter &lt;text&gt;] [--verbose] [file.wui ...]</c>
     /// <list type="bullet">
     /// <item>Always runs the self-contained format and engine tests (synthetic scenarios in a temp folder).</item>
     /// <item>Round-trips (load, write, reload, write) every example in the repository's <c>Examples/</c> and
@@ -35,9 +35,10 @@ namespace PREACT.Tests
                     case "--no-examples": examples = false; break;
                     case "--out": outDir = args[++i]; break;
                     case "--filter": filter = args[++i]; break;
+                    case "--verbose": Log.Echo = true; break;
                     case "-h":
                     case "--help":
-                        Console.WriteLine("PREACTtests [--no-examples] [--out <dir>] [--filter <text>] [file.wui ...]");
+                        Console.WriteLine("PREACTtests [--no-examples] [--out <dir>] [--filter <text>] [--verbose] [file.wui ...]");
                         return 0;
                     default: files.Add(args[i]); break;
                 }
