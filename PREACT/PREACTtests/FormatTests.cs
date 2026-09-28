@@ -87,6 +87,10 @@ namespace PREACT.Tests
             Assert.Equal(1, log.Count(m => m.Contains("[Destination] Colour")), "and one log line");
             Assert.True(Item("Population", "line " + (lines.IndexOf("a line with no equals sign") + 1)).Message.Contains("not a Key=Value line"), "a stray line");
             Assert.True(Item("Scenario", "line 1").Message.Contains("before the first [section]"), "a line before any section");
+            //Quoted as written (e2e N4: "junkbeforeanysection", "alinewithnoequalssign").
+            Assert.True(Item("Scenario", "line 1").Message.Contains("\"junk before any section\""), "quoted verbatim: " + Item("Scenario", "line 1").Message);
+            string stray = Item("Population", "line " + (lines.IndexOf("a line with no equals sign") + 1)).Message;
+            Assert.True(stray.Contains("\"a line with no equals sign\""), "quoted verbatim: " + stray);
             Assert.True(Item("Weather", "DesiredLatLon").Message.Contains("no longer used"), "a retired key says so");
             Assert.True(Item("Behave", "[Behave]").Message.Contains("rate of spread now always comes from the fire module"), "a removed module's section");
             Assert.True(Item("ElmfireNamelist", "SEEED").Message.Contains("did you mean SEED?"), "a mistyped namelist key");
@@ -158,6 +162,13 @@ namespace PREACT.Tests
                 if (!header[0].StartsWith("Enabled=false"))
                 {
                     Assert.True(PREACTInput.Requirements.Any(r => r.Key == "Enabled" && !r.Critical), when + ": and said so");
+                }
+                if (!header[0].StartsWith("Enabled="))
+                {
+                    //e2e N5: said where the GUI shows it, not as one more default.
+                    PREACTInput.InputRequirement off = PREACTInput.Requirements.First(r => r.Section == "WildfireModule" && r.Key == "Enabled");
+                    Assert.True(off.Notice && off.Message.Contains("the fire module is off and the scenario runs without a fire")
+                                && off.Message.Contains("Enabled=true"), when + ": a notice, saying what it means: " + off.Message);
                 }
                 AssertFireKept(input, when);
 

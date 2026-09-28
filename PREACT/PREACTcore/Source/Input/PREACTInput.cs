@@ -288,6 +288,10 @@ namespace PREACT.Input
             List<int> demographicsLineIndices = new List<int>();
             List<int> ignitionPointLineIndices = new List<int>();
 
+            //As the file says them, for quoting a line nothing reads: normalising takes the spaces out of any line that
+            //is not Key=Value ("stray text" was quoted as "straytext", e2e N4).
+            string[] asWritten = (string[])inputLines.Clone();
+
             try
             {
                 //first index all headers
@@ -521,7 +525,7 @@ namespace PREACT.Input
                 //Last, once every parser has had its sections: what the file says that none of them read.
                 ReadSection("Scenario", false, () =>
                 {
-                    ReportIgnored(inputLines, allHeaders, duplicateHeaders);
+                    ReportIgnored(inputLines, asWritten, allHeaders, duplicateHeaders);
                     return true;
                 });
             }
@@ -744,7 +748,7 @@ namespace PREACT.Input
         /// known when the writer writes it (<see cref="PREACTInputWriter.FileKeys"/> of the section's type, the members
         /// every parser looks its keys up by), so the two cannot disagree about what the format holds.
         /// </remarks>
-        private static void ReportIgnored(string[] inputLines, List<int> headers, HashSet<int> duplicates)
+        private static void ReportIgnored(string[] inputLines, string[] asWritten, List<int> headers, HashSet<int> duplicates)
         {
             var keyCache = new Dictionary<string, HashSet<string>>();
             //section|key (or section| for a whole section) -> first line and how many times, in file order.
@@ -770,7 +774,7 @@ namespace PREACT.Input
             {
                 if ((inputLines[i] ?? string.Empty).Length > 0)
                 {
-                    Note("|line" + i, i, "Scenario", "line " + (i + 1), $"\"{Shorten(inputLines[i])}\"",
+                    Note("|line" + i, i, "Scenario", "line " + (i + 1), $"\"{Shorten(Verbatim(asWritten, i))}\"",
                         "comes before the first [section], so nothing reads it.");
                 }
             }
@@ -822,7 +826,7 @@ namespace PREACT.Input
                         {
                             continue;
                         }
-                        Note(name + "|line" + i, i, name, "line " + (i + 1), $"[{name}] \"{Shorten(line)}\"",
+                        Note(name + "|line" + i, i, name, "line " + (i + 1), $"[{name}] \"{Shorten(Verbatim(asWritten, i))}\"",
                             "is not a Key=Value line.");
                         continue;
                     }
@@ -854,6 +858,12 @@ namespace PREACT.Input
                 _currentSection = m[0];
                 AddRequirement(m[1], text, false);
             }
+        }
+
+        /// <summary>Line <paramref name="i"/> as the file has it, without its comment and surrounding whitespace.</summary>
+        private static string Verbatim(string[] asWritten, int i)
+        {
+            return StripComment(asWritten[i] ?? string.Empty).Trim();
         }
 
         private static string Shorten(string line)
@@ -995,6 +1005,12 @@ namespace PREACT.Input
             public string Message = string.Empty;
             public bool Critical;
 
+            /// <summary>
+            /// Not required, but it changes what the scenario does in a way its file does not say - a module switched off
+            /// because its section has no <c>Enabled</c> line. A GUI shows it where it is seen, not only among the defaults.
+            /// </summary>
+            public bool Notice;
+
             public override string ToString()
             {
                 return string.IsNullOrEmpty(Section) ? Key : Section + " / " + Key;
@@ -1096,7 +1112,7 @@ namespace PREACT.Input
         /// </summary>
         public static bool ReadingSwitchedOffSection { get => InSoftScope; }
 
-        private static void AddRequirement(string key, string message, bool critical)
+        private static void AddRequirement(string key, string message, bool critical, bool notice = false)
         {
             critical &= !InSoftScope;
             string section = _currentSection ?? string.Empty;
@@ -1119,6 +1135,7 @@ namespace PREACT.Input
                 {
                     //Critical wins, so a hard requirement is never masked by a softer duplicate.
                     target[i].Critical |= critical;
+                    target[i].Notice |= notice;
                     merged = true;
                     break;
                 }
@@ -1131,7 +1148,8 @@ namespace PREACT.Input
                     Section = section,
                     Key = key,
                     Message = message,
-                    Critical = critical
+                    Critical = critical,
+                    Notice = notice,
                 });
             }
 
@@ -1177,6 +1195,22 @@ namespace PREACT.Input
                 Engine.Message(null, Engine.LogType.Warning, $"{nameOfInput} was not found, default value {defaultValue} has been used.");
                 AddRequirement(nameOfInput, $"Not set; defaulted to {defaultValue}.", false);
             }
+        }
+
+        /// <summary>
+        /// A module section with no <c>Enabled</c> line: the module is off, which is the default, and it is said as a
+        /// <see cref="InputRequirement.Notice"/> - the section is there, so the file may well mean the module to run, and
+        /// a save writes <c>Enabled=false</c> (e2e N5: a scenario meant to run ELMFIRE silently ran without a fire).
+        /// </summary>
+        /// <param name="module">What is off, as a noun phrase ("the fire module").</param>
+        /// <param name="consequence">What that means for a run ("the scenario runs without a fire").</param>
+        public static void ModuleOffForWantOfEnabled(string module, string consequence)
+        {
+            string section = _currentSection ?? string.Empty;
+            string message = $"Not set, so {module} is off and {consequence}. Add Enabled=true to [{section}] to run it, or "
+                             + "Enabled=false to say it is meant to be off.";
+            Engine.Message(null, Engine.LogType.Warning, $"[{section}] Enabled: " + message);
+            AddRequirement("Enabled", message, false, notice: true);
         }
 
         /// <summary>

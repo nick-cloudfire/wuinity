@@ -1427,6 +1427,11 @@ namespace WUInity.Workflow
 
             foreach (PREACTInput.InputRequirement r in _ctx.Requirements)
             {
+                if (r.Notice && !r.Critical)
+                {
+                    AddNotice(r);
+                    continue;
+                }
                 if (!r.Critical) continue;
                 WorkflowStep s = this[StepFor(r)] ?? this[WorkflowStepId.PlaceAndTime];
                 if (s == null || !s.Applicable) continue;
@@ -1440,6 +1445,39 @@ namespace WUInity.Workflow
                 if (!_ctx.RequirementsFresh) s.Info(text + " (found before your latest edits)", WorkflowAction.CheckScenario, "Check again");
                 else if (unreadable || s.Status == StepStatus.Done) s.Error(text, WorkflowAction.CheckScenario, "Check again");
                 else s.Info(text, WorkflowAction.CheckScenario, "Check again");
+            }
+        }
+
+        /// <summary>
+        /// A parser finding that is not required but changes what runs - a module section with no Enabled line, so the
+        /// module is off (e2e N5) - as a warning on its step, or on Place and time when that step does not apply (which a
+        /// module being off is the usual reason for), with the settings page that switches it.
+        /// </summary>
+        private void AddNotice(PREACTInput.InputRequirement r)
+        {
+            WorkflowStep s = this[StepFor(r)];
+            if (s == null || !s.Applicable) s = this[WorkflowStepId.PlaceAndTime];
+            if (s == null) return;
+
+            string section = string.IsNullOrEmpty(r.Section) ? "Scenario" : r.Section;
+            string text = $"Scenario check: [{section}] {r.Key} - {r.Message}"
+                          + (_ctx.RequirementsFresh ? string.Empty : " (found before your latest edits)");
+            switch (section.ToLowerInvariant())
+            {
+                case "wildfiremodule":
+                case "smokemodule":
+                    s.Warn(text, WorkflowAction.OpenFireModelSettings, "Fire model settings");
+                    break;
+                case "pedestrianmodule":
+                case "trafficmodule":
+                    s.Warn(text, WorkflowAction.OpenEvacuationModules, "Evacuation modules");
+                    break;
+                case "triggerbuffermodule":
+                    s.Warn(text, WorkflowAction.OpenTriggerBoundary, "Trigger boundary settings");
+                    break;
+                default:
+                    s.Warn(text, WorkflowAction.CheckScenario, "Check again");
+                    break;
             }
         }
 

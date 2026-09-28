@@ -139,10 +139,12 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
 
             IReadOnlyList<PREACTInput.InputRequirement> items = WorkflowService.Requirements;
-            int required = 0, optional = 0;
+            int required = 0, optional = 0, notices = 0;
             foreach (PREACTInput.InputRequirement r in items)
             {
-                if (r.Critical) ++required; else ++optional;
+                if (r.Critical) ++required;
+                else if (r.Notice) ++notices;
+                else ++optional;
             }
 
             ImGui.Text(ScenarioSession.DisplayName);
@@ -153,6 +155,10 @@ namespace Assets.WUInity.GUI.DearIMGUI
             else
             {
                 Fields.Caution($"{required} item(s) the parser requires before this scenario can run.");
+            }
+            if (notices > 0)
+            {
+                Fields.Warn($"{notices} module(s) off because their section has no Enabled line - see [note] below.");
             }
             if (optional > 0)
             {
@@ -173,7 +179,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             var byStep = new SortedDictionary<int, List<PREACTInput.InputRequirement>>();
             foreach (PREACTInput.InputRequirement r in items)
             {
-                if (_onlyRequired && !r.Critical) continue;
+                if (_onlyRequired && !r.Critical && !r.Notice) continue;
                 int step = (int)ScenarioWorkflow.StepFor(r);
                 if (!byStep.TryGetValue(step, out var list)) byStep[step] = list = new List<PREACTInput.InputRequirement>();
                 list.Add(r);
@@ -208,6 +214,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 foreach (PREACTInput.InputRequirement item in group.Value)
                 {
                     if (item.Critical) ImGui.TextColored(Fields.Alert, "[required]");
+                    else if (item.Notice) ImGui.TextColored(Fields.Warning, "[note]");
                     else ImGui.TextDisabled("[default]");
                     ImGui.SameLine();
                     ImGui.TextWrapped($"[{(string.IsNullOrEmpty(item.Section) ? "Scenario" : item.Section)}] {item.Key} - {item.Message}");

@@ -903,8 +903,9 @@ namespace PREACT.Utility
             if (!string.IsNullOrWhiteSpace(named))
             {
                 string path = string.IsNullOrEmpty(rootFolder) ? PREACTInput.NormalisePath(named) : PREACTInput.ResolvePath(rootFolder, named);
-                return $"[ELMFIRE] ElmfireExe names {path}, which is not there. Correct the path in the scenario (Hazards "
-                       + "tab), or clear it to use the build in WUInity/Assets/ThirdParty/elmfire.";
+                return $"[ELMFIRE] ElmfireExe names {path}, which is not there. Correct that key in the scenario file (Help > "
+                       + "External tools and keys shows which ELMFIRE is used), or remove it to use the build in "
+                       + "WUInity/Assets/ThirdParty/elmfire.";
             }
 
             string relative = windows ? "ThirdParty/elmfire/build/windows/bin/elmfire.exe" : "ThirdParty/elmfire/build/linux/bin/elmfire";

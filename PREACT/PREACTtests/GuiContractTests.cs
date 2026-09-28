@@ -34,7 +34,9 @@ namespace PREACT.Tests
                 return warnings;
             }
 
-            string[] retired = { "Prepare data", "Hazards tab", "Run/edit", "Hazards >" };
+            //The GUI has no Hazards menu or tab any more, so the word itself in a message is a retired name (e2e N3: the
+            //line-by-line scan missed "(Hazards " + "tab)", split across a line break).
+            string[] retired = { "Prepare data", "Hazards", "Run/edit" };
             var found = new List<string>();
             foreach (string root in new[] { Path.Combine(repo, "PREACT"), Path.Combine(repo, "WUInity", "Assets", "WUInity") })
             {
@@ -42,21 +44,125 @@ namespace PREACT.Tests
                 {
                     string rel = Path.GetRelativePath(repo, file).Replace('\\', '/');
                     if (rel.Contains("/bin/") || rel.Contains("/obj/") || rel.StartsWith("PREACT/PREACTtests/")) continue;
-                    string[] lines = File.ReadAllLines(file);
-                    for (int i = 0; i < lines.Length; ++i)
+                    foreach ((int line, string text) in StringLiterals(File.ReadAllText(file)))
                     {
-                        string code = lines[i].TrimStart();
-                        if (code.StartsWith("//")) continue; //a comment may say what a thing used to be called
                         foreach (string name in retired)
                         {
-                            int at = code.IndexOf(name, StringComparison.Ordinal);
-                            if (at > 0 && code.LastIndexOf('"', at) >= 0) found.Add($"{rel}:{i + 1} \"{name}\"");
+                            if (System.Text.RegularExpressions.Regex.IsMatch(text, @"(^|\W)" + System.Text.RegularExpressions.Regex.Escape(name) + @"(\W|$)"))
+                            {
+                                found.Add($"{rel}:{line} \"{name}\"");
+                            }
                         }
                     }
                 }
             }
             Assert.True(found.Count == 0, "strings still name retired menus: " + string.Join(", ", found));
+
+            //The scan itself: a literal split with + over lines is read whole, and code in an interpolation hole is not text.
+            List<(int, string)> probe = StringLiterals("var m = \"Correct it (Hazards \"\n    + \"tab)\"; // \"Hazards tab\"\nvar n = $\"{sim.Hazards.Count} cells {(a ? \"x\" : \"y\")}\";");
+            Assert.True(probe.Count == 2 && probe[0].Item2 == "Correct it (Hazards tab)" && probe[1].Item2 == " cells ",
+                "the literal scan: " + string.Join(" | ", probe.Select(p => p.Item1 + ":" + p.Item2)));
             return warnings;
+        }
+
+        /// <summary>
+        /// The text of every string literal in C# source <paramref name="code"/>, with its line: literals joined by
+        /// <c>+</c> (across line breaks) as one, interpolation holes and comments left out.
+        /// </summary>
+        internal static List<(int Line, string Text)> StringLiterals(string code)
+        {
+            var result = new List<(int, string)>();
+            var text = new System.Text.StringBuilder();
+            int line = 1, start = 0;
+            bool open = false;       //a literal (or a + chain of them) is being collected
+            bool joinNext = false;   //a + followed the last literal
+            int i = 0, n = code.Length;
+
+            void Flush()
+            {
+                if (open) result.Add((start, text.ToString()));
+                open = false;
+                joinNext = false;
+                text.Clear();
+            }
+
+            //Reads a "..." (or @"...") body starting after its opening quote, appending its text unless in a hole.
+            void ReadString(bool verbatim, bool interpolated, bool keep)
+            {
+                while (i < n)
+                {
+                    char c = code[i];
+                    if (c == '\n') ++line;
+                    if (verbatim && c == '"' && i + 1 < n && code[i + 1] == '"') { if (keep) text.Append('"'); i += 2; continue; }
+                    if (!verbatim && c == '\\' && i + 1 < n) { if (keep) text.Append(code[i + 1]); i += 2; continue; }
+                    if (c == '"') { ++i; return; }
+                    if (interpolated && c == '{')
+                    {
+                        if (i + 1 < n && code[i + 1] == '{') { if (keep) text.Append('{'); i += 2; continue; }
+                        ++i;
+                        int depth = 1;
+                        while (i < n && depth > 0)
+                        {
+                            char h = code[i];
+                            if (h == '\n') ++line;
+                            if (h == '"') { ++i; ReadString(false, false, false); continue; }
+                            if (h == '{') ++depth;
+                            else if (h == '}') --depth;
+                            ++i;
+                        }
+                        continue;
+                    }
+                    if (interpolated && c == '}' && i + 1 < n && code[i + 1] == '}') { if (keep) text.Append('}'); i += 2; continue; }
+                    if (keep) text.Append(c);
+                    ++i;
+                }
+            }
+
+            while (i < n)
+            {
+                char c = code[i];
+                if (c == '\n') { ++line; ++i; continue; }
+                if (char.IsWhiteSpace(c)) { ++i; continue; }
+                if (c == '/' && i + 1 < n && code[i + 1] == '/') { while (i < n && code[i] != '\n') ++i; continue; }
+                if (c == '/' && i + 1 < n && code[i + 1] == '*')
+                {
+                    i += 2;
+                    while (i + 1 < n && !(code[i] == '*' && code[i + 1] == '/')) { if (code[i] == '\n') ++line; ++i; }
+                    i += 2;
+                    continue;
+                }
+                if (c == '\'')
+                {
+                    i += code[i + 1] == '\\' ? 3 : 2;
+                    while (i < n && code[i] != '\'') ++i;
+                    ++i;
+                    Flush();
+                    continue;
+                }
+
+                int prefix = 0;
+                bool verbatim = false, interpolated = false;
+                while (i + prefix < n && (code[i + prefix] == '@' || code[i + prefix] == '$') && prefix < 2)
+                {
+                    verbatim |= code[i + prefix] == '@';
+                    interpolated |= code[i + prefix] == '$';
+                    ++prefix;
+                }
+                if (i + prefix < n && code[i + prefix] == '"')
+                {
+                    if (!(open && joinNext)) { Flush(); open = true; start = line; }
+                    joinNext = false;
+                    i += prefix + 1;
+                    ReadString(verbatim, interpolated, true);
+                    continue;
+                }
+
+                if (c == '+' && open) { joinNext = true; ++i; continue; }
+                Flush();
+                ++i;
+            }
+            Flush();
+            return result;
         }
 
         private static void EarlierCampaign()

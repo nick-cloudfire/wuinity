@@ -50,7 +50,7 @@ namespace PREACT.Input
             }
             else
             {
-                PREACTInput.InputNotFoundMessage(nameOfInput, false, "false");
+                PREACTInput.ModuleOffForWantOfEnabled("the trigger boundary", "no trigger boundary is computed");
             }
 
             //Read whether or not the boundary is on, so a save keeps the k-PERIL settings (they used to be
