@@ -605,6 +605,23 @@ namespace PREACT.Tests
 
                 Assert.True(!CampaignLayout.IsLockHeld(campaign), "released with the campaign");
                 Assert.True(File.Exists(Path.Combine(campaign, CampaignLayout.LockFile)), "the file stays, and is no lock");
+
+                //A campaign of another scenario, in another folder, on the same case: seen through the case's own lock, which
+                //two campaigns can hold at once (review NIT: the refusal looked only under this scenario's _output).
+                string caseDir = Path.Combine(c.Folder, "case");
+                Directory.CreateDirectory(caseDir);
+                using (PREACTcli.Campaigns.CampaignLock one = PREACTcli.Campaigns.CampaignLock.AcquireCase(caseDir))
+                using (PREACTcli.Campaigns.CampaignLock two = PREACTcli.Campaigns.CampaignLock.AcquireCase(caseDir))
+                {
+                    Assert.True(one != null && two != null, "two campaigns share the case's lock");
+                    Assert.True(CampaignLayout.IsLockHeld(caseDir), "and it reads as held");
+
+                    bool built = ElmfireCoupling.BuildCaseOnly(input, null, out string problem);
+                    Assert.True(!built && problem != null && problem.Contains("running on this case"), "the GUI's build is refused: " + problem);
+                    (int exit, string output) = RunCli(c.Folder, "build-case", "--wui", wui, "--dem", c.DemPath, "--no-climatology");
+                    Assert.True(exit == 1 && output.Contains("running on this case"), "and build-case: " + Tail(output));
+                }
+                Assert.True(!CampaignLayout.IsLockHeld(caseDir), "released when both have finished");
                 (int after, string said) = RunCli(c.Folder, "build-case", "--wui", wui, "--dem", c.DemPath, "--no-climatology",
                     "--windninja", Path.Combine(c.Folder, "no-windninja-here"));
                 Assert.Equal(0, after, "once it has finished the case builds (" + Tail(said) + ")");

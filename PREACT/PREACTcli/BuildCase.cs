@@ -140,14 +140,13 @@ namespace PREACTcli
                 return 1;
             }
 
-            string campaign = CampaignLayout.DescribeRunningCampaign(input.RootFolder);
+            string caseDir = output != null ? Path.GetFullPath(output) : ElmfireCoupling.CaseDirectoryPath(input.RootFolder, settings);
+            string campaign = CampaignLayout.DescribeRunningCampaign(input.RootFolder, caseDir);
             if (campaign != null)
             {
                 Console.Error.WriteLine("ERROR: " + campaign);
                 return 1;
             }
-
-            string caseDir = output != null ? Path.GetFullPath(output) : ElmfireCoupling.CaseDirectoryPath(input.RootFolder, settings);
             ElmfireCaseBuilder.Options o = ElmfireCoupling.CreateBuildOptions(input, settings, caseDir, Console.WriteLine);
 
             o.PathToGdal ??= GdalTools.FindBinDirectory();

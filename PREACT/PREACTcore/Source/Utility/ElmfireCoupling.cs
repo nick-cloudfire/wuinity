@@ -746,7 +746,7 @@ namespace PREACT.Utility
                 return false;
             }
 
-            string campaign = CampaignLayout.DescribeRunningCampaign(input.RootFolder);
+            string campaign = CampaignLayout.DescribeRunningCampaign(input.RootFolder, caseDir);
             if (campaign != null)
             {
                 problem = "The case was not built: " + campaign;

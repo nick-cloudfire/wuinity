@@ -161,10 +161,13 @@ namespace PREACTcli.Campaigns
         private readonly string _path;
         private FileStream _stream;
 
-        private CampaignLock(string path, FileStream stream)
+        private readonly bool _shared;
+
+        private CampaignLock(string path, FileStream stream, bool shared = false)
         {
             _path = path;
             _stream = stream;
+            _shared = shared;
         }
 
         /// <summary>Why <paramref name="folder"/> cannot be taken over now, or null when no campaign process holds it.</summary>
@@ -210,6 +213,40 @@ namespace PREACTcli.Campaigns
         }
 
         /// <summary>
+        /// The case's lock (<see cref="CampaignLayout.CaseLockFile"/> in <paramref name="caseDirectory"/>), held shared for as
+        /// long as the campaign runs: other campaigns may hold it too, and a build of the case - from any scenario - sees it
+        /// held and refuses (<see cref="CampaignLayout.DescribeRunningCampaign"/>). Null, with nothing held, when the folder
+        /// cannot hold one (read-only); the campaign then runs without it, as before.
+        /// </summary>
+        /// <remarks>
+        /// Shared: read access with read/write sharing, which on Windows lets any number of such handles coexist and refuses
+        /// the builder's unshared open, and on Unix is a flock LOCK_SH that the builder's LOCK_EX probe cannot take.
+        /// </remarks>
+        public static CampaignLock AcquireCase(string caseDirectory)
+        {
+            if (string.IsNullOrEmpty(caseDirectory) || !Directory.Exists(caseDirectory)) return null;
+            string path = Path.Combine(caseDirectory, CampaignLayout.CaseLockFile);
+            try
+            {
+                if (!File.Exists(path))
+                {
+                    File.WriteAllText(path, "held (shared) by every trigger campaign running on this case; a file nobody "
+                                            + "holds is no lock" + Environment.NewLine);
+                }
+                var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                return new CampaignLock(path, stream, shared: true);
+            }
+            catch (IOException)
+            {
+                return null;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
         /// Releases the lock. The file stays: deleting it after closing it let a second process that opened it in
         /// between keep a lock on a file no longer in the folder - on Linux an flock on an unlinked inode - so a third
         /// could take the folder beside it (review NIT). A file nobody holds is no lock (<see cref="HeldBy"/>).
@@ -217,6 +254,13 @@ namespace PREACTcli.Campaigns
         public void Dispose()
         {
             if (_stream == null) return;
+            if (_shared)
+            {
+                //Read-only, and other campaigns may hold it: closing is the release.
+                _stream.Dispose();
+                _stream = null;
+                return;
+            }
             try
             {
                 _stream.SetLength(0);

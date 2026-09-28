@@ -94,6 +94,8 @@ namespace PREACTcli
 
             Directory.CreateDirectory(c.RealizationsDir);
             using (CampaignLock campaignLock = CampaignLock.Acquire(c.Folder, out string lockProblem))
+            //The case's too, so a build of it from another scenario's folder waits for this campaign (review NIT).
+            using (CampaignLock caseLock = CampaignLock.AcquireCase(Path.GetDirectoryName(c.InputsDir)))
             {
                 if (campaignLock == null)
                 {
