@@ -208,11 +208,16 @@ namespace PREACT.Tests
             var simulation = new Simulation(Program.Engine, input, 0);
             Assert.True(simulation.Weather.HasFireWeatherCodes, "the run has fire weather codes");
 
+            //The record is UTC and the scenario's clock local (the synthetic domain is at Mati, UTC+3 in June): the
+            //run reads the record's hour that its local hour is, not the same number. It read the same number.
+            TimeSpan utc = simulation.Time.StartUTCDateTime - simulation.Time.StartDateTime;
+            Assert.Near(-3.0, utc.TotalHours, 1e-9, "Mati is UTC+3 in June");
+
             //What the archive derivation gives for the same hours and seeds.
             WeatherInput seeds = input.Weather;
             var raw = new List<ClimatologySampler.RawHour>();
             string[] rows = File.ReadAllLines(weatherPath);
-            DateTime first = input.Simulation.StartDateTime, last = input.Simulation.EndDateTime;
+            DateTime first = input.Simulation.StartDateTime + utc, last = input.Simulation.EndDateTime + utc;
             for (int i = 4; i < rows.Length; ++i)
             {
                 string[] c = rows[i].Split(',');
@@ -233,19 +238,20 @@ namespace PREACT.Tests
             var daily = new Dictionary<int, double>();
             for (int h = 0; h < raw.Count; ++h)
             {
-                DateTime t = first.AddHours(h);
+                DateTime t = input.Simulation.StartDateTime.AddHours(h);
+                DateTime record = first.AddHours(h);
                 simulation.Weather.Update(t);
                 ClimatologySampler.DerivedCodes got = simulation.Weather.FireWeatherCodes;
-                Assert.Near(expected[h].Ffmc, got.Ffmc, 1e-4, $"daily FFMC at {t:MM-dd HH}:00");
-                Assert.Near(expected[h].Dc, got.Dc, 1e-4, $"DC at {t:MM-dd HH}:00");
-                Assert.Near(expected[h].FfmcHourly, got.FfmcHourly, 1e-4, $"hourly FFMC at {t:MM-dd HH}:00");
-                if (t.Day == 28) daily[t.Hour] = got.Ffmc;
+                Assert.Near(expected[h].Ffmc, got.Ffmc, 1e-4, $"daily FFMC at {t:MM-dd HH}:00 local ({record:HH}:00 UTC)");
+                Assert.Near(expected[h].Dc, got.Dc, 1e-4, $"DC at {t:MM-dd HH}:00 local");
+                Assert.Near(expected[h].FfmcHourly, got.FfmcHourly, 1e-4, $"hourly FFMC at {t:MM-dd HH}:00 local");
+                if (record.Day == 28) daily[record.Hour] = got.Ffmc;
             }
 
-            //Local noon at -120 is 20:00 UTC: the daily codes hold from 12:00 to 19:00 and move at 20:00. The run
+            //Local noon at -120 is 20:00 UTC: the daily codes hold from 12:00 to 19:00 UTC and move at 20:00. The run
             //used to advance them at 12:00 of the simulation clock.
-            Assert.Near(daily[12], daily[19], 1e-9, "the daily FFMC is unchanged from 12:00 to 19:00");
-            Assert.True(System.Math.Abs(daily[20] - daily[19]) > 1e-6, "it moves at 20:00, local noon");
+            Assert.Near(daily[12], daily[19], 1e-9, "the daily FFMC is unchanged from 12:00 to 19:00 UTC");
+            Assert.True(System.Math.Abs(daily[20] - daily[19]) > 1e-6, "it moves at 20:00 UTC, local noon at 120 W");
         }
 
         /// <summary>

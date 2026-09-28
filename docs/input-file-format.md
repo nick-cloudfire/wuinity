@@ -114,7 +114,7 @@ trigger boundary.
 | Key | Type | Default | Notes |
 |---|---|---|---|
 | `WeatherFile` | path | – | Hourly CSV in the Open-Meteo layout ([below](#weather-csv)). Not set: no weather is reported and nothing is downloaded. Set but missing, or not covering the run: a run downloads what it needs from Open-Meteo and caches it. Building an ELMFIRE case points it at the case's ERA5 archive. |
-| `WeatherAnchorDateTime` | date | unset | The moment in the record that the simulation's start reads from, so a scenario dated today reports the historical day its fire was computed against. Set by the case build. Unset: the record is read at the scenario's own dates. |
+| `WeatherAnchorDateTime` | date | unset | The moment in the record (UTC) that the simulation's start reads from, so a scenario dated today reports the historical day its fire was computed against. Set by the case build. Unset: the record is read at the scenario's own dates, at the UTC hour its local clock stands for (13:00 at Mati in June reads the record's 10:00). |
 | `StartFFMC` | number | `85` | Fine fuel moisture code at the first local noon. |
 | `StartDMC` | number | `6` | Duff moisture code. |
 | `StartDC` | number | `15` | Drought code. |

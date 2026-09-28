@@ -69,8 +69,10 @@ Magnitudes are from the Mati (Greece) case and the shipped examples, measured on
 | Grid edge | Positions up to one cell west or south of the grid counted as inside. | Outside. |
 
 **Weather shown during a run** (does not drive the fire or the evacuation): the FWI codes now use km/h wind
-and local noon, the weather CSV's latitude is read (it was always 0), and a scenario without a `WeatherFile` no
-longer downloads a year of weather on every run.
+and local noon, the weather CSV's latitude is read (it was always 0), a scenario without a `WeatherFile` no
+longer downloads a year of weather on every run, and the record (UTC) is read at the hour the scenario's local
+clock stands for — it was read at the same number, 3 h later in the day at Mati in summer and 7 h earlier in
+California.
 
 ### Actions required after upgrading
 
