@@ -17,19 +17,21 @@ up-to-date example and matches the current engine.
 You do **not** need a Mapbox token to run a simulation; it is only used for the
 map background in the visualizer.
 
-## 2. Build the engine and the command-line runner
+## 2. Build the engine and the command-line tools
 
 ```sh
-dotnet build PREACT/PREACTexecute/PREACTexecute.csproj -c Release
+powershell -ExecutionPolicy Bypass -File build.ps1   # Windows
+./build.sh                                           # Linux
 ```
 
-This builds `PREACTcore` (the engine) and `PREACTexecute` (the head-less
-runner). The runner executable is
-`PREACT/PREACTexecute/bin/Release/net8.0/PREACT.exe`.
+This builds `PREACTcore` (the engine), `PREACTexecute` (the head-less runner,
+`PREACT/PREACTexecute/bin/Release/net8.0/PREACT.exe`) and `PREACTcli`
+(`PREACT/PREACTcli/bin/Release/net8.0/PREACTcli.exe`), all in Release, and says
+where they are.
 
-> Building `PREACTcore` in **Release** also copies the engine DLLs into the
-> Unity project at `WUInity/Assets/PREACT/`. Always build Release before opening
-> WUI-NITY in Unity.
+> The engine DLLs the Unity project uses are not committed; the script builds
+> them into `WUInity/Assets/PREACT/Release/`. Run it before opening WUI-NITY in
+> Unity, and again after pulling engine changes.
 
 ## 3. Run a simulation (command line)
 
@@ -53,8 +55,8 @@ See [Command-line tools](command-line-tools.md) for the full argument reference.
 
 ## 4. Run in the visualizer (Unity)
 
-1. Build `PREACTcore` in Release (step 2) so the DLLs are up to date in
-   `WUInity/Assets/PREACT/`.
+1. Run the build script (step 2) so the engine DLLs are in
+   `WUInity/Assets/PREACT/Release/` and up to date.
 2. Open the `WUInity/` project in Unity (the version Unity Hub reports).
 3. Open the scene `WUInity/Assets/WUInity/Scenes/WUInityMain.unity`.
 4. (Optional) add a Mapbox token — see [Troubleshooting](troubleshooting.md).
