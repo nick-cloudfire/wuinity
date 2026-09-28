@@ -31,6 +31,35 @@ namespace PREACT
         /// </summary>
         public static void SaveGraphicalFireInput(string filePath, Input.WildfireData fireData, int xCount, int yCount)
         {
+            SaveGraphicalFireInput(filePath, fireData, xCount, yCount, null);
+        }
+
+        /// <summary>
+        /// Where the grid a painting was made on lies: its south-west corner in its CRS, its cell size, and the CRS
+        /// as an EPSG code (0 when unknown).
+        /// </summary>
+        public sealed class PaintedGrid
+        {
+            public double XllCorner, YllCorner, CellSize;
+            public int EpsgCode;
+        }
+
+        /// <summary>Marks the optional trailer after the four masks that says where their grid lies.</summary>
+        public const string GridTrailerTag = "GFIGRID1";
+
+        /// <summary>
+        /// As <see cref="SaveGraphicalFireInput(string, Input.WildfireData, int, int)"/>, and records where the grid
+        /// lies after the masks when <paramref name="grid"/> is given.
+        /// </summary>
+        /// <remarks>
+        /// A painting used to be recognised by its cell count alone, so a domain moved by a whole number of cells
+        /// with its size unchanged placed the old painting on the new ground without a word (review MI-3). The
+        /// position is a trailer: every reader of the format stops after the masks, so files with it open in older
+        /// builds, and files without it are still matched by size.
+        /// </remarks>
+        public static void SaveGraphicalFireInput(string filePath, Input.WildfireData fireData, int xCount, int yCount,
+            PaintedGrid grid)
+        {
             int cells = xCount * yCount;
 
             using (FileStream fs = new FileStream(filePath, FileMode.Create))
@@ -43,7 +72,45 @@ namespace PREACT
                     bw.Write(GetBytes(fireData.RandomIgnition, cells));
                     bw.Write(GetBytes(fireData.InitialIgnition, cells));
                     bw.Write(GetBytes(fireData.ManualTriggerBuffer, cells));
+
+                    if (grid != null && grid.CellSize > 0.0)
+                    {
+                        bw.Write(System.Text.Encoding.ASCII.GetBytes(GridTrailerTag));
+                        bw.Write(grid.XllCorner);
+                        bw.Write(grid.YllCorner);
+                        bw.Write(grid.CellSize);
+                        bw.Write(grid.EpsgCode);
+                    }
                 }
+            }
+        }
+
+        /// <summary>
+        /// Where a painting's grid lies, read from the trailer after its four masks, or null when the file does
+        /// not record it (every file written before the trailer existed).
+        /// </summary>
+        public static PaintedGrid ReadPaintedGrid(BinaryReader afterMasks)
+        {
+            try
+            {
+                byte[] tag = afterMasks.ReadBytes(GridTrailerTag.Length);
+                if (tag.Length != GridTrailerTag.Length || System.Text.Encoding.ASCII.GetString(tag) != GridTrailerTag)
+                {
+                    return null;
+                }
+
+                var grid = new PaintedGrid
+                {
+                    XllCorner = afterMasks.ReadDouble(),
+                    YllCorner = afterMasks.ReadDouble(),
+                    CellSize = afterMasks.ReadDouble(),
+                    EpsgCode = afterMasks.ReadInt32(),
+                };
+                return grid.CellSize > 0.0 ? grid : null;
+            }
+            catch (EndOfStreamException)
+            {
+                return null;
             }
         }
 

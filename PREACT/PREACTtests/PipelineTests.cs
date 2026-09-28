@@ -19,6 +19,61 @@ namespace PREACT.Tests
             runner.Add("preflight: a missing ELMFIRE is reported with the path that was tried", MissingElmfireNamed);
             runner.Add("weather: a user's archive is never rewritten; the build works on a copy", ArchiveWorkingCopy);
             runner.Add("builder: the case grid covers the whole padded domain, in whole cells", GridCoversPaddedDomain);
+            runner.Add("builder: a painting that records its grid is placed only on that grid, not on any of its size", PaintingPosition);
+        }
+
+        private static void PaintingPosition()
+        {
+            using (var c = new SyntheticCase())
+            {
+                string caseDir = Path.Combine(c.Folder, "case");
+                ElmfireCaseBuilder.Build(c.Options(caseDir, 150.0, new List<string>())).GetAwaiter().GetResult();
+                MasterGrid g = MasterGrid.FromRasterFile(ElmfireStems.Tif(Path.Combine(caseDir, "inputs"), ElmfireStems.Dem));
+
+                var data = new Input.WildfireData();
+                int cells = g.Header.Ncols * g.Header.Nrows;
+                data.WuiArea = new bool[cells];
+                for (int i = cells / 3; i < cells / 3 + 40; ++i) data.WuiArea[i] = true;
+                string gfi = Path.Combine(c.Folder, "painted.gfi");
+
+                (bool Ok, string Log, string Error) BuildWith(GraphicalFireInput.PaintedGrid recorded)
+                {
+                    if (recorded == null) GraphicalFireInput.SaveGraphicalFireInput(gfi, data, g.Header.Ncols, g.Header.Nrows);
+                    else GraphicalFireInput.SaveGraphicalFireInput(gfi, data, g.Header.Ncols, g.Header.Nrows, recorded);
+                    var log = new List<string>();
+                    ElmfireCaseBuilder.Options o = c.Options(caseDir, 150.0, log);
+                    o.PaintedMasksPath = gfi;
+                    try
+                    {
+                        ElmfireCaseBuilder.Build(o).GetAwaiter().GetResult();
+                        return (true, string.Join("\n", log), null);
+                    }
+                    catch (InvalidDataException e)
+                    {
+                        return (false, string.Join("\n", log), e.Message);
+                    }
+                }
+
+                var here = new GraphicalFireInput.PaintedGrid { XllCorner = g.XMin, YllCorner = g.YMin, CellSize = 30, EpsgCode = 32634 };
+                var moved = new GraphicalFireInput.PaintedGrid { XllCorner = g.XMin + 300, YllCorner = g.YMin, CellSize = 30, EpsgCode = 32634 };
+
+                var right = BuildWith(here);
+                Assert.True(right.Ok && right.Log.Contains("which the file places at"), "painted on this grid: placed; " + right.Error);
+                Assert.True(PaintedAreasReadable(gfi, g), "a file with the trailer still reads as every older reader reads it");
+
+                var wrong = BuildWith(moved);
+                Assert.True(!wrong.Ok && wrong.Error.Contains("-300 m east"), "same size, 10 cells away: refused, saying so: " + wrong.Error);
+
+                var legacy = BuildWith(null);
+                Assert.True(legacy.Ok && legacy.Log.Contains("matched by its size alone"), "an older file is matched by size, and it is said");
+            }
+        }
+
+        /// <summary>The masks of a painting read the way every older reader does: the header, then four blocks.</summary>
+        private static bool PaintedAreasReadable(string gfi, MasterGrid g)
+        {
+            GraphicalFireInput.LoadGraphicalFireInput(gfi, out int ncols, out int nrows, out bool[] wui, out bool[] _, out bool[] _, out bool[] _, out bool ok);
+            return ok && ncols == g.Header.Ncols && nrows == g.Header.Nrows && wui.Count(b => b) == 40;
         }
 
         private static void GridCoversPaddedDomain()

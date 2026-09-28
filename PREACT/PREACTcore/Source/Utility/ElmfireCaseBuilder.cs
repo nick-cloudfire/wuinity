@@ -1429,8 +1429,9 @@ namespace PREACT.Utility
             }
 
             PaintedMaskExporter.Masks masks = PaintedMaskExporter.Load(o.PaintedMasksPath);
+            var misplaced = new List<string>();
             MasterGrid painted = ResolvePaintedGrid(masks, grid, previousGridDirectory, o.PaintedMasksGridPath,
-                                     out string paintedOn);
+                                     out string paintedOn, misplaced);
 
             if (painted == null)
             {
@@ -1440,12 +1441,16 @@ namespace PREACT.Utility
                       + DescribeDimensions(o.PaintedMasksGridPath);
                 throw new InvalidDataException(
                     $"The painted areas in {Path.GetFileName(o.PaintedMasksPath)} are {masks.Ncols}x{masks.Nrows} cells, "
-                    + $"but the fire-case grid is {grid.Header.Ncols}x{grid.Header.Nrows} and {landscape}, so there is "
-                    + "no telling which ground they were painted on. Repaint the ignition and WUI areas on the "
-                    + "fire-case grid (load the case's dem.tif as the landscape), then build again.");
+                    + $"but the fire-case grid is {grid.Header.Ncols}x{grid.Header.Nrows} and {landscape}"
+                    + (misplaced.Count > 0 ? " (" + string.Join("; ", misplaced) + ")" : "")
+                    + ", so there is no telling which ground they were painted on. Repaint the ignition and WUI areas "
+                    + "on the fire-case grid (load the case's dem.tif as the landscape), then build again.");
             }
 
-            log($"  painted: {masks.Ncols}x{masks.Nrows} painting placed via {paintedOn}.");
+            log($"  painted: {masks.Ncols}x{masks.Nrows} painting placed via {paintedOn}"
+                + (masks.Grid == null
+                    ? " - matched by its size alone, since the file does not record where its grid lies."
+                    : $", which the file places at {masks.Grid.XllCorner:F1}, {masks.Grid.YllCorner:F1}."));
 
             if (masks.Any(masks.RandomIgnition))
             {
@@ -1472,13 +1477,28 @@ namespace PREACT.Utility
             }
         }
 
-        /// <summary>The grid a painting of this shape was made on, per the rule in <see cref="ApplyPaintedMasks"/>.</summary>
+        /// <summary>
+        /// The grid a painting of this shape was made on, per the rule in <see cref="ApplyPaintedMasks"/>: the right
+        /// size, and - when the file records where its grid lies - in the same place, to half a cell, with the same
+        /// cell size and CRS. A candidate of the right size in the wrong place is described in
+        /// <paramref name="misplaced"/>.
+        /// </summary>
         private static MasterGrid ResolvePaintedGrid(PaintedMaskExporter.Masks masks, MasterGrid caseGrid,
-            string previousGridDirectory, string landscapePath, out string paintedOn)
+            string previousGridDirectory, string landscapePath, out string paintedOn, List<string> misplaced = null)
         {
             paintedOn = null;
 
-            if (masks.Ncols == caseGrid.Header.Ncols && masks.Nrows == caseGrid.Header.Nrows)
+            bool Fits(MasterGrid g, string what)
+            {
+                if (masks.Ncols != g.Header.Ncols || masks.Nrows != g.Header.Nrows) return false;
+
+                string why = DescribePaintedGridMismatch(masks.Grid, g);
+                if (why == null) return true;
+                misplaced?.Add(what + " is the right size but " + why);
+                return false;
+            }
+
+            if (Fits(caseGrid, "the fire-case grid"))
             {
                 paintedOn = "the fire-case grid";
                 return caseGrid;
@@ -1490,7 +1510,7 @@ namespace PREACT.Utility
                 if (File.Exists(previousDem))
                 {
                     MasterGrid previous = MasterGrid.FromRasterFile(previousDem);
-                    if (masks.Ncols == previous.Header.Ncols && masks.Nrows == previous.Header.Nrows)
+                    if (Fits(previous, "the case grid this build replaced"))
                     {
                         paintedOn = "the case grid this build replaced";
                         return previous;
@@ -1501,11 +1521,40 @@ namespace PREACT.Utility
             if (!string.IsNullOrEmpty(landscapePath) && File.Exists(landscapePath))
             {
                 MasterGrid landscape = MasterGrid.FromRasterFile(landscapePath);
-                if (masks.Ncols == landscape.Header.Ncols && masks.Nrows == landscape.Header.Nrows)
+                if (Fits(landscape, "the landscape raster " + Path.GetFileName(landscapePath)))
                 {
                     paintedOn = "the landscape raster " + Path.GetFileName(landscapePath) + " (painted before the case grid existed)";
                     return landscape;
                 }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Why a painting recorded at <paramref name="recorded"/> was not painted on <paramref name="grid"/>, or null
+        /// when it was - or cannot be told, because the file records no position.
+        /// </summary>
+        public static string DescribePaintedGridMismatch(GraphicalFireInput.PaintedGrid recorded, MasterGrid grid)
+        {
+            if (recorded == null) return null;
+
+            double cs = grid.Header.CellSize;
+            if (System.Math.Abs(recorded.CellSize - cs) > 0.001 * cs)
+            {
+                return $"has {cs:F1} m cells and the painting {recorded.CellSize:F1} m";
+            }
+
+            if (recorded.EpsgCode > 0 && !string.IsNullOrEmpty(grid.Epsg)
+                && !string.Equals(grid.Epsg, "EPSG:" + recorded.EpsgCode.ToString(CultureInfo.InvariantCulture), StringComparison.OrdinalIgnoreCase))
+            {
+                return $"is in {grid.Epsg} and the painting in EPSG:{recorded.EpsgCode}";
+            }
+
+            double dx = grid.XMin - recorded.XllCorner, dy = grid.YMin - recorded.YllCorner;
+            if (System.Math.Abs(dx) > 0.5 * cs || System.Math.Abs(dy) > 0.5 * cs)
+            {
+                return $"starts {dx:F0} m east and {dy:F0} m north of the grid the painting was made on";
             }
 
             return null;
