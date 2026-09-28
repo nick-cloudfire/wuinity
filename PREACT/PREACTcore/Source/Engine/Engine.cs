@@ -106,14 +106,10 @@ namespace PREACT
         /// </remarks>
         private void SetupNativeLibraries()
         {
-            string root = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "Runtimes", "Native");
-            //No Behave entry: BEHAVE has been removed entirely - both the native library, which was called
-            //from nothing, and the managed port k-PERIL once used to derive its own rate of spread.
-            //FOFEM is kept on purpose (v1 decision) although nothing calls it yet; see its folder.
-            string fofem = Path.Combine(root, "FOFEM", "x64");
-            string gdal = Path.Combine(root, "GDAL", "x64");
-            string nfdrs4 = Path.Combine(root, "NFDRS4", "x64");
-            string[] runtimeFolders = { fofem, gdal, nfdrs4 };
+            //FOFEM, GDAL and NFDRS4 under Runtimes/Native. No Behave entry: BEHAVE has been removed entirely - both
+            //the native library, which was called from nothing, and the managed port k-PERIL once used to derive its
+            //own rate of spread. FOFEM is kept on purpose (v1 decision) although nothing calls it yet; see its folder.
+            string[] runtimeFolders = NativeLibraries.EngineRuntimeFolders();
 
             bool isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
             bool isOsx = RuntimeInformation.IsOSPlatform(OSPlatform.OSX);

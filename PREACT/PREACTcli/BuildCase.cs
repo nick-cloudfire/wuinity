@@ -193,7 +193,7 @@ namespace PREACTcli
             }
             catch (Exception e)
             {
-                Console.Error.WriteLine("build-case failed: " + e.Message);
+                Console.Error.WriteLine("build-case failed: " + Program.Describe(e));
                 return 1;
             }
         }

@@ -12,6 +12,10 @@ namespace PREACTcli
                 return 0;
             }
 
+            //What the engine's constructor does for PREACT.exe and the GUI: the CLI builds no Engine, so without
+            //this its GDAL wrappers were only found on Linux with Runtimes/Native/GDAL/x64 on LD_LIBRARY_PATH.
+            PREACT.Runtime.NativeLibraries.SetUpForProcess();
+
             switch (args[0])
             {
                 case "global-gpw-to-pop":
@@ -29,6 +33,21 @@ namespace PREACTcli
                     PrintUsage();
                     return 2;
             }
+        }
+
+        /// <summary>
+        /// An exception's message with every inner exception's after it. A type initializer or a reflection call only
+        /// says that something failed; which native library would not load is two levels down.
+        /// </summary>
+        internal static string Describe(Exception e)
+        {
+            var parts = new List<string>();
+            for (Exception x = e; x != null && parts.Count < 6; x = x.InnerException)
+            {
+                string m = x.Message?.Trim();
+                if (!string.IsNullOrEmpty(m) && !parts.Contains(m)) parts.Add(m);
+            }
+            return string.Join(" <- ", parts);
         }
 
         static void PrintUsage()
