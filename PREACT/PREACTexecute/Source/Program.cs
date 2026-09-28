@@ -17,7 +17,11 @@ namespace PREACT
             // run and never ended if the finished callback did not fire).
             int exitCode = await preact.Execute(args);
 
-            Console.WriteLine("Simulation run executed, shutting down (exit code " + exitCode + ").");
+            //Only after a run: after a usage line or a scenario that did not load it read as though something had run.
+            if (preact.Ran)
+            {
+                Console.WriteLine("Simulation run executed, shutting down (exit code " + exitCode + ").");
+            }
             return exitCode;
         }
     }

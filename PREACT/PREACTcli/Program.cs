@@ -6,24 +6,22 @@ namespace PREACTcli
     {
         static int Main(string[] args)
         {
-            if (args.Length == 0)
+            //Help is asked for, not an unknown command (e2e N6), and needs no native library: it works on a machine
+            //where GDAL cannot be loaded, which is when it is most needed.
+            if (args.Length == 0 || IsHelp(args[0]) || (args.Length == 2 && IsHelp(args[1])))
             {
                 PrintUsage();
                 return 0;
             }
 
-            //What the engine's constructor does for PREACT.exe and the GUI: the CLI builds no Engine, so without
-            //this its GDAL wrappers were only found on Linux with Runtimes/Native/GDAL/x64 on LD_LIBRARY_PATH.
-            PREACT.Runtime.NativeLibraries.SetUpForProcess();
-
             switch (args[0])
             {
                 case "global-gpw-to-pop":
-                    return Guarded(args[0], () => RunGpwToPop(args[1..]));
+                    return Guarded(args[0], () => WithNativeLibraries(() => RunGpwToPop(args[1..])));
                 case "converge-trigger":
-                    return Guarded(args[0], () => ConvergeTrigger.Run(args[1..]));
+                    return Guarded(args[0], () => WithNativeLibraries(() => ConvergeTrigger.Run(args[1..])));
                 case "build-case":
-                    return Guarded(args[0], () => BuildCase.Run(args[1..]));
+                    return Guarded(args[0], () => WithNativeLibraries(() => BuildCase.Run(args[1..])));
                 case "probabilistic-trigger":
                     Console.Error.WriteLine("probabilistic-trigger is gone: converge-trigger generates the realizations "
                                             + "with ELMFIRE and runs until the probability raster is stable.");
@@ -33,6 +31,20 @@ namespace PREACTcli
                     PrintUsage();
                     return 2;
             }
+        }
+
+        private static bool IsHelp(string arg) => arg == "--help" || arg == "-h" || arg == "help" || arg == "/?";
+
+        /// <summary>
+        /// What the engine's constructor does for PREACT.exe and the GUI - the CLI builds no Engine, so without it its
+        /// GDAL wrappers were only found on Linux with Runtimes/Native/GDAL/x64 on LD_LIBRARY_PATH - inside the command's
+        /// guard, so a machine with no GDAL at all gets a message and exit 1 rather than an unhandled type-initializer
+        /// crash (exit 134, review NIT).
+        /// </summary>
+        private static int WithNativeLibraries(Func<int> run)
+        {
+            PREACT.Runtime.NativeLibraries.SetUpForProcess();
+            return run();
         }
 
         /// <summary>

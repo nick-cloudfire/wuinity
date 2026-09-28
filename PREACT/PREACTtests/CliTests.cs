@@ -20,6 +20,7 @@ namespace PREACT.Tests
             runner.Add("cli: a realization's archived scenario opens where it is kept", ArchivedScenarioOpensInPlace);
             runner.Add("cli: an unexpected exception ends a command with a message and exit 1", UnhandledExceptionExit);
             runner.Add("cli: realizations stopped by the wall-clock limit are called out, not just counted", TruncatedCalledOut);
+            runner.Add("cli: --help, -h and help print the usage with exit 0; PREACT says it ran only when it did", HelpAndUsage);
         }
 
         private static void TruncatedCalledOut()
@@ -28,6 +29,57 @@ namespace PREACT.Tests
             string said = ConvergenceAggregator.DescribeTruncated(3, 40, 8640);
             Assert.True(said != null && said.Contains("3 of 40") && said.Contains("144 min") && said.Contains("--max-runtime-minutes"),
                 "how many, the limit, and what to do: " + said);
+        }
+
+        /// <summary>e2e N6: PREACTcli --help was "Unknown command" (exit 2), and PREACT printed "Simulation run executed" after a usage line.</summary>
+        private static void HelpAndUsage()
+        {
+            string dir = Directory.CreateTempSubdirectory("preact-help-").FullName;
+            try
+            {
+                foreach (string[] args in new[] { new[] { "--help" }, new[] { "-h" }, new[] { "help" }, new[] { "build-case", "--help" } })
+                {
+                    (int exit, string output) = PipelineTests.RunCli(dir, args);
+                    Assert.True(exit == 0 && output.Contains("Usage:") && output.Contains("converge-trigger"),
+                        "PREACTcli " + string.Join(" ", args) + " prints the usage, exit 0: " + exit + " " + PipelineTests.Tail(output));
+                }
+                (int unknown, string said) = PipelineTests.RunCli(dir, "frobnicate");
+                Assert.True(unknown == 2 && said.Contains("Unknown command"), "an unknown command is still one");
+
+                string preact = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "PREACTexecute", "bin", "Debug", "net8.0", "PREACT.dll"));
+                Assert.True(File.Exists(preact), "PREACT's build output is there: " + preact);
+                (int help, string usage) = RunDotnet(dir, preact, "--help");
+                Assert.True(help == 0 && usage.Contains("Usage: PREACT"), "PREACT --help: usage, exit 0: " + help);
+                (int none, string noArgs) = RunDotnet(dir, preact);
+                Assert.True(none == 1 && noArgs.Contains("Usage: PREACT") && !noArgs.Contains("Simulation run executed"),
+                    "PREACT without a scenario: usage, exit 1, and no word of a run: " + noArgs);
+                (int missing, string noFile) = RunDotnet(dir, preact, Path.Combine(dir, "nothing.wui"));
+                Assert.True(missing == 1 && !noFile.Contains("Simulation run executed"), "nor for a missing file: " + noFile);
+            }
+            finally
+            {
+                try { Directory.Delete(dir, true); } catch { }
+            }
+        }
+
+        private static (int Exit, string Output) RunDotnet(string workingDirectory, string dll, params string[] args)
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo("dotnet")
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                WorkingDirectory = workingDirectory,
+            };
+            psi.ArgumentList.Add(dll);
+            foreach (string a in args) psi.ArgumentList.Add(a);
+            using (System.Diagnostics.Process p = System.Diagnostics.Process.Start(psi))
+            {
+                Task<string> stdout = p.StandardOutput.ReadToEndAsync();
+                Task<string> stderr = p.StandardError.ReadToEndAsync();
+                Assert.True(p.WaitForExit(120000), "finished within two minutes");
+                return (p.ExitCode, stdout.Result + stderr.Result);
+            }
         }
 
         private static void UnhandledExceptionExit()

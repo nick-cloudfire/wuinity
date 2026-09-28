@@ -266,8 +266,12 @@ namespace PREACT.Pedestrian
                 }
             }
 
-            Engine.Message(_simulation, Engine.LogType.Warning, $"Number of households/people culled outside of defined groups: {culledHouseholdsOutsideGroups}/{culledPeopleOutsideGroups}");
-            Engine.Message(_simulation, Engine.LogType.Warning, $"Number of households/people culled outside of defined simulation domain: {culledHouseholdsOutsideDomain}/{culledPeopleOutsideDomain}");
+            //A warning only when someone was actually left out: "culled ... 0/0" as a WARNING on every run of a scenario
+            //whose population all lies inside (Lytton) reads as a problem that is not there (e2e N6).
+            Engine.Message(_simulation, culledHouseholdsOutsideGroups > 0 ? Engine.LogType.Warning : Engine.LogType.Log,
+                $"Number of households/people culled outside of defined groups: {culledHouseholdsOutsideGroups}/{culledPeopleOutsideGroups}");
+            Engine.Message(_simulation, culledHouseholdsOutsideDomain > 0 ? Engine.LogType.Warning : Engine.LogType.Log,
+                $"Number of households/people culled outside of defined simulation domain: {culledHouseholdsOutsideDomain}/{culledPeopleOutsideDomain}");
 
             //sum up the number of people which will not evacuate and total cars
             totalPeopleWhoWillNotEvacuate = 0;
