@@ -31,6 +31,8 @@
     <ProjectReference Include="..\PREACTcore\PREACTcore.csproj" />
     <!-- For the CLI tests (argument parsing, PREACT.exe exit codes, finding PREACT.exe); internals are visible. -->
     <ProjectReference Include="..\PREACTcli\PREACTcli.csproj" />
+    <!-- Built, not referenced: the CLI tests run PREACT.exe itself, so building the tests must build it too. -->
+    <ProjectReference Include="..\PREACTexecute\PREACTexecute.csproj" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
 
   <!-- The GDAL wrappers PREACTcore references by path (they do not flow through a project reference), for the

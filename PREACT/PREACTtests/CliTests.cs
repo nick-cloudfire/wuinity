@@ -47,7 +47,9 @@ namespace PREACT.Tests
                 (int unknown, string said) = PipelineTests.RunCli(dir, "frobnicate");
                 Assert.True(unknown == 2 && said.Contains("Unknown command"), "an unknown command is still one");
 
-                string preact = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "PREACTexecute", "bin", "Debug", "net8.0", "PREACT.dll"));
+                //PREACT is built beside the tests (a build-only project reference), in the tests' own configuration.
+                string configuration = new DirectoryInfo(AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)).Parent.Name;
+                string preact = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "PREACTexecute", "bin", configuration, "net8.0", "PREACT.dll"));
                 Assert.True(File.Exists(preact), "PREACT's build output is there: " + preact);
                 (int help, string usage) = RunDotnet(dir, preact, "--help");
                 Assert.True(help == 0 && usage.Contains("Usage: PREACT"), "PREACT --help: usage, exit 0: " + help);

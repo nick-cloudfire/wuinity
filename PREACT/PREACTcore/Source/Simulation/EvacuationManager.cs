@@ -1007,7 +1007,7 @@ namespace PREACT.Evacuation
             if (covered == 0)
             {
                 Engine.Message(null, Engine.LogType.Warning,
-                    "The landscape does not overlap the fire grid at all, so k-PERIL will run on flat ground.");
+                    "The terrain does not overlap the fire grid at all, so k-PERIL will run on flat ground.");
                 elevation = null;
                 slope = null;
                 aspect = null;
@@ -1021,12 +1021,12 @@ namespace PREACT.Evacuation
                 //grid and is genuinely flat. Reported so that a landscape that really is too small to cover
                 //the domain is distinguishable from one that simply has water in it.
                 Engine.Message(null, Engine.LogType.Log,
-                    $"The landscape gives a height for {coveredFraction * 100.0:F1}% of the fire grid; the rest is "
+                    $"The terrain gives a height for {coveredFraction * 100.0:F1}% of the fire grid; the rest is "
                     + "treated as flat.");
             }
 
             Engine.Message(null, Engine.LogType.Log,
-                $"k-PERIL topography sampled from the landscape onto the fire grid ({coveredFraction * 100.0:F1}% covered).");
+                $"k-PERIL topography sampled onto the fire grid ({coveredFraction * 100.0:F1}% covered).");
             return true;
         }
 
