@@ -93,6 +93,15 @@ namespace PREACT.Wildfire
         }
 
         /// <summary>
+        /// The EPSG code of the fire grid's CRS, or 0 when the module does not know it. Written beside rasters
+        /// derived from the grid (the trigger boundary's <c>.prj</c>) so they open where they belong.
+        /// </summary>
+        public virtual int GetGridEpsgCode()
+        {
+            return 0;
+        }
+
+        /// <summary>
         /// Returns state of cell on mesh based on simulation position. Returns dead if outside of mesh.
         /// </summary>
         /// <param name="simulationPos"></param>

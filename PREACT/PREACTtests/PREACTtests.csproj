@@ -30,4 +30,15 @@
     <ProjectReference Include="..\PREACTcli\PREACTcli.csproj" />
   </ItemGroup>
 
+  <!-- The GDAL wrappers PREACTcore references by path (they do not flow through a project reference), for the
+       tests that open what the engine writes the way GDAL and QGIS will. -->
+  <ItemGroup>
+    <Reference Include="gdal_csharp">
+      <HintPath>..\PREACTcore\Runtimes\Native\GDAL\gdal_csharp.dll</HintPath>
+    </Reference>
+    <Reference Include="osr_csharp">
+      <HintPath>..\PREACTcore\Runtimes\Native\GDAL\osr_csharp.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
 </Project>

@@ -1089,7 +1089,8 @@ namespace PREACT.Evacuation
                             string outputFilePath = Path.Combine(simulation.Engine.OutputFolder, simulation.SimulationIndex + "_" + outputName);
                             kPERIL.SaveToFile(_triggerBufferModule.TriggerBufferOutput,
                                 simulation.Hazards.Wildfire.GetCellSizeX(), outputFilePath,
-                                simulation.Hazards.Wildfire.GetGridOriginUtm());
+                                simulation.Hazards.Wildfire.GetGridOriginUtm(),
+                                simulation.Hazards.Wildfire.GetGridEpsgCode());
 
                             //Registered here, once per run, rather than once after the loop - which
                             //would have recorded only the last group's boundary.

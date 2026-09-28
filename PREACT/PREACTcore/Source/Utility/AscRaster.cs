@@ -112,6 +112,37 @@ namespace PREACT.Utility
             return EpsgFromWkt(File.ReadAllText(prj));
         }
 
+        /// <summary>
+        /// Writes <c>&lt;raster&gt;.prj</c> for an ESRI ASCII grid in the CRS <paramref name="epsgCode"/>, as OGC WKT
+        /// with its EPSG authority, which GDAL (and so QGIS) identifies as that code - the ESRI dialect loses the code
+        /// and comes back as an unnamed "UTM zone 34N". Quietly does nothing when the code is unknown or GDAL cannot
+        /// describe it: the grid is still correct, only without a CRS attached.
+        /// </summary>
+        /// <remarks>
+        /// An .asc cannot hold its own CRS, and the platform's boundaries and probability rasters used to be written
+        /// without one, so every one of them opened in QGIS as "unknown CRS" at the right numbers but the wrong place
+        /// until the zone was set by hand. <see cref="Read"/> takes the CRS back from this file.
+        /// </remarks>
+        public static void WriteCompanionPrj(string rasterFilePath, int epsgCode)
+        {
+            if (epsgCode <= 0 || string.IsNullOrEmpty(rasterFilePath)) return;
+
+            try
+            {
+                using (var srs = new OSGeo.OSR.SpatialReference(""))
+                {
+                    if (srs.ImportFromEPSG(epsgCode) != 0) return;
+                    srs.ExportToWkt(out string wkt, null);
+                    if (string.IsNullOrEmpty(wkt)) return;
+                    File.WriteAllText(Path.ChangeExtension(rasterFilePath, ".prj"), wkt);
+                }
+            }
+            catch
+            {
+                //A missing CRS is a convenience lost, not a wrong raster; never fail the write over it.
+            }
+        }
+
         private static string[] SplitLine(string line)
         {
             return (line ?? string.Empty).Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
@@ -485,6 +516,10 @@ namespace PREACT.Utility
                     w.WriteLine(sb.ToString());
                 }
             }
+
+            //The CRS the header carries (read from a GeoTIFF, or from a .prj beside an .asc), so what is written
+            //opens where it belongs.
+            WriteCompanionPrj(outputFilePath, header.EpsgCode);
         }
     }
 }

@@ -32,6 +32,7 @@ namespace PREACT.Wildfire
         //The cell width and height. A GeoTIFF's pixels need not be square (the Mati DEM's are 27.592 x 27.616 m);
         //taking the height to be the width misplaced the northern edge by the difference times the row count.
         private double _xllcorner, _yllcorner, _cellsize, _cellsizeY, _NODATA_VALUE;
+        private int _epsgCode;
         private FireRasterData[,] _data;
         private Vector2d _landscapeSize;
         private bool _ignited = false;
@@ -181,6 +182,15 @@ namespace PREACT.Wildfire
         public override Vector2d GetGridOriginUtm()
         {
             return new Vector2d(_xllcorner, _yllcorner);
+        }
+
+        /// <summary>
+        /// The arrival raster's own CRS (a GeoTIFF's, or an .asc's companion .prj); otherwise the simulation's UTM
+        /// zone, which is what an imported fire without one is assumed to be in everywhere else.
+        /// </summary>
+        public override int GetGridEpsgCode()
+        {
+            return _epsgCode > 0 ? _epsgCode : _simulation.Input.Simulation.Data.UtmEpsgCode;
         }
 
         public override void GetOffsetAndSize(out Vector2d offset, out Vector2d size)
@@ -354,6 +364,7 @@ namespace PREACT.Wildfire
             _cellsize = header.CellSize;
             _cellsizeY = header.CellSizeY > 0.0 ? header.CellSizeY : header.CellSize;
             _NODATA_VALUE = header.NoDataValue;
+            _epsgCode = header.EpsgCode;
 
             _data = new FireRasterData[ncols, nrows];
 
