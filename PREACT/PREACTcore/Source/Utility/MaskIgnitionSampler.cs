@@ -57,6 +57,10 @@ namespace PREACT.Utility
         /// <param name="edgeBufferMetres">
         /// The namelist's <c>EDGEBUFFER</c>: ELMFIRE will not ignite within it, so neither does this.
         /// </param>
+        /// <param name="nonBurnableFuelCodes">
+        /// Codes besides 91-99, 0 and NoData that cannot burn; null for the case builder's default (Anderson's 14),
+        /// since the test is <see cref="ElmfireStems.IsBurnable"/>, the one the builder made the mask with.
+        /// </param>
         public static Result Sample(string maskPath, string fuelPath, double edgeBufferMetres, int seed,
                                     HashSet<int> nonBurnableFuelCodes = null)
         {
@@ -105,7 +109,7 @@ namespace PREACT.Utility
                 {
                     float weight = mask[x, y];
                     if (float.IsNaN(weight) || weight < MaskCritical) continue;
-                    if (fuel != null && !IsBurnable(fuel[x, y], nonBurnableFuelCodes)) continue;
+                    if (fuel != null && !ElmfireStems.IsBurnable(fuel[x, y], nonBurnableFuelCodes)) continue;
 
                     columns.Add(x);
                     rows.Add(y);
@@ -203,19 +207,6 @@ namespace PREACT.Utility
         {
             double bearing = System.Math.Atan2(toX - fromX, toY - fromY) * 180.0 / System.Math.PI;
             return ((bearing + 180.0) % 360.0 + 360.0) % 360.0;
-        }
-
-        /// <summary>
-        /// Whether a fuel code can carry fire — the 91-99 block is nonburnable in both FBFM13 and FBFM40, as
-        /// are zero and NoData. Mirrors <see cref="ElmfireCaseBuilder"/>'s own test, which is what built the
-        /// mask this samples.
-        /// </summary>
-        private static bool IsBurnable(float code, HashSet<int> nonBurnable)
-        {
-            if (float.IsNaN(code) || code <= 0f) return false;
-            int c = (int)System.Math.Round(code);
-            if (c >= 91 && c <= 99) return false;
-            return nonBurnable == null || !nonBurnable.Contains(c);
         }
     }
 }

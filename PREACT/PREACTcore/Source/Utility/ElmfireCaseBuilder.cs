@@ -1099,7 +1099,7 @@ namespace PREACT.Utility
             yield return "cbd";
 
             //Masks, barriers and the suppression difficulty index.
-            yield return "ignition_mask";
+            yield return ElmfireStems.IgnitionMask;
             yield return "barriers";
             yield return "sdi";
 
@@ -1171,7 +1171,7 @@ namespace PREACT.Utility
             yield return "ch";
             yield return "cbh";
             yield return "cbd";
-            yield return "ignition_mask";
+            yield return ElmfireStems.IgnitionMask;
 
             foreach ((string key, string[] stems) in BuildingLayers)
             {
@@ -1585,7 +1585,7 @@ namespace PREACT.Utility
                 PathToGdal = o.PathToGdal,
                 AvailableMeteorologyBands = AscRaster.GetBandCount(Path.Combine(r.InputsDirectory, "ws.tif")),
                 HasBuildingFuelModelFile = File.Exists(Path.Combine(r.InputsDirectory, "building_fuel_models.csv")),
-                HasFuelModelFile = File.Exists(Path.Combine(r.InputsDirectory, "fuel_models.csv")),
+                HasFuelModelFile = File.Exists(Path.Combine(r.InputsDirectory, ElmfireStems.FuelModelTable)),
                 CanopyInRealUnits = r.CanopyInRealUnits,
             };
 

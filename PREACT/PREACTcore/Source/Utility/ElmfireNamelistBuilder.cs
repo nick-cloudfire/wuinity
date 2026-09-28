@@ -216,9 +216,9 @@ namespace PREACT.Utility
             l.Add(Bool("ROTATE_ASP", s.ROTATE_ASP));
             l.Add(Bool("ROTATE_WD", s.ROTATE_WD));
 
-            if (c.AvailableStems.Contains("ignition_mask"))
+            if (c.AvailableStems.Contains(ElmfireStems.IgnitionMask))
             {
-                l.Add(Str("IGNITION_MASK_FILENAME", "ignition_mask"));
+                l.Add(Str("IGNITION_MASK_FILENAME", ElmfireStems.IgnitionMask));
             }
 
             //The flag beside the file it reads. On only when the case actually has the raster: ELMFIRE reading
@@ -815,7 +815,7 @@ namespace PREACT.Utility
             //fuels directory - the same folder - so this only makes the resolution explicit.
             if (c.HasFuelModelFile)
             {
-                l.Add(Str("FUEL_MODEL_FILE", "fuel_models.csv"));
+                l.Add(Str(ElmfireNamelistKeys.FuelModelFile, ElmfireStems.FuelModelTable));
                 l.Add(Str("MISCELLANEOUS_INPUTS_DIRECTORY", "./inputs"));
             }
             if (!string.IsNullOrEmpty(c.PathToGdal))
