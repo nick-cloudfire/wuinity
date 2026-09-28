@@ -83,3 +83,18 @@ crashlytics-build.properties
 # data ends up with a meta file describing a directory they do not have.
 /[Aa]ssets/[Tt]hird[Pp]arty/LFMC/*
 /[Aa]ssets/[Tt]hird[Pp]arty/LFMC.meta
+
+# Unity 6 writes a .slnx beside the (already ignored) generated .csproj files
+*.slnx
+# The .meta Unity writes beside each ignored secret configuration file. Nothing references their
+# GUIDs, and tracking them only made Unity delete them as noise wherever the secret is absent.
+[Mm]apbox[Cc]onfiguration.txt.meta
+[Oo]pen[Tt]opography[Cc]onfiguration.txt.meta
+
+# PREACTcore's Release build lands here (BaseOutputPath in PREACTcore.csproj) and build.ps1 /
+# build.sh regenerate it, so the binaries are not committed. Their .meta files are, so Unity keeps
+# the same GUIDs and plugin import settings; the .pdb.meta Unity writes beside each .pdb is not.
+/[Aa]ssets/[Pp]REACT/[Rr]elease/**
+!/[Aa]ssets/[Pp]REACT/[Rr]elease/**/
+!/[Aa]ssets/[Pp]REACT/[Rr]elease/**/*.meta
+/[Aa]ssets/[Pp]REACT/[Rr]elease/**/*.pdb.meta

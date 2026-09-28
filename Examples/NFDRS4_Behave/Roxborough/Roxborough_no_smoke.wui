@@ -26,7 +26,6 @@ MaxCars=1
 MaxCarsProbability=0.3
 
 [Evacuation]
-EvacuationOrderStart=0.0
 UseTriggerBufferEvacuation=false
 TriggerBufferFile=fire/trigger_buffer.asc
 
@@ -92,10 +91,11 @@ TimeInput=Relative
 
 [EvacuationGroup]
 Name=groupA
+EvacuationOrderDateTime=2001-06-05T11:00:00
 Demographics=one_car
 DestinationChoice=EvacGroupCDF
 ShapeFile=groups/groupA.shp
-ResponseCurves=observed_average 
+ResponseCurves=observed_average
 ResponseCurvesCDF=1.0
 Destinations=goalE, goalR, goalF
 DestinationsCDF=0.4,0.7,1.0
@@ -103,23 +103,25 @@ Color=1.0,1.0,0.0
 
 [EvacuationGroup]
 Name=groupB
+EvacuationOrderDateTime=2001-06-05T11:00:00
 Demographics=one_car
 ShapeFile=groups/groupB.shp
 DestinationChoice=EvacGroupCDF
 Destinations=goalE, goalR, goalF
 DestinationsCDF=0.25, 0.75, 1.0
-ResponseCurves=observed_average 
+ResponseCurves=observed_average
 ResponseCurvesCDF=1.0
 Color=1.0,1.0,0.0
 
 [EvacuationGroup]
 Name=groupC
+EvacuationOrderDateTime=2001-06-05T11:00:00
 Demographics=one_car
 ShapeFile=groups/groupC.shp
 DestinationChoice=EvacGroupCDF
 Destinations=goalE, goalR, goalF
 DestinationsCDF=0.1, 0.2, 1.0
-ResponseCurves=observed_average 
+ResponseCurves=observed_average
 ResponseCurvesCDF=1.0
 Color=0.0,1.0,0.0
 
@@ -134,19 +136,17 @@ WalkingDistanceModifier=1.0
 
 [TrafficModule]
 Enabled=true
-Module=SUMO      
-VisibilityAffectsSpeed=false  
+Module=SUMO
+VisibilityAffectsSpeed=false
 
 [SUMO]
 ConfigurationFile=sumo/rox.sumocfg
-UTMoffset=-491253.49,-4359238.56
 SmokeAlpha=0.4967
 SmokeBeta=-0.02910
 
 [WildfireModule]
 Enabled=true
 Module=AscImport
-GraphicalFireInputFile=fire/example.gfi
 
 [AscImport]
 StartDateTime=2001-06-05T11:00:00
@@ -156,18 +156,12 @@ RateOfSpreadFile=flammap/output/ROS.asc
 SpreadDirectionFile=flammap/output/SD.asc
 FirelineIntensityFile=flammap/output/FI.asc
 
+[Landscape]
+LandscapeFile=fire/rox_big_burning_city.lcp
+
 [TriggerBufferModule]
 Enabled=false
 Module=kPERIL
 
 [kPERIL]
-MidflameWindspeed=10.0
-CalculateROSFromBehave=true
-InitialFuelMoistureFile=fireCell/default.fmc
 OutputName=trigger_buffer.asc
-
-[WUIShow]
-SendDataToWUIShow=false
-WuiShowServerIP=127.0.0.1
-WuiShowServerPort=9023
-WuiShowDeltaTime=1.0

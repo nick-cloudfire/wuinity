@@ -49,7 +49,6 @@ many simulations to run at once.
 | **`EngineTask`** | Describes a run (serial / batch); the engine manages one or many simulations. |
 | **WUI-NITY** | Unity project that hosts the engine and visualizes it. |
 | **PREACTexecute / PREACTcli** | Console tools that host the engine head-less. |
-| **QGIS plugin** | Prepares input data (population, road network, domain, destinations, evacuation groups) and exports a `.wui` project. |
 
 Simulations run in **UTM coordinate space**, which matters for the traffic and
 fire-spread data. A [Mapbox](https://www.mapbox.com/) access token is needed for
@@ -69,7 +68,6 @@ Full end-user documentation lives in [`docs/`](docs/):
 - **[Examples](docs/examples.md)** – what ships in `Examples/` and which to start with.
 - **[Module status](docs/modules.md)** – which fire / traffic / pedestrian / smoke / trigger modules are production-ready vs experimental.
 - **[Output files](docs/output-files.md)** – what a run produces and what each file contains.
-- **[QGIS plugin](docs/qgis-plugin.md)** – preparing input data with the plugin.
 - **[Troubleshooting](docs/troubleshooting.md)** – common problems and fixes.
 
 ---
@@ -77,7 +75,7 @@ Full end-user documentation lives in [`docs/`](docs/):
 ## Requirements
 
 - **Windows.** The `dev` branch is Windows-only because of the native libraries
-  (GDAL, Behave, FOFEM, NFDRS4, SUMO) it links against.
+  (GDAL, FOFEM, NFDRS4, SUMO) it links against.
 - **.NET 8 SDK** to build the engine and CLI tools
   ([download](https://dotnet.microsoft.com/en-us/download/dotnet/8.0)).
 - **Unity** – only if you want the visualizer. Add the cloned project in Unity
@@ -96,8 +94,8 @@ avoids permission issues.
 ## Quick start
 
 ```sh
-# 1. Build the engine + command-line runner (.NET 8 SDK required)
-dotnet build PREACT/PREACTexecute/PREACTexecute.csproj -c Release
+# 1. Build the engine for Unity, PREACT.exe and PREACTcli.exe (.NET 8 SDK required)
+powershell -ExecutionPolicy Bypass -File build.ps1      # Windows; ./build.sh on Linux
 
 # 2. Run the reference example head-less
 PREACT/PREACTexecute/bin/Release/net8.0/PREACT.exe \
@@ -108,9 +106,10 @@ Outputs are written to an `_output/` folder next to the `.wui` file. For the
 Unity visualizer and a full walk-through, see
 [Getting started](docs/getting-started.md).
 
-> Building the `Release` configuration of **PREACTcore** copies the engine DLLs
-> into the Unity project (`WUInity/Assets/PREACT/`). Build PREACTcore in
-> `Release` before opening WUI-NITY in Unity. See [Building](docs/building.md).
+> The engine DLLs the Unity project uses are **not committed**: the build script
+> writes them into `WUInity/Assets/PREACT/Release/`. Run it once after cloning,
+> and again after pulling engine changes, before opening WUI-NITY in Unity. See
+> [Building](docs/building.md).
 
 ---
 

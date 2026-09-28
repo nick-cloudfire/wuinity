@@ -69,8 +69,9 @@ PREACTcli global-gpw-to-pop --gpw <dir> --osm <file> --out <file> [--minhh <n>] 
 
 This command uses no GDAL, so it runs without a SUMO install. Coverage matches
 the OSM file's extent; households outside your simulation domain are culled at
-run time (`CullOutsideGroups` / domain culling). The [QGIS plugin](qgis-plugin.md)
-offers the same thing with a GUI and can also fetch OSM/WorldPop data for you.
+run time (`CullOutsideGroups` / domain culling). In the Unity visualizer,
+`Scenario > Prepare data` builds the population too, and downloads the OSM and
+WorldPop data it needs.
 
 ### `probabilistic-trigger` — probabilistic k-PERIL trigger boundary
 

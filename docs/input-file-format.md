@@ -5,9 +5,7 @@ A PREACT simulation is described by a single plain-text project file with the
 every section it can contain.
 
 > This document is generated from the actual parser
-> (`PREACT/PREACTcore/Source/Input/`). It supersedes the older
-> `Documentation/new_input_format.wui`, which uses key names the current engine
-> no longer reads.
+> (`PREACT/PREACTcore/Source/Input/`).
 
 A complete, working example is
 [`Examples/NFDRS4_Behave/Roxborough/Roxborough_no_smoke.wui`](../Examples/NFDRS4_Behave/Roxborough/Roxborough_no_smoke.wui).
@@ -460,7 +458,7 @@ OriginLat,OriginLon,AccessLat,AccessLon,People
   road network, otherwise the vehicle is teleported to the nearest valid edge.
 - `People` – number of people in the household (integer).
 
-Generate this file with the [QGIS plugin](qgis-plugin.md) or
+Generate this file with `Scenario > Prepare data` in the visualizer or
 [`PREACTcli global-gpw-to-pop`](command-line-tools.md).
 
 ### Fire rasters (`[AscImport]`)

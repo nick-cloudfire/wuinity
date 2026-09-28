@@ -18,12 +18,13 @@ run time. Check that:
 - Your logged-in account can read the SUMO install directory. Running as a local
   administrator avoids permission problems.
 
-## Unity shows old behaviour after I changed the engine
+## Unity reports missing PREACT types, or shows old behaviour after an engine change
 
-Build **PREACTcore in Release** before opening/playing the Unity project. Only
-the Release configuration copies the engine DLLs into
-`WUInity/Assets/PREACT/`; a Debug build writes to `PREACT/PREACTcore/bin/` and
-Unity will keep using the stale DLLs. See [Building](building.md).
+The engine DLLs are not committed. Run `build.ps1` (Windows) or `build.sh` (Linux)
+before opening the Unity project, after cloning and after pulling engine changes.
+It builds PREACTcore in Release, the only configuration that writes into
+`WUInity/Assets/PREACT/Release/`; a Debug build writes to `PREACT/PREACTcore/bin/`
+and Unity keeps using whatever DLLs it had. See [Building](building.md).
 
 ## The map background is missing in the visualizer
 
@@ -56,7 +57,3 @@ appear in older examples (`EvacuationOrderStart`, `UTMoffset`, `MaxSimTime`,
 `RootFolder`, `WeatherStreamFile`, `GraphicalFireInputFile`) are silently
 ignored by the current parser.
 
-## "Saving input files is not implemented yet"
-
-Writing a `.wui` file back out from the engine/visualizer is not implemented.
-Build or edit `.wui` files with the [QGIS plugin](qgis-plugin.md) or by hand.
