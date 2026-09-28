@@ -18,104 +18,94 @@ namespace PREACT.Evacuation
 
         public static void Parse(Dictionary<string, DemographicsInput> newInputs, string[] inputLines, List<int> demographicsLineIndices, out bool success)
         {
-            success = false;
+            //Nothing here is critical: a group whose demographics are missing uses the default ones. Each
+            //section is read on its own, so one without a name no longer discards every one after it.
+            success = true;
             newInputs.Clear();
 
             for (int i = 0; i < demographicsLineIndices.Count; ++i)
             {
                 DemographicsInput newInput = new DemographicsInput();
-                success = false;
-                int issues = 0;
                 Dictionary<string, string> inputToParse = PREACTInput.GetHeaderInput(inputLines, demographicsLineIndices[i]);
                 string nameOfInput, userInput;
 
-                //critical
                 nameOfInput = nameof(Name);
-                if (inputToParse.TryGetValue(nameOfInput, out userInput))
+                if (!inputToParse.TryGetValue(nameOfInput, out userInput) || userInput.Length == 0)
                 {
-                    newInput.Name = userInput;
-                    success = true;
+                    PREACTInput.InputWarning("Demographics", $"the section on line {demographicsLineIndices[i] + 1} has no Name, so nothing can refer to it; it is ignored.");
+                    continue;
                 }
-                else
+                newInput.Name = userInput;
+                if (newInputs.ContainsKey(newInput.Name))
                 {
-                    success = false;
-                    PREACTInput.InputNotFoundMessage(nameOfInput, true);
+                    PREACTInput.InputWarning("Demographics", $"{newInput.Name} is defined more than once; the first definition is used.");
+                    continue;
                 }
-                if (!success)
-                {
-                    break;
-                }                               
 
                 nameOfInput = nameof(AllowMoreThanOneCar);
                 if (inputToParse.TryGetValue(nameOfInput, out userInput))
                 {
-                    bool.TryParse(userInput, out newInput.AllowMoreThanOneCar);
+                    if (!InputParse.Bool(userInput, out newInput.AllowMoreThanOneCar))
+                    {
+                        newInput.AllowMoreThanOneCar = true;
+                        PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput, false, "true");
+                    }
                 }
                 else
                 {
-                    PREACTInput.InputNotFoundMessage(nameOfInput);
+                    PREACTInput.InputNotFoundMessage(nameOfInput, false, "true");
                 }
 
                 nameOfInput = nameof(MaxCars);
                 if (inputToParse.TryGetValue(nameOfInput, out userInput))
                 {
-                    int.TryParse(userInput, out newInput.MaxCars);
+                    if (!InputParse.Int(userInput, out newInput.MaxCars) || newInput.MaxCars < 1)
+                    {
+                        newInput.MaxCars = 2;
+                        PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput, false, "2");
+                    }
                 }
                 else
                 {
-                    PREACTInput.InputNotFoundMessage(nameOfInput);
+                    PREACTInput.InputNotFoundMessage(nameOfInput, false, "2");
                 }
 
                 nameOfInput = nameof(MaxCarsProbability);
                 if (inputToParse.TryGetValue(nameOfInput, out userInput))
                 {
-                    float.TryParse(userInput, out newInput.MaxCarsProbability);
+                    if (!InputParse.Float(userInput, out newInput.MaxCarsProbability) || newInput.MaxCarsProbability < 0f || newInput.MaxCarsProbability > 1f)
+                    {
+                        newInput.MaxCarsProbability = 0.3f;
+                        PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput, false, "0.3");
+                    }
                 }
                 else
                 {
-                    PREACTInput.InputNotFoundMessage(nameOfInput);
+                    PREACTInput.InputNotFoundMessage(nameOfInput, false, "0.3");
                 }
 
-                //not critical
+                //not critical; the first one is the default unless another says it is
                 if (newInputs.Count == 0)
                 {
                     newInput.Default = true;
                 }
-                else
+                if (inputToParse.TryGetValue(nameof(Default), out userInput) && InputParse.Bool(userInput, out bool isDefault))
                 {
-                    nameOfInput = nameof(Default);
-                    if (inputToParse.TryGetValue(nameOfInput, out userInput))
-                    {
-                        success = bool.TryParse(userInput, out newInput.Default);
-                    }
-                    else
-                    {
-                        success = false;
-                        PREACTInput.InputNotFoundMessage(nameOfInput);
-                    }
-                    if (!success)
-                    {
-                        newInput.Default = false;
-                    }
-                    else if (newInput.Default)
+                    if (isDefault)
                     {
                         foreach (DemographicsInput prevInput in newInputs.Values)
                         {
                             prevInput.Default = false;
                         }
+                        newInput.Default = true;
+                    }
+                    else if (newInputs.Count > 0)
+                    {
+                        newInput.Default = false;
                     }
                 }
 
                 newInputs.Add(newInput.Name, newInput);
-            }
-
-            if (newInputs.Count == demographicsLineIndices.Count)
-            {
-                success = true;
-            }
-            else
-            {
-                Engine.Message(null, Engine.LogType.InputError, "Could not read all specified Demographics.");
             }
         }
     }

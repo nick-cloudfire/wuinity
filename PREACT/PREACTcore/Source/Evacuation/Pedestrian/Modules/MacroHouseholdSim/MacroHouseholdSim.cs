@@ -36,8 +36,6 @@ namespace PREACT.Pedestrian
         int totalPeopleReachedCar = 0;
         int totalPeopleResponded = 0;
 
-        MacroHouseholdVisualizer _visualizer;
-        public MacroHouseholdVisualizer Visualizer { get { return _visualizer; } }
 
 
         public MacroHouseholdSim(Simulation simulation) : base(simulation)
@@ -131,7 +129,7 @@ namespace PREACT.Pedestrian
                 }
 
                 //Time(s),Households left,People left,Total households responded, Total people responded,Total households reached car,Total people reached car,Total cars activated,Avg. walking dist.
-                output.Add(currentTime + "," + totalHouseholdsLeft + "," + peopleLeft + "," + totalHouseholdsResponded + "," + totalPeopleResponded + "," + totalHouseholdsReachedCar + "," + totalPeopleReachedCar + "," + totalCarsReached + "," + avgWalkDist);
+                output.Add(System.FormattableString.Invariant($"{currentTime},{totalHouseholdsLeft},{peopleLeft},{totalHouseholdsResponded},{totalPeopleResponded},{totalHouseholdsReachedCar},{totalPeopleReachedCar},{totalCarsReached},{avgWalkDist}"));
                 //string output = currentTime + "," +  peopleWhoReachedCar";
                 //SaveToFile(output, false);
             }
@@ -305,25 +303,76 @@ namespace PREACT.Pedestrian
             return Random.Range(eO.WalkingSpeedMinMax.X, eO.WalkingSpeedMinMax.Y) * eO.WalkingSpeedModifier;
         }
 
-        public override void Stop()
-        {
-            //there is nothing to stop;
-        }
+        int _householdsStartedByFire;
+        int _peopleStartedByFire;
+        int _frontVersionSeen = -1;
 
+        /// <summary>Households that left because the fire came within the reaction distance, not on their own time.</summary>
+        public int HouseholdsStartedByFire { get => _householdsStartedByFire; }
+
+        /// <summary>
+        /// Starts every household that has not left yet and whose home is within
+        /// <see cref="MacroHouseholdSimInput.FireReactionDistance"/> of the fire as it is now - the cells the fire
+        /// has reached by <paramref name="simulationTime"/>.
+        /// </summary>
+        /// <remarks>
+        /// Three things made this inert before, so every departure came from the response curve alone:
+        /// <list type="bullet">
+        /// <item>it looked up the distance at the home's <b>lat/lon in degrees</b> as if they were simulation
+        /// metres, which is one cell near the grid's south-west corner for every household;</item>
+        /// <item><see cref="MacroHousehold.StartEvacuation"/> postponed the household instead of starting it;</item>
+        /// <item>the distance field was built from the fire's final rate-of-spread raster - everywhere it would
+        /// ever burn - rather than from where it had burned so far.</item>
+        /// </list>
+        /// A household whose drawn response is "never" (the part of the curve above its last probability) is left
+        /// alone: that share is the modelled population that stays. Nothing is done when the fire field has not
+        /// changed since the last call.
+        /// </remarks>
         public override void ReactToWildfire(double simulationTime)
         {
+            MacroHouseholdSimInput settings = _simulation.Input.PedestrianModule.MacroHouseholdSimInput;
+            if (!settings.ReactToFire || evacuationDone)
+            {
+                return;
+            }
+
+            int version = _simulation.Hazards.WildfireFrontVersion;
+            if (version == _frontVersionSeen || version == 0)
+            {
+                return;
+            }
+            _frontVersionSeen = version;
+
+            int started = 0;
             for (int i = 0; i < _macroHouseholds.Count; ++i)
             {
                 MacroHousehold household = _macroHouseholds[i];
-                if (!household.isMoving)
+                if (household.isMoving || household.reachedCar || household.ResponseTime == float.MaxValue
+                    || household.ResponseTime <= simulationTime)
                 {
-                    float distance = _simulation.Hazards.DistanceToWildfire(_macroHouseholds[i].HomePosition);
-                    if (distance <= 500.0)
-                    {
-                        household.StartEvacuation(simulationTime);
-                    }
-                }                
-            }            
+                    continue;
+                }
+
+                float distance = _simulation.Hazards.DistanceToWildfire(household.SimulationHomePosition);
+                if (distance <= settings.FireReactionDistance && household.StartEvacuation(simulationTime))
+                {
+                    ++totalHouseholdsResponded;
+                    totalPeopleResponded += household.peopleInHousehold;
+                    ++_householdsStartedByFire;
+                    _peopleStartedByFire += household.peopleInHousehold;
+                    ++started;
+                }
+            }
+
+            if (started > 0)
+            {
+                Engine.Message(_simulation, Engine.LogType.Log, $"The fire came within {settings.FireReactionDistance} m of {started} household(s), which left ahead of their response time ({_householdsStartedByFire} so far).");
+            }
+        }
+
+        public override void Stop()
+        {
+            Engine.Message(_simulation, Engine.LogType.Log, $"Households that left because of the fire's proximity: {_householdsStartedByFire} ({_peopleStartedByFire} people).");
         }
     }
 }

@@ -82,7 +82,11 @@ namespace PREACT.Traffic
             bool couldArrive = false;
             if(_destination != null)
             {
-                couldArrive = _destination.TryToArrive(this, deltaTime, currentTime);
+                //(vehicle, simulationTime, deltaTime) - these two were swapped, so the destination saw
+                //simulationTime = 1 s and reported a flow of arrivals x 3600 veh/h (Mati: 3 344 400 veh/h
+                //for 929 cars), and any MaxFlow would have refused every car after the first. The arrival is at
+                //the end of the step SUMO has just advanced through.
+                couldArrive = _destination.TryToArrive(this, currentTime + deltaTime, deltaTime);
             }
 
             return couldArrive;

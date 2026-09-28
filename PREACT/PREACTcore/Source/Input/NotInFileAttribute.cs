@@ -7,17 +7,13 @@
 
 namespace PREACT.Input
 {
-    public class TrafficData
+    /// <summary>
+    /// Marks a public member of an input class that is not part of the <c>.wui</c> format, so
+    /// <see cref="PREACTInputWriter"/> does not write it. For members kept only because other code still
+    /// binds to them (a retired key the GUI shows), and for runtime state that happens to be public.
+    /// </summary>
+    [System.AttributeUsage(System.AttributeTargets.Field | System.AttributeTargets.Property)]
+    public sealed class NotInFileAttribute : System.Attribute
     {
-        public TrafficData()
-        {
-
-        }
-
-        public void LoadAll(TrafficModuleInput trafficInput, string rootFolder, out bool success)
-        {
-            //SUMO loads its own network via its .sumocfg; no extra data to load here.
-            success = true;
-        }
     }
 }

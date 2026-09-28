@@ -14,101 +14,72 @@ namespace PREACT.Input
     {
         public enum TrafficModules { None, SUMO }
 
-        private TrafficData _data;
         private SUMOInput _sumoInput;
 
         public bool Enabled = false;
-        public TrafficData Data { get => _data; }
         public SUMOInput SumoInput { get { return _sumoInput; } }
         public TrafficModules Module = TrafficModules.SUMO;
-        public bool VisibilityAffectsSpeed = false;
-
 
         public TrafficModuleInput()
         {
-            _data = new TrafficData();
             _sumoInput = new SUMOInput();
         }
 
         public void Parse(string[] inputLines, int startIndex, Dictionary<string, int> headerLineIndex, string rootFolder, out bool success)
         {     
-            success = false;
-            int issues = 0;
+            success = true;
             Dictionary<string, string> inputToParse = PREACTInput.GetHeaderInput(inputLines, startIndex);
             string nameOfInput, userInput;
 
             nameOfInput = nameof(Enabled);
             if (inputToParse.TryGetValue(nameOfInput, out userInput))
             {
-                success = bool.TryParse(userInput, out Enabled);
-            }
-            else
-            {
-                success = false;
-                PREACTInput.InputNotFoundMessage(nameOfInput);
-            }
-            if (!success || !Enabled)
-            {
-                return;
-            }
-
-            //critical
-            nameOfInput = nameof(Module);
-            if (inputToParse.TryGetValue(nameOfInput, out userInput))
-            {
-                switch (userInput)
+                if (!InputParse.Bool(userInput, out Enabled))
                 {
-                    case nameof(TrafficModules.SUMO):
-                        Module = TrafficModules.SUMO;
-                        break;
-                    default:
-                        ++issues;
-                        PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
-                        break;
+                    Enabled = false;
+                    PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput, false, "false");
                 }
             }
             else
             {
-                ++issues;
-                Engine.Message(null, Engine.LogType.SimulationError, "No traffic module choice was set.");
-            }
-            if(issues > 0)
-            {
-                return;
+                PREACTInput.InputNotFoundMessage(nameOfInput, false, "false");
             }
 
-            nameOfInput = nameof(VisibilityAffectsSpeed);
-            if (inputToParse.TryGetValue(nameOfInput, out userInput))
+            //Read whether or not traffic is on, so a save keeps the SUMO settings (this used to return when it
+            //was off, and the writer then dropped the [SUMO] section); nothing is critical when it is off.
+            using (PREACTInput.SoftRequirements(!Enabled))
             {
-                bool.TryParse(userInput, out VisibilityAffectsSpeed);
-            }
-            else
-            {                
-            }
-
-            //load correct module
-            if(Module == TrafficModules.SUMO)
-            {
-                int lineIndex;
-                nameOfInput = nameof(TrafficModules.SUMO);
-                if (headerLineIndex.TryGetValue(nameOfInput, out lineIndex))
+                nameOfInput = nameof(Module);
+                if (inputToParse.TryGetValue(nameOfInput, out userInput))
                 {
-                    PREACTInput.ReadingInputMessage(nameOfInput);
-                    _sumoInput = SUMOInput.Parse(inputLines, lineIndex, rootFolder, out success);
+                    if (!InputParse.Enum(userInput, out Module) || Module == TrafficModules.None)
+                    {
+                        Module = TrafficModules.SUMO;
+                        success &= !Enabled;
+                        PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
+                    }
                 }
                 else
                 {
-                    //critical
-                    Engine.Message(null, Engine.LogType.SimulationError, nameof(Simulation) + " header not found." + PREACTInput.pleaseCheckInput);
-                    return;
+                    PREACTInput.InputNotFoundMessage(nameOfInput, false, nameof(TrafficModules.SUMO));
+                }
+
+                //VisibilityAffectsSpeed used to be read here and never used; smoke acts through
+                //[SUMO] SmokeAlpha/SmokeBeta. The key is ignored and not written.
+
+                nameOfInput = nameof(TrafficModules.SUMO);
+                if (headerLineIndex.TryGetValue(nameOfInput, out int lineIndex))
+                {
+                    PREACTInput.ReadingInputMessage(nameOfInput);
+                    _sumoInput = SUMOInput.Parse(inputLines, lineIndex, rootFolder, out bool ok);
+                    success &= ok || !Enabled;
+                }
+                else
+                {
+                    PREACTInput.InputProblem("[" + nameOfInput + "]", "the traffic module needs a [SUMO] section naming its ConfigurationFile.");
+                    success &= !Enabled;
                 }
             }
-            else
-            {
-                Engine.Message(null, Engine.LogType.SimulationError, "Unknown traffic module has been specified.");
-            }
-
-            _data.LoadAll(this, rootFolder, out success);
         }
     }
 }

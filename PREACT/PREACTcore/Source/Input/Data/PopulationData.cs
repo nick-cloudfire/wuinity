@@ -47,8 +47,9 @@ namespace PREACT.Input
             
             if(pedestrianInput.Enabled)
             {
-                string filePath = Path.Combine(rootFolder, populationInput.PopulationFile);
-                _householdData = LoadPopulation(filePath, out _totalPopulation, out success);
+                string filePath = PREACTInput.ResolvePath(rootFolder, populationInput.PopulationFile);
+                HouseholdData[] households = LoadPopulation(filePath, out _totalPopulation, out success);
+                _householdData = households ?? System.Array.Empty<HouseholdData>();
                 if(!success)
                 {
                     return;
@@ -58,54 +59,91 @@ namespace PREACT.Input
             success = true;
         }
         
+        /// <summary>
+        /// Reads a population CSV: a header, then <c>lat,lon,carLat,carLon,people</c> per household.
+        /// </summary>
+        /// <remarks>
+        /// Blank lines anywhere (a trailing newline, an editor's empty last line) are skipped; they used to reach
+        /// <c>double.Parse("")</c> and throw, which took the rest of the scenario with it. A malformed line is
+        /// reported with its line number and skipped, and the load fails only if nothing usable is left or more
+        /// than a handful of lines are bad - a file that is mostly garbage is the wrong file.
+        /// </remarks>
         public static HouseholdData[] LoadPopulation(string filePath, out int totalPopulation, out bool success)
         {
             success = false;
             totalPopulation = 0;
             HouseholdData[] householdData = null;
 
-            if (File.Exists(filePath))
+            if (!File.Exists(filePath))
             {
-                using (StreamReader sr = new StreamReader(filePath))
+                Engine.Message(null, Engine.LogType.InputError, "Population file " + filePath + " could not be found.");
+                return householdData;
+            }
+
+            string[] lines;
+            try
+            {
+                lines = File.ReadAllLines(filePath);
+            }
+            catch (System.Exception e)
+            {
+                Engine.Message(null, Engine.LogType.InputError, "Population file " + filePath + " could not be read: " + e.Message);
+                return householdData;
+            }
+
+            var households = new List<HouseholdData>(lines.Length);
+            int badLines = 0;
+            //first row is the header
+            for (int i = 1; i < lines.Length; ++i)
+            {
+                string text = lines[i];
+                if (string.IsNullOrWhiteSpace(text))
                 {
-                    List<string> lines = new List<string>();
+                    continue;
+                }
 
-                    while (!sr.EndOfStream)
+                string[] line = text.Split(',');
+                //Invariant, matching how the file is written. Parsing with the current culture reads
+                //"38.05" as 3805 wherever the decimal separator is a comma.
+                if (line.Length >= 5
+                    && InputParse.Double(line[0], out double lat)
+                    && InputParse.Double(line[1], out double lon)
+                    && InputParse.Double(line[2], out double carLat)
+                    && InputParse.Double(line[3], out double carLon)
+                    && InputParse.Int(line[4], out int people)
+                    && people >= 0)
+                {
+                    households.Add(new HouseholdData(new Vector2d(lat, lon), new Vector2d(carLat, carLon), people));
+                    totalPopulation += people;
+                }
+                else
+                {
+                    ++badLines;
+                    if (badLines <= 5)
                     {
-                        lines.Add(sr.ReadLine());
+                        Engine.Message(null, Engine.LogType.Warning, $"Population file {Path.GetFileName(filePath)} line {i + 1} is not lat,lon,carLat,carLon,people and was skipped: {text}");
                     }
+                }
+            }
 
-                    //skip first rom (header, and last row (should be empty)
-                    householdData = new HouseholdData[lines.Count - 1];
-                    for (int i = 1; i < lines.Count; ++i)
-                    {
-                        string[] line = lines[i].Split(",");
-                        //Invariant, matching how the file is written. Parsing with the current culture reads
-                        //"38.05" as 3805 wherever the decimal separator is a comma.
-                        double lat = double.Parse(line[0], CultureInfo.InvariantCulture);
-                        double lon = double.Parse(line[1], CultureInfo.InvariantCulture);
-                        double carLat = double.Parse(line[2], CultureInfo.InvariantCulture);
-                        double carLon = double.Parse(line[3], CultureInfo.InvariantCulture);
-                        int people = int.Parse(line[4], CultureInfo.InvariantCulture);
-                        householdData[i - 1] = new HouseholdData(new Vector2d(lat, lon), new Vector2d(carLat, carLon), people);
-                        totalPopulation += people;
-                    }
+            householdData = households.ToArray();
+            if (badLines > 0)
+            {
+                Engine.Message(null, Engine.LogType.Warning, $"Population file {Path.GetFileName(filePath)}: {badLines} malformed line(s) skipped.");
+            }
 
-                    if(totalPopulation > 0)
-                    {
-                        success = true;
-                        Engine.Message(null, Engine.LogType.Log, "Loaded population " + Path.GetFileNameWithoutExtension(filePath) + " containing " + totalPopulation + " people and " + householdData.Length + " households.");
-                    }
-                    else
-                    {
-                        Engine.Message(null, Engine.LogType.InputError, "Population file found but did not contain any population.");
-                    }
-                    
-                }                
+            if (totalPopulation > 0 && badLines <= System.Math.Max(5, households.Count / 100))
+            {
+                success = true;
+                Engine.Message(null, Engine.LogType.Log, "Loaded population " + Path.GetFileNameWithoutExtension(filePath) + " containing " + totalPopulation + " people and " + householdData.Length + " households.");
+            }
+            else if (totalPopulation <= 0)
+            {
+                Engine.Message(null, Engine.LogType.InputError, "Population file found but did not contain any population.");
             }
             else
             {
-                Engine.Message(null, Engine.LogType.InputError, "Population file " + filePath + " could not be found.");
+                Engine.Message(null, Engine.LogType.InputError, $"Population file {Path.GetFileName(filePath)} has {badLines} malformed lines out of {lines.Length - 1}; it does not look like a population file.");
             }
 
             return householdData;

@@ -28,62 +28,68 @@ namespace PREACT.Input
 
         public static SUMOInput Parse(string[] inputLines, int startIndex, string rootFolder, out bool success)
         {
-            success = false;
-            int issues = 0;
+            success = true;
             SUMOInput newInput = new SUMOInput();
             Dictionary<string, string> inputToParse = PREACTInput.GetHeaderInput(inputLines, startIndex);
             string nameOfInput, userInput;
 
+            //critical: SUMO cannot start without it. Every other key is still read when it is missing (this
+            //used to return, so a missing .sumocfg also reset the raster size and smoke factors on save).
             nameOfInput = nameof(ConfigurationFile);
-            if (inputToParse.TryGetValue(nameOfInput, out userInput))
+            if (inputToParse.TryGetValue(nameOfInput, out userInput) && !string.IsNullOrWhiteSpace(userInput))
             {
                 newInput.ConfigurationFile = userInput;
-                PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.ConfigurationFile, rootFolder, out success);
+                PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.ConfigurationFile, rootFolder, out bool found);
+                success &= found;
             }
             else
             {
                 success = false;
                 PREACTInput.InputNotFoundMessage(nameOfInput, true);
             }
-            if(!success)
-            {
-                return newInput;
-            }
 
             nameOfInput = nameof(OutputRasterSize);
             if (inputToParse.TryGetValue(nameOfInput, out userInput))
             {
-                double.TryParse(userInput, out newInput.OutputRasterSize);
+                if (!InputParse.Double(userInput, out newInput.OutputRasterSize) || newInput.OutputRasterSize <= 0.0)
+                {
+                    newInput.OutputRasterSize = 25.0;
+                    PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput, false, "25");
+                }
             }
             else
             {
-                PREACTInput.InputNotFoundMessage(nameOfInput);
+                PREACTInput.InputNotFoundMessage(nameOfInput, false, "25");
             }
 
             nameOfInput = nameof(SmokeAlpha);
             if (inputToParse.TryGetValue(nameOfInput, out userInput))
             {
-                float.TryParse(userInput, out newInput.SmokeAlpha);
+                if (!InputParse.Float(userInput, out newInput.SmokeAlpha) || newInput.SmokeAlpha < 0f || newInput.SmokeAlpha > 1f)
+                {
+                    newInput.SmokeAlpha = 0f;
+                    PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput + " (must be between 0 and 1)", false, "0 (no smoke effect)");
+                }
             }
             else
             {
-                PREACTInput.InputNotFoundMessage(nameOfInput);
+                PREACTInput.InputNotFoundMessage(nameOfInput, false, "0 (no smoke effect)");
             }
 
             nameOfInput = nameof(SmokeBeta);
             if (inputToParse.TryGetValue(nameOfInput, out userInput))
             {
-                float.TryParse(userInput, out newInput.SmokeBeta);
+                if (!InputParse.Float(userInput, out newInput.SmokeBeta))
+                {
+                    newInput.SmokeBeta = 0f;
+                    PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput, false, "0");
+                }
             }
             else
             {
-                PREACTInput.InputNotFoundMessage(nameOfInput);
+                PREACTInput.InputNotFoundMessage(nameOfInput, false, "0");
             }
 
-            if (issues == 0)
-            {
-                success = true;
-            }
             return newInput;
         }
     }

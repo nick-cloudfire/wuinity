@@ -129,12 +129,12 @@ namespace PREACT.Tools
                 {
                     var d = datasets.data[i];
                     if (d.data_file == null) continue;
-                    if (!int.TryParse(d.popyear, out int candidateYear)) continue;
+                    if (!int.TryParse(d.popyear, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int candidateYear)) continue;
 
                     int distance = System.Math.Abs(candidateYear - year);
                     //ties go to the later year: newer population data is the better estimate
                     if (distance < bestDistance || (distance == bestDistance && selected != null &&
-                        int.TryParse(selected.popyear, out int chosen) && candidateYear > chosen))
+                        int.TryParse(selected.popyear, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int chosen) && candidateYear > chosen))
                     {
                         bestDistance = distance;
                         selected = d;

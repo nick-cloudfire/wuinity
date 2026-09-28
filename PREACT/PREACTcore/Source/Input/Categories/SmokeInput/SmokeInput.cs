@@ -31,75 +31,74 @@ namespace PREACT.Input
 
         public void Parse(string[] inputLines, int startIndex, Dictionary<string, int> headerLineIndex, WeatherInput weatherInput, string rootFolder, out bool success)
         {
-            success = false;
-            int issues = 0;
+            success = true;
             Dictionary<string, string> inputToParse = PREACTInput.GetHeaderInput(inputLines, startIndex);
             string nameOfInput, userInput;
 
             nameOfInput = nameof(Enabled);
             if (inputToParse.TryGetValue(nameOfInput, out userInput))
             {
-                success = bool.TryParse(userInput, out Enabled);
+                if (!InputParse.Bool(userInput, out Enabled))
+                {
+                    Enabled = false;
+                    PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput, false, "false");
+                }
             }
             else
             {
-                success = false;
-                PREACTInput.InputNotFoundMessage(nameOfInput);
-            }
-            if (!success || !Enabled)
-            {
-                return;
+                PREACTInput.InputNotFoundMessage(nameOfInput, false, "false");
             }
 
-            //critical
-            nameOfInput = nameof(Module);
-            if (inputToParse.TryGetValue(nameOfInput, out userInput))
+            //Read in full whether or not smoke is on, so a save keeps the settings; nothing is critical when off.
+            using (PREACTInput.SoftRequirements(!Enabled))
             {
-                switch (userInput)
+                nameOfInput = nameof(Module);
+                if (inputToParse.TryGetValue(nameOfInput, out userInput))
                 {
-                    case nameof(SmokeModules.GlobalSmoke):
-                        Module = SmokeModules.GlobalSmoke;
-                        break;
-                    default:
-                        ++issues;
+                    if (!InputParse.Enum(userInput, out Module))
+                    {
+                        Module = SmokeModules.None;
+                        success &= !Enabled;
                         PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
-                        break;
+                    }
                 }
-            }
-            else
-            {
-                ++issues;
-                PREACTInput.InputNotFoundMessage(nameOfInput, true);
-            }
-            if(issues > 0)
-            {
-                success = false;
-                return;
-            }
-
-            //critical
-            if (Module == SmokeModules.GlobalSmoke)
-            {
-                int lineIndex;
-                nameOfInput = nameof(SmokeModules.GlobalSmoke);
-                if (headerLineIndex.TryGetValue(nameOfInput, out lineIndex))
-                {
-                    PREACTInput.ReadingInputMessage(nameOfInput);
-                    _globalSmokeInput = GlobalSmokeInput.Parse(inputLines, lineIndex, rootFolder, this, out success);
-                }
-                else
+                else if (Enabled)
                 {
                     success = false;
                     PREACTInput.InputNotFoundMessage(nameOfInput, true);
                 }
-                if (!success)
+
+                if (Enabled && Module == SmokeModules.None)
                 {
-                    return;
+                    success = false;
+                    PREACTInput.InputProblem(nameOfInput, "smoke is enabled but no smoke module is chosen; choose GlobalSmoke or switch smoke off.");
+                }
+
+                if (headerLineIndex.TryGetValue(nameof(SmokeModules.GlobalSmoke), out int lineIndex))
+                {
+                    using (PREACTInput.SoftRequirements(Module != SmokeModules.GlobalSmoke))
+                    {
+                        PREACTInput.ReadingInputMessage(nameof(SmokeModules.GlobalSmoke));
+                        _globalSmokeInput = GlobalSmokeInput.Parse(inputLines, lineIndex, rootFolder, this, out bool ok);
+                        success &= ok || !Enabled || Module != SmokeModules.GlobalSmoke;
+                    }
+                }
+                else if (Enabled && Module == SmokeModules.GlobalSmoke)
+                {
+                    success = false;
+                    PREACTInput.InputNotFoundMessage("[" + nameof(SmokeModules.GlobalSmoke) + "]", true);
+                }
+
+                if (Enabled && success)
+                {
+                    _data.LoadAll(this, rootFolder, out bool loaded);
+                    if (!loaded)
+                    {
+                        success = false;
+                        PREACTInput.InputProblem(nameof(GlobalSmokeInput.ExtinctionFile), "could not be read as a time,extinction coefficient ramp with at least two rows.");
+                    }
                 }
             }
-
-            _data.LoadAll(this, rootFolder, out success);
-            return;
         }
     }
 }

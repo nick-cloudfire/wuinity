@@ -6,8 +6,14 @@ namespace PREACT.Input
 {
     public class WeatherInput
     {
+        /// <summary>
+        /// The hourly weather CSV (the format the Open-Meteo downloader writes). Optional: the weather is
+        /// reported during a run - temperature, humidity, wind, fire-danger indices - but neither the evacuation
+        /// nor the trigger boundary uses it, so a scenario without one runs and simply reports no weather.
+        /// When the file is set but does not cover the run, a year is downloaded from Open-Meteo at run time
+        /// and cached beside the scenario; when it is not set, nothing is downloaded.
+        /// </summary>
         public string WeatherFile = string.Empty;
-        public Vector2d DesiredLatLon = Vector2d.zero;
 
         /// <summary>
         /// The moment in the weather record that the simulation's own start time reads from. Unset means the
@@ -46,6 +52,9 @@ namespace PREACT.Input
         public double StartKBDI = 100.0;
         public double MeanAnnualPrcp = 1000.0;
 
+        internal const string NoWeatherFileConsequence = "No weather file, so no temperature, humidity, wind or "
+            + "fire-danger indices are reported for the run. Nothing is downloaded in its place.";
+
         public WeatherInput()
         {
 
@@ -53,48 +62,26 @@ namespace PREACT.Input
 
         public void Parse(string[] inputLines, int startIndex, string rootFolder, out bool success)
         {
-            int issues = 0;
             Dictionary<string, string> inputToParse = PREACTInput.GetHeaderInput(inputLines, startIndex);
             string nameOfInput, userInput;
 
-            //stream in if not exists
+            //Not critical either way: the weather is reported, not used by anything that decides the result.
+            //A set-but-missing file used to be critical (blocking the run) while an unset one silently
+            //downloaded a full year at run time; and a missing file's name was cleared, so a save dropped it.
             nameOfInput = nameof(WeatherFile);
-            if (inputToParse.TryGetValue(nameOfInput, out userInput))
+            if (inputToParse.TryGetValue(nameOfInput, out userInput) && !string.IsNullOrWhiteSpace(userInput))
             {
                 WeatherFile = userInput;
-                PREACTInput.CheckIfFileExist(nameOfInput, ref WeatherFile, rootFolder, out success);
-            }
-            else
-            {
-                success = false;
-                PREACTInput.InputNotFoundMessage(nameOfInput);
-            }
-            if (success == false)
-            {
-                WeatherFile = string.Empty;
-            }
-
-            nameOfInput = nameof(DesiredLatLon);
-            if (inputToParse.TryGetValue(nameOfInput, out userInput))
-            {
-                string[] data = userInput.Split(',');
-                issues += double.TryParse(data[0], out DesiredLatLon.x) ? 0 : 1;
-                issues += double.TryParse(data[1], out DesiredLatLon.y) ? 0 : 1;
-                if (issues > 0)
+                PREACTInput.CheckIfFileExist(nameOfInput, ref WeatherFile, rootFolder, out bool exists, false);
+                if (!exists)
                 {
-                    PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
+                    PREACTInput.InputWarning(nameOfInput, "is not there; a run will try to download the weather it needs from Open-Meteo.");
                 }
             }
             else
             {
-                PREACTInput.InputNotFoundMessage(nameOfInput, false);
+                PREACTInput.OptionalInputMissing(nameOfInput, NoWeatherFileConsequence);
             }
-            if (issues > 0)
-            {
-                success = false;
-                return;
-            }
-            issues = 0;
 
             //All optional and silent when absent: an index has a standard starting value, and asking every
             //scenario to state six of them would bury the keys that matter.
@@ -109,24 +96,31 @@ namespace PREACT.Input
             nameOfInput = nameof(WeatherAnchorDateTime);
             if (inputToParse.TryGetValue(nameOfInput, out userInput) && userInput.Length > 0)
             {
-                if (!DateTime.TryParse(userInput, System.Globalization.CultureInfo.InvariantCulture,
-                        System.Globalization.DateTimeStyles.None, out WeatherAnchorDateTime))
+                if (!InputParse.DateTime(userInput, out WeatherAnchorDateTime))
                 {
                     WeatherAnchorDateTime = default;
-                    PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
+                    PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput, false, "no anchor");
                 }
             }
 
+            //DesiredLatLon used to be read here and never used by anything; it is ignored now (and not written).
             success = true;
         }
 
         private static void ReadDouble(Dictionary<string, string> input, string key, ref double field)
         {
-            if (input.TryGetValue(key, out string userInput)
-                && double.TryParse(userInput, System.Globalization.NumberStyles.Float,
-                    System.Globalization.CultureInfo.InvariantCulture, out double parsed))
+            if (!input.TryGetValue(key, out string userInput))
+            {
+                return;
+            }
+
+            if (InputParse.Double(userInput, out double parsed))
             {
                 field = parsed;
+            }
+            else
+            {
+                PREACTInput.CouldNotInterpretInputMessage(key, userInput, false, InputParse.Format(field));
             }
         }
     }

@@ -45,7 +45,7 @@ namespace PREACT.Input
         public void UpdateData(string lat, string lon, out bool success)
         {
             Vector2d latLon;
-            if (double.TryParse(lat, out latLon.x) && double.TryParse(lon, out latLon.y))
+            if (double.TryParse(lat, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out latLon.x) && double.TryParse(lon, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out latLon.y))
             {
                 success = true;
                 UpdateData(latLon);
@@ -196,7 +196,7 @@ namespace PREACT.Input
             src.ImportFromEPSG(4326); // WGS84
 
             var dst = new OSGeo.OSR.SpatialReference("");
-            dst.ImportFromEPSG(int.Parse(utmEpsg.Replace("EPSG:", "")));
+            dst.ImportFromEPSG(int.Parse(utmEpsg.Replace("EPSG:", ""), System.Globalization.CultureInfo.InvariantCulture));
 
             var transform = new OSGeo.OSR.CoordinateTransformation(src, dst);
 

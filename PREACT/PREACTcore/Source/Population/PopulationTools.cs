@@ -18,38 +18,6 @@ namespace PREACT.Tools
     public static class PopulationTools
     {
 
-        public static async Task CreateBaseScenario(string path, string scenarioId, int minHouseholdSize, int maxHouseholdSize, Vector2d lowerLeftLatLon, Vector2d upperRightLatLon, int year)
-        {
-            string osmFilePath = Path.Combine(path, scenarioId + "_osm.xml");
-            await OSMDownloader.Download(lowerLeftLatLon, upperRightLatLon, osmFilePath);
-
-            if(osmFilePath != null)
-            {
-                string sumoNetFilePath = Path.Combine(path, scenarioId + "_net.net.xml");
-                Process.Start("netconvert", $"--osm {osmFilePath} -o {sumoNetFilePath}"); //this needs no callback
-            }
-            else
-            {
-                return;
-            }
-
-            string routerDbFilePath = Path.Combine(path, scenarioId + ".routerdb");
-            RoutingData.CreateAndSaveRouterDb(osmFilePath, routerDbFilePath, out bool success);
-            if (success)
-            {
-                Itinero.RouterDb routerDb = RoutingData.LoadRouterDb(routerDbFilePath, out success);
-                if (success)
-                {
-                    string worldPopFilePath = await WorldPopDownloader.DownloadRegionUTM(year, lowerLeftLatLon, upperRightLatLon, path, null);
-
-                    if(worldPopFilePath != null)
-                    {
-                        string populationFilePath = Path.Combine(path, scenarioId + "_population.csv");
-                        PopulationMap.CreatePopulation(worldPopFilePath, populationFilePath, routerDb, minHouseholdSize, maxHouseholdSize, out success);
-                    }                        
-                }
-            }
-        }
 
 
         public static void ScaleTotalPopulation(PopulationMap populationMap, int desiredPopulation, out bool success)
@@ -181,12 +149,12 @@ namespace PREACT.Tools
         public static bool FilterOsmData(string osmFile, string xBorder, string yBorder, string lowerLeftLat, string lowerLeftLon, string domainSizeX, string domainSizeY)
         {
             Vector2d osmFilterBorder, domainSize, lowerLeftLatLon;
-            if (double.TryParse(xBorder, out osmFilterBorder.x) 
-                && double.TryParse(yBorder, out osmFilterBorder.y)
-                && double.TryParse(lowerLeftLat, out lowerLeftLatLon.x)
-                && double.TryParse(lowerLeftLon, out lowerLeftLatLon.y)
-                && double.TryParse(domainSizeX, out domainSize.x)
-                && double.TryParse(domainSizeY, out domainSize.y))
+            if (double.TryParse(xBorder, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out osmFilterBorder.x) 
+                && double.TryParse(yBorder, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out osmFilterBorder.y)
+                && double.TryParse(lowerLeftLat, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out lowerLeftLatLon.x)
+                && double.TryParse(lowerLeftLon, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out lowerLeftLatLon.y)
+                && double.TryParse(domainSizeX, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out domainSize.x)
+                && double.TryParse(domainSizeY, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out domainSize.y))
             {
                 return FilterOsmData(osmFile, lowerLeftLatLon, domainSize, osmFilterBorder);
             }

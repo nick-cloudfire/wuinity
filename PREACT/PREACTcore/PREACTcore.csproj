@@ -2,7 +2,10 @@
 
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
-    <Nullable>enable</Nullable>
+    <!-- annotations, not enable: the engine was never written against nullable flow analysis, which buried
+         the handful of real warnings under ~400 CS86xx ones. `?` annotations stay legal; turn full analysis
+         on per file (#nullable enable) once a file is actually annotated. -->
+    <Nullable>annotations</Nullable>
     <RootNamespace>PREACT</RootNamespace>
     <!-- Release builds land in Unity Assets; Debug builds go to local bin/ -->
     <BaseOutputPath Condition="'$(Configuration)' == 'Release'">..\..\WUInity\Assets\PREACT\</BaseOutputPath>
@@ -27,20 +30,22 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Reference Include="gdalconst_csharp">
-      <HintPath>ThirdParty\GDAL\x64\gdalconst_csharp.dll</HintPath>
-    </Reference>
+    <!-- The managed GDAL wrappers and Open-Meteo are committed under Runtimes/, and referenced from there.
+         These used to point at a ThirdParty/ folder that does not exist, and only resolved because the
+         SDK's default None glob made every DLL under the project a candidate - any stray DLL there
+         could have been picked instead. gdalconst is not referenced: nothing in the engine, k-PERIL or
+         gdal_csharp itself uses it. -->
     <Reference Include="gdal_csharp">
-      <HintPath>ThirdParty\GDAL\x64\gdal_csharp.dll</HintPath>
+      <HintPath>Runtimes\Native\GDAL\gdal_csharp.dll</HintPath>
     </Reference>
     <Reference Include="ogr_csharp">
-      <HintPath>ThirdParty\GDAL\x64\ogr_csharp.dll</HintPath>
-    </Reference>
-    <Reference Include="OpenMeteo">
-      <HintPath>ThirdParty\Open-Meteo-DotNet\OpenMeteo.dll</HintPath>
+      <HintPath>Runtimes\Native\GDAL\ogr_csharp.dll</HintPath>
     </Reference>
     <Reference Include="osr_csharp">
-      <HintPath>ThirdParty\GDAL\x64\osr_csharp.dll</HintPath>
+      <HintPath>Runtimes\Native\GDAL\osr_csharp.dll</HintPath>
+    </Reference>
+    <Reference Include="OpenMeteo">
+      <HintPath>Runtimes\Managed\Open-Meteo-DotNet\OpenMeteo.dll</HintPath>
     </Reference>
   </ItemGroup>
 
@@ -61,13 +66,7 @@
     <None Update="Runtimes\Native\FOFEM\x64\FOFEM.dll">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Update="Runtimes\Native\GDAL\x64\gdalconst_wrap.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
     <None Update="Runtimes\Native\GDAL\x64\gdal_wrap.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="Runtimes\Native\GDAL\x64\libgdalconst_wrap.so">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="Runtimes\Native\GDAL\x64\libgdal_wrap.so">
@@ -85,20 +84,12 @@
     <None Update="Runtimes\Native\GDAL\x64\osr_wrap.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Update="Runtimes\Managed\Open-Meteo-DotNet\OpenMeteo.dll">
-      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
-    </None>
     <None Update="Runtimes\Native\NFDRS4\x64\libNFDRS4core.so">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="Runtimes\Native\NFDRS4\x64\NFDRS4core.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-  </ItemGroup>
-
-  <ItemGroup>
-    <Folder Include="Source\Evacuation\Consequence\Dose\" />
-    <Folder Include="Source\Evacuation\Consequence\Concentration\" />
   </ItemGroup>
 
 </Project>

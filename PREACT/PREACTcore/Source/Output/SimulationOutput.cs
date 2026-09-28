@@ -16,19 +16,12 @@ namespace PREACT.Output
     {
         private Simulation _simulation;
 
-        private float _totalAverageEvacTime;
-        public float TotalAverageEvacTime { get => _totalAverageEvacTime; }
-        private EvacOutput _evac;
-        public EvacOutput Evac { get => _evac; }
-        private List<float> _averageEvacTimes;
 
         Dictionary<int, float[,]> _triggerBuffers = new Dictionary<int, float[,]>();
 
 
         public SimulationOutput(Simulation simulation)
         {
-            _evac = new EvacOutput();
-            _averageEvacTimes = new List<float>();
 
             _simulation = simulation;
         }
@@ -61,7 +54,7 @@ namespace PREACT.Output
                 List<double> data = _simulation.Evacuation.TrafficModule.GetArrivalData();
                 foreach (double value in data)
                 {
-                    outputFile.WriteLine(value.ToString());
+                    outputFile.WriteLine(value.ToString("R", System.Globalization.CultureInfo.InvariantCulture));
                 }
             }
         }
@@ -79,51 +72,9 @@ namespace PREACT.Output
             }
         }
 
-        public void AddEvacTime(float totalEvacTime)
-        {
-            _averageEvacTimes.Add(totalEvacTime);
-            _totalAverageEvacTime = 0f;
-            for (int i = 0; i < _averageEvacTimes.Count; i++)
-            {
-                _totalAverageEvacTime += _averageEvacTimes[i];
-            }
-            _totalAverageEvacTime /= _averageEvacTimes.Count;
-        }
-
         public void AddTriggerBufferOutput(float[,] triggerBufferOutput, int simulationIndex)
         {
             _triggerBuffers.Add(simulationIndex, triggerBufferOutput);
-        }
-
-        public float[,] GetTriggerBufferOutput(int simulationIndex, out bool success)
-        {
-            float[,] buffer = null;
-            success = _triggerBuffers.TryGetValue(simulationIndex, out buffer);
-            return buffer;
-        }
-
-        public void CalculateAverageTriggerBuffer()
-        {
-            float bufferCountInverse = 1f / _triggerBuffers.Count;
-            float[,] perilOutput = null;         
-            foreach (KeyValuePair<int, float[,]> buffer in _triggerBuffers)
-            {
-                int xDim = buffer.Value.GetLength(0);
-                int yDim = buffer.Value.GetLength(1);
-
-                if(perilOutput == null)
-                {
-                    perilOutput = new float[xDim, yDim];
-                }
-
-                for(int y = 0; y < yDim; ++y)
-                {
-                    for (int x = 0; x < xDim; ++x)
-                    {
-                        perilOutput[x, y] += buffer.Value[x, y] * bufferCountInverse;
-                    }
-                }
-            }
         }
 
         /// <summary>
@@ -137,13 +88,5 @@ namespace PREACT.Output
         }
     }
 
-    [System.Serializable]
-    public class EvacOutput
-    {        
-        public int actualTotalEvacuees;    
-        public int stayingPeople;
-
-        [System.NonSerialized] public int[] rawPopulation;
-    }
 }
 

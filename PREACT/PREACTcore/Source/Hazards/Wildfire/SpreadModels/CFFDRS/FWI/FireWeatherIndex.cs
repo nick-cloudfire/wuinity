@@ -5,7 +5,7 @@ namespace PREACT.Wildfire
 {
     public class FireWeatherIndex
     {
-        double _ffmc, _ffmc0, _dmc, _dmc0, _dc, _dc0, _isi, _bui, _fwi, _ffwi; //, _G, _aPRCP
+        double _ffmc, _ffmc0, _dmc, _dmc0, _dc, _dc0, _isi, _bui, _fwi; //, _G, _aPRCP
 
         public double FFMC { get => _ffmc; }
         public double DMC { get => _dmc; }

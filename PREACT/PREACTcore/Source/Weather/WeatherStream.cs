@@ -35,7 +35,12 @@ namespace PREACT.Weather
             interpolatedHour._rh = Interpolation.CosineInterpolate(hour1._rh, hour2._rh, fraction);
             interpolatedHour._precip = Interpolation.CosineInterpolate(hour1._precip, hour2._precip, fraction);
             interpolatedHour._windSpeed = Interpolation.CosineInterpolate(hour1._windSpeed, hour2._windSpeed, fraction);
-            interpolatedHour._windDirection = Interpolation.CosineInterpolate(hour1._windDirection, hour2._windDirection, fraction);
+            //Along the shorter arc: interpolating the raw angles took 350 -> 10 degrees through 180.
+            float turn = hour2._windDirection - hour1._windDirection;
+            if (turn > 180f) turn -= 360f;
+            else if (turn < -180f) turn += 360f;
+            float direction = Interpolation.CosineInterpolate(hour1._windDirection, hour1._windDirection + turn, fraction);
+            interpolatedHour._windDirection = direction < 0f ? direction + 360f : direction >= 360f ? direction - 360f : direction;
             interpolatedHour._cloudCover = Interpolation.CosineInterpolate(hour1._cloudCover, hour2._cloudCover, fraction);
             interpolatedHour._boundrayLayerHeight = Interpolation.CosineInterpolate(hour1._boundrayLayerHeight, hour2._boundrayLayerHeight, fraction);
         }
@@ -49,6 +54,9 @@ namespace PREACT.Weather
         private DateTime _dateTimeLastEntry;
 
         public HourlyWeather[] HourlyData { get => _hourlyData; }
+        public double Latitude { get => _latitude; }
+        public double Longitude { get => _longitude; }
+        public double Elevation { get => _elevation; }
         public DateTime FirstEntry { get => _dateTimeFirstEntry; }
         public DateTime LastEntry { get => _dateTimeLastEntry; }
 
@@ -62,18 +70,32 @@ namespace PREACT.Weather
             _dateTimeLastEntry = lastDateTime;
         }
 
+        /// <summary>
+        /// The hour containing <paramref name="dateTime"/> and the one after it (the same hour at the end of the
+        /// record). The rows are taken to be consecutive hours from <see cref="FirstEntry"/>; a time outside the
+        /// record is clamped to its first or last hour instead of indexing past the array.
+        /// </summary>
         public void GetHourlyData(DateTime dateTime, out HourlyWeather current, out HourlyWeather next)
         {
-            int index = (int)(dateTime - _dateTimeFirstEntry).TotalHours;
+            if (_hourlyData == null || _hourlyData.Length == 0)
+            {
+                current = default;
+                next = default;
+                return;
+            }
+
+            double hours = (dateTime - _dateTimeFirstEntry).TotalHours;
+            int index = hours <= 0 ? 0 : hours >= _hourlyData.Length - 1 ? _hourlyData.Length - 1 : (int)hours;
             current = _hourlyData[index];
-            if(index < _hourlyData.Length - 2)
-            {
-                next = _hourlyData[index + 1];
-            }
-            else
-            {
-                next = current;
-            }
+            //The last row has no successor; the one before it does (this used to stop one row early).
+            next = index + 1 < _hourlyData.Length ? _hourlyData[index + 1] : current;
+        }
+
+        private static double ReadHeaderValue(string line)
+        {
+            string[] parts = (line ?? string.Empty).Split(',');
+            return parts.Length >= 2 && double.TryParse(parts[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double value)
+                ? value : 0.0;
         }
 
         public static WeatherStream LoadFromFile(string filePath, out bool success)
@@ -94,17 +116,13 @@ namespace PREACT.Weather
                         DateTime first = DateTime.MinValue;
                         DateTime last = DateTime.MaxValue;
 
-                        string line = sr.ReadLine();
-                        string[] data = line.Split(',');
-                        double.TryParse(line, out latitude);
-
-                        line = sr.ReadLine();
-                        data = line.Split(',');
-                        double.TryParse(data[1], out longitude);
-
-                        line = sr.ReadLine();
-                        data = line.Split(',');
-                        double.TryParse(data[1], out elevation);
+                        //Three header rows of name,value: latitude, longitude, elevation. The latitude used to be
+                        //parsed from the whole line ("Latitide,38.1"), which never parses, so it was always 0.
+                        latitude = ReadHeaderValue(sr.ReadLine());
+                        longitude = ReadHeaderValue(sr.ReadLine());
+                        elevation = ReadHeaderValue(sr.ReadLine());
+                        string line;
+                        string[] data;
 
                         line = sr.ReadLine(); //header line, skip                    
                         line = sr.ReadLine();
@@ -116,23 +134,23 @@ namespace PREACT.Weather
                             {
                                 if (j == 4)
                                 {
-                                    DateTime.TryParse(data[0], out first);
+                                    DateTime.TryParse(data[0], System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out first);
                                 }
                                 else
                                 {
-                                    DateTime.TryParse(data[0], out last);
+                                    DateTime.TryParse(data[0], System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out last);
                                 }
 
                                 float temp, rh, precip, windSpeed, windDirection, cloudCover, directRadiation, boundrayLayerHeight;
 
-                                bool b1 = float.TryParse(data[1], out temp);
-                                bool b2 = float.TryParse(data[2], out rh);
-                                bool b3 = float.TryParse(data[3], out precip);
-                                bool b4 = float.TryParse(data[4], out windSpeed);
-                                bool b5 = float.TryParse(data[5], out windDirection);
-                                bool b6 = float.TryParse(data[6], out cloudCover);
-                                bool b7 = float.TryParse(data[7], out directRadiation);
-                                bool b8 = float.TryParse(data[8], out boundrayLayerHeight);
+                                bool b1 = float.TryParse(data[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out temp);
+                                bool b2 = float.TryParse(data[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out rh);
+                                bool b3 = float.TryParse(data[3], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out precip);
+                                bool b4 = float.TryParse(data[4], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out windSpeed);
+                                bool b5 = float.TryParse(data[5], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out windDirection);
+                                bool b6 = float.TryParse(data[6], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out cloudCover);
+                                bool b7 = float.TryParse(data[7], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out directRadiation);
+                                bool b8 = float.TryParse(data[8], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out boundrayLayerHeight);
 
                                 HourlyWeather wD = new HourlyWeather(temp, rh, precip, windSpeed, windDirection, cloudCover, directRadiation, boundrayLayerHeight);
                                 weatherData.Add(wD);
@@ -140,6 +158,12 @@ namespace PREACT.Weather
 
                             j++;
                             line = sr.ReadLine();
+                        }
+
+                        if (weatherData.Count > 1 && (last - first).TotalHours + 1.5 < weatherData.Count)
+                        {
+                            Engine.Message(null, Engine.LogType.Warning, $"Weather input file {filePath} has {weatherData.Count} rows between "
+                                + $"{first:yyyy-MM-dd HH:mm} and {last:yyyy-MM-dd HH:mm}, more than one per hour; the rows are read as consecutive hours.");
                         }
 
                         if (weatherData.Count > 0)
@@ -150,7 +174,7 @@ namespace PREACT.Weather
                         }
                         else if (fileExists)
                         {
-                            Engine.Message(null, Engine.LogType.Warning, "Weather input file " + filePath + " was found but did not contain any valid data, will not be able to do fire or smoke spread simulations.");
+                            Engine.Message(null, Engine.LogType.Warning, "Weather input file " + filePath + " was found but did not contain any valid data; no weather is reported.");
                         }
                     }                    
                 }
@@ -161,7 +185,7 @@ namespace PREACT.Weather
             }
             else
             {
-                Engine.Message(null, Engine.LogType.Warning, "Weather data file " + filePath + " not found, will not be able to do fire or smoke spread simulations.");
+                Engine.Message(null, Engine.LogType.Warning, "Weather data file " + filePath + " not found; no weather is reported.");
             }
 
             return result;

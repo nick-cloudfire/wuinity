@@ -55,134 +55,132 @@ namespace PREACT.Evacuation
             DataPoints = dataPoints.ToArray();
         }
 
+        /// <summary>
+        /// Reads every <c>[ResponseCurve]</c>: <c>Name</c>, <c>TimeInput</c> and then bare <c>time,probability</c>
+        /// rows, in any order, with comments and blank lines allowed between them.
+        /// </summary>
+        /// <remarks>
+        /// <b>Relative</b> times are seconds after the group's evacuation order. <b>Absolute</b> times are dates;
+        /// they are held as seconds after the simulation start (the group's order time is then <i>not</i> added,
+        /// see <see cref="EvacuationGroup.GetWeightedRandomResponseTime"/>) and written back as dates, so a save
+        /// keeps them. A save used to write those seconds under <c>TimeInput=Absolute</c>, which the next load
+        /// could not read - the curve was lost.
+        ///
+        /// Rows used to be located by position (header + 3) and counted from the number of keys, so a comment,
+        /// a blank line or a reordered key broke the curve, and the error printed the TimeInput value instead of
+        /// the offending row. One curve without a name also stopped every curve after it from being read.
+        /// </remarks>
         public static void Parse(Dictionary<string, ResponseCurve> newInputs, string[] inputLines, List<int> responseCurveLineIndices, SimulationInput simulationInput, out bool success)
         {
-            success = false;
+            success = true;
             newInputs.Clear();
 
             for (int i = 0; i < responseCurveLineIndices.Count; ++i)
             {
+                int headerIndex = responseCurveLineIndices[i];
                 ResponseCurve newInput = new ResponseCurve();
-                success = true;
-                int issues = 0;
-                Dictionary<string, string> inputToParse = PREACTInput.GetHeaderInput(inputLines, responseCurveLineIndices[i], true);
+                Dictionary<string, string> inputToParse = PREACTInput.GetHeaderInput(inputLines, headerIndex, true);
                 string nameOfInput, userInput;
 
-                //critical
                 nameOfInput = nameof(Name);
-                if (inputToParse.TryGetValue(nameOfInput, out userInput))
+                if (!inputToParse.TryGetValue(nameOfInput, out userInput) || userInput.Length == 0)
                 {
-                    newInput.Name = userInput;
-                    success = true;
-                }
-                else
-                {
+                    PREACTInput.InputProblem("ResponseCurve", $"the section on line {headerIndex + 1} has no Name, so nothing can refer to it; it is ignored.");
                     success = false;
-                    PREACTInput.InputNotFoundMessage(nameOfInput, true);
+                    continue;
                 }
-                if (!success)
+                newInput.Name = userInput;
+                if (newInputs.ContainsKey(newInput.Name))
                 {
-                    break;
+                    PREACTInput.InputWarning("ResponseCurve", $"{newInput.Name} is defined more than once; the first definition is used.");
+                    continue;
                 }
 
-                //critical
                 nameOfInput = nameof(TimeInput);
+                newInput.TimeInput = TimeInputs.Relative;
                 if (inputToParse.TryGetValue(nameOfInput, out userInput))
                 {
-                    switch (userInput)
+                    if (!InputParse.Enum(userInput, out newInput.TimeInput))
                     {
-                        case nameof(TimeInputs.Absolute):
-                            newInput.TimeInput = TimeInputs.Absolute;
-                            break;
-                        case nameof(TimeInputs.Relative):
-                            newInput.TimeInput = TimeInputs.Relative;
-                            break;
-                        default:
-                            ++issues;
-                            PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
-                            break;
+                        success = false;
+                        PREACTInput.CouldNotInterpretInputMessage(newInput.Name + " " + nameOfInput, userInput);
+                        continue;
                     }
                 }
                 else
                 {
-                    success = false;
-                    PREACTInput.InputNotFoundMessage(nameOfInput, true);
-                }
-                if (!success)
-                {
-                    break;
+                    PREACTInput.InputNotFoundMessage(newInput.Name + " " + nameOfInput, false, nameof(TimeInputs.Relative));
                 }
 
-                //this one is a bit special as each line does not have a name
-                int startIndex = responseCurveLineIndices[i] + 3; //skip header, name line and time relation
-                int endIndex = startIndex + inputToParse.Count - 2; //remove name and timeinput line from count
-                List<ResponseDataPoint> points = new List<ResponseDataPoint>(endIndex - startIndex);
-                for (int j = startIndex; j < endIndex; ++j)
+                //The data rows are the lines of the section that have no '=' - whatever order they come in.
+                List<ResponseDataPoint> points = new List<ResponseDataPoint>();
+                bool rowsOk = true;
+                for (int j = headerIndex + 1; j < inputLines.Length; ++j)
                 {
-                    issues = 0;
-                    string[] data = inputLines[j].Split(',');
-                    if(data.Length == 2)
+                    string row = inputLines[j];
+                    if (row.StartsWith("["))
                     {
-                        ResponseDataPoint dataPoint = new ResponseDataPoint();
-
-                        if(newInput.TimeInput == TimeInputs.Relative)
-                        {
-                            issues += float.TryParse(data[0], out dataPoint.Time) ? 0 : 1;
-                        }
-                        else
-                        {
-                            DateTime dateTime;
-                            if(DateTime.TryParse(data[0], out dateTime))
-                            {
-                                dataPoint.Time = (float)(dateTime - simulationInput.StartDateTime).TotalSeconds;
-                            }
-                            else
-                            {
-                                ++issues;
-                            }
-                        }                        
-                        issues += float.TryParse(data[1], out dataPoint.Probability) ? 0 : 1;
-
-                        if (issues > 0)
-                        {
-                            PREACTInput.CouldNotInterpretInputMessage("Response curve data point on line " + j, userInput);
-                            break;
-                        }
-                        else
-                        {
-                            points.Add(dataPoint);
-                        }
-                    }
-                    else
-                    {
-                        issues++;
-                        PREACTInput.CouldNotInterpretInputMessage("Response curve data point on line " + j, userInput);
                         break;
-                    }    
+                    }
+                    if (row.Length == 0 || row.IndexOf('=') >= 0)
+                    {
+                        continue;
+                    }
+
+                    string[] data = row.Split(',');
+                    ResponseDataPoint dataPoint = new ResponseDataPoint();
+                    bool ok = data.Length == 2;
+                    if (ok && newInput.TimeInput == TimeInputs.Relative)
+                    {
+                        ok = InputParse.Float(data[0], out dataPoint.Time);
+                    }
+                    else if (ok)
+                    {
+                        ok = InputParse.DateTime(data[0], out DateTime dateTime);
+                        dataPoint.Time = (float)(dateTime - simulationInput.StartDateTime).TotalSeconds;
+                    }
+                    ok = ok && InputParse.Float(data[1], out dataPoint.Probability);
+
+                    if (!ok)
+                    {
+                        rowsOk = false;
+                        PREACTInput.CouldNotInterpretInputMessage($"Response curve {newInput.Name} data row on line {j + 1}", row);
+                        continue;
+                    }
+                    points.Add(dataPoint);
                 }
-                if (points.Count > 1 && issues == 0)
-                {
-                    newInput.SetDataPoints(points);
-                }
-                else
+
+                if (points.Count < 2)
                 {
                     success = false;
-                    PREACTInput.CouldNotInterpretInputMessage("Response curve could not be constructed, too few points.", userInput);
+                    PREACTInput.InputProblem(newInput.Name, $"a response curve needs at least two time,probability rows; it has {points.Count}.");
+                    continue;
                 }
 
-                if (success)
+                //Monotone in both, or the inverse-CDF draw in EvacuationGroup picks the wrong interval.
+                for (int k = 1; k < points.Count; ++k)
                 {
-                    newInputs.Add(newInput.Name, newInput);
-                }                
-            }
+                    if (points[k].Time < points[k - 1].Time || points[k].Probability < points[k - 1].Probability)
+                    {
+                        rowsOk = false;
+                        PREACTInput.InputProblem(newInput.Name, $"rows must increase in both time and probability; row {k + 1} ({points[k].Time}, {points[k].Probability}) goes back.");
+                        break;
+                    }
+                }
+                if (points[points.Count - 1].Probability > 1.0001f || points[0].Probability < 0f)
+                {
+                    rowsOk = false;
+                    PREACTInput.InputProblem(newInput.Name, "probabilities must lie between 0 and 1.");
+                }
+                else if (points[points.Count - 1].Probability < 0.9999f)
+                {
+                    //Legitimate: the rest of the population never leaves. Worth saying, because it is also what a typo looks like.
+                    PREACTInput.InputWarning(newInput.Name, $"ends at probability {points[points.Count - 1].Probability}, so {(1f - points[points.Count - 1].Probability) * 100f:F0}% of the households using it never evacuate.");
+                }
 
-            if (newInputs.Count == responseCurveLineIndices.Count)
-            {
-                success = true;
-            }
-            else
-            {
-                Engine.Message(null, Engine.LogType.InputError, "Could not read all specified ResponseCurves.");
+                success &= rowsOk;
+                newInput.SetDataPoints(points);
+                newInputs.Add(newInput.Name, newInput);
             }
         }
     }

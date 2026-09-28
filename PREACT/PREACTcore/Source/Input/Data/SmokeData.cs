@@ -22,7 +22,7 @@ namespace PREACT.Input
 
             if (smokeInput.Module == SmokeInput.SmokeModules.GlobalSmoke)
             {
-                string filePath = Path.Combine(rootFolder, smokeInput.GlobalSmokeInput.ExtinctionFile);
+                string filePath = PREACTInput.ResolvePath(rootFolder, smokeInput.GlobalSmokeInput.ExtinctionFile);
                 LoadExtinctionRamp(filePath, out success);
             }
             else

@@ -2,6 +2,7 @@
 using System;
 using PREACT.Weather;
 using System.IO;
+using System.Collections.Generic;
 
 namespace PREACT
 {    
@@ -59,13 +60,33 @@ namespace PREACT
             _ffmcHourly = new Wildfire.HourlyFFMC(weatherInput.StartHourlyFFMC);
             _DailyKBDI = new DailyKBDI(weatherInput.StartKBDI, weatherInput.MeanAnnualPrcp);
 
+            //Runtime copies: a run must not change the scenario the GUI edits and saves (the ELMFIRE rebase used
+            //to write the case's archive and anchor back into the input).
+            _weatherFile = simulation.Input.Weather.WeatherFile;
+            _anchor = simulation.Input.Weather.WeatherAnchorDateTime;
+
             //Before the weather is loaded, because the offset decides which span of the record has to be
             //covered - and so whether the file on disk is usable at all.
-            SetAnchor(simulation.Input.Weather.WeatherAnchorDateTime, time.StartDateTime);
+            SetAnchor(_anchor, time.StartDateTime);
 
             LoadOrDownloadWeather(time);
             Update(time.StartDateTime, true);
         }
+
+        private string _weatherFile;
+        private DateTime _anchor;
+
+        /// <summary>Whether any weather was loaded. Without it every reported value is 0 and the indices stay at their seeds.</summary>
+        public bool HasWeather { get => _weatherData != null; }
+
+        /// <summary>The weather file this run reads (scenario-relative), which an ELMFIRE run may have switched to its case's archive.</summary>
+        public string WeatherFile { get => _weatherFile; }
+
+        /// <summary>The instant in the record the simulation start reads from, for this run; default when unanchored.</summary>
+        public DateTime WeatherAnchor { get => _anchor; }
+
+        /// <summary>Whether this run's weather is anchored to a day other than the simulation's own.</summary>
+        public bool HasWeatherAnchor { get => _anchor != default; }
 
         /// <summary>
         /// How far the weather record is offset from the simulation's own clock.
@@ -115,16 +136,15 @@ namespace PREACT
             }
 
             SetAnchor(anchor, time.StartDateTime);
+            _anchor = anchor;
 
             bool reload = !string.IsNullOrEmpty(weatherFile)
-                          && !string.Equals(weatherFile, _simulation.Input.Weather.WeatherFile, StringComparison.OrdinalIgnoreCase);
+                          && !string.Equals(weatherFile, _weatherFile, StringComparison.OrdinalIgnoreCase);
 
             if (reload)
             {
-                _simulation.Input.Weather.WeatherFile = weatherFile;
+                _weatherFile = weatherFile;
             }
-
-            _simulation.Input.Weather.WeatherAnchorDateTime = anchor;
 
             if (reload || _weatherData == null)
             {
@@ -132,8 +152,9 @@ namespace PREACT
             }
 
             //Re-read the current hour through the new offset, so the first reported values are already the
-            //sampled day's rather than the previous anchor's.
-            Update(time.StartDateTime, true);
+            //sampled day's rather than the previous anchor's. Only the hour: a forced Update would step the
+            //daily drought code a second time for the same day.
+            ReadHour(time.StartDateTime);
 
             Engine.Message(_simulation, Engine.LogType.Log,
                 $"Weather rebased onto {anchor:yyyy-MM-dd HH:mm} from the record ("
@@ -158,39 +179,15 @@ namespace PREACT
                    && DateTime.Compare(last, stream.LastEntry) <= 0;
         }
 
-        private void Initialize(TimeManager timeManager)
-        {
-            //calculate FWI up until point of simulation start
-            /*if(_weatherData.FirstEntry.Month == 1 && _weatherData.FirstEntry.Day == 1 && _weatherData.FirstEntry.Hour == 0)
-            {
-                _fwi.Reset();
-                int days = (_simulation.Time.StartDateTime - _weatherData.FirstEntry).Days;
-                if(_simulation.Time.StartDateTime.Hour < 12)
-                {
-                    days--; 
-                }
-
-                DateTime start = _weatherData.FirstEntry.AddHours(12); 
-                for (int i = 0; i < days; ++i)
-                {
-                    HourlyWeatherData noonData = _weatherData.HourlyData[12 + 24 * i];
-                    _fwi.CalculateDay(start, noonData._temp, noonData._rh, noonData._windSpeed, noonData._precip);
-                    start.AddHours(24);
-                }
-            }*/
-        }
-
-        Wildfire.DeadFuelMoistureEngine _deadFuelMoistureEngine;
-        public void DeadFuelMoistureRun(DateTime start, DateTime end)
-        {
-            if(_deadFuelMoistureEngine == null)
-            {
-                //_deadFuelMoistureEngine = new Wildfire.DeadFuelMoistureEngine()
-            }
-        }
-
         public void Update(DateTime currentDateTime, bool forceUpdate = false)
         {
+            if (_weatherData == null)
+            {
+                //No weather configured, or none could be had: nothing to report, nothing to march forward.
+                _lastDateTime = currentDateTime;
+                return;
+            }
+
             bool newMinute = _lastDateTime.Minute != currentDateTime.Minute;
             bool newHour = _lastDateTime.Hour != currentDateTime.Hour;
             bool newDay = _lastDateTime.DayOfYear != currentDateTime.DayOfYear;
@@ -219,8 +216,7 @@ namespace PREACT
             {
                 //read new values from weather input stream, at the moment in the record this simulation time
                 //corresponds to - the same instant the fire's own weather rasters were written from.
-                _weatherData.GetHourlyData(WeatherTime(currentDateTime), out _currentHourlyData, out _nextHourlyData);
-                _interpolatedHourlyData = _currentHourlyData;                
+                ReadHour(currentDateTime);
 
                 //now update hourly values
                 _ffmcHourly.Calculate(_currentHourlyData._temp, _currentHourlyData._rh, _currentHourlyData._windSpeed * 3.6, _currentHourlyData._precip);                          
@@ -259,89 +255,82 @@ namespace PREACT
             _lastDateTime = currentDateTime;
         }
 
+        private void ReadHour(DateTime currentDateTime)
+        {
+            if (_weatherData == null)
+            {
+                return;
+            }
+            _weatherData.GetHourlyData(WeatherTime(currentDateTime), out _currentHourlyData, out _nextHourlyData);
+            _interpolatedHourlyData = _currentHourlyData;
+        }
+
+        /// <summary>
+        /// Loads the weather this run reads: the scenario's file, else the downloader's default name, else the
+        /// shared cache - whichever covers the run. Downloads a year from Open-Meteo only when the scenario asked
+        /// for weather (a WeatherFile is set) and nothing on disk covers the run.
+        /// </summary>
+        /// <remarks>
+        /// A scenario without a weather file used to download a full year from Open-Meteo on every run, silently.
+        /// The weather is display-only - neither the evacuation nor the trigger boundary reads it - so with no
+        /// weather configured the run simply reports none.
+        /// </remarks>
         private void LoadOrDownloadWeather(TimeManager timeManager)
         {
-            string filePath = Path.Combine(_simulation.Input.RootFolder, _simulation.Input.Weather.WeatherFile);
-            bool success = false;
-            bool haveCorrectWeather = false;
-            bool fileExists = File.Exists(filePath);
-            if (fileExists)
+            _weatherData = null;
+            var candidates = new List<string>();
+            if (!string.IsNullOrWhiteSpace(_weatherFile))
             {
-                WeatherStream wD = WeatherStream.LoadFromFile(filePath, out success);
-                Engine.Message(_simulation, Engine.LogType.Log, $"Weather data available from {wD.FirstEntry.ToString()} to {wD.LastEntry.ToString()}");
-                if (success)
-                {
-                    if(Covers(wD, timeManager))
-                    {
-                        haveCorrectWeather = true;
-                        _weatherData = wD;
-                    }
-                }
-                else
-                {
-                    Engine.Message(_simulation, Engine.LogType.Log, $"Supplied weather data is outside of needed range.");
-                }
-            }     
+                candidates.Add(Input.PREACTInput.ResolvePath(_simulation.Input.RootFolder, _weatherFile));
+            }
+            //the default name the downloader saves under, and the shared cache
+            candidates.Add(Path.Combine(_simulation.Input.RootFolder, $"{_simulation.Input.Simulation.Name}_weather.csv"));
+            candidates.Add(SharedWeatherCachePath());
 
-            //check for default named file that would be saved by the downloader
-            if(!fileExists)
+            foreach (string filePath in candidates)
             {
-                filePath = Path.Combine(_simulation.Input.RootFolder, $"{_simulation.Input.Simulation.Name}_weather.csv");
-                if(File.Exists(filePath))
+                if (!File.Exists(filePath))
                 {
-                    WeatherStream wD = WeatherStream.LoadFromFile(filePath, out success);
-                    Engine.Message(_simulation, Engine.LogType.Log, $"Weather data available from {wD.FirstEntry.ToString()} to {wD.LastEntry.ToString()}");
-                    if (success)
-                    {
-                        if (Covers(wD, timeManager))
-                        {
-                            haveCorrectWeather = true;
-                            _weatherData = wD;
-                        }
-                        else
-                        {
-                            Engine.Message(_simulation, Engine.LogType.Log, $"Supplied weather data is outside of needed range.");
-                        }
-                    }
-                }                
+                    continue;
+                }
+
+                WeatherStream wD = WeatherStream.LoadFromFile(filePath, out bool success);
+                if (!success)
+                {
+                    continue;
+                }
+
+                Engine.Message(_simulation, Engine.LogType.Log, $"Weather data in {Path.GetFileName(filePath)} spans {wD.FirstEntry:yyyy-MM-dd HH:mm} to {wD.LastEntry:yyyy-MM-dd HH:mm}.");
+                if (Covers(wD, timeManager))
+                {
+                    _weatherData = wD;
+                    _weatherReferenceElevation = (float)wD.Elevation;
+                    return;
+                }
+
+                Engine.Message(_simulation, Engine.LogType.Log, $"{Path.GetFileName(filePath)} does not cover the part of the record this run reads "
+                    + $"({WeatherTime(timeManager.StartDateTime):yyyy-MM-dd HH:mm} to {WeatherTime(timeManager.EndDateTime):yyyy-MM-dd HH:mm}).");
             }
 
-            //Shared cache, checked before falling back to the network. The name above is derived
-            //from Simulation.Name, which the probabilistic-trigger driver overrides per
-            //realization - so that file never exists on a fresh run and every realization of a
-            //campaign downloads its own copy of the same year of weather. A 990-realization
-            //campaign meant 990 identical Open-Meteo requests, which is what draws rate limiting.
-            if (!haveCorrectWeather)
+            if (string.IsNullOrWhiteSpace(_weatherFile))
             {
-                string sharedPath = SharedWeatherCachePath();
-                if (File.Exists(sharedPath))
-                {
-                    WeatherStream wD = WeatherStream.LoadFromFile(sharedPath, out success);
-                    if (success && Covers(wD, timeManager))
-                    {
-                        Engine.Message(_simulation, Engine.LogType.Log, $"Using shared weather cache {Path.GetFileName(sharedPath)}.");
-                        haveCorrectWeather = true;
-                        _weatherData = wD;
-                    }
-                }
+                Engine.Message(_simulation, Engine.LogType.Log, "No weather file is set, so no weather is reported for this run (nothing is downloaded).");
+                return;
             }
 
-            if (!haveCorrectWeather)
-            {
-                Engine.Message(_simulation, Engine.LogType.Log, $"Weather data file was either not found or did not contain needed time range, downloading weather.");
+            Engine.Message(_simulation, Engine.LogType.Warning, $"The weather file {_weatherFile} was not found or does not cover this run; "
+                + "downloading the years needed from Open-Meteo.");
 
-                //A download failure used to take the whole process down with it, losing that
-                //realization's already-completed fire simulation and leaving nothing in the log to
-                //say why. Failing the simulation cleanly is recoverable; aborting is not.
-                try
-                {
-                    DownloadWeather();
-                }
-                catch (Exception e)
-                {
-                    Engine.Message(_simulation, Engine.LogType.SimulationError,
-                        $"Weather download failed: {e.Message}");
-                }
+            //A download failure used to take the whole process down with it. The weather is only reported, so a
+            //failed download is a warning, not a reason to stop the run.
+            try
+            {
+                DownloadWeather();
+            }
+            catch (Exception e)
+            {
+                _weatherData = null;
+                Engine.Message(_simulation, Engine.LogType.Warning, $"Weather download failed ({e.Message}); no weather is reported for this run.");
             }
         }
 
@@ -369,7 +358,6 @@ namespace PREACT
             return Path.Combine(_simulation.Input.RootFolder, name);
         }
 
-        //TODO: remove
         private void DownloadWeather()
         {
             //if we do not have weather file/file is not complete for period we try to stream it in.
@@ -399,9 +387,9 @@ namespace PREACT
                 string tempPath = filePath + "." + System.Diagnostics.Process.GetCurrentProcess().Id + ".tmp";
                 using (StreamWriter file = new StreamWriter(tempPath))
                 {
-                    file.WriteLine($"Latitide,{weatherStream.Latitude}");
-                    file.WriteLine($"Longitude,{weatherStream.Longitude}");
-                    file.WriteLine($"Elevation,{weatherStream.Elevation}");                    
+                    file.WriteLine(FormattableString.Invariant($"Latitide,{weatherStream.Latitude}"));
+                    file.WriteLine(FormattableString.Invariant($"Longitude,{weatherStream.Longitude}"));
+                    file.WriteLine(FormattableString.Invariant($"Elevation,{weatherStream.Elevation}"));
 
                     if (weatherStream.Hourly != null)
                     {
@@ -416,8 +404,8 @@ namespace PREACT
                             //save actual data to usable format in memory
                             HourlyWeather[] hourlyArray = new HourlyWeather[hourly.Time.Length];
                             DateTime startDateTime, endDateTime;
-                            DateTime.TryParse(hourly.Time[0], out startDateTime);
-                            DateTime.TryParse(hourly.Time[hourly.Time.Length - 1], out endDateTime);
+                            DateTime.TryParse(hourly.Time[0], System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out startDateTime);
+                            DateTime.TryParse(hourly.Time[hourly.Time.Length - 1], System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out endDateTime);
                             _weatherData = new WeatherStream(weatherStream.Latitude, weatherStream.Longitude, weatherStream.Elevation, startDateTime, endDateTime, hourlyArray);
 
                             Wildfire.FireWeatherIndex fwi = new Wildfire.FireWeatherIndex();
@@ -426,14 +414,18 @@ namespace PREACT
                             //loop through all data
                             for (int i = 0; i < hourly.Time.Length; i++)
                             {
-                                bool timeParsed = DateTime.TryParse(hourly.Time[i], out DateTime dateTime);
+                                bool timeParsed = DateTime.TryParse(hourly.Time[i], System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out DateTime dateTime);
+                                //The indices take wind in km/h; the download is in m/s. The cache's FFMC/FWI columns
+                                //used to be computed with m/s (3.6 times too little wind) while Update, reading the same
+                                //functions, converted - so the file and the run disagreed.
+                                double windKmh = (hourly.Windspeed_10m[i] ?? 0) * 3.6;
                                 if(timeParsed && dateTime.Hour == 12)
                                 {
-                                    fwi.CalculateDay(dateTime, hourly.Temperature_2m[i] ?? 0, hourly.Relativehumidity_2m[i] ?? 0, hourly.Windspeed_10m[i] ?? 0, hourly.Precipitation[i] ?? 0);
+                                    fwi.CalculateDay(dateTime, hourly.Temperature_2m[i] ?? 0, hourly.Relativehumidity_2m[i] ?? 0, windKmh, hourly.Precipitation[i] ?? 0);
                                 }
-                                ffmcHourly.Calculate(hourly.Temperature_2m[i] ?? 0, hourly.Relativehumidity_2m[i] ?? 0, hourly.Windspeed_10m[i] ?? 0, hourly.Precipitation[i] ?? 0);
+                                ffmcHourly.Calculate(hourly.Temperature_2m[i] ?? 0, hourly.Relativehumidity_2m[i] ?? 0, windKmh, hourly.Precipitation[i] ?? 0);
 
-                                file.WriteLine($"{hourly.Time[i]},{hourly.Temperature_2m[i]},{hourly.Relativehumidity_2m[i]},{hourly.Precipitation[i]},{hourly.Windspeed_10m[i]},{hourly.Winddirection_10m[i]},{hourly.Cloudcover[i]},{hourly.Direct_radiation[i]},{hourly.Boundary_layer_height[i]},{ffmcHourly.Value},{fwi.FFMC},{fwi.DMC},{fwi.DC},{fwi.ISI},{fwi.BUI},{fwi.FWI}");
+                                file.WriteLine(FormattableString.Invariant($"{hourly.Time[i]},{hourly.Temperature_2m[i]},{hourly.Relativehumidity_2m[i]},{hourly.Precipitation[i]},{hourly.Windspeed_10m[i]},{hourly.Winddirection_10m[i]},{hourly.Cloudcover[i]},{hourly.Direct_radiation[i]},{hourly.Boundary_layer_height[i]},{ffmcHourly.Value},{fwi.FFMC},{fwi.DMC},{fwi.DC},{fwi.ISI},{fwi.BUI},{fwi.FWI}"));
 
                                 _weatherData.HourlyData[i] = new HourlyWeather(hourly.Temperature_2m[i] ?? 0, hourly.Relativehumidity_2m[i] ?? 0,hourly.Precipitation[i] ?? 0, hourly.Windspeed_10m[i] ?? 0, hourly.Winddirection_10m[i] ?? 0, hourly.Cloudcover[i] ?? 0, hourly.Direct_radiation[i] ?? 0, hourly.Boundary_layer_height[i] ?? 0);
                             }
@@ -445,7 +437,7 @@ namespace PREACT
             }
             else
             {
-                Engine.Message(_simulation, Engine.LogType.SimulationError, "Could not download weather and no weather file has been supplied.");
+                Engine.Message(_simulation, Engine.LogType.Warning, "Could not download the weather; no weather is reported for this run.");
             }
         }
 

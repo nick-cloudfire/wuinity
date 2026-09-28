@@ -32,7 +32,12 @@ namespace PREACT.Pedestrian
         EvacuationGroup _evacuationGroup;
 
         public EvacuationGroup EvacuationGroup { get => _evacuationGroup; }
+        /// <summary>The home as WGS84 lat/lon (degrees).</summary>
         public Vector2d HomePosition { get => _houseHoldData.originLatLon; }
+        /// <summary>The home in simulation coordinates (metres from the domain's lower-left corner).</summary>
+        public Vector2d SimulationHomePosition { get => new Vector2d(_homePosition.X, _homePosition.Y); }
+        /// <summary>Walking time from home to the car, in seconds.</summary>
+        public float TravelTime { get => _travelTime; }
 
         /// <summary>
         /// Creates a household that will move as a unit.
@@ -84,9 +89,28 @@ namespace PREACT.Pedestrian
             isMoving = false;            
         }
 
-        public void StartEvacuation(double simulationTime)
+        /// <summary>
+        /// Starts this household now, ahead of its drawn response time: it responds at
+        /// <paramref name="simulationTime"/> and reaches its car one walk later. Returns false (and changes nothing)
+        /// for a household that is already moving or has already reached its car.
+        /// </summary>
+        /// <remarks>
+        /// This used to move only <see cref="evacuationTime"/>, leaving <see cref="ResponseTime"/> and
+        /// <see cref="isMoving"/> alone - so the caller, which only acts on households that are not moving, called it
+        /// again every step, pushing the arrival at the car back a second at a time until the household's own
+        /// response time came round. Nobody ever left early.
+        /// </remarks>
+        public bool StartEvacuation(double simulationTime)
         {
-            evacuationTime = (float)simulationTime + _travelTime;
+            if (isMoving || reachedCar)
+            {
+                return false;
+            }
+
+            ResponseTime = (float)simulationTime;
+            evacuationTime = ResponseTime + _travelTime;
+            isMoving = true;
+            return true;
         }
 
         public Vector2d GetVehicleLatLon()

@@ -28,63 +28,52 @@ namespace PREACT.Input
 
         public void Parse(string[] inputLines, int startIndex, Dictionary<string, int> headerLineIndex, out bool success)
         {
-            success = false;
-            int issues = 0;            
+            success = true;
             Dictionary<string, string> inputToParse = PREACTInput.GetHeaderInput(inputLines, startIndex);
             string nameOfInput, userInput;
 
             nameOfInput = nameof(Enabled);
             if (inputToParse.TryGetValue(nameOfInput, out userInput))
             {
-                success = bool.TryParse(userInput, out Enabled);
-            }
-            else
-            {
-                success = false;
-                PREACTInput.InputNotFoundMessage(nameOfInput);
-            }
-            if (!success || !Enabled)
-            {
-                return;
-            }
-
-            nameOfInput = nameof(Module);
-            if (inputToParse.TryGetValue(nameOfInput, out userInput))
-            {
-                switch (userInput)
+                if (!InputParse.Bool(userInput, out Enabled))
                 {
-                    case nameof(PedestrianModules.MacroHouseholdSim):
-                        Module = PedestrianModules.MacroHouseholdSim;
-                        break;
-                    default:
-                        ++issues;
-                        PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
-                        break;
+                    Enabled = false;
+                    PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput, false, "false");
                 }
             }
             else
             {
-                PREACTInput.InputNotFoundMessage(nameOfInput);
+                PREACTInput.InputNotFoundMessage(nameOfInput, false, "false");
             }
 
-            if(Module == PedestrianModules.MacroHouseholdSim)
+            //The rest is read whether or not the module is on, so a save keeps it; nothing is critical when off.
+            using (PREACTInput.SoftRequirements(!Enabled))
             {
-                int lineIndex;
-                if (headerLineIndex.TryGetValue(nameof(PedestrianModules.MacroHouseholdSim), out lineIndex))
+                nameOfInput = nameof(Module);
+                if (inputToParse.TryGetValue(nameOfInput, out userInput))
                 {
-                    _macroHouseholdSimInput = MacroHouseholdSimInput.Parse(inputLines, lineIndex, out success);
+                    if (!InputParse.Enum(userInput, out Module) || Module == PedestrianModules.None)
+                    {
+                        Module = PedestrianModules.MacroHouseholdSim;
+                        PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput, false, nameof(PedestrianModules.MacroHouseholdSim));
+                    }
                 }
                 else
+                {
+                    PREACTInput.InputNotFoundMessage(nameOfInput, false, nameof(PedestrianModules.MacroHouseholdSim));
+                }
+
+                if (headerLineIndex.TryGetValue(nameof(PedestrianModules.MacroHouseholdSim), out int lineIndex))
+                {
+                    PREACTInput.ReadingInputMessage(nameof(PedestrianModules.MacroHouseholdSim));
+                    _macroHouseholdSimInput = MacroHouseholdSimInput.Parse(inputLines, lineIndex, out bool ok);
+                    success &= ok || !Enabled;
+                }
+                else if (Enabled)
                 {
                     Engine.Message(null, Engine.LogType.Warning, nameof(PedestrianModules.MacroHouseholdSim) + " input was not found, using defaults.");
                 }
             }
-            else
-            {
-                Engine.Message(null, Engine.LogType.Debug, "This should not happen, trying to use non-implemented pedestrian module.");
-            }
-
-            success = true;
         }
     }
 }

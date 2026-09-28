@@ -322,16 +322,10 @@ namespace PREACT.Utility
             var y = UTMNorthing;
             var ZoneNumber = UTMZoneNumber;
             var ZoneLetter = UTMZoneLetter;
-            int NorthernHemisphere;
-
-            //ASCII of N is 78, all letters after N is in northern hemisphere
-            if (UTMZoneLetter[0] >  77)
+            //ASCII of N is 78, all letters from N on are in the northern hemisphere; southern northings carry
+            //a 10 000 km false northing.
+            if (UTMZoneLetter[0] <= 77)
             {
-                NorthernHemisphere = 1;
-            }
-            else
-            {
-                NorthernHemisphere = 0;
                 y -= 10000000.0;
             }
 

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Regression tests for the engine, as a plain console runner: the local NuGet feed has no test
+       framework, and none is needed. Exit code 0 = every test passed. Built by the harness with every
+       other PREACT project; run it with
+         dotnet PREACT/PREACTtests/bin/Debug/net8.0/PREACTtests.dll [file.wui ...]
+       (Linux: LD_LIBRARY_PATH must contain the GDAL 3.10 libgdal.so.36). See Program.cs for options. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <RootNamespace>PREACT.Tests</RootNamespace>
+    <AssemblyName>PREACTtests</AssemblyName>
+    <RollForward>LatestMajor</RollForward>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PREACTcore\PREACTcore.csproj" />
+  </ItemGroup>
+
+</Project>

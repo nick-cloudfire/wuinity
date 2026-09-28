@@ -63,6 +63,8 @@ namespace PREACT.Utility
             //As named, when that is a SUMO file that exists. An absolute path survives the combine.
             if (!string.IsNullOrWhiteSpace(configuredPath))
             {
+                //Forward slashes: a Windows-written sumo\\osm.sumocfg must resolve on every platform.
+                configuredPath = configuredPath.Trim().Replace('\\', '/');
                 string asNamed = Path.Combine(rootFolder ?? string.Empty, configuredPath);
                 bool typeOk = requireConfiguration ? IsConfiguration(configuredPath) : IsSumoFile(configuredPath);
 

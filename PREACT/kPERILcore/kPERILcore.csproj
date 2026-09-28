@@ -8,7 +8,9 @@
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>disable</Nullable>
+    <!-- annotations: the vendored source uses ? annotations (CS8632 under disable) but was never written
+         against nullable flow analysis. -->
+    <Nullable>annotations</Nullable>
     <LangVersion>latest</LangVersion>
     <RootNamespace>kPERIL</RootNamespace>
     <AssemblyName>kPERILcore</AssemblyName>
@@ -17,9 +19,6 @@
   <ItemGroup>
     <Reference Include="gdal_csharp">
       <HintPath>..\PREACTcore\Runtimes\Native\GDAL\gdal_csharp.dll</HintPath>
-    </Reference>
-    <Reference Include="gdalconst_csharp">
-      <HintPath>..\PREACTcore\Runtimes\Native\GDAL\gdalconst_csharp.dll</HintPath>
     </Reference>
     <Reference Include="ogr_csharp">
       <HintPath>..\PREACTcore\Runtimes\Native\GDAL\ogr_csharp.dll</HintPath>

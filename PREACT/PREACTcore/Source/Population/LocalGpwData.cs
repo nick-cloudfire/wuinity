@@ -52,86 +52,7 @@ namespace PREACT.Population
             return new Vector2d(xSize, ySize);
         }
 
-        public void SaveToDisk(string filePath)
-        {            
-            string[] data = new string[6];
-                        
-            data[0] = ActualOriginLatLon.x + " " + ActualOriginLatLon.y;
-            data[1] = OriginOffset.x + " " + OriginOffset.y;
-            data[2] = RealWorldSize.x + " " + RealWorldSize.y;
-            data[3] = CellCount.x + " " + CellCount.y;
-            data[4] = TotalPopulation.ToString();
 
-            string densityData = "";
-            for (int i = 0; i < _density.Length; ++i)
-            {
-                densityData += _density[i] + " ";
-            }
-            data[5] = densityData;
-
-            File.WriteAllLines(filePath, data);
-        }
-
-        public static LocalGPWData LoadFromFile(string localGpwFilePath, out bool success)
-        {
-            success = false;
-            LocalGPWData localGPWData = null;
-
-            if (File.Exists(localGpwFilePath))
-            {
-                string[] d = File.ReadAllLines(localGpwFilePath);
-
-                Vector2d actualOriginDegrees;
-                Vector2d originOffset;
-                Vector2d realWorldSize;
-                Vector2int _cellCount;  
-                int totalPopulation;
-                double[] density;
-
-                string[] dummy = d[0].Split(' ');
-                double xD;
-                double yD;
-                double.TryParse(dummy[0], out xD);
-                double.TryParse(dummy[1], out yD);
-                actualOriginDegrees = new Vector2d(xD, yD);
-
-                dummy = d[1].Split(' ');
-                double.TryParse(dummy[0], out xD);
-                double.TryParse(dummy[1], out yD);
-                originOffset = new Vector2d(xD, yD);
-
-                dummy = d[2].Split(' ');
-                double.TryParse(dummy[0], out xD);
-                double.TryParse(dummy[1], out yD);
-                realWorldSize = new Vector2d(xD, yD);
-
-                dummy = d[3].Split(' ');
-                int xI;
-                int yI;
-                int.TryParse(dummy[0], out xI);
-                int.TryParse(dummy[1], out yI);
-                _cellCount = new Vector2int(xI, yI);
-
-                int.TryParse(d[4], out totalPopulation);
-
-                dummy = d[5].Split(' ');
-                density = new double[_cellCount.x * _cellCount.y];
-                for (int i = 0; i < density.Length; ++i)
-                {
-                    double.TryParse(dummy[i], out density[i]);
-                }
-
-                localGPWData = new LocalGPWData(actualOriginDegrees, originOffset, realWorldSize, _cellCount, totalPopulation, density);
-                success = true;
-                Engine.Message(null, Engine.LogType.Log, " Loaded local GPW data from " + localGpwFilePath);
-            }
-            else
-            {
-                Engine.Message(null, Engine.LogType.Warning, " No local GPW data was found, build from global GPW or create custom population.");                
-            }
-
-            return localGPWData;
-        }
 
         public static LocalGPWData CreateLocalGPWData(Vector2d lowerLeftLatLon, Vector2d domainSize, string globalGpwFolder, out bool success)
         {
@@ -340,17 +261,17 @@ namespace PREACT.Population
 
                 //read and save general stuff
                 string[] dummy = d[0].Split(' ');
-                int.TryParse(dummy[dummy.Length - 1], out ncols);
+                int.TryParse(dummy[dummy.Length - 1], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out ncols);
                 dummy = d[1].Split(' ');
-                int.TryParse(dummy[dummy.Length - 1], out nrows);
+                int.TryParse(dummy[dummy.Length - 1], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out nrows);
                 dummy = d[2].Split(' ');
-                double.TryParse(dummy[dummy.Length - 1], out xllcorner);
+                double.TryParse(dummy[dummy.Length - 1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out xllcorner);
                 dummy = d[3].Split(' ');
-                double.TryParse(dummy[dummy.Length - 1], out yllcorner);
+                double.TryParse(dummy[dummy.Length - 1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out yllcorner);
                 dummy = d[4].Split(' ');
-                double.TryParse(dummy[dummy.Length - 1], out cellsize);
+                double.TryParse(dummy[dummy.Length - 1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out cellsize);
                 dummy = d[5].Split(' ');
-                int.TryParse(dummy[dummy.Length - 1], out NODATA_value);
+                int.TryParse(dummy[dummy.Length - 1], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out NODATA_value);
 
                 Vector2d degreesToRead = SizeToDegrees(latLon, size);
                 //number of columns and rows
@@ -404,7 +325,7 @@ namespace PREACT.Population
                         if (j >= xSI && j <= xEI && realYIndex >= ySI && realYIndex <= yEI)
                         {
                             int index = (j - xSI) + (realYIndex - ySI) * cells.x;
-                            double.TryParse(e[j], out density[index]);
+                            double.TryParse(e[j], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out density[index]);
                         }
                     }
                 }

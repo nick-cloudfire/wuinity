@@ -25,34 +25,10 @@ namespace PREACT
             output[1] = "0.0, 0";
             for (int i = 0; i < data.Length; i++)
             {
-                output[i + 2] = data[i].ToString() + "," + (i + 1).ToString();
+                output[i + 2] = data[i].ToString("R", System.Globalization.CultureInfo.InvariantCulture) + "," + (i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
             }
             string path = Path.Combine(_engine.OutputFolder, _engine.Simulation.Input.Simulation.Name + "_traffic_average.csv");
             File.WriteAllLines(path, output);
-        }
-
-        byte[] _plotBytes;
-        public void CreatePlotData(double[] xData, double[] yData)
-        {
-            /*if (xData.Length > 0 && yData.Length > 0)
-            {
-                ScottPlot.Plot timeTraffic = new ScottPlot.Plot(512, 512);
-                timeTraffic.AddScatterLines(xData, yData);
-                timeTraffic.Title("Average cumulative arrival of cars");
-                timeTraffic.YLabel("Number of cars [-]");
-                timeTraffic.XLabel("Time [h]");
-                //string plotPath = timeTraffic.SaveFig(System.IO.Path.Combine(WUIEngine.OUTPUT_FOLDER, "traffic_avg.png"));
-                byte[] byteData = timeTraffic.GetImageBytes();
-            }*/
-        }
-
-        /// <summary>
-        /// Returns bytes for bitmap to draw a plot of average curve for evacuation.
-        /// </summary>
-        /// <returns></returns>
-        public byte[] GetArrivalPlotBytes()
-        {
-            return _plotBytes;
         }
     }
 }

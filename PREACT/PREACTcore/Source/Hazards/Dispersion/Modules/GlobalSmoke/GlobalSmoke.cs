@@ -9,6 +9,18 @@ using PREACT.Math;
 
 namespace PREACT.Dispersion
 {
+    /// <summary>
+    /// One smoke value for the whole domain, read from a time ramp (<c>[GlobalSmoke] ExtinctionFile</c>: a header,
+    /// then <c>time [s], extinction coefficient [1/m]</c> rows).
+    /// </summary>
+    /// <remarks>
+    /// The ramp holds an <b>extinction coefficient</b>. It used to be handed out as a soot density and multiplied
+    /// by 8700 m2/kg on the way to the SUMO speed reduction, so the speed model saw K x 8700 - 1740 /m for
+    /// Roxborough's 0.2 /m. <see cref="GetExtinctionCoefficientAtPos"/> returns the ramp value itself now. The
+    /// <c>GetSootDensity*</c> members still return the ramp value too, because the Unity smoke renderer reads them
+    /// and scales its colours as an extinction coefficient; switch it to <see cref="GetExtinctionCoefficient"/>
+    /// and they can return a true density.
+    /// </remarks>
     public class GlobalSmoke : SmokeModule
     {
         ExtinctionRamp _extinctionCoefficientRamp;
@@ -52,6 +64,17 @@ namespace PREACT.Dispersion
         }
 
         public override float GetSootDensityAtCoordinate(Vector2d latLon)
+        {
+            return _extinctionCoefficientOutput[0];
+        }
+
+        /// <summary>The domain's extinction coefficient now, 1/m.</summary>
+        public float GetExtinctionCoefficient()
+        {
+            return _extinctionCoefficientOutput[0];
+        }
+
+        public override float GetExtinctionCoefficientAtPos(Vector2d pos)
         {
             return _extinctionCoefficientOutput[0];
         }

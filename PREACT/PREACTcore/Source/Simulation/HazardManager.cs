@@ -34,10 +34,27 @@ namespace PREACT
         }
                 
         /// <summary>When the distance-to-fire field was last recomputed. The transform is O(cells) and the
-        /// front moves slowly next to the timestep, so five minutes apart is ample.</summary>
+        /// front moves slowly next to the timestep; the interval is [MacroHouseholdSim] FireReactionUpdateInterval.</summary>
         private float _lastDistanceTransformTime = float.NegativeInfinity;
-        private const float DistanceTransformIntervalSeconds = 300f;
+        private float[,] _burnedSoFar;
+        private int _frontVersion;
 
+        /// <summary>
+        /// Increases every time the distance-to-fire field is recomputed; 0 until the fire has burned anything.
+        /// Lets a consumer skip work when the field has not changed.
+        /// </summary>
+        public int WildfireFrontVersion { get => _frontVersion; }
+
+        /// <summary>
+        /// Distance from every fire cell to the fire as it is <b>now</b>: the cells whose arrival time is at or
+        /// before <paramref name="simulationTime"/>.
+        /// </summary>
+        /// <remarks>
+        /// This used to feed the transform the final rate-of-spread raster - every cell the fire would reach by
+        /// the end of the run - and recompute that same static field every five minutes, so from the first burning
+        /// sweep every household within the reaction distance of anywhere the fire would ever go counted as
+        /// threatened.
+        /// </remarks>
         private void CalculateWildfireDistanceTransform(float simulationTime)
         {
             //_wildfire is null when no wildfire module is enabled (e.g. a
@@ -48,34 +65,47 @@ namespace PREACT
             }
 
             //Elapsed time, not (int)simulationTime % 300 == 0. That only fires when the clock lands exactly
-            //on a multiple of 300, so it depended on the timestep dividing 300: at DeltaTime = 7 the clock
-            //runs 294, 301, 308 and never satisfies it, so the distance field was never computed after t = 0,
-            //DistanceToWildfire returned float.MaxValue forever, and the fire had no effect on when anyone
-            //left - silently. Same defect as the one in AscFireImport.Step.
-            if (simulationTime - _lastDistanceTransformTime < DistanceTransformIntervalSeconds)
+            //on a multiple of 300, so it depended on the timestep dividing 300.
+            float interval = _simulation.Input.PedestrianModule.MacroHouseholdSimInput.FireReactionUpdateInterval;
+            if (simulationTime - _lastDistanceTransformTime < interval)
             {
                 return;
             }
             _lastDistanceTransformTime = simulationTime;
 
-            float[,] front = _wildfire.GetMaxROS();
-            if(_wildfireFrontDistance == null)
+            int xDim = _wildfire.GetCellCountX();
+            int yDim = _wildfire.GetCellCountY();
+            if (_wildfireFrontDistance == null)
             {
-                int xDim = front.GetLength(0);
-                int yDim = front.GetLength(1);
-                _wildfireFrontDistance = new float[xDim, yDim]; 
-                for(int j = 0; j < yDim; ++j)
-                {
-                    for (int i = 0; i < xDim; ++i)
-                    {
-                        _wildfireFrontDistance[i, j] = float.MaxValue;
-                    }
-                }
-                
+                _wildfireFrontDistance = new float[xDim, yDim];
+                _burnedSoFar = new float[xDim, yDim];
             }
-            Utility.Analysis.EuclideanDistanceTransform.ComputeEDT(front, _wildfireFrontDistance, _wildfire.GetCellSizeX(), _wildfire.GetCellSizeY(), 0f); 
+
+            int burned = 0;
+            for (int x = 0; x < xDim; ++x)
+            {
+                for (int y = 0; y < yDim; ++y)
+                {
+                    float arrival = _wildfire.GetTimeOfArrival(x, y);
+                    bool hasBurned = arrival != float.MaxValue && arrival <= simulationTime;
+                    _burnedSoFar[x, y] = hasBurned ? 1f : 0f;
+                    burned += hasBurned ? 1 : 0;
+                }
+            }
+
+            if (burned == 0)
+            {
+                return;
+            }
+
+            Utility.Analysis.EuclideanDistanceTransform.ComputeEDT(_burnedSoFar, _wildfireFrontDistance, _wildfire.GetCellSizeX(), _wildfire.GetCellSizeY(), 0f);
+            ++_frontVersion;
         }
 
+        /// <summary>
+        /// Distance in metres from a simulation position to the nearest cell the fire has reached so far, as of
+        /// the last update; <see cref="float.MaxValue"/> outside the fire grid or before anything has burned.
+        /// </summary>
         public float DistanceToWildfire(Vector2d simulationPos)
         {
             float distance = float.MaxValue;
@@ -89,30 +119,34 @@ namespace PREACT
             return distance;
         }
 
+        /// <summary>
+        /// Creates the fire and smoke modules, each on its own: either may be enabled without the other.
+        /// </summary>
+        /// <remarks>
+        /// This used to return as soon as there was no fire module, before the smoke module was even looked at -
+        /// so a smoke-only scenario (GlobalSmoke needs no fire) silently ran without smoke.
+        /// </remarks>
         public List<SimulationModule> CreateModules(WeatherManager weather, TimeManager time, out bool success)
         {
             List<SimulationModule> createdModules = new List<SimulationModule>();
 
-            CreateWildfireModule(_simulation, _simulation.Input, weather, time, out success);
-            if(success && _wildfire != null)
+            CreateWildfireModule(_simulation, _simulation.Input, weather, time, out bool fireOk);
+            if (fireOk && _wildfire != null)
             {
                 createdModules.Add(_wildfire);
             }
-            else
+
+            bool smokeOk = false;
+            if (fireOk)
             {
-                return createdModules;
-            }
-            
-            CreateSmokeModule(_simulation, _simulation.Input, weather, time, out success);
-            if (success && _smoke != null)
-            {
-                createdModules.Add(_smoke);
-            }
-            else
-            {
-                return createdModules;
+                CreateSmokeModule(_simulation, _simulation.Input, weather, time, out smokeOk);
+                if (smokeOk && _smoke != null)
+                {
+                    createdModules.Add(_smoke);
+                }
             }
 
+            success = fireOk && smokeOk;
             return createdModules;
         }
 
@@ -238,9 +272,15 @@ namespace PREACT
 
             if (input.SmokeModule.Enabled)
             {
-                if (input.SmokeModule.Module == SmokeInput.SmokeModules.GlobalSmoke)
+                if (input.SmokeModule.Module == SmokeInput.SmokeModules.GlobalSmoke && input.SmokeModule.Data.ExtinctionRamp != null)
                 {
                     _smoke = new GlobalSmoke(simulation, input.SmokeModule.Data.ExtinctionRamp);
+                    Engine.Message(simulation, Engine.LogType.Log, "Smoke module GlobalSmoke initiated.");
+                }
+                else
+                {
+                    Engine.Message(simulation, Engine.LogType.SimulationError, "The smoke module is enabled but could not be created: "
+                        + (input.SmokeModule.Module == SmokeInput.SmokeModules.GlobalSmoke ? "the extinction ramp was not loaded." : "no smoke module is chosen."));
                 }
             }
             else
@@ -256,18 +296,11 @@ namespace PREACT
         }
 
         /// <summary>
-        /// Returns optical density at ground level and location in simulation space.
+        /// Light extinction coefficient (1/m) at ground level at a position in simulation space; 0 without smoke.
         /// </summary>
-        /// <returns></returns>
         public float GetExtinctionCoefficientAtPos(Vector2d pos)
         {
-            float result = 0f;
-            if(_smoke != null)
-            {
-                result = _smoke.GetSootDensityAtPos(pos) * 8700f; //TODO: user specified mass specific extinction coefficient
-            }
-
-            return result;
+            return _smoke != null ? _smoke.GetExtinctionCoefficientAtPos(pos) : 0f;
         }
     }
 }

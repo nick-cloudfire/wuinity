@@ -57,48 +57,50 @@ namespace PREACT.Evacuation
                 _demographics = simulation.Evacuation.DefaultDemographics;
             }
 
-            //this is where we need to "re-build" the information from input
+            //this is where we need to "re-build" the information from input. A name that refers to nothing is
+            //skipped together with its CDF entry, so the two lists stay aligned; the checklist has already said
+            //so (critical when the module that needs it is on). It used to log a SimulationError here, which
+            //stopped the run even when the traffic module that needs destinations was switched off.
             _destinations = new List<EvacuationDestination>(groupInput.Destinations.Count);
+            _destinationsCDF = new List<double>(groupInput.Destinations.Count);
             for(int i = 0; i < groupInput.Destinations.Count; ++i)
             {
-                EvacuationDestination eD;
-                if (allDestinations.TryGetValue(groupInput.Destinations[i], out eD))
+                if (allDestinations.TryGetValue(groupInput.Destinations[i], out EvacuationDestination eD))
                 {
-                    Destinations.Add(eD);
+                    _destinations.Add(eD);
+                    _destinationsCDF.Add(i < groupInput.DestinationsCDF.Count ? groupInput.DestinationsCDF[i] : 1.0);
                 }
                 else
                 {
-                    Engine.Message(simulation, Engine.LogType.SimulationError, "When creating evacuation groups a referenced group name was not found.");
+                    Engine.Message(simulation, Engine.LogType.Warning, $"Evacuation group {_name}: destination {groupInput.Destinations[i]} does not exist and is ignored.");
                 }
             }
-            _destinationsCDF = groupInput.DestinationsCDF;
 
             _responseCurves = new List<ResponseCurve>(groupInput.ResponseCurves.Count);
+            _responseCurvesCDF = new List<double>(groupInput.ResponseCurves.Count);
             for (int i = 0; i < groupInput.ResponseCurves.Count; ++i)
             {
-                ResponseCurve rC;
-                if (allResponseCurves.TryGetValue(groupInput.ResponseCurves[i], out rC))
+                if (allResponseCurves.TryGetValue(groupInput.ResponseCurves[i], out ResponseCurve rC))
                 {
                     _responseCurves.Add(rC);
+                    _responseCurvesCDF.Add(i < groupInput.ResponseCurvesCDF.Count ? groupInput.ResponseCurvesCDF[i] : 1.0);
                 }
                 else
                 {
-                    Engine.Message(simulation, Engine.LogType.SimulationError, "When creating evacuation groups a referenced response curve was not found.");
+                    Engine.Message(simulation, Engine.LogType.Warning, $"Evacuation group {_name}: response curve {groupInput.ResponseCurves[i]} does not exist and is ignored.");
                 }
             }
-
-            _responseCurvesCDF = groupInput.ResponseCurvesCDF;
 
             //A painted mask defines the area directly, so there is no polygon to build from a
             //shapefile that may not even be present.
             if (!string.IsNullOrEmpty(groupInput.MaskFile))
             {
-                LoadMask(simulation, System.IO.Path.Combine(simulation.Input.RootFolder, groupInput.MaskFile));
+                LoadMask(simulation, Input.PREACTInput.ResolvePath(simulation.Input.RootFolder, groupInput.MaskFile));
             }
 
             if (_mask == null)
             {
-                string shapeFilePath = System.IO.Path.Combine(simulation.Input.RootFolder, groupInput.ShapeFile);
+                string shapeFilePath = Input.PREACTInput.ResolvePath(simulation.Input.RootFolder, groupInput.ShapeFile);
                 CreateShapeFilePolygon(simulation, shapeFilePath);
             }
         }
@@ -329,22 +331,31 @@ namespace PREACT.Evacuation
             return result;
         }
 
+        /// <summary>
+        /// A destination drawn from the group's cumulative distribution.
+        /// </summary>
+        /// <remarks>
+        /// A draw above the last CDF value (a CDF that ends below 1, which the load reports) goes to the <b>last</b>
+        /// destination, as the message always said; it used to go to the first. Null only for a group with no
+        /// destination at all, which the checklist makes critical whenever traffic is on.
+        /// </remarks>
         public EvacuationDestination GetWeightedRandomDestination()
         {
-            float randomChoice = Random.valueF;
-            EvacuationDestination eD = Destinations[0];            
+            if (_destinations.Count == 0)
+            {
+                return null;
+            }
 
-            for (int i = 0; i < _destinationsCDF.Count; i++)
+            float randomChoice = Random.valueF;
+            for (int i = 0; i < _destinationsCDF.Count && i < _destinations.Count; i++)
             {
                 if (randomChoice <= _destinationsCDF[i])
                 {
-                    return Destinations[i];
+                    return _destinations[i];
                 }
             }
 
-            //this should not happen, but keep as backup as we do not want to return null
-            Engine.Message(null, Engine.LogType.Warning, "The evacuation destinations specified have cumulative probability under 1.0 and a higher probability was drawn, using last user destination specified as fallback.");            
-            return eD;
+            return _destinations[_destinations.Count - 1];
         }
 
         public EvacuationDestination GetClosestEuclideanDestination(Vector2d startLatLon, Simulation simulation)
@@ -367,13 +378,25 @@ namespace PREACT.Evacuation
             return closestDestination;
         }
 
+        /// <summary>
+        /// A household's response time in seconds after the simulation start, drawn from one of the group's
+        /// curves; <see cref="float.MaxValue"/> for a household that does not evacuate (a draw above the curve's
+        /// final probability).
+        /// </summary>
+        /// <param name="evacuationOrderStart">Seconds from the simulation start to this group's evacuation order.
+        /// Added to a Relative curve; an Absolute curve is already measured from the simulation start.</param>
         public float GetWeightedRandomResponseTime(float evacuationOrderStart)
         {
             float responseTime = float.MaxValue;
+            if (_responseCurves.Count == 0)
+            {
+                return responseTime;
+            }
+
             float r = Random.valueF;
-            //get curve index from evac group
-            ResponseCurve pickedCurve = _responseCurves[0];
-            for (int i = 0; i < _responseCurves.Count; i++)
+            //get curve index from evac group; a draw above the last CDF value takes the last curve
+            ResponseCurve pickedCurve = _responseCurves[_responseCurves.Count - 1];
+            for (int i = 0; i < _responseCurves.Count && i < _responseCurvesCDF.Count; i++)
             {
                 if (r <= _responseCurvesCDF[i])
                 {
@@ -382,14 +405,15 @@ namespace PREACT.Evacuation
                 }
             }
 
+            float offset = pickedCurve.TimeInput == TimeInputs.Absolute ? 0f : evacuationOrderStart;
+
             //need new random
             r = Random.valueF;            
             for (int i = 1; i < pickedCurve.DataPoints.Length; i++) //skip first as that is always zero probability
             {
                 if (r <= pickedCurve.DataPoints[i].Probability)
                 {
-                    //offset with evacuation order time
-                    responseTime = Random.Range(pickedCurve.DataPoints[i - 1].Time, pickedCurve.DataPoints[i].Time) + evacuationOrderStart;
+                    responseTime = Random.Range(pickedCurve.DataPoints[i - 1].Time, pickedCurve.DataPoints[i].Time) + offset;
                     break;
                 }
             }

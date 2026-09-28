@@ -35,81 +35,66 @@ namespace PREACT.Input
 
         public void Parse(string[] inputLines, int startIndex, Dictionary<string, int> headerLineIndex, SimulationInput simulationInput, string rootFolder, out bool success)
         {
-            success = false;
-            int issues = 0;             
+            success = true;
             Dictionary<string, string> inputToParse = PREACTInput.GetHeaderInput(inputLines, startIndex);
             string nameOfInput, userInput;
 
             nameOfInput = nameof(Enabled);
             if (inputToParse.TryGetValue(nameOfInput, out userInput))
             {
-                success = bool.TryParse(userInput, out Enabled);
+                if (!InputParse.Bool(userInput, out Enabled))
+                {
+                    Enabled = false;
+                    PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput, false, "false");
+                }
             }
             else
             {
-                success = false;
-                PREACTInput.InputNotFoundMessage(nameOfInput);
-            }
-            if(!success)
-            {
-                return;
+                PREACTInput.InputNotFoundMessage(nameOfInput, false, "false");
             }
 
-            if (Enabled)
+            //Read whether or not the boundary is on, so a save keeps the k-PERIL settings (they used to be
+            //skipped when it was off, and the writer dropped them); nothing is critical when off.
+            using (PREACTInput.SoftRequirements(!Enabled))
             {
                 nameOfInput = nameof(Module);
                 if (inputToParse.TryGetValue(nameOfInput, out userInput))
                 {
-                    switch (userInput)
+                    if (!InputParse.Enum(userInput, out Module))
                     {
-                        case nameof(TriggerBufferModules.kPERIL):
-                            Module = TriggerBufferModules.kPERIL;
-                            break;
-                        default:
-                            ++issues;
-                            PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
-                            break;
+                        Module = TriggerBufferModules.None;
+                        success &= !Enabled;
+                        PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
                     }
                 }
-                else
-                {
-                    ++issues;
-                    PREACTInput.InputNotFoundMessage(nameOfInput);
-                }
-                if(issues > 0)
+                else if (Enabled)
                 {
                     success = false;
                     PREACTInput.InputNotFoundMessage(nameOfInput, true);
-                    return;
                 }
 
-                //now check modules that have been selected
-                if (Module == TriggerBufferModules.kPERIL)
+                if (Enabled && Module == TriggerBufferModules.None)
                 {
-                    //critical
-                    nameOfInput = nameof(TriggerBufferModules.kPERIL);
-                    int lineindex;
-                    if (headerLineIndex.TryGetValue(nameOfInput, out lineindex))
+                    success = false;
+                    PREACTInput.InputProblem(nameOfInput, "the trigger boundary is enabled but no module is chosen; choose kPERIL or switch it off.");
+                }
+
+                nameOfInput = nameof(TriggerBufferModules.kPERIL);
+                if (headerLineIndex.TryGetValue(nameOfInput, out int lineindex))
+                {
+                    using (PREACTInput.SoftRequirements(Module != TriggerBufferModules.kPERIL))
                     {
-                        _kPERILInput = kPERILInput.Parse(inputLines, lineindex, rootFolder, out success);
-                    }
-                    else
-                    {
-                        success = false;
-                        PREACTInput.InputNotFoundMessage(nameOfInput);
-                    }
-                    if(!success)
-                    {
-                        return;
+                        PREACTInput.ReadingInputMessage(nameOfInput);
+                        _kPERILInput = kPERILInput.Parse(inputLines, lineindex, rootFolder, out bool ok);
+                        success &= ok || !Enabled || Module != TriggerBufferModules.kPERIL;
                     }
                 }
-                else
+                else if (Enabled && Module == TriggerBufferModules.kPERIL)
                 {
-                    Engine.Message(null, Engine.LogType.Debug, "Trying to use non-implemented trigger buffer.");
+                    success = false;
+                    PREACTInput.InputNotFoundMessage("[" + nameOfInput + "]", true);
                 }
             }
-
-            success = true;
         }
     }     
 }

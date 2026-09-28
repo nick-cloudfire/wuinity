@@ -27,8 +27,17 @@ namespace PREACT.Utility
             public int Nrows;
             public double XllCorner;
             public double YllCorner;
+            /// <summary>Cell width (x) in the raster's units.</summary>
             public double CellSize;
             public double NoDataValue;
+
+            /// <summary>
+            /// Cell height (y). Equal to <see cref="CellSize"/> for an .asc and for square GeoTIFF pixels; a GeoTIFF
+            /// with rectangular pixels (the Mati DEM is 27.592 x 27.616 m) has its own here. It used to be taken to
+            /// be the width, which misplaces the far edge of such a grid by the difference times the row count
+            /// (about 14 m across Mati). Code that assumes square cells should compare the two.
+            /// </summary>
+            public double CellSizeY;
 
             /// <summary>
             /// The raster's coordinate reference system as an EPSG code, or 0 when it does not say.
@@ -79,7 +88,7 @@ namespace PREACT.Utility
                     code = srs.GetAuthorityCode("PROJCS") ?? srs.GetAuthorityCode("GEOGCS");
                 }
 
-                return int.TryParse(code, out int epsg) ? epsg : 0;
+                return int.TryParse(code, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int epsg) ? epsg : 0;
             }
             catch
             {
@@ -105,7 +114,85 @@ namespace PREACT.Utility
 
         private static string[] SplitLine(string line)
         {
-            return line.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+            return (line ?? string.Empty).Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+        }
+
+        /// <summary>
+        /// Reads an ESRI ASCII grid header: keyword/value lines in any order, case-insensitive - ncols, nrows,
+        /// xllcorner or xllcenter, yllcorner or yllcenter, cellsize (or dx/dy), and an optional NODATA_value
+        /// (default -9999). Returns the number of header lines, or -1 with a message when a required key is
+        /// missing. It used to assume exactly six lines in a fixed order, so a grid written with xllcenter, or
+        /// without NODATA_value, was read with the first data row taken for the nodata value.
+        /// </summary>
+        private static int ParseAscHeader(Func<int, string> line, string filePath, ref Header header)
+        {
+            bool haveCols = false, haveRows = false, haveX = false, haveY = false, haveSize = false;
+            bool xCentre = false, yCentre = false;
+            header.NoDataValue = -9999.0;
+            double dx = 0.0, dy = 0.0;
+            int count = 0;
+            for (int i = 0; ; ++i)
+            {
+                string[] parts = SplitLine(line(i));
+                if (parts.Length < 2 || !char.IsLetter(parts[0][0]))
+                {
+                    break;
+                }
+                count = i + 1;
+                string key = parts[0].ToLowerInvariant();
+                double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double value);
+                switch (key)
+                {
+                    case "ncols": header.Ncols = (int)value; haveCols = true; break;
+                    case "nrows": header.Nrows = (int)value; haveRows = true; break;
+                    case "xllcorner": header.XllCorner = value; haveX = true; break;
+                    case "xllcenter": header.XllCorner = value; haveX = true; xCentre = true; break;
+                    case "yllcorner": header.YllCorner = value; haveY = true; break;
+                    case "yllcenter": header.YllCorner = value; haveY = true; yCentre = true; break;
+                    case "cellsize": header.CellSize = value; header.CellSizeY = value; haveSize = true; break;
+                    case "dx": dx = value; break;
+                    case "dy": dy = value; break;
+                    case "nodata_value": header.NoDataValue = value; break;
+                }
+            }
+
+            if (!haveSize && dx > 0.0)
+            {
+                header.CellSize = dx;
+                header.CellSizeY = dy > 0.0 ? dy : dx;
+                haveSize = true;
+            }
+
+            if (!(haveCols && haveRows && haveX && haveY && haveSize) || header.Ncols <= 0 || header.Nrows <= 0 || header.CellSize <= 0.0)
+            {
+                Engine.Message(null, Engine.LogType.InputError, "ASC file has an incomplete header (ncols, nrows, xll*, yll*, cellsize): " + filePath);
+                return -1;
+            }
+
+            //A centre is half a cell in from the corner every consumer expects.
+            if (xCentre) header.XllCorner -= 0.5 * header.CellSize;
+            if (yCentre) header.YllCorner -= 0.5 * header.CellSizeY;
+            return count;
+        }
+
+        /// <summary>Cell size from a GDAL geotransform, with a word about what the reader cannot represent.</summary>
+        private static void ApplyGeoTransform(double[] gt, string filePath, ref Header header)
+        {
+            header.CellSize = System.Math.Abs(gt[1]);
+            header.CellSizeY = System.Math.Abs(gt[5]);
+            header.XllCorner = gt[0];
+            header.YllCorner = gt[3] + gt[5] * header.Nrows; //gt[5] negative -> bottom edge
+
+            if (gt[2] != 0.0 || gt[4] != 0.0)
+            {
+                Engine.Message(null, Engine.LogType.Warning, $"{Path.GetFileName(filePath)} is rotated in its geotransform ({gt[2]}, {gt[4]}); "
+                    + "the rotation is ignored and the raster will be misplaced. Warp it north-up first.");
+            }
+            else if (gt[5] > 0.0)
+            {
+                //South-up: the origin is the lower-left corner already.
+                header.YllCorner = gt[3];
+            }
         }
 
         /// <summary>
@@ -143,40 +230,39 @@ namespace PREACT.Utility
 
             if (!File.Exists(filePath))
             {
-                Engine.Message(null, Engine.LogType.SimulationError, "ASC file not found: " + filePath);
+                Engine.Message(null, Engine.LogType.InputError, "ASC file not found: " + filePath);
                 return null;
             }
 
             string[] lines = File.ReadAllLines(filePath);
-            if (lines.Length < 6)
+            int headerLines = ParseAscHeader(i => i < lines.Length ? lines[i] : null, filePath, ref header);
+            if (headerLines < 0)
             {
-                Engine.Message(null, Engine.LogType.SimulationError, "ASC file has no data: " + filePath);
                 return null;
             }
-
-            int.TryParse(SplitLine(lines[0])[1], out header.Ncols);
-            int.TryParse(SplitLine(lines[1])[1], out header.Nrows);
-            double.TryParse(SplitLine(lines[2])[1], NumberStyles.Any, CultureInfo.InvariantCulture, out header.XllCorner);
-            double.TryParse(SplitLine(lines[3])[1], NumberStyles.Any, CultureInfo.InvariantCulture, out header.YllCorner);
-            double.TryParse(SplitLine(lines[4])[1], NumberStyles.Any, CultureInfo.InvariantCulture, out header.CellSize);
-            double.TryParse(SplitLine(lines[5])[1], NumberStyles.Any, CultureInfo.InvariantCulture, out header.NoDataValue);
             header.EpsgCode = EpsgFromCompanionPrj(filePath);
 
             float[,] data = new float[header.Ncols, header.Nrows];
+            int shortRows = 0;
             for (int y = 0; y < header.Nrows; y++)
             {
-                if (y + 6 >= lines.Length)
+                if (y + headerLines >= lines.Length)
                 {
-                    Engine.Message(null, Engine.LogType.SimulationError, "ASC file has fewer data rows than nrows: " + filePath);
+                    Engine.Message(null, Engine.LogType.InputError, "ASC file has fewer data rows than nrows: " + filePath);
                     return null;
                 }
-                string[] row = SplitLine(lines[y + 6]);
+                string[] row = SplitLine(lines[y + headerLines]);
+                shortRows += row.Length < header.Ncols ? 1 : 0;
                 int yIndex = header.Nrows - 1 - y; //flip: first row is north
                 for (int x = 0; x < header.Ncols && x < row.Length; x++)
                 {
-                    float.TryParse(row[x], NumberStyles.Any, CultureInfo.InvariantCulture, out float v);
+                    float.TryParse(row[x], NumberStyles.Float, CultureInfo.InvariantCulture, out float v);
                     data[x, yIndex] = v;
                 }
+            }
+            if (shortRows > 0)
+            {
+                Engine.Message(null, Engine.LogType.Warning, $"{Path.GetFileName(filePath)}: {shortRows} row(s) have fewer than {header.Ncols} values; the missing cells read as 0.");
             }
 
             success = true;
@@ -240,7 +326,7 @@ namespace PREACT.Utility
 
             if (!File.Exists(filePath))
             {
-                Engine.Message(null, Engine.LogType.SimulationError, "GeoTIFF not found: " + filePath);
+                Engine.Message(null, Engine.LogType.InputError, "GeoTIFF not found: " + filePath);
                 return null;
             }
 
@@ -249,7 +335,7 @@ namespace PREACT.Utility
             {
                 if (ds == null)
                 {
-                    Engine.Message(null, Engine.LogType.SimulationError, "GDAL could not open: " + filePath);
+                    Engine.Message(null, Engine.LogType.InputError, "GDAL could not open: " + filePath);
                     return null;
                 }
 
@@ -258,14 +344,12 @@ namespace PREACT.Utility
 
                 double[] gt = new double[6];
                 ds.GetGeoTransform(gt); //[originX, pxW, 0, originY, 0, pxH(neg)]
-                double cellSize = gt[1];
-                double originX = gt[0];
-                double originY = gt[3];
+                bool southUp = gt[5] > 0.0;
 
                 bandCount = ds.RasterCount;
                 if (bandNumber < 1 || bandNumber > bandCount)
                 {
-                    Engine.Message(null, Engine.LogType.SimulationError,
+                    Engine.Message(null, Engine.LogType.InputError,
                         $"{Path.GetFileName(filePath)} has {bandCount} band(s); band {bandNumber} was asked for.");
                     return null;
                 }
@@ -275,9 +359,7 @@ namespace PREACT.Utility
 
                 header.Ncols = ncols;
                 header.Nrows = nrows;
-                header.CellSize = cellSize;
-                header.XllCorner = originX;
-                header.YllCorner = originY + gt[5] * nrows; //gt[5] negative -> bottom edge
+                ApplyGeoTransform(gt, filePath, ref header);
                 header.NoDataValue = hasNodata != 0 ? nodata : -9999.0;
                 //Populated here as well as in ReadHeader. Leaving it out meant a raster read for its data
                 //reported no CRS while the same file read for its header reported one, so whether a raster
@@ -290,7 +372,7 @@ namespace PREACT.Utility
                 float[,] data = new float[ncols, nrows];
                 for (int row = 0; row < nrows; row++)
                 {
-                    int yIndex = nrows - 1 - row; //flip: GDAL row 0 is north
+                    int yIndex = southUp ? row : nrows - 1 - row; //flip: GDAL row 0 is north (for a north-up image)
                     for (int x = 0; x < ncols; x++)
                     {
                         data[x, yIndex] = buffer[row * ncols + x];
@@ -315,7 +397,7 @@ namespace PREACT.Utility
 
             if (!File.Exists(filePath))
             {
-                Engine.Message(null, Engine.LogType.SimulationError, "Raster not found: " + filePath);
+                Engine.Message(null, Engine.LogType.InputError, "Raster not found: " + filePath);
                 return header;
             }
 
@@ -327,7 +409,7 @@ namespace PREACT.Utility
                 {
                     if (ds == null)
                     {
-                        Engine.Message(null, Engine.LogType.SimulationError, "GDAL could not open: " + filePath);
+                        Engine.Message(null, Engine.LogType.InputError, "GDAL could not open: " + filePath);
                         return header;
                     }
 
@@ -336,9 +418,7 @@ namespace PREACT.Utility
 
                     header.Ncols = ds.RasterXSize;
                     header.Nrows = ds.RasterYSize;
-                    header.CellSize = gt[1];
-                    header.XllCorner = gt[0];
-                    header.YllCorner = gt[3] + gt[5] * header.Nrows; //gt[5] negative -> bottom edge
+                    ApplyGeoTransform(gt, filePath, ref header);
 
                     ds.GetRasterBand(1).GetNoDataValue(out double nodata, out int hasNodata);
                     header.NoDataValue = hasNodata != 0 ? nodata : -9999.0;
@@ -349,26 +429,24 @@ namespace PREACT.Utility
                 }
             }
 
-            //An .asc grid keeps all six in its first six lines, so the data never has to be touched.
+            //An .asc grid keeps its header in its first few lines, so the data never has to be touched.
             using (StreamReader reader = new StreamReader(filePath))
             {
-                string[] lines = new string[6];
-                for (int i = 0; i < 6; ++i)
+                var lines = new System.Collections.Generic.List<string>();
+                int headerLines = ParseAscHeader(i =>
                 {
-                    lines[i] = reader.ReadLine();
-                    if (lines[i] == null)
+                    while (lines.Count <= i)
                     {
-                        Engine.Message(null, Engine.LogType.SimulationError, "ASC file has no header: " + filePath);
-                        return header;
+                        string next = reader.ReadLine();
+                        if (next == null) return null;
+                        lines.Add(next);
                     }
+                    return lines[i];
+                }, filePath, ref header);
+                if (headerLines < 0)
+                {
+                    return header;
                 }
-
-                int.TryParse(SplitLine(lines[0])[1], out header.Ncols);
-                int.TryParse(SplitLine(lines[1])[1], out header.Nrows);
-                double.TryParse(SplitLine(lines[2])[1], NumberStyles.Any, CultureInfo.InvariantCulture, out header.XllCorner);
-                double.TryParse(SplitLine(lines[3])[1], NumberStyles.Any, CultureInfo.InvariantCulture, out header.YllCorner);
-                double.TryParse(SplitLine(lines[4])[1], NumberStyles.Any, CultureInfo.InvariantCulture, out header.CellSize);
-                double.TryParse(SplitLine(lines[5])[1], NumberStyles.Any, CultureInfo.InvariantCulture, out header.NoDataValue);
             }
 
             header.EpsgCode = EpsgFromCompanionPrj(filePath);
