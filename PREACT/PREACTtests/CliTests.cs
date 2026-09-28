@@ -15,6 +15,75 @@ namespace PREACT.Tests
             runner.Add("cli: PREACT is found where the build script puts it, by the platform's name", FindPreact);
             runner.Add("cli: converge-trigger arguments are parsed strictly", ArgumentParsing);
             runner.Add("cli: the newest campaign folder is found, replaced ones are not", LatestCampaign);
+            runner.Add("cli: every realization's evacuation runs on its own reproducible seed", EvacuationSeeds);
+        }
+
+        /// <summary>A campaign with just what writing a realization's scenario reads.</summary>
+        internal static Campaign MinimalCampaign(string scenarioDir, int seed, string[] baseLines)
+        {
+            var c = new Campaign
+            {
+                Options = CampaignOptions.Parse(new[] { "--wui", Path.Combine(scenarioDir, "base.wui"), "--max", "3", "--seed", seed.ToString(System.Globalization.CultureInfo.InvariantCulture) }),
+                BaseWuiPath = Path.Combine(scenarioDir, "base.wui"),
+                ScenarioDir = scenarioDir,
+                BaseLines = baseLines,
+                ScenarioName = "base",
+                SettingsHash = "0123456789abcdef",
+                StartDateTime = new DateTime(2026, 6, 28, 12, 0, 0),
+                InputsDir = Path.Combine(scenarioDir, "case", "inputs"),
+            };
+            c.Folder = Path.Combine(scenarioDir, "_output", "campaign_base_01234567");
+            c.RealizationsDir = Path.Combine(c.Folder, "realizations");
+            return c;
+        }
+
+        private static void EvacuationSeeds()
+        {
+            string dir = Directory.CreateTempSubdirectory("preact-seed-").FullName;
+            try
+            {
+                string[] baseLines = { "[Simulation]", "Name=base", "RandomSeed=42", "", "[kPERIL]", "OutputName=b.asc" };
+                Campaign c = MinimalCampaign(dir, 12345, baseLines);
+
+                int Seed(string[] lines)
+                {
+                    Input.PREACTInput input = Input.PREACTInput.LoadFromLines(lines, dir, out bool _);
+                    return input.Simulation.RandomSeed;
+                }
+
+                var seen = new HashSet<int>();
+                for (int index = 1; index <= 200; ++index)
+                {
+                    string id = CampaignLayout.RealizationId(index);
+                    var record = new RealizationRecord { Toa = "outputs/toa.tif", Ros = "outputs/vs.tif", Sd = "outputs/sd.tif", Mfws = "outputs/mfws.tif" };
+                    string[] lines = RealizationRunner.ScenarioLines(c, index, id, c.RealizationDir(id), record);
+                    int seed = Seed(lines);
+                    Assert.True(seed != 0, "never 0, which PREACT reads as 'seed from the clock'");
+                    Assert.True(seed != 42, "not the base scenario's own seed, which every realization would share");
+                    Assert.Equal(record.EvacuationSeed, seed, "the record carries the seed the scenario was written with");
+                    Assert.True(seen.Add(seed), "a seed of its own for realization " + index);
+
+                    //The same realization again - a resume re-running only its evacuation - gets the same seed.
+                    var again = new RealizationRecord { Toa = record.Toa, Ros = record.Ros, Sd = record.Sd, Mfws = record.Mfws };
+                    Assert.Equal(seed, Seed(RealizationRunner.ScenarioLines(c, index, id, c.RealizationDir(id), again)),
+                        "the same seed when realization " + index + " is written again");
+                }
+
+                Assert.True(RealizationRunner.EvacuationSeed(-RealizationRunner.EvacuationSeedOffset - 7, 7) != 0,
+                    "the one index that would land on 0 is moved off it");
+                Assert.True(RealizationRunner.EvacuationSeed(12345, 1) != RealizationRunner.EvacuationSeed(54321, 1),
+                    "another campaign seed gives another evacuation");
+
+                //Kept in the realization's record and read back.
+                string rdir = Path.Combine(dir, "r");
+                var saved = new RealizationRecord { EvacuationSeed = RealizationRunner.EvacuationSeed(12345, 3) };
+                saved.Save(rdir);
+                Assert.Equal(saved.EvacuationSeed, RealizationRecord.Load(rdir).EvacuationSeed, "realization.txt keeps the seed");
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
         }
 
         private static void ExitCodes()

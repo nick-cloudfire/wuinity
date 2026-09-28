@@ -125,7 +125,7 @@ namespace PREACTcli.Campaigns
 
             if (stopping()) { outcome.Cancelled = true; return outcome; }
 
-            bool ok = RealizationRunner.Run(c, id, dir, record, out string message, out bool cancelled);
+            bool ok = RealizationRunner.Run(c, index, id, dir, record, out string message, out bool cancelled);
             if (cancelled || stopping())
             {
                 outcome.Cancelled = true;

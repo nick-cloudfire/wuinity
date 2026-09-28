@@ -49,7 +49,7 @@ namespace PREACTcli.Campaigns
             WriteDiagnosticsHeader(diag);
             using var summary = new StreamWriter(Path.Combine(_c.Folder, CampaignLayout.RealizationsCsv));
             summary.WriteLine("realization,status,reused,message,fire_area_acres,elmfire_minutes,ignition_x,ignition_y,"
-                              + "wind_from_deg,mean_wind_10m_mph,dead_1h_pct,live_herbaceous_pct,live_woody_pct");
+                              + "wind_from_deg,mean_wind_10m_mph,dead_1h_pct,live_herbaceous_pct,live_woody_pct,evacuation_seed");
 
             int[,] insideCount = null;
             AscRaster.Header header = default;
@@ -371,7 +371,8 @@ namespace PREACTcli.Campaigns
                 rec == null ? "" : N(rec.WindFromDeg), rec == null ? "" : N(rec.MeanWindMph),
                 rec == null ? "" : N(rec.M1Percent),
                 rec == null || !rec.LiveDrawn ? "" : N(rec.LiveHerbaceousPercent),
-                rec == null || !rec.LiveDrawn ? "" : N(rec.LiveWoodyPercent)));
+                rec == null || !rec.LiveDrawn ? "" : N(rec.LiveWoodyPercent),
+                rec == null || rec.EvacuationSeed == 0 ? "" : rec.EvacuationSeed.ToString(CultureInfo.InvariantCulture)));
             w.Flush();
         }
     }

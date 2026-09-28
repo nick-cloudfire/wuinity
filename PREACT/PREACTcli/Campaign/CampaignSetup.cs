@@ -45,6 +45,7 @@ namespace PREACTcli.Campaigns
 
             c.ScenarioName = CampaignLayout.CampaignScenarioName(input.Simulation.Name, c.BaseWuiPath);
             c.StartDateTime = input.Simulation.StartDateTime;
+            c.BaseRandomSeed = input.Simulation.RandomSeed;
             c.CentreLatLon = CentreOf(input.Simulation.LowerLeftLatLon, input.Simulation.DomainSize);
 
             if (!input.TriggerBufferModule.Enabled
@@ -249,6 +250,10 @@ namespace PREACTcli.Campaigns
             s["weather.conditioning_days"] = o.ConditioningDays.ToString(CultureInfo.InvariantCulture);
             s["weather.windninja"] = c.WindNinjaExe == null ? "(none: uniform wind)" : Path.GetFileName(c.WindNinjaExe) + " mesh " + o.WindNinjaMesh;
             s["weather.start"] = c.StartDateTime.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture);
+
+            //How each realization's evacuation is seeded. Recorded because realizations computed before it existed ran
+            //on a clock seed, and reusing them beside reproducible ones would mix the two.
+            s["evacuation.seed"] = "seed + " + RealizationRunner.EvacuationSeedOffset.ToString(CultureInfo.InvariantCulture) + " + index";
 
             c.SettingsHash = ElmfireFingerprint.Hash(string.Join("\n", s.Select(kv => kv.Key + "=" + kv.Value)));
             c.Folder = Path.Combine(c.ScenarioDir, CampaignLayout.OutputFolder,

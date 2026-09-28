@@ -45,7 +45,7 @@ namespace PREACTcli.Campaigns
                 sb.AppendLine("# What each realization whose fire the ensemble used actually drew. Compare against");
                 sb.AppendLine("# weather_distributions.csv. The last two rows are the realized mean and standard deviation.");
                 sb.AppendLine("realization,temperature_c,relative_humidity_pct,wind_speed_10m_ms,wind_direction_deg,wind_direction_source,"
-                              + "dead_1h_pct,dead_10h_pct,dead_100h_pct,live_herbaceous_pct,live_woody_pct");
+                              + "dead_1h_pct,dead_10h_pct,dead_100h_pct,live_herbaceous_pct,live_woody_pct,evacuation_seed");
 
                 foreach ((string id, RealizationRecord d) in drawn)
                 {
@@ -53,7 +53,8 @@ namespace PREACTcli.Campaigns
                         N(d.Temperature), N(d.RelativeHumidity), N(d.WindSpeedMps), N(d.WindDirectionDeg),
                         d.DirectionResampled ? "resampled" : "aimed",
                         N(d.M1Percent), N(d.M10Percent), N(d.M100Percent),
-                        d.LiveDrawn ? N(d.LiveHerbaceousPercent) : "", d.LiveDrawn ? N(d.LiveWoodyPercent) : ""));
+                        d.LiveDrawn ? N(d.LiveHerbaceousPercent) : "", d.LiveDrawn ? N(d.LiveWoodyPercent) : "",
+                        d.EvacuationSeed == 0 ? "" : d.EvacuationSeed.ToString(CultureInfo.InvariantCulture)));
                 }
 
                 List<RealizationRecord> records = drawn.Select(u => u.Record).ToList();
@@ -80,7 +81,7 @@ namespace PREACTcli.Campaigns
                 N(f(all.Select(d => d.WindSpeedMps))), "", "",
                 N(f(all.Select(d => d.M1Percent))), N(f(all.Select(d => d.M10Percent))), N(f(all.Select(d => d.M100Percent))),
                 live.Count > 0 ? N(f(live.Select(d => d.LiveHerbaceousPercent))) : "",
-                live.Count > 0 ? N(f(live.Select(d => d.LiveWoodyPercent))) : ""));
+                live.Count > 0 ? N(f(live.Select(d => d.LiveWoodyPercent))) : "", ""));
         }
 
         private static double Sd(IEnumerable<double> values)

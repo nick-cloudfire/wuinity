@@ -160,6 +160,9 @@ namespace PREACTcli
             Console.WriteLine($"  ignition  drawn from {c.IgnitionMaskStem}.tif ({c.IgnitableCells} cells with a positive weight)"
                               + (o.WindToWui ? $", wind aimed at the WUI area centroid ({c.WuiCentreX:F0}, {c.WuiCentreY:F0}; {c.WuiCells} cells)" : ""));
             Console.WriteLine($"  k-PERIL   each realization's own midflame wind (ELMFIRE mfws) and wind direction");
+            Console.WriteLine($"  evacuation seeded per realization: [Simulation] RandomSeed = {o.Seed} + "
+                              + $"{RealizationRunner.EvacuationSeedOffset} + index"
+                              + (c.BaseRandomSeed != 0 ? $" (the scenario's own RandomSeed={c.BaseRandomSeed} is not used)" : ""));
             Console.WriteLine($"  runs      up to {o.MaxRealizations}, {o.Parallelism} at a time, until {o.Streak} consecutive "
                               + $"within {o.Tolerance:P0} per decile");
         }

@@ -35,6 +35,9 @@ namespace PREACTcli.Campaigns
 
         public double IgnitionX = double.NaN, IgnitionY = double.NaN, WindFromDeg = double.NaN;
         public double FireAreaAcres = -1.0;
+
+        /// <summary>The <c>[Simulation] RandomSeed</c> the evacuation ran with; 0 before it has run.</summary>
+        public int EvacuationSeed;
         public double ElmfireSeconds = -1.0;
 
         /// <summary>The drawn weather, when it was drawn from fitted distributions.</summary>
@@ -87,6 +90,8 @@ namespace PREACTcli.Campaigns
             r.WindFromDeg = Num(values, "wind_from_deg");
             r.FireAreaAcres = Num(values, "fire_area_acres", -1.0);
             r.ElmfireSeconds = Num(values, "elmfire_seconds", -1.0);
+            r.EvacuationSeed = int.TryParse(Str(values, "evacuation_seed", "0"), NumberStyles.Integer, CultureInfo.InvariantCulture,
+                out int evacuationSeed) ? evacuationSeed : 0;
             r.HasDraw = Str(values, "drawn", "false") == "true";
             r.Temperature = Num(values, "temperature_c");
             r.RelativeHumidity = Num(values, "relative_humidity_pct");
@@ -122,6 +127,7 @@ namespace PREACTcli.Campaigns
             Line(sb, "wind_from_deg", N(WindFromDeg));
             Line(sb, "fire_area_acres", N(FireAreaAcres));
             Line(sb, "elmfire_seconds", N(ElmfireSeconds));
+            Line(sb, "evacuation_seed", EvacuationSeed == 0 ? string.Empty : EvacuationSeed.ToString(CultureInfo.InvariantCulture));
             Line(sb, "drawn", HasDraw ? "true" : "false");
             Line(sb, "temperature_c", N(Temperature));
             Line(sb, "relative_humidity_pct", N(RelativeHumidity));

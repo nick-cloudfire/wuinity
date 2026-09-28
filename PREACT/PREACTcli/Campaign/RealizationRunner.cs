@@ -38,7 +38,8 @@ namespace PREACTcli.Campaigns
         /// unrelated wind field. Keys the base scenario names are overridden.
         /// </para>
         /// </remarks>
-        public static bool Run(Campaign c, string id, string dir, RealizationRecord record, out string message, out bool cancelled)
+        public static bool Run(Campaign c, int index, string id, string dir, RealizationRecord record, out string message,
+            out bool cancelled)
         {
             message = null;
             cancelled = false;
@@ -47,6 +48,83 @@ namespace PREACTcli.Campaigns
             string outputName = name + "_trigger.asc";
             string outputDir = Path.Combine(c.ScenarioDir, CampaignLayout.OutputFolder);
             Directory.CreateDirectory(outputDir);
+
+            string[] lines = ScenarioLines(c, index, id, dir, record);
+
+            string tempWui = Path.Combine(c.ScenarioDir, "__" + name + ".wui");
+            string preactDir = Path.Combine(dir, CampaignLayout.RealizationPreactFolder);
+            string logPath = Path.Combine(dir, CampaignLayout.RealizationPreactLog);
+
+            try
+            {
+                File.WriteAllLines(tempWui, lines);
+                File.WriteAllLines(Path.Combine(dir, CampaignLayout.RealizationScenarioCopy),
+                    new[] { "# The scenario PREACT.exe ran for this realization, written as " + Path.GetFileName(tempWui)
+                            + " beside " + Path.GetFileName(c.BaseWuiPath) + "; its paths are relative to that folder." }
+                        .Concat(lines));
+
+                //Anything an interrupted earlier attempt left under this name would otherwise be read as this run's.
+                RemoveOutputs(outputDir, name);
+                if (Directory.Exists(preactDir)) Directory.Delete(preactDir, recursive: true);
+
+                Console.WriteLine($"[{id}] running evacuation + k-PERIL...");
+                long generation = ElmfireProcesses.Generation;
+                int exit = RunProcess(c.PreactExe, tempWui, logPath);
+                if (ElmfireProcesses.CancelledSince(generation))
+                {
+                    cancelled = true;
+                    message = "cancelled";
+                    return false;
+                }
+
+                int moved = CollectOutputs(outputDir, name, preactDir);
+
+                string boundary = Path.Combine(preactDir, "0_" + outputName);
+                message = DescribeRun(exit, File.Exists(boundary), moved, logPath);
+                if (message != null)
+                {
+                    return false;
+                }
+
+                record.Boundary = Path.GetRelativePath(dir, boundary).Replace('\\', '/');
+                return true;
+            }
+            finally
+            {
+                try { File.Delete(tempWui); } catch { }
+            }
+        }
+
+        /// <summary>What is added to the campaign seed to seed a realization's evacuation, apart from its fire's
+        /// (seed + index), its weather's (seed + index, another generator) and its ignition's (seed + 1 000 000 + index).</summary>
+        internal const int EvacuationSeedOffset = 2_000_000;
+
+        /// <summary>
+        /// The <c>[Simulation] RandomSeed</c> realization <paramref name="index"/> of a campaign seeded
+        /// <paramref name="campaignSeed"/> evacuates with: <c>seed + 2 000 000 + index</c>, never 0.
+        /// </summary>
+        /// <remarks>
+        /// The evacuation - response-curve draws, walking speeds, cars per household, destination choice - used to
+        /// run on whatever the base scenario said, which for Mati is nothing, i.e. a clock seed: irreproducible although
+        /// the campaign seed is part of the campaign's identity, and a resume that re-ran a failed evacuation got
+        /// another WRSET for the same fire. A base scenario with a fixed seed was worse: every realization drew the
+        /// same departures, so the ensemble under-represented evacuation variability. 0 is PREACT's "seed from the
+        /// clock", so the one index that would land on it is moved to 1.
+        /// </remarks>
+        internal static int EvacuationSeed(int campaignSeed, int index)
+        {
+            int seed = unchecked(campaignSeed + EvacuationSeedOffset + index);
+            return seed == 0 ? 1 : seed;
+        }
+
+        /// <summary>
+        /// The base scenario with the realization's fire, wind, WUI area, topography and evacuation seed written into
+        /// it, every added path relative to the base scenario's folder.
+        /// </summary>
+        internal static string[] ScenarioLines(Campaign c, int index, string id, string dir, RealizationRecord record)
+        {
+            string name = c.RealizationName(id);
+            string outputName = name + "_trigger.asc";
 
             string R(string realizationRelative) =>
                 CampaignLayout.RelativeForWui(c.ScenarioDir, RealizationRecord.Resolve(dir, realizationRelative));
@@ -97,48 +175,11 @@ namespace PREACTcli.Campaigns
                 if (File.Exists(path)) Set("Landscape", key, CampaignLayout.RelativeForWui(c.ScenarioDir, path));
             }
 
-            string tempWui = Path.Combine(c.ScenarioDir, "__" + name + ".wui");
-            string preactDir = Path.Combine(dir, CampaignLayout.RealizationPreactFolder);
-            string logPath = Path.Combine(dir, CampaignLayout.RealizationPreactLog);
+            //Reproducible and different for every realization (MA-5).
+            record.EvacuationSeed = EvacuationSeed(c.Options.Seed, index);
+            Set("Simulation", "RandomSeed", record.EvacuationSeed.ToString(CultureInfo.InvariantCulture));
 
-            try
-            {
-                File.WriteAllLines(tempWui, lines);
-                File.WriteAllLines(Path.Combine(dir, CampaignLayout.RealizationScenarioCopy),
-                    new[] { "# The scenario PREACT.exe ran for this realization, written as " + Path.GetFileName(tempWui)
-                            + " beside " + Path.GetFileName(c.BaseWuiPath) + "; its paths are relative to that folder." }
-                        .Concat(lines));
-
-                //Anything an interrupted earlier attempt left under this name would otherwise be read as this run's.
-                RemoveOutputs(outputDir, name);
-                if (Directory.Exists(preactDir)) Directory.Delete(preactDir, recursive: true);
-
-                Console.WriteLine($"[{id}] running evacuation + k-PERIL...");
-                long generation = ElmfireProcesses.Generation;
-                int exit = RunProcess(c.PreactExe, tempWui, logPath);
-                if (ElmfireProcesses.CancelledSince(generation))
-                {
-                    cancelled = true;
-                    message = "cancelled";
-                    return false;
-                }
-
-                int moved = CollectOutputs(outputDir, name, preactDir);
-
-                string boundary = Path.Combine(preactDir, "0_" + outputName);
-                message = DescribeRun(exit, File.Exists(boundary), moved, logPath);
-                if (message != null)
-                {
-                    return false;
-                }
-
-                record.Boundary = Path.GetRelativePath(dir, boundary).Replace('\\', '/');
-                return true;
-            }
-            finally
-            {
-                try { File.Delete(tempWui); } catch { }
-            }
+            return lines;
         }
 
         private static void RemoveOutputs(string outputDir, string name)
