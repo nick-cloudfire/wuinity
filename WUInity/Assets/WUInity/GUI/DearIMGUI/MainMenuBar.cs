@@ -43,13 +43,22 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             //"New scenario" belongs beside "Load", not under Scenario: both start from nothing and replace
             //whatever is loaded, which is the property worth grouping on.
-            if (ImGui.MenuItem("New scenario...", !IsRunning)) { NewScenarioWindow.Open(true); }
-            if (ImGui.MenuItem("Load scenario...")) { FileBrowser.OpenLoadInput(); }
+            bool busy = ScenarioSession.IsBusy;
+
+            if (ImGui.MenuItem("New scenario...", !busy)) { NewScenarioWindow.Open(true); }
+            BusyTooltip(busy);
+            //Gated like New: loading replaced the scenario a running data step was about to write its paths
+            //into, and the one a running simulation was reading.
+            if (ImGui.MenuItem("Load scenario...", !busy)) { FileBrowser.OpenLoadInput(); }
+            BusyTooltip(busy);
 
             ImGui.Separator();
 
-            if (ImGui.MenuItem("Save", "Ctrl+S", false, ScenarioEditorWindow.HasInput)) { ScenarioEditorWindow.SaveInput(); }
-            if (ImGui.MenuItem("Save as...", ScenarioEditorWindow.HasInput)) { FileBrowser.OpenSaveInput(); }
+            bool canSave = ScenarioSession.HasInput && !ScenarioSession.EditingLocked;
+            if (ImGui.MenuItem("Save", "Ctrl+S", false, canSave)) { ScenarioEditorWindow.SaveInput(); }
+            BusyTooltip(ScenarioSession.EditingLocked);
+            if (ImGui.MenuItem("Save as...", canSave)) { FileBrowser.OpenSaveInput(); }
+            BusyTooltip(ScenarioSession.EditingLocked);
 
             ImGui.EndMenu();
         }
@@ -62,14 +71,16 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 return;
             }
 
-            bool canEdit = ScenarioEditorWindow.HasInput && !IsRunning;
+            bool canEdit = ScenarioEditorWindow.HasInput && !ScenarioSession.EditingLocked;
 
             if (ImGui.MenuItem("Edit...", canEdit)) { ScenarioEditorWindow.Open(); }
+            BusyTooltip(ScenarioSession.EditingLocked);
 
             //Its own entry rather than only inside the creator: opening the creator clears the loaded
             //scenario, so building a missing RouterDb, population, SUMO network or ELMFIRE case for one meant
             //discarding the scenario it was wanted for.
             if (ImGui.MenuItem("Prepare data...", canEdit)) { ScenarioDataWindow.Open(); }
+            BusyTooltip(ScenarioSession.EditingLocked);
 
             //Reopenable, since it is dismissed as soon as it has been read but the items stay outstanding
             //until they are dealt with.
@@ -136,7 +147,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 return;
             }
 
-            if (ImGui.MenuItem("Probabilistic trigger campaign...")) { ProbabilisticTriggerWindow.Open(); }
+            if (ImGui.MenuItem("Probabilistic trigger campaign...", !ScenarioSession.SimulationActive)) { ProbabilisticTriggerWindow.Open(); }
             if (ImGui.IsItemHovered())
             {
                 ImGui.SetTooltip("One evacuation and trigger boundary per fire realization, aggregated into a "
@@ -149,11 +160,12 @@ namespace Assets.WUInity.GUI.DearIMGUI
             ImGui.EndMenu();
         }
 
-        private static bool IsRunning
+        /// <summary>Says why the item just drawn is disabled, when it is disabled for being busy.</summary>
+        private static void BusyTooltip(bool disabledForBusy)
         {
-            get
+            if (disabledForBusy && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
             {
-                return PreactGUI.Engine.Simulation != null && PreactGUI.Engine.Simulation.IsRunning;
+                ImGui.SetTooltip(ScenarioSession.BusyTooltip);
             }
         }
 

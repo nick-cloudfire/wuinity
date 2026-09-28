@@ -55,7 +55,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 _folderSet = false;
                 _latLon = Vector2d.zero;
             }
-            ScenarioEditorWindow.ClearInput();
+            //The loaded scenario stays loaded until the new one is generated: clearing it here meant cancelling
+            //the creator left the GUI with nothing editable while the engine still held it.
             PreactGUI.WUInity.ShowWebMercatorMap();
         }
         public static void Close()
@@ -147,7 +148,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                     ImGui.InputInt("Min household size", ref ScenarioDataSteps.MinHouseholdSize);
                     ImGui.InputInt("Max household size", ref ScenarioDataSteps.MaxHouseholdSize);
 
-                    ImGui.BeginDisabled(ScenarioDataSteps.Busy);
+                    ImGui.BeginDisabled(ScenarioSession.IsBusy);
                     if (ScenarioDataSteps.StepButton("Step 1: Download WorldPop", WorldPopFile)) { ScenarioDataSteps.DownloadWorldPop(); }
                     if (ScenarioDataSteps.StepButton("Step 2: Download OSM data", OsmFile)) { ScenarioDataSteps.DownloadOsm(); }
                     if (ScenarioDataSteps.StepButton("Step 3: Build RouterDb", RouterDbFile)) { ScenarioDataSteps.BuildRouterDb(); }
@@ -188,7 +189,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 }
                 else
                 {
-                    ImGui.BeginDisabled(ScenarioDataSteps.Busy);
+                    ImGui.BeginDisabled(ScenarioSession.IsBusy);
                     if (ScenarioDataSteps.StepButton("Step 1: Download OSM data", OsmFile)) { ScenarioDataSteps.DownloadOsm(); }
                     if (ScenarioDataSteps.StepButton("Step 2: Build SUMO network", SumoConfigFile)) { ScenarioDataSteps.BuildSumoNetwork(); }
                     ImGui.EndDisabled();
@@ -209,7 +210,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             ImGui.Text($"{nameof(_input.Landscape.ElevationFile)}: {_input.Landscape.ElevationFile}");
 
             ScenarioDataWindow.DrawOpenTopographyKey();
-            ImGui.BeginDisabled(ScenarioDataSteps.Busy);
+            ImGui.BeginDisabled(ScenarioSession.IsBusy);
             if (ScenarioDataSteps.StepButton("Or download a DEM", ScenarioDataSteps.DemFile)) { ScenarioDataSteps.DownloadDem(); }
             ImGui.EndDisabled();
             ImGui.TextWrapped("A DEM can be had for anywhere on Earth, and slope and aspect are computed from it, "
@@ -241,7 +242,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 else
                 {
                     ImGui.Checkbox("Anderson 13 fuel models (otherwise Scott & Burgan 40)", ref ScenarioDataSteps.UseAnderson13);
-                    ImGui.BeginDisabled(ScenarioDataSteps.Busy);
+                    ImGui.BeginDisabled(ScenarioSession.IsBusy);
                     if (ImGui.Button("Step 1: Download Landfire data")) { ScenarioDataSteps.DownloadLandfire(); }
                     ImGui.EndDisabled();
                     //LANDFIRE is US-only; outside it the request simply returns nothing useful.
@@ -255,7 +256,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 }
                 else
                 {
-                    ImGui.BeginDisabled(ScenarioDataSteps.Busy);
+                    ImGui.BeginDisabled(ScenarioSession.IsBusy);
                     if (ScenarioDataSteps.StepButton("Step 1: Download weather file", WeatherFile)) { ScenarioDataSteps.DownloadWeather(); }
                     ImGui.EndDisabled();
                 }

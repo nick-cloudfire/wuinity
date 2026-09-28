@@ -335,6 +335,7 @@ namespace WUInity
             }
 
             UpdateWebMercatorMapInteraction();
+            WatchRunTask();
 
             //always update visuals, even when paused
             if (_engine.Simulation != null)
@@ -453,11 +454,68 @@ namespace WUInity
             }           
         }
 
+        //The task RunSimulations returns, which is what the GUI follows to know a run is going on. It used to
+        //be discarded, so an exception from a module was lost with it, and Simulation.IsRunning - which a run
+        //that throws never resets - was left to say whether one was still going: after a crash, forever.
+        private System.Threading.Tasks.Task _runTask;
+        private bool _runTaskReported = true;
+
+        /// <summary>A run started from the GUI has not finished yet, however it is going to finish.</summary>
+        public bool IsSimulationActive { get => _runTask != null && !_runTask.IsCompleted; }
+
+        /// <summary>Whether the last GUI run ended in an error, or null when there has been none.</summary>
+        public bool? LastRunFailed { get; private set; }
+
+        /// <summary>Raised on the main thread when a GUI-started run has finished, however it finished.</summary>
+        public event System.Action RunFinished;
+
         public void RunSimulation(EngineTask engineTask)
         {
+            if (IsSimulationActive)
+            {
+                Engine.Message(null, Engine.LogType.Warning, "A simulation is already running.");
+                return;
+            }
+
             _visualsExist = false;
-            SetSampleMode(DataSampleMode.TrafficDens);
-            _engine.RunSimulations(engineTask);
+            _runTaskReported = false;
+            LastRunFailed = null;
+            _runTask = _engine.RunSimulations(engineTask);
+        }
+
+        /// <summary>
+        /// Notices a run finishing: reports an exception it ended with, and tells whoever is listening.
+        /// Polled from Update, which is the main thread, so listeners can touch the GUI and the scenario.
+        /// </summary>
+        private void WatchRunTask()
+        {
+            if (_runTaskReported || _runTask == null || !_runTask.IsCompleted)
+            {
+                return;
+            }
+            _runTaskReported = true;
+
+            bool failed = false;
+            if (_runTask.IsFaulted)
+            {
+                failed = true;
+                System.Exception e = _runTask.Exception != null ? _runTask.Exception.GetBaseException() : null;
+                Engine.Message(null, Engine.LogType.Exception, "The run stopped with an error"
+                    + (e != null ? ": " + e.GetType().Name + ": " + e.Message : ".")
+                    + " The GUI is usable again; see the console for what led up to it.");
+                if (e != null)
+                {
+                    Debug.LogException(e);
+                }
+            }
+            else if (_engine.Simulation != null
+                     && (_engine.Simulation.State == Simulation.SimulationState.Error || _engine.Simulation.StoppedDueToError))
+            {
+                failed = true;
+            }
+
+            LastRunFailed = failed;
+            RunFinished?.Invoke();
         }
 
         bool _visualsExist = false;
@@ -1026,7 +1084,7 @@ namespace WUInity
             _roadNetworkBuilt = false;
             _roadNetworkVisualizer.SetVisibility(false);
             _godCamera.SetInput(_input);
-            _wuiGUI.SetInput(_input);
+            ScenarioSession.OnEngineInput(_input);
             //A scenario can name its own ELMFIRE, GDAL and WindNinja, so the tools are looked for again.
             ToolsService.Refresh();
             //this needs map and evac goals

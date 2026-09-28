@@ -36,7 +36,14 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
 
             ImGui.Separator();
 
-            if (ImGui.Button("Start run"))
+            ImGui.BeginDisabled(ScenarioSession.IsBusy);
+            bool start = ImGui.Button("Start run");
+            ImGui.EndDisabled();
+            if (ScenarioSession.IsBusy && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            {
+                ImGui.SetTooltip(ScenarioSession.BusyTooltip);
+            }
+            if (start)
             {
                 ScenarioEditorWindow.Close();
                 PreactGUI.WUInity.RunSimulation(_engineTask);

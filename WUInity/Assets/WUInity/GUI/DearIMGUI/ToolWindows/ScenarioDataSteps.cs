@@ -38,6 +38,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
         private static volatile bool _busy;
         public static string Status { get => _status; }
         public static bool Busy { get => _busy; }
+        /// <summary>The step or chain running now, or last run.</summary>
+        public static string CurrentTitle { get => _progressTitle; }
 
         //The progress window's own copy of what the running step said. Written from the step's worker
         //thread and read while drawing, hence the lock; the console gets the same lines through

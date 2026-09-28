@@ -9,20 +9,21 @@ namespace Assets.WUInity.GUI.DearIMGUI
     public  static class ScenarioEditorWindow
     {
         private static bool _isOpen;
-        private static PREACT.Input.PREACTInput _input;
 
-        public static PREACT.Input.PREACTInput Input{ get => _input; }
-        public static bool HasInput { get => _input == null ? false : true; }
+        /// <summary>The current scenario. Kept for the windows that still read it from here; it is
+        /// <see cref="ScenarioSession.Input"/>.</summary>
+        public static PREACT.Input.PREACTInput Input { get => ScenarioSession.Input; }
+        public static bool HasInput { get => ScenarioSession.HasInput; }
 
-        public static void SetInput(PREACT.Input.PREACTInput input)
+        static ScenarioEditorWindow()
         {
-            _input = input;
-            Open();
-        }
-
-        public static void ClearInput()
-        {
-            _input = null;
+            ScenarioSession.ScenarioChanged += () =>
+            {
+                if (ScenarioSession.HasInput)
+                {
+                    Open();
+                }
+            };
         }
 
         public static void Open()
@@ -45,6 +46,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
         public static void Draw()
         {
+            PREACT.Input.PREACTInput _input = ScenarioSession.Input;
             if(!_isOpen || _input == null)
             {
                 return;
@@ -94,13 +96,13 @@ namespace Assets.WUInity.GUI.DearIMGUI
         public static void SaveInput()
         {
             //ParseMainData();
-            PREACT.Input.PREACTInput.SaveToDisk(_input, PreactGUI.Engine.WorkingFile);
+            PREACT.Input.PREACTInput.SaveToDisk(ScenarioSession.Input, PreactGUI.Engine.WorkingFile);
         }
 
         public static void SaveNewInput(string[] paths)
         {
             //ParseMainData();
-            PREACT.Input.PREACTInput.SaveToDisk(_input, paths[0]);
+            PREACT.Input.PREACTInput.SaveToDisk(ScenarioSession.Input, paths[0]);
             PreactGUI.Engine.LoadInputFromFile(paths[0], out bool success);
         }
     }

@@ -142,11 +142,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
         }
 
 
-        public void SetInput(PREACT.Input.PREACTInput input)
-        {
-            ScenarioEditorWindow.SetInput(input);
-        }
-
         //Static like _engine and _wuinityManager above, so the menu bar - which is static - can
         //clear it.
         //

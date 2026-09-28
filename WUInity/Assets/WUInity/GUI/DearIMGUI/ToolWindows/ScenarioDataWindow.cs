@@ -151,7 +151,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 return;
             }
 
-            ImGui.BeginDisabled(ScenarioDataSteps.Busy);
+            ImGui.BeginDisabled(ScenarioSession.IsBusy);
 
             ImGui.SeparatorText("Road network");
             //Both the RouterDb and the SUMO network are built from the same OSM extract, which is why
@@ -209,7 +209,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             //weather file - and those live only in memory until the scenario is written back out.
             ImGui.TextWrapped("Steps that produce a file the scenario refers to also set the path on it. "
                 + "Save the scenario to keep those, or they are lost when it is closed.");
-            ImGui.BeginDisabled(ScenarioDataSteps.Busy || !ScenarioEditorWindow.HasInput);
+            ImGui.BeginDisabled(ScenarioSession.EditingLocked || !ScenarioEditorWindow.HasInput);
             if (ImGui.Button("Save scenario"))
             {
                 ScenarioEditorWindow.SaveInput();
