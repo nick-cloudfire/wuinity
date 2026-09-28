@@ -21,7 +21,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
         private static readonly List<EvacuationGroupInput> _ordered = new List<EvacuationGroupInput>();
         private static int _selected;
         /// <summary>Whether this window's brush is live, asked of the painter rather than remembered.</summary>
-        /// <remarks>See FirePaintWindow.Painting: two windows each remembering this separately meant
+        /// <remarks>See FireAreasWindow.Painting: two windows each remembering this separately meant
         /// neither agreed with the painter, nor with the other.</remarks>
         private static bool Painting
         {
@@ -49,7 +49,16 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                 _subscribed = true;
                 //The dictionary this window holds belongs to the scenario it was opened for; after another is
                 //loaded, carrying on would paint into, and save the masks of, one that is no longer open.
-                ScenarioSession.ScenarioChanged += () => { if (_isOpen) { _isOpen = false; } };
+                //Unregistered here as well: Draw returns before its own close path once _isOpen is false, and
+                //the next Open would then register a second copy that draws over the first.
+                ScenarioSession.ScenarioChanged += () =>
+                {
+                    if (_isOpen)
+                    {
+                        _isOpen = false;
+                        PreactGUI.CloseWindow(Draw);
+                    }
+                };
             }
 
             _inputs = inputs;

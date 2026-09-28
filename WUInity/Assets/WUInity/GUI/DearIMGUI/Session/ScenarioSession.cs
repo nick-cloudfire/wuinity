@@ -223,7 +223,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 return false;
             }
 
-            ScenarioChecklistWindow.ShowFor(Path.GetFileName(path));
+            ScenarioCheckWindow.NoteLoaded(Path.GetFileName(path));
             return true;
         }
 
@@ -593,7 +593,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
         public static bool CampaignActive { get => CampaignProbe.IsRunning; }
 
         /// <summary>Anything at all is running: no other scenario may be opened, created or closed.</summary>
-        public static bool IsBusy { get => SimulationActive || StepActive || CampaignActive; }
+        public static bool IsBusy { get => SimulationActive || StepActive || CampaignActive || ScenarioCheckWindow.Checking; }
 
         /// <summary>
         /// Something is running that reads or writes the scenario in memory, so it must not be edited. The
@@ -609,6 +609,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 if (SimulationActive) return "a simulation is running";
                 if (StepActive) return "\"" + ScenarioDataSteps.CurrentTitle + "\" is running";
                 if (CampaignActive) return "a trigger campaign is running";
+                if (ScenarioCheckWindow.Checking) return "the scenario is being checked";
                 return null;
             }
         }

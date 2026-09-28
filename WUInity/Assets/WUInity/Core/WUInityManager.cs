@@ -1040,23 +1040,9 @@ namespace WUInity
             return _renderFireSpread;
         }        
 
-        PREACTColor GetTrafficDensityColor(int cars)
-        {
-            float fraction = UnityEngine.Mathf.Lerp(0f, 1f, cars / 20f);
-            PREACTColor c = PREACTColor.HSVToRGB(0.67f - 0.67f * fraction, 1.0f, 1.0f);
-
-            return c;
-        }
-
-        public List<Texture2D> outputTextures;
-        
         public void UpdateInput(PREACTInput input)
         {
             _input = input;
-            //A different scenario is a different grid. The painter used to keep the first grid it resolved
-            //for the whole session, textures and group ownership included, and wrote the next scenario's
-            //masks with the previous one's cell count.
-            _painter.ResetForScenario();
             _painter.SetLCPData(_input.WildfireModule.Data.LandscapeData);
 
             //Every route into a scenario passes through here - loading a file, saving a new one, the
@@ -1064,15 +1050,38 @@ namespace WUInity
             //the one place that has to remember it.
             RecentScenario.Remember(_engine.WorkingFile);
 
+            RefreshScenarioView();
+
+            ScenarioSession.OnEngineInput(_input);
+            //A scenario can name its own ELMFIRE, GDAL and WindNinja, so the tools are looked for again.
+            ToolsService.Refresh();
+        }
+
+        /// <summary>
+        /// Redraws everything placed in the scenario's simulation coordinates: the UTM map, the domain border,
+        /// the camera, the markers, the road network and the painter's grid. Needed whenever the origin may
+        /// have moved - a load, or the area of interest changed in Place and time, which used to move the
+        /// simulation grid and leave all of these where they were.
+        /// </summary>
+        public void RefreshScenarioView()
+        {
+            if (_input == null)
+            {
+                ShowWebMercatorMap();
+                return;
+            }
+
+            //A different scenario is a different grid. The painter used to keep the first grid it resolved
+            //for the whole session, textures and group ownership included, and wrote the next scenario's
+            //masks with the previous one's cell count.
+            _painter.ResetForScenario();
+
             //A different scenario is a different network, in a different frame. Dropped rather than reused,
             //which would draw the previous scenario's roads at this one's origin.
             _roadNetwork = null;
             _roadNetworkBuilt = false;
             _roadNetworkVisualizer.SetVisibility(false);
             _godCamera.SetInput(_input);
-            ScenarioSession.OnEngineInput(_input);
-            //A scenario can name its own ELMFIRE, GDAL and WindNinja, so the tools are looked for again.
-            ToolsService.Refresh();
             //this needs map and evac goals
             _simulationDomainVisualizer.SpawnEvacuationGoalMarkers(_input, _destinationMarkerPrefab);
             _simulationDomainVisualizer.SpawnWildfireIgnitionMarkers(_input, _wildfireIgnitionMarkerPrefab);
@@ -1082,6 +1091,29 @@ namespace WUInity
             LoadUTMMap(_input);
             UpdateSimBorders();
         }
+
+        /// <summary>
+        /// Back to the open scenario's map after the world map was put up for a pick that was then abandoned,
+        /// or for the new-scenario dialog that was then closed. Nothing moved, so unlike
+        /// <see cref="RefreshScenarioView"/> this leaves the painter (and any unsaved strokes), the markers and
+        /// the road network alone.
+        /// </summary>
+        public void RestoreScenarioMap()
+        {
+            //The session, not _input: closing a scenario leaves the engine's (and so this) reference in place.
+            if (_input == null || !ScenarioSession.HasInput)
+            {
+                ShowWebMercatorMap();
+                return;
+            }
+
+            ShowUTMMap();
+            _godCamera.SetInput(_input);
+            UpdateSimBorders();
+        }
+
+        /// <summary>The road network has been read already (the workflow never makes it parse one).</summary>
+        public bool HasRoadNetworkLoaded { get => _roadNetwork != null; }
 
         public void UpdateDestinations(List<PREACT.Evacuation.EvacuationDestination> destinations)
         {

@@ -17,16 +17,16 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
     /// because there are a hundred of them in nine groups — appending that to the module's own settings is
     /// what made the page unnavigable.
     /// </remarks>
-    internal static class HazardsInputTab
+    internal static class FireTabs
     {
         public static void Draw(PREACTInput input)
         {
-            if (!ImGui.BeginTabBar("HazardsBar"))
+            if (!ImGui.BeginTabBar("FireBar"))
             {
                 return;
             }
 
-            if (ImGui.BeginTabItem("Fire"))
+            if (ImGui.BeginTabItem("Fire model"))
             {
                 FireInputTab.Draw(input);
                 ImGui.EndTabItem();
@@ -41,9 +41,9 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
                 ImGui.EndTabItem();
             }
 
-            if (ImGui.BeginTabItem("Ignitions and areas"))
+            if (ImGui.BeginTabItem("Fire areas"))
             {
-                FireAreasInputTab.Draw(input);
+                Editors.FireAreasWindow.DrawSummary(input);
                 ImGui.EndTabItem();
             }
 
@@ -64,7 +64,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
         }
 
         /// <summary>The generated <c>elmfire.data</c>: what the fire is told, as against how it is run.</summary>
-        private static void DrawBehaviour(PREACTInput input)
+        public static void DrawBehaviour(PREACTInput input)
         {
             bool isElmfire = input.WildfireModule.Module == WildfireModuleInput.WildfireModules.ELMFIRE;
 
@@ -84,7 +84,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
             {
                 Fields.Warn("NamelistTemplate is set to " + elmfire.NamelistTemplate + ",",
                             "so the file is used as it stands and nothing here reaches ELMFIRE.");
-                Fields.Hint("Clear it under Fire > Case and executables to generate a namelist instead.");
+                Fields.Hint("Clear it under Fire model > Case and executables to generate a namelist instead.");
                 ImGui.Separator();
             }
 

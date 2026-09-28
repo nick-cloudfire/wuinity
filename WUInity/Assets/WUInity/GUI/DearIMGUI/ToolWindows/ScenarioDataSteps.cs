@@ -1080,37 +1080,50 @@ namespace Assets.WUInity.GUI.DearIMGUI
         public static void AdoptCaseOutputs(PREACTInput input, DateTime builtSinceUtc)
         {
             if (input == null) return;
+            AdoptCaseTerrain(input);
+            AdoptCaseWuiArea(input, builtSinceUtc);
+            PreactGUI.WUInity?.Painter?.ResetForScenario();
+        }
 
-            string caseDir = (input.WildfireModule.ElmfireInput.CaseDirectory ?? "elmfire").Replace('\\', '/').TrimEnd('/');
-            string dem = caseDir + "/inputs/dem.tif";
-            string slp = caseDir + "/inputs/slp.tif";
-            string asp = caseDir + "/inputs/asp.tif";
-            string wui = caseDir + "/inputs/wui_area.tif";
+        /// <summary>[Landscape] elevation, slope and aspect become the case's dem/slp/asp.tif, when the case has them.</summary>
+        public static void AdoptCaseTerrain(PREACTInput input)
+        {
+            if (input == null || !string.IsNullOrEmpty(input.Landscape.LandscapeFile)) return;
 
-            if (File.Exists(Path.Combine(input.RootFolder, dem)) && string.IsNullOrEmpty(input.Landscape.LandscapeFile))
+            string dem = ScenarioFiles.CaseInput(input, "dem.tif");
+            string slp = ScenarioFiles.CaseInput(input, "slp.tif");
+            string asp = ScenarioFiles.CaseInput(input, "asp.tif");
+
+            if (!File.Exists(Path.Combine(input.RootFolder, dem))) return;
+
+            if (input.Landscape.ElevationFile != dem)
             {
-                if (input.Landscape.ElevationFile != dem)
-                {
-                    LogStep($"[Landscape] now uses the fire case's terrain ({dem}) instead of {Show(input.Landscape.ElevationFile)}, "
-                        + "so the map, painting, the evacuation groups and k-PERIL's slope are all on the case grid.");
-                    input.Landscape.ElevationFile = dem;
-                }
-                if (File.Exists(Path.Combine(input.RootFolder, slp))) input.Landscape.SlopeFile = slp;
-                if (File.Exists(Path.Combine(input.RootFolder, asp))) input.Landscape.AspectFile = asp;
+                LogStep($"[Landscape] now uses the fire case's terrain ({dem}) instead of {Show(input.Landscape.ElevationFile)}, "
+                    + "so the map, painting, the evacuation groups and k-PERIL's slope are all on the case grid.");
+                input.Landscape.ElevationFile = dem;
             }
+            if (File.Exists(Path.Combine(input.RootFolder, slp))) input.Landscape.SlopeFile = slp;
+            if (File.Exists(Path.Combine(input.RootFolder, asp))) input.Landscape.AspectFile = asp;
+        }
 
-            //Only a WUI area this build wrote: an older wui_area.tif may be from masks painted since replaced.
-            kPERILInput peril = input.TriggerBufferModule?.kPERILInput;
+        /// <summary>
+        /// [kPERIL] WuiAreaFile becomes the case's wui_area.tif - only one written since
+        /// <paramref name="builtSinceUtc"/>, since an older one may be from masks painted since replaced.
+        /// </summary>
+        public static void AdoptCaseWuiArea(PREACTInput input, DateTime builtSinceUtc = default)
+        {
+            kPERILInput peril = input?.TriggerBufferModule?.kPERILInput;
+            if (peril == null || peril.WuiAreaSource != kPERILInput.WuiAreaSources.Raster) return;
+
+            string wui = ScenarioFiles.CaseInput(input, "wui_area.tif");
             string wuiPath = Path.Combine(input.RootFolder, wui);
-            if (peril != null && peril.WuiAreaSource == kPERILInput.WuiAreaSources.Raster
-                && File.Exists(wuiPath) && File.GetLastWriteTimeUtc(wuiPath) >= builtSinceUtc.AddSeconds(-5)
-                && peril.WuiAreaFile != wui)
+            //default means "whatever the case has" (asked for by hand); DateTime.MinValue cannot be moved back 5 s.
+            bool recent = builtSinceUtc == default || File.GetLastWriteTimeUtc(wuiPath) >= builtSinceUtc.AddSeconds(-5);
+            if (File.Exists(wuiPath) && recent && peril.WuiAreaFile != wui)
             {
                 LogStep($"[kPERIL] WuiAreaFile now names {wui}, the painted WUI area the case build put on its grid.");
                 peril.WuiAreaFile = wui;
             }
-
-            PreactGUI.WUInity?.Painter?.ResetForScenario();
         }
 
         private static string Show(string path) => string.IsNullOrEmpty(path) ? "nothing" : path;

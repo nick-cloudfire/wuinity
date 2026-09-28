@@ -103,22 +103,21 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             bool canEdit = ScenarioEditorWindow.HasInput && !ScenarioSession.EditingLocked;
 
-            if (ImGui.MenuItem("Edit...", canEdit)) { ScenarioEditorWindow.Open(); }
+            if (ImGui.MenuItem("All settings...", canEdit)) { ScenarioEditorWindow.Open(); }
             BusyTooltip(ScenarioSession.EditingLocked);
 
-            //Its own entry rather than only inside the creator: opening the creator clears the loaded
-            //scenario, so building a missing RouterDb, population, SUMO network or ELMFIRE case for one meant
-            //discarding the scenario it was wanted for.
-            if (ImGui.MenuItem("Prepare data...", canEdit)) { ScenarioDataWindow.Open(); }
-            BusyTooltip(ScenarioSession.EditingLocked);
+            //The data steps are rows of the workflow panel now, each with its own button.
+            if (ImGui.MenuItem("Workflow panel", string.Empty, ScenarioWorkflowWindow.IsOpen)) { ScenarioWorkflowWindow.Toggle(); }
 
             //Reopenable, since it is dismissed as soon as it has been read but the items stay outstanding
             //until they are dealt with.
-            if (ImGui.MenuItem("Checklist...", ScenarioChecklistWindow.HasItems)) { ScenarioChecklistWindow.Open(); }
+            if (ImGui.MenuItem("Check scenario...", ScenarioSession.HasInput)) { ScenarioCheckWindow.OpenAndCheck(); }
 
             ImGui.Separator();
 
-            if (ImGui.MenuItem("Output...", HasOutput)) { OutputWindow.Open(); }
+            if (ImGui.MenuItem("Run simulation...", "F5", false, ScenarioSession.HasInput)) { RunSimulationWindow.Open(); }
+            if (ImGui.MenuItem("Results...", ScenarioSession.HasInput)) { ResultsWindow.Open(); }
+            if (ImGui.MenuItem("Live output...", HasOutput)) { LiveOutputWindow.Open(); }
             if (ImGui.IsItemHovered() && !HasOutput)
             {
                 ImGui.SetTooltip("Available once a run has started. Opens by itself when one does.");

@@ -55,6 +55,10 @@ namespace Assets.WUInity.GUI.DearIMGUI
         private static event Action Windows;
         public static void DrawWindow(Action window)
         {
+            //At most once each. A window that was closed from outside its own Draw (a scenario change, a
+            //modal) and then reopened used to register a second copy, which drew over the first with the same
+            //IDs - the double registration behind several "the button does nothing" reports.
+            Windows -= window;
             Windows += window;
         }
 
@@ -74,6 +78,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
 
             ScenarioSession.Update();
+            //After the session (which may have just loaded a scenario) and before anything draws from it.
+            WorkflowService.Tick();
 
             MainDock();
             MainMenuBar.Draw();      
@@ -170,7 +176,10 @@ namespace Assets.WUInity.GUI.DearIMGUI
         {
             _wuinityManager = wuinityManager;
             _engine = engine;
-            StartWindow.Open();
+            //The workflow panel is where every session starts; the welcome window that used to open here is
+            //Help > External tools and keys now.
+            ScenarioWorkflowWindow.Register();
+            ScenarioSession.RunShortcut = RunSimulationWindow.Shortcut;
             //Once at start-up, off the main thread; the answers are read from ToolsService.Current.
             ToolsService.Refresh();
         }
@@ -256,7 +265,18 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
         public void ApplyTheme()
         {
+            _dark = darkTheme;
             Themes.ApplyAdobeSpectrum(darkTheme);
+        }
+
+        //Which theme is showing, for the View menu's radio items; the serialized field is only the start-up choice.
+        private static bool _dark;
+        public static bool IsDarkTheme { get => _dark; }
+
+        public static void SetTheme(bool dark)
+        {
+            _dark = dark;
+            Themes.ApplyAdobeSpectrum(dark);
         }
 
         public void AddFont(ImGuiIOPtr io)

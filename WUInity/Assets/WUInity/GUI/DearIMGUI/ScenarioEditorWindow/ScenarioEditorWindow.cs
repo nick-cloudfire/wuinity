@@ -1,30 +1,29 @@
 ﻿using Assets.WUInity.GUI.DearIMGUI.Input;
 using ImGuiNET;
-using System;
-using System.Collections.Generic;
-using System.Text;
+using UnityEngine;
 
 namespace Assets.WUInity.GUI.DearIMGUI
 {
-    public  static class ScenarioEditorWindow
+    /// <summary>
+    /// Scenario &gt; All settings: every setting of the open scenario in one tabbed window, for when the
+    /// workflow's one-page-per-step windows are not the quickest way in.
+    /// </summary>
+    /// <remarks>
+    /// Was the "Scenario editor", which opened itself on every load and every Save as, floated (it could not
+    /// be docked), and held the Run tab - which closed the window it was in when a run started. Running is the
+    /// Run simulation window now, and this opens only when asked. The pages are the same drawers the workflow's
+    /// settings windows use, so there is one control per setting whichever way it is reached.
+    /// </remarks>
+    public static class ScenarioEditorWindow
     {
         private static bool _isOpen;
 
-        /// <summary>The current scenario. Kept for the windows that still read it from here; it is
-        /// <see cref="ScenarioSession.Input"/>.</summary>
+        /// <summary>The current scenario. Kept for the windows that still read it from here (the campaign
+        /// window); it is <see cref="ScenarioSession.Input"/>.</summary>
         public static PREACT.Input.PREACTInput Input { get => ScenarioSession.Input; }
         public static bool HasInput { get => ScenarioSession.HasInput; }
 
-        static ScenarioEditorWindow()
-        {
-            ScenarioSession.ScenarioChanged += () =>
-            {
-                if (ScenarioSession.HasInput)
-                {
-                    Open();
-                }
-            };
-        }
+        public static bool IsOpen { get => _isOpen; }
 
         public static void Open()
         {
@@ -37,65 +36,68 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
         public static void Close()
         {
-            if(_isOpen)
+            if (_isOpen)
             {
                 PreactGUI.CloseWindow(Draw);
             }
-            _isOpen = false;            
+            _isOpen = false;
         }
 
         public static void Draw()
         {
-            PREACT.Input.PREACTInput _input = ScenarioSession.Input;
-            if(!_isOpen || _input == null)
+            if (!_isOpen)
             {
                 return;
             }
 
-            ImGui.Begin("Scenario editor", ref _isOpen, PreactGUI.NoDockingNoCollapse);
-
-            //Configure, then run: the run tab is last because it is the last thing done, and it closes this
-            //window when it starts. It used to be first, so the tab that discards the window you are working
-            //in was the one you landed on.
-            if (ImGui.BeginTabBar("Scenario"))
+            PreactGUI.PlaceNextWindow(new Vector2(640f, 680f));
+            if (ImGui.Begin("All settings###AllSettings", ref _isOpen, PreactGUI.ToolWindowFlags))
             {
-                if (ImGui.BeginTabItem("Simulation"))
+                PREACT.Input.PREACTInput input = ScenarioSession.Input;
+                if (input == null)
                 {
-                    SimulationTabs.Draw(_input);
-                    ImGui.EndTabItem();
+                    ImGui.TextDisabled("No scenario is open.");
                 }
-
-                if (ImGui.BeginTabItem("Evacuation"))
+                else
                 {
-                    EvacuationTabs.Draw(_input, _input.Evacuation, _input.PedestrianModule, _input.TrafficModule);
-                    ImGui.EndTabItem();
-                }
+                    if (ScenarioSession.EditingLocked)
+                    {
+                        ImGui.TextDisabled("Read-only while " + ScenarioSession.BusyReason + ".");
+                    }
 
-                if (ImGui.BeginTabItem("Hazards"))
-                {
-                    HazardsInputTab.Draw(_input);
-                    ImGui.EndTabItem();
-                }
+                    //Read-only while a run or a data step is using the scenario: they read it from another thread.
+                    ImGui.BeginDisabled(ScenarioSession.EditingLocked);
+                    if (ImGui.BeginTabBar("AllSettingsTabs"))
+                    {
+                        if (ImGui.BeginTabItem("Scenario###AllScenario"))
+                        {
+                            SimulationTabs.Draw(input);
+                            ImGui.EndTabItem();
+                        }
 
-                if (ImGui.BeginTabItem("Run"))
-                {
-                    RunTab.Draw();
-                    ImGui.EndTabItem();
-                }
+                        if (ImGui.BeginTabItem("Evacuation###AllEvacuation"))
+                        {
+                            EvacuationTabs.Draw(input, input.Evacuation, input.PedestrianModule, input.TrafficModule);
+                            ImGui.EndTabItem();
+                        }
 
-                ImGui.EndTabBar();
+                        if (ImGui.BeginTabItem("Fire###AllFire"))
+                        {
+                            FireTabs.Draw(input);
+                            ImGui.EndTabItem();
+                        }
+
+                        ImGui.EndTabBar();
+                    }
+                    ImGui.EndDisabled();
+                }
             }
-
             ImGui.End();
+
             if (!_isOpen)
             {
                 PreactGUI.CloseWindow(Draw);
             }
-        }
-
-        public static void SaveInput()
-        {
-            ScenarioSession.Save();
         }
     }
 }

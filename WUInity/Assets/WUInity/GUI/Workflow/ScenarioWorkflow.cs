@@ -272,6 +272,10 @@ namespace WUInity.Workflow
                 case WorkflowAction.OpenResults:
                 case WorkflowAction.OpenSourceLayers:
                 case WorkflowAction.OpenFireModelSettings:
+                //Its ignition points need no grid, and it offers to build the case that gives one.
+                case WorkflowAction.OpenFireAreas:
+                //The run window is where the blockers are listed; it will not start while they stand.
+                case WorkflowAction.OpenRun:
                     return true;
                 default:
                     return false;
@@ -885,10 +889,10 @@ namespace WUInity.Workflow
             if (IsElmfire)
             {
                 var apply = new StepAction(WorkflowAction.ApplyFireAreasToCase, "Apply to case",
-                    "Rebuilds the case keeping its layers, so the painted areas become its ignition_mask.tif and wui_area.tif.");
-                if (_painted == null) apply.Disable("Nothing painted yet.");
-                else if (!onGrid) apply.Disable("The painted areas are not on the case grid; repaint them first.");
-                else if (_ctx.UnsavedFireStrokes || _ctx.IsDirty) apply.Disable("Save first: the build reads the painted areas from their file.");
+                    "Rebuilds the case keeping its layers, so the painted areas become its ignition_mask.tif and wui_area.tif. "
+                    + "The build reads the painted areas from their file, so unsaved strokes are offered a save first.");
+                if (_painted == null && !_ctx.UnsavedFireStrokes) apply.Disable("Nothing painted yet.");
+                else if (_painted != null && !onGrid) apply.Disable("The painted areas are not on the case grid; repaint them first.");
                 s.Secondary.Add(apply);
             }
             return s;
@@ -1299,6 +1303,11 @@ namespace WUInity.Workflow
         {
             if (!string.IsNullOrEmpty(step.BlockedBy)) return step.BlockedBy;
             foreach (StepIssue i in step.Issues) if (i.Level == IssueLevel.Error) return i.Text;
+            //A step that simply has not been done is blocked by that, not by whichever warning comes first.
+            if (step.Status != StepStatus.Done)
+            {
+                return "not done yet" + (string.IsNullOrEmpty(step.Summary) ? "." : " (" + step.Summary + ").");
+            }
             foreach (StepIssue i in step.Issues) if (i.Level == IssueLevel.Warning) return i.Text;
             foreach (StepIssue i in step.Issues) return i.Text;
             return "not done.";

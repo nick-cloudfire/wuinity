@@ -3,19 +3,25 @@ using ImGuiNET;
 using PREACT;
 using System.Globalization;
 using UnityEngine;
-using WUInity;
 using WUInity.Visualization;
 
 namespace Assets.WUInity.GUI.DearIMGUI
 {
-    public static class OutputWindow
+    /// <summary>
+    /// Results &gt; Live output: the running simulation's clock, people, vehicles, weather and fire, and the
+    /// controls for what is drawn.
+    /// </summary>
+    /// <remarks>
+    /// Was "Output", and drew nothing at all - not even its frame - while the simulation was initialising, which
+    /// with ELMFIRE is where the fire is computed and can last hours, or after an error: the window was open and
+    /// invisible exactly when someone was looking for it. It now says what phase the run is in, and Stop is
+    /// always there while one is going.
+    /// </remarks>
+    public static class LiveOutputWindow
     {
         private static bool _isOpen;
 
-        static OutputWindow()
-        {
-
-        }
+        public static bool IsOpen { get => _isOpen; }
 
         public static void Open()
         {
@@ -33,13 +39,41 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 return;
             }            
             
-            if (PreactGUI.Engine.Simulation == null || PreactGUI.Engine.Simulation.State == Simulation.SimulationState.Error || PreactGUI.Engine.Simulation.State == Simulation.SimulationState.Initializing)
+            PreactGUI.PlaceNextWindow(new Vector2(420f, 560f));
+            if (!ImGui.Begin("Live output###LiveOutput", ref _isOpen, PreactGUI.ToolWindowFlags))
             {
+                ImGui.End();
+                CloseIfClosed();
                 return;
             }
 
-            ImGui.Begin("Output", ref _isOpen, ImGuiWindowFlags.NoDocking);
             Simulation sim = PreactGUI.Engine.Simulation;
+            if (sim == null)
+            {
+                ImGui.TextDisabled("Nothing has run yet. Run > Run simulation starts one.");
+                ImGui.End();
+                CloseIfClosed();
+                return;
+            }
+
+            if (sim.State == Simulation.SimulationState.Initializing)
+            {
+                ImGui.TextWrapped("Preparing the run: creating the modules. With an ELMFIRE fire, this is where the fire "
+                    + "is computed - minutes to hours. The console shows its progress.");
+                if (ImGui.Button("Stop")) { RunSimulationWindow.Stop(); }
+                ImGui.End();
+                CloseIfClosed();
+                return;
+            }
+
+            if (sim.State == Simulation.SimulationState.Error)
+            {
+                Fields.Caution("The run stopped with an error; the console says why.");
+                if (ImGui.Button("Open console")) { ConsoleWindow.Open(); }
+                ImGui.End();
+                CloseIfClosed();
+                return;
+            }
 
             ImGui.SeparatorText("General");
             ImGui.BulletText($"{nameof(sim.Time.SimulationTime)}: {(int)sim.Time.SimulationTime} s");
@@ -67,10 +101,10 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 ImGui.BulletText(pauseState);
 
                 if (ImGui.Button(pauseButton)) { sim.TogglePause(); }
-
-                if (ImGui.Button("Stop simulation")) { PreactGUI.WUInity.StopSimulations(); }
-
-                if (ImGui.Button("Toggle realtime")) { sim.ToggleRealtime(); }
+                ImGui.SameLine();
+                if (ImGui.Button("Stop simulation")) { RunSimulationWindow.Stop(); }
+                ImGui.SameLine();
+                if (ImGui.Button("Real-time playback")) { sim.ToggleRealtime(); }
 
                 ImGui.BulletText("Step execution time [ms]: " + sim.StepExecutionTime.ToString("F1", CultureInfo.InvariantCulture));
             }
@@ -122,7 +156,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
             if (ImGui.Button("Toggle wildfire spread rendering"))
             {
                 PreactGUI.WUInity.ToggleFireSpreadRendering();
-                PreactGUI.WUInity.SetSampleMode(DataSampleMode.None);
             }
             ImGui.EndDisabled();
             if (ImGui.IsItemHovered())
@@ -136,7 +169,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
             if (ImGui.Button("Toggle wildfire smoke rendering"))
             {
                 PreactGUI.WUInity.ToggleSootRendering();
-                PreactGUI.WUInity.SetSampleMode(DataSampleMode.None);
             }
             ImGui.EndDisabled();
             if (!sim.Input.SmokeModule.Enabled && ImGui.IsItemHovered())
@@ -144,27 +176,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 ImGui.SetTooltip("No smoke module in this scenario.");
             }
 
-            //Named for what it does. It was "Disable rendering", which it is not: the fire spread plane,
-            //the households and the traffic are separate objects and it never touched any of them, so the
-            //button appeared not to work on everything the eye was actually on.
-            if (ImGui.Button("Hide domain overlays"))
-            {
-                PreactGUI.WUInity.SimulationDomainVisualizer.SetVisibility(false);
-                PreactGUI.WUInity.SimulationDomainVisualizer.SetGPWVisibility(false);
-                PreactGUI.WUInity.FireDomainVisualizer.SetVisibility(false);
-            }
-            ImGui.SameLine();
-            //There was no way back from the old button short of restarting the run.
-            if (ImGui.Button("Show domain overlays"))
-            {
-                PreactGUI.WUInity.SimulationDomainVisualizer.SetVisibility(true);
-                PreactGUI.WUInity.FireDomainVisualizer.SetVisibility(true);
-            }
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.SetTooltip("The domain and fire-domain planes underneath. Not the fire itself, the "
-                    + "households or the traffic - those are the toggles above.");
-            }
+            ImGui.TextDisabled("Map overlays (population, roads, painted areas, results): View > Map layers.");
 
             ImGui.SeparatorText("Evacuation");
 
@@ -210,25 +222,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 ImGui.TextDisabled("the evacuation. Cells stay lit once burned, so this is the burned area");
                 ImGui.TextDisabled("growing rather than an instantaneous fire front.");
 
-                ImGui.SeparatorText("Fire display mode");
-                if (ImGui.Button("Fireline intensity"))
-                {
-                    PreactGUI.WUInity.FireRenderer.SetFireDisplayMode(FireRenderer.FireDisplayMode.FirelineIntensity);
-                }
-
-                //Disabled rather than removed: it is a real ELMFIRE raster, just not one this module reads.
-                //Clickable, it set a display mode whose data source returns nothing, which froze the fire on
-                //screen with no indication why.
-                ImGui.SameLine();
-                ImGui.BeginDisabled(true);
-                ImGui.Button("Fuel model");
-                ImGui.EndDisabled();
-                if (ImGui.IsItemHovered())
-                {
-                    ImGui.SetTooltip("An imported fire carries arrival time, spread rate, spread direction "
-                        + "and intensity - the fuel model was an input to the fire, not an output of it, so "
-                        + "there is nothing here to draw.");
-                }
+                ImGui.TextDisabled("Drawn as fireline intensity.");
             }
             else if (sim.Input.WildfireModule.Enabled)
             {
@@ -236,6 +230,11 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
 
             ImGui.End();
+            CloseIfClosed();
+        }
+
+        private static void CloseIfClosed()
+        {
             if (!_isOpen)
             {
                 PreactGUI.CloseWindow(Draw);

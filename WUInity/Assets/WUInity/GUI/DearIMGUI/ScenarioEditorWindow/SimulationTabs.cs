@@ -20,21 +20,15 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
                 return;
             }
 
-            if (ImGui.BeginTabItem("General"))
+            if (ImGui.BeginTabItem("Place and time"))
             {
-                SimulationInputTab.Draw(input.Simulation);
-                ImGui.EndTabItem();
-            }
-
-            if (ImGui.BeginTabItem("Map"))
-            {
-                MapInputTab.Draw(input.Map);
+                SimulationInputTab.Draw(input);
                 ImGui.EndTabItem();
             }
 
             if (ImGui.BeginTabItem("Terrain"))
             {
-                LandscapeInputTab.Draw(input.Landscape);
+                LandscapeInputTab.Draw(input);
                 ImGui.EndTabItem();
             }
 
