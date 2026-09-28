@@ -211,9 +211,9 @@ namespace PREACT.Utility
             /// <remarks>
             /// Those points: before the grid is decided (nothing changed yet), after a new case's first DEM, before
             /// the weather, and before every WindNinja solve. Not between a re-cut grid and the layers carried onto
-            /// it - a stop there would leave them behind in inputs/_previous_grid, where the next build (which then
-            /// finds the case on its grid) no longer looks - and not once the wind is written, since the moisture
-            /// and the namelist that counts its bands have to follow it.
+            /// it, which would leave the case on a new grid without them until the next build carried them (see
+            /// <see cref="CarryPendingMarker"/>), and not once the wind is written, since the moisture and the namelist
+            /// that counts its bands have to follow it.
             /// </remarks>
             public Func<bool> Cancelled;
         }
@@ -360,6 +360,18 @@ namespace PREACT.Utility
                         + "onto it; the old rasters are kept in inputs/" + PreviousGridFolder + ".");
                     previousGridDirectory = SetAsidePreviousGrid(inputs, Log);
                 }
+            }
+
+            //A grid an earlier build set aside and never carried onto its new one - it failed or was killed after the
+            //set-aside (no DEM to cut the new grid from, a source layer that would not warp): carried now. Without this
+            //the next build found no dem.tif (or a new one that fits) and never looked in inputs/_previous_grid again,
+            //so the building layers, the WUI area and every hand-made layer stayed there, and a painting on the old grid
+            //was refused as painted on no known grid.
+            if (previousGridDirectory == null && !o.OverwriteExistingLayers && IsCarryPending(inputs))
+            {
+                previousGridDirectory = Path.Combine(inputs, PreviousGridFolder);
+                Log($"  inputs/{PreviousGridFolder} holds the grid an earlier build set aside and did not finish carrying "
+                    + "onto the new one; carrying its layers now.");
             }
 
             if (grid == null)
@@ -640,7 +652,25 @@ namespace PREACT.Utility
             //still worth having on disk to look at, and the run is where refusing belongs.
             result.Validation = ElmfireCaseValidator.Validate(inputs, grid, result.FuelStem, OptionalStems(), Log);
 
+            //Everything that reads the set-aside grid has run; it is kept for reference, no longer pending.
+            if (previousGridDirectory != null)
+            {
+                try { File.Delete(Path.Combine(previousGridDirectory, CarryPendingMarker)); } catch (IOException) { }
+            }
+
             return result;
+        }
+
+        /// <summary>
+        /// Left in <see cref="PreviousGridFolder"/> by the build that sets a grid aside, until a build has carried its
+        /// layers onto the new grid and finished: while it is there, the set-aside grid is the case's real one.
+        /// </summary>
+        public const string CarryPendingMarker = "carry_pending.txt";
+
+        private static bool IsCarryPending(string inputs)
+        {
+            string previous = Path.Combine(inputs, PreviousGridFolder);
+            return File.Exists(Path.Combine(previous, CarryPendingMarker)) && File.Exists(ElmfireStems.Tif(previous, ElmfireStems.Dem));
         }
 
         /// <summary>Where a case keeps its ERA5 archive: <c>climatology/&lt;scenario name&gt;_era5_hourly.csv</c>.</summary>
@@ -702,11 +732,18 @@ namespace PREACT.Utility
         private static string SetAsidePreviousGrid(string inputs, Action<string> log)
         {
             string previous = Path.Combine(inputs, PreviousGridFolder);
-            if (Directory.Exists(previous))
+            string into = previous;
+            if (IsCarryPending(inputs))
+            {
+                //The grid set aside by an earlier build that did not finish is the one to carry from, so it stays; what
+                //that build left on its own new grid goes beside it, kept rather than deleted.
+                into = Path.Combine(previous, "superseded_" + DateTime.Now.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture));
+            }
+            else if (Directory.Exists(previous))
             {
                 try { Directory.Delete(previous, recursive: true); } catch { }
             }
-            Directory.CreateDirectory(previous);
+            Directory.CreateDirectory(into);
 
             var moved = new List<string>();
             foreach (string stem in KnownStems().Concat(new[] { ElmfireStems.WuiArea }).Distinct())
@@ -714,13 +751,18 @@ namespace PREACT.Utility
                 string path = ElmfireStems.Tif(inputs, stem);
                 if (!File.Exists(path)) continue;
 
-                File.Move(path, ElmfireStems.Tif(previous, stem));
+                File.Move(path, ElmfireStems.Tif(into, stem));
                 string aux = path + ".aux.xml";
                 if (File.Exists(aux)) { try { File.Delete(aux); } catch { } }
                 moved.Add(stem);
             }
 
-            log($"  moved {moved.Count} raster(s) of the old grid to inputs/{PreviousGridFolder}: {string.Join(", ", moved)}");
+            File.WriteAllText(Path.Combine(previous, CarryPendingMarker),
+                "The build that set this grid aside has not finished carrying its layers onto the case's new grid; the next "
+                + "build carries them. Removed once a build has.\n");
+            log($"  moved {moved.Count} raster(s) of the old grid to inputs/{PreviousGridFolder}"
+                + (into == previous ? string.Empty : "/" + Path.GetFileName(into) + " (an earlier set-aside grid is still to be carried)")
+                + $": {string.Join(", ", moved)}");
             return previous;
         }
 
