@@ -342,6 +342,12 @@ namespace PREACT
         {
             PreSimulations(engineTask);
 
+            //Created before any module starts: a SUMO configuration may log into it (the Roxborough example's
+            //writes ../_output/log.txt), and SUMO refuses to start when the folder is not there yet - which it
+            //never is on a scenario's first run.
+            string outputFolder = OutputFolder;
+            Message(null, LogType.Log, "Output is written to " + outputFolder);
+
             _simulations = new Simulation[1];
             for (int i = 0; i < engineTask.NumberOfRuns; ++i)
             {
