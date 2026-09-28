@@ -55,12 +55,17 @@ See [Command-line tools](command-line-tools.md) for the full argument reference.
 
 ## 4. Run in the visualizer (Unity)
 
-1. Run the build script (step 2) so the engine DLLs are in
-   `WUInity/Assets/PREACT/Release/` and up to date.
+1. Run the build script (step 2) **before opening Unity**, so the engine DLLs are in
+   `WUInity/Assets/PREACT/Release/` and up to date. Opened without them, Unity reports compile errors.
 2. Open the `WUInity/` project in Unity (the version Unity Hub reports).
 3. Open the scene `WUInity/Assets/WUInity/Scenes/WUInityMain.unity`.
 4. (Optional) add a Mapbox token — see [Troubleshooting](troubleshooting.md).
-5. Press **Play**, then load a `.wui` project from the in-app menu.
+5. Press **Play**. The scenario you had open last time reopens; otherwise use **File > Open scenario** or
+   **File > New scenario**.
+6. To leave, use **File > Quit**: it stops a running simulation, data step or campaign, waits for it, then asks
+   about unsaved changes. Stopping Play in the editor also asks (in Unity's own dialog), after stopping what runs.
+
+To check a release by hand, [Manual test of the v1 GUI](manual-test-v1.md) walks through every part of it.
 
 ### Finding things in the visualizer
 
@@ -70,36 +75,42 @@ wrong and a button that does the step:
 
 1. Place and time · 2. Roads · 3. Population · 4. Fuels, canopy and buildings · 5. Fire case (ELMFIRE) ·
 6. Fire areas and ignition · 7. Destinations · 8. Response curves and demographics · 9. Evacuation groups ·
-10. Trigger boundary (k-PERIL) · 11. Run one simulation · 12. Results · 13. Probabilistic campaign
+10. Trigger boundary (k-PERIL) · 11. Run one simulation · 12. Results · 13. Trigger campaign
 
 The menus hold the same actions, grouped the same way:
 
 | Menu | Holds |
 |---|---|
-| **File** | New scenario, Open, Open recent, Save, Save as, Copy scenario to, Close, Quit. Unsaved changes are asked about before anything discards them. |
+| **File** | New scenario, Open, Open recent, Save, Save as, Copy scenario to, Close, Quit. Unsaved changes - settings and painted areas - are asked about before anything discards them. |
 | **Scenario** | The workflow panel, Place and time, Terrain, Weather, Check scenario, All settings. |
-| **Data** | Roads (OpenStreetMap to a SUMO network), Population (WorldPop to households), Fuels, canopy and buildings (LANDFIRE for the US), Build fire case. Each runs only what is missing. |
+| **Data** | Roads (OpenStreetMap to a SUMO network), Population (WorldPop to households), Fuels, canopy and buildings (LANDFIRE for the US), Build fire case. Each runs what is missing; a running step can be stopped from its progress window. |
 | **Fire** | Fire areas (painting), Ignition points, Fire model settings, Fire behaviour (the namelist) and its preview, Trigger boundary, Smoke. |
 | **Evacuation** | Modules, Destinations, Response curves, Demographics, Evacuation groups, Paint group areas. |
-| **Run** | Run simulation (F5), Pause, Stop, Probabilistic trigger campaign. |
+| **Run** | Run simulation (F5), Pause, Stop, Trigger campaign (opens at any time, to set one up or to watch and cancel the one running). |
 | **Results** | Live output, Show on map (fire arrival, trigger boundary and probability, burn probability, arrival percentiles), the results of the last run and campaign. |
-| **View** / **Help** | Map layers, console, theme, window layout / getting started, troubleshooting, external tools and keys. |
+| **View** / **Help** | Map layers (population, roads, markers, result overlay), console, theme, window layout / getting started, troubleshooting, external tools and keys. |
 
 Two distinctions worth knowing:
 
 - **Fire model settings** is how ELMFIRE is *run* — the case, the executables, the fire duration, what to
-  build. **Fire behaviour** is what it is *told*, and becomes the generated `elmfire.data`. Setting a
-  `NamelistTemplate` replaces the whole of Fire behaviour, and the page says so.
+  build. **Fire behaviour** is what it is *told*, and becomes the generated `elmfire.data`. Every build writes
+  `elmfire.data` again from these settings; one edited by hand is first set aside as
+  `elmfire.data.kept-<time>`, and step 5 says so before and after. Setting a `NamelistTemplate` replaces the
+  whole of Fire behaviour, and the page says so.
 - For an ELMFIRE scenario the case's `dem.tif` is the grid everything is painted and computed on. Building
   the case points `[Landscape]` at the case terrain; fuel and canopy rasters are named under Fuels, canopy
-  and buildings, not under Terrain.
+  and buildings, not under Terrain. A painting made on another grid (an older landscape raster, or a grid a
+  rebuild replaced) is moved onto the case grid with step 6's **Move painting onto the fire-case grid**, into a
+  new file beside the old one; a build that re-cuts the grid moves the painting along by itself.
 
 ## 5. Prepare your own scenario
 
 `File > New scenario` asks for a folder, a name, the area (picked on the map) and the dates, and writes the
 `.wui` at once. Then work down the workflow panel: each row's button fetches or builds what that step needs —
-roads, population, fuels, the fire case — and sets the paths on the scenario, which `File > Save` (Ctrl+S)
-keeps. To understand or hand-edit the file, read [The `.wui` input file format](input-file-format.md).
+roads, population, fuels (LANDFIRE in the US; outside it, a fuel model raster of your own), the fire case —
+and sets the paths on the scenario, which `File > Save` (Ctrl+S) keeps. The fire case's terrain comes from
+OpenTopography, whose key goes in `Assets/Resources/OpenTopography/OpenTopographyConfiguration.txt` (or can be
+typed in for one session under Help > External tools and keys). To understand or hand-edit the file, read [The `.wui` input file format](input-file-format.md).
 
 ## Where to go next
 
