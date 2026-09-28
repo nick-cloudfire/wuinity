@@ -6,100 +6,155 @@ using System.Linq;
 namespace PREACT.Utility
 {
     /// <summary>
-    /// Runs one ELMFIRE realization: writes the realization's patched namelist into its own run
-    /// directory, invokes the native <c>elmfire</c> binary there, and hands back the four output
-    /// rasters the WUInity/k-PERIL half consumes.
+    /// Runs one ELMFIRE fire: writes the patched namelist into the run directory's <c>outputs/</c>, invokes the
+    /// native <c>elmfire</c> binary with the run directory as the working directory, and hands back the rasters
+    /// the WUInity/k-PERIL half consumes.
     ///
-    /// Invocation follows WildfireAV's <c>pipeline/runElmfireCase.py</c>: the binary is run
-    /// directly on the case's <c>.data</c> file with the case directory as the working directory —
-    /// single rank, no <c>mpiexec</c>. ELMFIRE reports "Running with 1 workers" in that mode.
+    /// Invocation follows WildfireAV's <c>pipeline/runElmfireCase.py</c>: the binary is run directly on the
+    /// namelist - single rank, no <c>mpiexec</c>. ELMFIRE reports "Running with 1 workers" in that mode.
     ///
-    /// Each realization gets a private run directory holding its own <c>outputs/</c> and
-    /// <c>scratch/</c>, while <c>inputs/</c> is shared read-only across all of them. That split is
-    /// what makes concurrent realizations safe: ELMFIRE converts every input GeoTIFF to an
-    /// intermediate ENVI .bsq/.hdr pair before reading it, and writes those next to the input only
-    /// when SCRATCH is unset — with SCRATCH set (this writer always sets it) they land there
-    /// instead, so parallel runs never write to the same path. Output filenames are not unique
-    /// either: with one ensemble member per realization every run produces
-    /// <c>time_of_arrival_0000001_*.tif</c>, so a shared outputs directory would have them
-    /// overwriting each other.
+    /// Each run gets its own <c>outputs/</c> and <c>scratch/</c>, while the inputs are shared read-only. That
+    /// split is what makes concurrent realizations safe: ELMFIRE converts every input GeoTIFF to an ENVI
+    /// .bsq/.hdr pair before reading it and writes those next to the input only when SCRATCH is unset.
+    /// Output names are not unique across runs either (<c>time_of_arrival_0000001_*.tif</c> for every
+    /// single-member case), so a shared outputs directory would have them overwriting each other.
+    ///
+    /// The namelist is written to <c>outputs/run.data</c> rather than over the case's own <c>elmfire.data</c>:
+    /// the template is the user's, and a campaign reading it while a single run rewrote it picked up the change
+    /// mid-campaign. The file that produced a set of outputs now lives with them.
     /// </summary>
     public static class ElmfireRunner
     {
-        /// <summary>ELMFIRE output stems, mapped to the roles AscImport expects.</summary>
-        private const string ToaStem = "time_of_arrival";
-        private const string RosStem = "vs";           // velocity of spread (m/min with SPREAD_RATE_IN_M)
-        private const string SdStem = "spread_dir";
-        private const string FiStem = "flin";          // fireline intensity
+        /// <summary>Where the run's namelist is written, inside <c>outputs/</c>.</summary>
+        public const string RunNamelistName = "run.data";
+
+        /// <summary>
+        /// Written beside the outputs after a successful run: what the run was computed from, so a later run
+        /// reuses the outputs only when nothing that decides them has changed.
+        /// </summary>
+        public const string FingerprintName = "run.fingerprint";
 
         public class Result
         {
             public bool Ok;
             public string Toa, Ros, Sd, Fi;
+
+            /// <summary>Midflame wind speed, ft/min, on the cells the fire reached. Null when the build of
+            /// ELMFIRE predates DUMP_MIDFLAME_WINDSPEED.</summary>
+            public string Mfws;
+
             public string Message;
+
+            /// <summary>Outputs from an earlier identical run were reused and ELMFIRE was not invoked.</summary>
             public bool Reused;
+
+            /// <summary>The run was stopped by <see cref="CancelAll"/>.</summary>
+            public bool Cancelled;
+
+            /// <summary>
+            /// ELMFIRE completed and the fire did not spread (0 acres). Not <see cref="Ok"/>, but the rasters are
+            /// set: for a campaign this is a realization that threatened nothing, not a failure.
+            /// </summary>
+            public bool NoSpread;
+
+            /// <summary>ELMFIRE hit its wall-clock <c>MAX_RUNTIME</c> and dumped a truncated fire.</summary>
+            public bool MaxRuntimeHit;
+
+            /// <summary>Final burned area from ELMFIRE's log, or -1 when it did not report one.</summary>
+            public double FireAreaAcres = -1.0;
+
+            /// <summary>The namelist the run used, <c>outputs/run.data</c>.</summary>
+            public string NamelistPath;
+
+            public TimeSpan Elapsed;
         }
 
         /// <summary>
-        /// Runs (or reuses) realization <paramref name="runId"/> in <paramref name="runDir"/>.
-        /// <paramref name="namelistLines"/> is a template already patched by
-        /// the campaign driver, whose OUTPUTS_DIRECTORY / SCRATCH must be the
-        /// './outputs' and './scratch' inside <paramref name="runDir"/>.
+        /// Kills every ELMFIRE (and WindNinja) process tree this process started, and makes the runs they
+        /// belong to return a failure with <see cref="Result.Cancelled"/> set. Runs started afterwards are not
+        /// affected.
         /// </summary>
+        /// <remarks>
+        /// Contract C3. The GUI's stop/close is expected to call this; ELMFIRE otherwise runs to completion in
+        /// the background after the simulation that wanted it has gone.
+        /// </remarks>
+        public static void CancelAll()
+        {
+            ElmfireProcesses.KillAll();
+        }
+
+        /// <summary>
+        /// Runs (or reuses) one fire in <paramref name="runDir"/>. <paramref name="namelistLines"/> must already
+        /// be patched: every directory in it relative to <paramref name="runDir"/>, OUTPUTS_DIRECTORY and
+        /// SCRATCH <c>./outputs</c> and <c>./scratch</c>.
+        /// </summary>
+        /// <param name="reuse">
+        /// Use outputs already in <c>outputs/</c> instead of running. Honoured only when
+        /// <paramref name="fingerprint"/> matches the one recorded with them - a fire from another ignition,
+        /// stop time or fuel is not this fire.
+        /// </param>
+        /// <param name="fingerprint">
+        /// What decides this run's result (see <see cref="ElmfireFingerprint"/>). Recorded after a successful run.
+        /// Null disables reuse.
+        /// </param>
         public static Result Run(string elmfireExe, string runDir, string runId, string[] namelistLines,
-                                 bool resume, TextWriter log, string gdalBinDir = null)
+                                 bool reuse, TextWriter log, string gdalBinDir = null, string fingerprint = null)
         {
             var result = new Result();
+            var clock = Stopwatch.StartNew();
+            long generation = ElmfireProcesses.Generation;
 
             string outputsDir = Path.Combine(runDir, "outputs");
             string scratchDir = Path.Combine(runDir, "scratch");
             Directory.CreateDirectory(outputsDir);
             Directory.CreateDirectory(scratchDir);
 
-            // Resume off means this realization is being computed again, so last time's files must not be
-            // able to stand in for it. Emptied rather than left to be overwritten, because ELMFIRE's dump
-            // names carry the run's stop time and TryCollectOutputs takes the largest one it finds - so a
-            // previous longer run's raster beats this one's and the campaign silently aggregates the old
-            // fire. RANDOMIZE_SIMULATION_TSTOP makes that likely even at identical settings, since every
-            // realization draws its own stop time.
-            //
-            // Scratch too: with USE_EXISTING_BSQS on, ELMFIRE reuses the converted rasters it finds there,
-            // which would be the ones made from the case's inputs as they were before they changed.
-            if (!resume)
-            {
-                Empty(outputsDir);
-                Empty(scratchDir);
-            }
+            string fingerprintPath = Path.Combine(outputsDir, FingerprintName);
+            result.NamelistPath = Path.Combine(outputsDir, RunNamelistName);
 
-            // Resume the same way WildfireAV does: an existing time-of-arrival dump means this
-            // realization already ran. Checked before writing the namelist so a resumed run does
-            // not need the binary at all.
-            if (resume && TryCollectOutputs(outputsDir, result))
+            if (reuse && fingerprint != null && TryReadAllText(fingerprintPath) == fingerprint
+                && TryCollectOutputs(outputsDir, result))
             {
                 result.Ok = true;
                 result.Reused = true;
-                log?.WriteLine($"[{runId}] reusing existing ELMFIRE outputs.");
+                TryReadFireArea(runDir, out result.FireAreaAcres);
+                log?.WriteLine($"[{runId}] reusing ELMFIRE outputs computed from the same namelist and inputs.");
                 return result;
             }
+
+            if (reuse && fingerprint != null && File.Exists(fingerprintPath))
+            {
+                log?.WriteLine($"[{runId}] the namelist or the inputs changed since the outputs were written; running again.");
+            }
+
+            // Emptied rather than left to be overwritten: dump names carry the run's stop time and the largest
+            // one is taken, so a previous longer run's raster would beat this one's. Scratch too, because with
+            // USE_EXISTING_BSQS ELMFIRE reuses converted rasters it finds there.
+            Empty(outputsDir);
+            Empty(scratchDir);
 
             if (elmfireExe == null || !File.Exists(elmfireExe))
             {
-                result.Message = "elmfire executable not found; pass --elmfire <path>.";
+                result.Message = "elmfire executable not found; pass --elmfire <path> or set [ELMFIRE] ElmfireExe.";
                 return result;
             }
 
-            string dataFile = Path.Combine(runDir, "elmfire.data");
-            File.WriteAllLines(dataFile, namelistLines);
+            File.WriteAllLines(result.NamelistPath, namelistLines);
 
             log?.WriteLine($"[{runId}] running ELMFIRE...");
-            int exit = RunProcess(elmfireExe, runDir, Path.GetFileName(dataFile), gdalBinDir, out string stderrTail);
+            int exit = RunProcess(elmfireExe, runDir, "outputs/" + RunNamelistName, gdalBinDir, out string stderrTail);
+            result.Elapsed = clock.Elapsed;
+
+            if (ElmfireProcesses.CancelledSince(generation))
+            {
+                result.Cancelled = true;
+                result.Message = "ELMFIRE was cancelled.";
+                return result;
+            }
 
             //ELMFIRE's own account of what went wrong comes first, from the log, and only then the exit code.
-            //Its diagnostics go to stdout via WRITE(*,*), so the stderr tail never held them - and what stderr
-            //does hold on a failure is the MPI epilogue, which is not the problem: every error path in ELMFIRE
-            //is a bare Fortran STOP that never calls MPI_FINALIZE, so Intel MPI then complains about "an MPI
-            //routine (internal_barrier) before initializing or after finalizing MPICH". Reporting that instead
-            //of the line above it describes the exit rather than the cause.
+            //Its diagnostics go to stdout via WRITE(*,*); stderr on a failure holds the MPI epilogue of a bare
+            //Fortran STOP ("an MPI routine ... before initializing or after finalizing"), which is not the cause.
             string diagnosis = DescribeFailure(runDir);
 
             if (exit != 0)
@@ -118,33 +173,56 @@ namespace PREACT.Utility
 
             if (!TryCollectOutputs(outputsDir, result))
             {
-                //Says which raster is missing, not just that something is. This used to blame the
-                //time-of-arrival dump whatever was absent, and the one usually absent is the spread
-                //direction - it is off by default in ELMFIRE - so the message named the one file that was
-                //definitely there.
                 result.Message = "elmfire reported success but " + MissingOutputs(outputsDir) + " in " + outputsDir;
                 return result;
             }
 
-            // A fire that never spread is not a realization, it is a wasted draw — and left
-            // unchecked it is invisible: ELMFIRE exits 0, writes all four rasters, and only the
-            // "Fire area: 0.0 acres" line in its log says anything is wrong. Downstream, k-PERIL
-            // produces an empty trigger boundary and the driver folds it into the probability
-            // raster as though it were a real outcome, biasing every decile toward zero.
-            if (TryReadFireArea(runDir, out double acres) && acres <= 0.0)
+            TryReadFireArea(runDir, out result.FireAreaAcres);
+
+            if (TryReadMaxRuntimeStop(runDir, out string stopLine))
             {
+                //Truncated, not finished: ELMFIRE stops propagating and dumps the fire as it stood. For a
+                //campaign that is a fire that did not get the time it was given, and aggregating it would count
+                //its unreached ground as safe.
+                result.MaxRuntimeHit = true;
+                result.Message = "ELMFIRE hit its wall-clock limit (MAX_RUNTIME) and stopped the fire early: "
+                                 + stopLine;
+                return result;
+            }
+
+            // A fire that never spread is not a fire, and left unchecked it is invisible: ELMFIRE exits 0 and
+            // writes every raster, and only "Fire area: 0.0 acres" in its log says anything is wrong.
+            if (result.FireAreaAcres == 0.0)
+            {
+                result.NoSpread = true;
                 result.Message = "elmfire burned 0 acres (the ignition most likely landed on non-burnable fuel)";
                 return result;
+            }
+
+            if (result.Mfws == null)
+            {
+                log?.WriteLine($"[{runId}] WARNING: no midflame wind raster (mfws_*.tif). This elmfire build predates "
+                               + "DUMP_MIDFLAME_WINDSPEED; k-PERIL will fall back to the 10 m wind.");
+            }
+
+            if (fingerprint != null)
+            {
+                try { File.WriteAllText(fingerprintPath, fingerprint); } catch { }
             }
 
             result.Ok = true;
             return result;
         }
 
+        private static string TryReadAllText(string path)
+        {
+            try { return File.Exists(path) ? File.ReadAllText(path) : null; }
+            catch { return null; }
+        }
+
         /// <summary>
-        /// Deletes the directory's contents, keeping the directory. Best-effort per entry: a file held open
-        /// by something else must not stop the run, and the one real consequence — a stale raster surviving —
-        /// is reported by the caller's own checks rather than papered over here.
+        /// Deletes the directory's contents, keeping the directory. Best-effort per entry: a file held open by
+        /// something else must not stop the run, and a stale raster surviving is caught by the caller's checks.
         /// </summary>
         private static void Empty(string directory)
         {
@@ -159,37 +237,32 @@ namespace PREACT.Utility
         }
 
         /// <summary>
-        /// Finds this run's output rasters. ELMFIRE names dumps
-        /// <c>&lt;stem&gt;_&lt;7-digit ensemble member&gt;_&lt;time in seconds&gt;.tif</c> and writes one
-        /// per DTDUMP interval, so the set is globbed rather than reconstructed, and the final
-        /// (largest-time) dump is the one taken — that is the fully-grown fire k-PERIL needs.
+        /// Finds this run's output rasters. Dumps are named
+        /// <c>&lt;stem&gt;_&lt;7-digit ensemble member&gt;_&lt;time in seconds&gt;.tif</c>, one per DTDUMP, so the
+        /// set is globbed and the final (largest-time) dump taken - the fully-grown fire k-PERIL needs.
         /// </summary>
-        private static bool TryCollectOutputs(string outputsDir, Result result)
+        public static bool TryCollectOutputs(string outputsDir, Result result)
         {
-            string toa = LatestDump(outputsDir, ToaStem);
+            string toa = LatestDump(outputsDir, ElmfireStems.TimeOfArrival);
             if (toa == null) return false;
 
-            // The other three are matched to the time-of-arrival dump's suffix rather than globbed
-            // independently, so a partially-written run cannot pair rasters from different times.
-            string suffix = Path.GetFileNameWithoutExtension(toa).Substring(ToaStem.Length);
+            // The others are matched to the time-of-arrival dump's suffix rather than globbed independently, so
+            // a partially-written run cannot pair rasters from different times. The midflame wind is written on
+            // the final dump only, which is the one taken.
+            string suffix = Path.GetFileNameWithoutExtension(toa).Substring(ElmfireStems.TimeOfArrival.Length);
 
             result.Toa = toa;
-            result.Ros = SiblingDump(outputsDir, RosStem, suffix);
-            result.Sd = SiblingDump(outputsDir, SdStem, suffix);
-            result.Fi = SiblingDump(outputsDir, FiStem, suffix);
+            result.Ros = SiblingDump(outputsDir, ElmfireStems.SpreadRate, suffix);
+            result.Sd = SiblingDump(outputsDir, ElmfireStems.SpreadDirection, suffix);
+            result.Fi = SiblingDump(outputsDir, ElmfireStems.FirelineIntensity, suffix);
+            result.Mfws = SiblingDump(outputsDir, ElmfireStems.MidflameWindSpeed, suffix);
 
-            // FI is optional downstream (AscImport only requires TOA/ROS/SD), the rest are not.
+            // FI and the midflame wind are optional downstream; the rest are not.
             return result.Ros != null && result.Sd != null;
         }
 
         /// <summary>
         /// What ELMFIRE said went wrong, read out of its log, or null if it did not complain.
-        ///
-        /// Needed because ELMFIRE reports failures in a way that hides them: the diagnostic goes to stdout,
-        /// the process then dies on a bare Fortran STOP that skips MPI_FINALIZE, and Intel MPI writes its own
-        /// complaint to stderr afterwards. So the last thing anyone sees is
-        /// "Attempting to use an MPI routine (internal_barrier) before initializing or after finalizing
-        /// MPICH", which is true, unhelpful, and about MPI rather than about the input that was wrong.
         /// </summary>
         private static string DescribeFailure(string runDir)
         {
@@ -238,14 +311,21 @@ namespace PREACT.Utility
                 return null;
             }
 
+            //An ELMFIRE built before a7fb9d6 refuses the midflame key when it reads &OUTPUTS. Its message names the
+            //key but not the remedy, and the remedy is a rebuild, not a namelist edit.
+            string hint = string.Empty;
+            if (found.Exists(l => l.IndexOf(ElmfireNamelistKeys.DumpMidflameWindSpeed, StringComparison.OrdinalIgnoreCase) >= 0))
+            {
+                hint = " - this elmfire build predates DUMP_MIDFLAME_WINDSPEED; rebuild it from the ELMFIRE-WUINITY "
+                       + "submodule (a7fb9d6 or later)";
+            }
+
             //The first few only: a cascade after the first failure says less than the first line does.
             if (found.Count > 3) found.RemoveRange(3, found.Count - 3);
-            return string.Join(" | ", found) + " (full output in " + logPath + ")";
+            return string.Join(" | ", found) + hint + " (full output in " + logPath + ")";
         }
 
-        /// <summary>
-        /// Whether a line is MPI complaining about the way ELMFIRE exited, rather than about the run.
-        /// </summary>
+        /// <summary>Whether a line is MPI complaining about the way ELMFIRE exited, rather than about the run.</summary>
         private static bool IsMpiEpilogue(string line)
         {
             return line.IndexOf("MPI routine", StringComparison.OrdinalIgnoreCase) >= 0
@@ -254,23 +334,24 @@ namespace PREACT.Utility
         }
 
         /// <summary>
-        /// Which of the rasters the reader needs are not there, with the namelist key that would produce
-        /// them - because that, not the file name, is what the user has to change.
+        /// Which of the rasters the reader needs are not there, with the namelist key that would produce them.
         /// </summary>
         private static string MissingOutputs(string outputsDir)
         {
             var missing = new System.Collections.Generic.List<string>();
 
-            string toa = LatestDump(outputsDir, ToaStem);
+            string toa = LatestDump(outputsDir, ElmfireStems.TimeOfArrival);
             if (toa == null)
             {
-                missing.Add($"{ToaStem} (DUMP_TIME_OF_ARRIVAL)");
+                missing.Add($"{ElmfireStems.TimeOfArrival} (DUMP_TIME_OF_ARRIVAL)");
                 return "produced no " + string.Join(", no ", missing);
             }
 
-            string suffix = Path.GetFileNameWithoutExtension(toa).Substring(ToaStem.Length);
-            if (SiblingDump(outputsDir, RosStem, suffix) == null) missing.Add($"{RosStem} (DUMP_SPREAD_RATE)");
-            if (SiblingDump(outputsDir, SdStem, suffix) == null) missing.Add($"{SdStem} (DUMP_SPREAD_DIRECTION)");
+            string suffix = Path.GetFileNameWithoutExtension(toa).Substring(ElmfireStems.TimeOfArrival.Length);
+            if (SiblingDump(outputsDir, ElmfireStems.SpreadRate, suffix) == null)
+                missing.Add($"{ElmfireStems.SpreadRate} (DUMP_SPREAD_RATE)");
+            if (SiblingDump(outputsDir, ElmfireStems.SpreadDirection, suffix) == null)
+                missing.Add($"{ElmfireStems.SpreadDirection} (DUMP_SPREAD_DIRECTION)");
 
             return missing.Count == 0
                 ? "produced no usable set of rasters"
@@ -279,13 +360,12 @@ namespace PREACT.Utility
 
         /// <summary>
         /// Reads the burned area back out of ELMFIRE's own log line, e.g.
-        /// <c>[1] Meteorology band 1: Case # 1 complete.  Fire area:   3094.0 acres.</c>
-        /// Returns false when no such line is present, in which case the caller must not treat the
-        /// run as empty — an unparsed log is not evidence of a zero-area fire.
+        /// <c>[1] Meteorology band 1: Case # 1 complete.  Fire area:   3094.0 acres.</c> Returns false when there
+        /// is no such line - an unparsed log is not evidence of a zero-area fire.
         /// </summary>
-        private static bool TryReadFireArea(string runDir, out double acres)
+        public static bool TryReadFireArea(string runDir, out double acres)
         {
-            acres = 0;
+            acres = -1.0;
             string logPath = Path.Combine(runDir, "elmfire.log");
             if (!File.Exists(logPath)) return false;
 
@@ -311,12 +391,30 @@ namespace PREACT.Utility
             return found;
         }
 
+        /// <summary>ELMFIRE's "STOPPED: ELAPSED TIME ... GREATER THAN MAX_RUNTIME" line, when it wrote one.</summary>
+        private static bool TryReadMaxRuntimeStop(string runDir, out string line)
+        {
+            line = null;
+            string logPath = Path.Combine(runDir, "elmfire.log");
+            if (!File.Exists(logPath)) return false;
+
+            foreach (string raw in File.ReadLines(logPath))
+            {
+                if (raw.IndexOf("GREATER THAN MAX_RUNTIME", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    line = raw.Trim();
+                    return true;
+                }
+            }
+            return false;
+        }
+
         private static string LatestDump(string outputsDir, string stem)
         {
             if (!Directory.Exists(outputsDir)) return null;
 
             return Directory.GetFiles(outputsDir, stem + "_*.tif")
-                            .Select(p => new { Path = p, Time = DumpTime(p, stem) })
+                            .Select(p => new { Path = p, Time = DumpTime(p) })
                             .Where(x => x.Time >= 0)
                             .OrderByDescending(x => x.Time)
                             .Select(x => x.Path)
@@ -332,17 +430,12 @@ namespace PREACT.Utility
         /// <summary>
         /// Pins the child's GDAL/PROJ resolution to the GDAL installation we were pointed at.
         ///
-        /// This is not defensive tidying, it is required. ELMFIRE shells out to gdalsrsinfo to
-        /// learn the DEM's EPSG code, and writes its output GeoTIFFs with <c>-a_srs</c> set from
-        /// the result. A conflicting PROJ data directory earlier on PATH — SUMO ships one, and
-        /// SUMO is on PATH on any machine set up to run WUInity's traffic half — makes that lookup
-        /// fail with "proj.db contains DATABASE.LAYOUT.VERSION.MINOR = 4 whereas a number >= 5 is
-        /// expected". ELMFIRE then falls back to A_SRS=UNKNOWN, every gdal_translate call fails
-        /// with "Failed to process SRS definition", and the run *still exits 0* having deleted its
-        /// own .bil intermediates — a silent, total loss of the realization's output.
-        ///
-        /// So the GDAL bin directory goes to the front of the child's PATH, and PROJ_DATA/PROJ_LIB
-        /// (the PROJ 9+ and pre-9 spellings) are pointed at its sibling share\proj when present.
+        /// Required, not tidying. ELMFIRE shells out to gdalsrsinfo to learn the DEM's EPSG code and writes its
+        /// output GeoTIFFs with <c>-a_srs</c> from the result. A conflicting PROJ data directory earlier on PATH
+        /// - SUMO ships one - makes that lookup fail with "proj.db contains DATABASE.LAYOUT.VERSION.MINOR = 4";
+        /// ELMFIRE then falls back to A_SRS=UNKNOWN, every gdal_translate fails, and the run still exits 0 having
+        /// deleted its own .bil intermediates. So the GDAL bin directory goes to the front of the child's PATH and
+        /// PROJ_DATA/PROJ_LIB are pointed at its sibling share/proj when present.
         /// </summary>
         private static void ApplyGdalEnvironment(ProcessStartInfo psi, string gdalBinDir)
         {
@@ -363,16 +456,11 @@ namespace PREACT.Utility
         /// Sets a variable in the child's environment, replacing any entry that differs only in case.
         /// </summary>
         /// <remarks>
-        /// Windows environment variable names are case-insensitive, and Windows spells the search path
-        /// <c>Path</c>. Whether assigning <c>psi.Environment["PATH"]</c> overwrites that or adds a second
-        /// entry beside it depends on the runtime: .NET Core keys this dictionary with
-        /// <c>OrdinalIgnoreCase</c> on Windows, Mono keys it ordinally. Under Mono - which is what Unity
-        /// runs - the child therefore inherited both <c>Path</c> (the original) and <c>PATH</c> (ours),
-        /// and the original won, so ELMFIRE's <c>where gdal_translate</c> found nothing and it fell back
-        /// to a blank PATH_TO_GDAL. The failure then surfaced as "DEM CRS does not appear to use metre
-        /// linear units", an error about the DEM, which is fine.
-        ///
-        /// This is why the same code worked from PREACTcli and not from the GUI.
+        /// Windows spells the search path <c>Path</c>, and whether assigning <c>psi.Environment["PATH"]</c>
+        /// replaces it depends on the runtime: .NET Core keys the dictionary case-insensitively on Windows, Mono
+        /// (Unity) ordinally - so under Mono the child inherited both and the original won, and ELMFIRE's
+        /// <c>where gdal_translate</c> found nothing. This is why the same code worked from PREACTcli and not from
+        /// the GUI.
         /// </remarks>
         private static void SetEnvironmentVariable(ProcessStartInfo psi, string name, string value)
         {
@@ -388,7 +476,7 @@ namespace PREACT.Utility
         }
 
         /// <summary>Parses the trailing "_&lt;seconds&gt;" of a dump filename; -1 if it does not parse.</summary>
-        private static long DumpTime(string path, string stem)
+        private static long DumpTime(string path)
         {
             string name = Path.GetFileNameWithoutExtension(path);
             int lastUnderscore = name.LastIndexOf('_');
@@ -397,10 +485,10 @@ namespace PREACT.Utility
         }
 
         /// <summary>
-        /// Runs the binary with <paramref name="runDir"/> as the working directory, since every
-        /// path in the namelist is relative to it. Both streams are redirected: ELMFIRE prints a
-        /// progress line per timestep, which at --parallel width would otherwise flood the console
-        /// and interleave unreadably. Only a tail of stderr is kept, for the failure message.
+        /// Runs the binary with <paramref name="runDir"/> as the working directory, since every path in the
+        /// namelist is relative to it. Both streams go to <c>elmfire.log</c> - ELMFIRE prints a progress line per
+        /// timestep, which at --parallel width would flood and interleave on the console - and a tail of stderr
+        /// is kept for the failure message. Registered with <see cref="ElmfireProcesses"/> so a cancel reaches it.
         /// </summary>
         private static int RunProcess(string exe, string runDir, string dataFileName, string gdalBinDir, out string stderrTail)
         {
@@ -418,10 +506,6 @@ namespace PREACT.Utility
             ApplyGdalEnvironment(psi, gdalBinDir);
 
             var stderrLines = new System.Collections.Generic.Queue<string>();
-
-            // Kept rather than discarded: ELMFIRE's per-timestep chatter is far too noisy for the
-            // console at --parallel width, but it is the only record of what the fire actually did
-            // and is needed to diagnose a realization after the fact.
             string logPath = Path.Combine(runDir, "elmfire.log");
 
             using (var log = new StreamWriter(logPath, append: false))
@@ -447,14 +531,22 @@ namespace PREACT.Utility
                 };
 
                 p.Start();
-                p.BeginOutputReadLine();
-                p.BeginErrorReadLine();
+                ElmfireProcesses.Register(p);
+                try
+                {
+                    p.BeginOutputReadLine();
+                    p.BeginErrorReadLine();
 
-                // ELMFIRE prompts "Hit Enter to continue" on a fatal input error and would
-                // otherwise block forever waiting on a console that is not there.
-                p.StandardInput.Close();
+                    // ELMFIRE prompts "Hit Enter to continue" on a fatal input error and would otherwise block
+                    // forever waiting on a console that is not there.
+                    p.StandardInput.Close();
 
-                p.WaitForExit();
+                    p.WaitForExit();
+                }
+                finally
+                {
+                    ElmfireProcesses.Unregister(p);
+                }
 
                 lock (stderrLines) stderrTail = string.Join(" | ", stderrLines);
                 return p.ExitCode;

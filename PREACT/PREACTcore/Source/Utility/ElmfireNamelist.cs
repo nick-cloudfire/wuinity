@@ -35,6 +35,51 @@ namespace PREACT.Utility
         // &OUTPUTS
         public const string OutputsDirectory = "OUTPUTS_DIRECTORY";
 
+        /// <summary>The key that makes ELMFIRE write <c>mfws_*.tif</c>. Requires ELMFIRE-WUINITY a7fb9d6 or later.</summary>
+        public const string DumpMidflameWindSpeed = "DUMP_MIDFLAME_WINDSPEED";
+
+        /// <summary>
+        /// The &amp;OUTPUTS keys every ELMFIRE run WUInity starts must carry, whatever the namelist or template says.
+        /// </summary>
+        /// <remarks>
+        /// The fire reader needs the first three rasters, and SPREAD_RATE_IN_M is the one that is not an error
+        /// anywhere when wrong: without it ELMFIRE dumps ft/min and the fire spreads 3.28 times too fast. The
+        /// midflame wind is what k-PERIL's length-to-breadth ratio is defined for; without it the trigger boundary
+        /// falls back to the 10 m wind, which elongates every spread ellipse. One list, so the case builder, the
+        /// single-run patch and every campaign realization force the same set.
+        /// </remarks>
+        public static readonly (string Key, string Value)[] RequiredOutputs =
+        {
+            ("DUMP_TIME_OF_ARRIVAL", ".TRUE."),
+            ("DUMP_SPREAD_RATE", ".TRUE."),
+            ("DUMP_SPREAD_DIRECTION", ".TRUE."),
+            ("SPREAD_RATE_IN_M", ".TRUE."),
+            (DumpMidflameWindSpeed, ".TRUE."),
+        };
+
+        /// <summary>Stems of the weather rasters, in &amp;INPUTS.</summary>
+        public const string WsFilename = "WS_FILENAME";
+        public const string WdFilename = "WD_FILENAME";
+
+        /// <summary>The surface fuel model table, read from MISCELLANEOUS_INPUTS_DIRECTORY.</summary>
+        public const string FuelModelFile = "FUEL_MODEL_FILE";
+
+        /// <summary>The building fuel model table, read from MISCELLANEOUS_INPUTS_DIRECTORY.</summary>
+        public const string BuildingFuelModelFile = "BUILDING_FUEL_MODEL_FILE";
+
+        /// <summary>Wall-clock seconds after which ELMFIRE stops propagating and dumps what it has.</summary>
+        public const string MaxRuntime = "MAX_RUNTIME";
+
+        /// <summary>Forces every &amp;OUTPUTS key in <see cref="RequiredOutputs"/>.</summary>
+        public static string[] ForceRequiredOutputs(string[] lines)
+        {
+            foreach ((string key, string value) in RequiredOutputs)
+            {
+                lines = ElmfireNamelist.SetKeyInGroup(lines, OutputsGroup, key, value);
+            }
+            return lines;
+        }
+
         // &TIME_CONTROL
         public const string SimulationTstop = "SIMULATION_TSTOP";
 
@@ -125,8 +170,9 @@ namespace PREACT.Utility
         public const string Scratch = "SCRATCH";
 
         /// <summary>
-        /// Where <c>fuel_models.csv</c> and <c>building_fuel_models.csv</c> are read from. Written relative to
-        /// the case root, so a realization running in its own directory has to be given it as an absolute path.
+        /// Where <c>fuel_models.csv</c> and <c>building_fuel_models.csv</c> are read from - and where ELMFIRE writes
+        /// its built-in fuel table when <c>FUEL_MODEL_FILE</c> is unset. Resolved against the directory ELMFIRE
+        /// runs in, like every other directory key.
         /// </summary>
         public const string MiscellaneousInputsDirectory = "MISCELLANEOUS_INPUTS_DIRECTORY";
 
@@ -142,10 +188,9 @@ namespace PREACT.Utility
 
     /// <summary>
     /// Generic Fortran-namelist (<c>&amp;GROUP ... /</c>) template patcher: finds or inserts a
-    /// <c>KEY = value</c> line inside a named group. Mirrors the "clone a base template, patch
-    /// known keys, write it out" convention already used for <c>.wui</c> files by
-    /// <see cref="ProbabilisticTrigger"/>'s <c>SetKeyInSection</c> (bracket-delimited sections),
-    /// adapted to ELMFIRE's <c>&amp;GROUP</c>/<c>/</c> delimiters.
+    /// <c>KEY = value</c> line inside a named group - the "clone a base template, patch known keys, write
+    /// it out" convention the campaign driver also uses for <c>.wui</c> sections, adapted to ELMFIRE's
+    /// <c>&amp;GROUP</c>/<c>/</c> delimiters.
     /// </summary>
     public static class ElmfireNamelist
     {

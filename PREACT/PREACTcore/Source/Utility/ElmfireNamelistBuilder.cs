@@ -25,10 +25,10 @@ namespace PREACT.Utility
     /// that name the wrong thing.
     /// </para>
     /// <para>
-    /// Four output keys are forced regardless of what was asked for -
-    /// <c>DUMP_TIME_OF_ARRIVAL</c>, <c>DUMP_SPREAD_RATE</c>, <c>DUMP_SPREAD_DIRECTION</c> and
-    /// <c>SPREAD_RATE_IN_M</c>. The reader needs all four, and the last is the one that is not an error
-    /// anywhere when wrong: without it ELMFIRE dumps ft/min and the fire simply spreads 3.28 times too fast.
+    /// The output keys in <see cref="ElmfireNamelistKeys.RequiredOutputs"/> are forced regardless of what was
+    /// asked for: the three rasters the reader needs, <c>SPREAD_RATE_IN_M</c> (without it ELMFIRE dumps ft/min
+    /// and the fire spreads 3.28 times too fast, which is an error nowhere), and the midflame wind k-PERIL is
+    /// fed.
     /// </para>
     /// </remarks>
     public static class ElmfireNamelistBuilder
@@ -255,11 +255,12 @@ namespace PREACT.Utility
             l.Add("&OUTPUTS");
             l.Add(Str("OUTPUTS_DIRECTORY", "./outputs"));
             l.Add(Num("DTDUMP", s.DTDUMP));
-            l.Add("! The fire reader needs these four; they are not the scenario's to switch off.");
-            l.Add(Bool("DUMP_TIME_OF_ARRIVAL", true));
-            l.Add(Bool("DUMP_SPREAD_RATE", true));
-            l.Add(Bool("DUMP_SPREAD_DIRECTION", true));
-            l.Add(Bool("SPREAD_RATE_IN_M", true));
+            l.Add("! The fire reader and k-PERIL need these; they are not the scenario's to switch off.");
+            l.Add("! DUMP_MIDFLAME_WINDSPEED needs ELMFIRE-WUINITY a7fb9d6 or later.");
+            foreach ((string key, string value) in ElmfireNamelistKeys.RequiredOutputs)
+            {
+                l.Add($"{key,KeyWidth} = {value}");
+            }
             l.Add(Bool("CONVERT_TO_GEOTIFF", true));
             l.Add(Bool("DUMP_FLIN", s.DUMP_FLIN));
             l.Add(Bool("DUMP_CROWN_FIRE", s.DUMP_CROWN_FIRE));
