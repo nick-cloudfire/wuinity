@@ -15,6 +15,26 @@ namespace PREACT.Tests
         {
             runner.Add("time: a scenario's zone, its daylight saving and its gaps, from the domain's coordinates", ScenarioZone);
             runner.Add("weather: a case's bands start at the scenario's local hour, read at the archive's UTC hour", BandsStartAtLocalHour);
+            runner.Add("weather: the sun Nelson's terrain factor uses peaks at local solar noon, at Mati and in California", SunAtLocalNoon);
+        }
+
+        /// <summary>
+        /// SunRadiation.SimpleRadiation passed east-positive longitude to a library that counts west as positive, so the
+        /// sun stood at the mirrored longitude: Mati's clear-sky peak came at 14:00 UTC instead of about 10:20, and in
+        /// California the sun was below the horizon at local noon, so Nelson's sticks got no terrain factor in daylight.
+        /// </summary>
+        private static void SunAtLocalNoon()
+        {
+            foreach ((string name, double lat, double lon) place in new[] { Mati, California })
+            {
+                int peak = Enumerable.Range(0, 24).OrderByDescending(h => Weather.SunRadiation.SimpleRadiation(place.lat, place.lon, 172, h * 100, 0, 0, 0, 0, 0)).First();
+                int solarNoon = (int)System.Math.Round(12.0 - place.lon / 15.0 + 24.0) % 24;
+                Assert.True(System.Math.Abs(peak - solarNoon) <= 1, $"{place.name}: the flat-ground peak is at {peak}:00 UTC, solar noon about {solarNoon}:00 UTC");
+                double south = Weather.SunRadiation.SimpleRadiation(place.lat, place.lon, 172, solarNoon * 100, 0, 0, 30, 180, 0);
+                double north = Weather.SunRadiation.SimpleRadiation(place.lat, place.lon, 172, solarNoon * 100, 0, 0, 30, 0, 0);
+                Assert.True(south > north && north > 0, $"{place.name}: at noon a south-facing slope gets more ({south:F0}) than a north-facing one ({north:F0})");
+                Assert.Equal(0.0, Weather.SunRadiation.SimpleRadiation(place.lat, place.lon, 172, ((solarNoon + 12) % 24) * 100, 0, 0, 0, 0, 0), place.name + ": midnight is dark");
+            }
         }
 
         private static readonly (string name, double lat, double lon) Mati = ("Mati", 38.03, 23.99);
