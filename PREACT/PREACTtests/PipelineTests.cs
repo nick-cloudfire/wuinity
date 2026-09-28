@@ -16,6 +16,42 @@ namespace PREACT.Tests
             runner.Add("builder: a re-cut grid carries the rasters a hand-edited namelist names (Mati's fbfm40_roads101)", RecutCarriesNamelistRasters);
             runner.Add("preflight: a raster the namelist names off the case grid is refused by key, for a run and a campaign", OffGridRasterRefused);
             runner.Add("paths: Windows backslash [ELMFIRE] paths resolve for the case, its sources and its template", BackslashElmfirePaths);
+            runner.Add("preflight: a missing ELMFIRE is reported with the path that was tried", MissingElmfireNamed);
+        }
+
+        private static void MissingElmfireNamed()
+        {
+            using (var c = new SyntheticCase())
+            {
+                string caseDir = Path.Combine(c.Folder, "case");
+                ElmfireCaseBuilder.Build(c.Options(caseDir, 150.0, new List<string>())).GetAwaiter().GetResult();
+
+                string missing = Path.Combine(c.Folder, "nowhere", "elmfire");
+                string wui = c.WriteScenario("case", 150.0);
+                File.WriteAllLines(wui, File.ReadAllLines(wui)
+                    .Select(l => l == "BuildCase=true" ? "BuildCase=false\nReuseExistingOutput=false\nElmfireExe=nowhere/elmfire" : l)
+                    .SelectMany(l => l.Split('\n')));
+                Input.PREACTInput input = Input.PREACTInput.LoadFromDisk(wui, out bool _);
+
+                ElmfireCoupling.Result run = ElmfireCoupling.Prepare(input, input.WildfireModule.ElmfireInput, null);
+                Assert.True(!run.Ok && run.Message.Contains(missing), "a run names the path it tried: " + run.Message);
+                Assert.True(!run.Message.Contains("--elmfire"), "and no flag PREACT.exe does not have: " + run.Message);
+
+                File.AppendAllLines(wui, new[] { "", "[TriggerBufferModule]", "Enabled=true", "Module=kPERIL", "", "[kPERIL]", "WuiAreaSource=Raster" });
+                TextWriter error = Console.Error;
+                var captured = new StringWriter();
+                try
+                {
+                    Console.SetError(captured);
+                    PREACTcli.Campaigns.CampaignSetup.Resolve(PREACTcli.Campaigns.CampaignOptions.Parse(
+                        new[] { "--wui", wui, "--max", "1", "--elmfire", missing }));
+                }
+                finally
+                {
+                    Console.SetError(error);
+                }
+                Assert.True(captured.ToString().Contains("--elmfire names " + missing), "a campaign names it too: " + captured);
+            }
         }
 
         /// <summary>

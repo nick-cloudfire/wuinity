@@ -137,7 +137,9 @@ namespace PREACT.Utility
 
             if (elmfireExe == null || !File.Exists(elmfireExe))
             {
-                result.Message = "elmfire executable not found; pass --elmfire <path> or set [ELMFIRE] ElmfireExe.";
+                result.Message = string.IsNullOrEmpty(elmfireExe)
+                    ? "no ELMFIRE executable was given."
+                    : "the ELMFIRE executable is not there: " + elmfireExe + ".";
                 return result;
             }
 

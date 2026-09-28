@@ -97,7 +97,10 @@ namespace PREACTcli.Campaigns
                 : ElmfireCoupling.ResolveExecutable(c.ScenarioDir, elmfire.ElmfireExe);
             if (running && (c.ElmfireExe == null || !File.Exists(c.ElmfireExe)))
             {
-                return Fail("the ELMFIRE executable was not found; pass --elmfire <path> or set [ELMFIRE] ElmfireExe.");
+                return Fail((!string.IsNullOrEmpty(o.ElmfireExe)
+                                ? "--elmfire names " + c.ElmfireExe + ", which is not there."
+                                : ElmfireCoupling.DescribeMissingExecutable(c.ScenarioDir, elmfire.ElmfireExe))
+                            + " Pass --elmfire <path> or set [ELMFIRE] ElmfireExe.");
             }
 
             c.GdalBin = o.PathToGdal

@@ -287,10 +287,10 @@ namespace PREACT.Utility
 
             string fingerprint = ElmfireFingerprint.ForRun(runLines, caseDir, exe);
 
+            string missingExe = exe == null ? DescribeMissingExecutable(input.RootFolder, settings.ElmfireExe) : null;
             if (exe == null && !settings.ReuseExistingOutput)
             {
-                result.Message = "elmfire.exe was not found. Set [ELMFIRE] ElmfireExe, or put the build under "
-                                 + "ThirdParty/elmfire/build/windows/bin.";
+                result.Message = "ELMFIRE cannot run: " + missingExe;
                 return result;
             }
 
@@ -327,7 +327,9 @@ namespace PREACT.Utility
             if (!run.Ok)
             {
                 result.Cancelled = run.Cancelled;
-                result.Message = run.Message;
+                result.Message = exe == null
+                    ? "ELMFIRE cannot run: " + missingExe + " There were no outputs of an identical earlier run to reuse."
+                    : run.Message;
                 return result;
             }
 
@@ -702,6 +704,26 @@ namespace PREACT.Utility
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Why <see cref="ResolveExecutable"/> found nothing, naming what it tried: the path the scenario's
+        /// <c>[ELMFIRE] ElmfireExe</c> resolves to, or the vendored build it looked for.
+        /// </summary>
+        public static string DescribeMissingExecutable(string rootFolder, string named)
+        {
+            bool windows = System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(
+                System.Runtime.InteropServices.OSPlatform.Windows);
+            if (!string.IsNullOrWhiteSpace(named))
+            {
+                string path = string.IsNullOrEmpty(rootFolder) ? PREACTInput.NormalisePath(named) : PREACTInput.ResolvePath(rootFolder, named);
+                return $"[ELMFIRE] ElmfireExe names {path}, which is not there. Correct the path in the scenario (Hazards "
+                       + "tab), or clear it to use the build in WUInity/Assets/ThirdParty/elmfire.";
+            }
+
+            string relative = windows ? "ThirdParty/elmfire/build/windows/bin/elmfire.exe" : "ThirdParty/elmfire/build/linux/bin/elmfire";
+            return $"[ELMFIRE] ElmfireExe is not set and there is no {relative} above {AssemblyDirectory() ?? "this program"} "
+                   + $"or {Directory.GetCurrentDirectory()}. Set ElmfireExe to the executable, or build ELMFIRE there.";
         }
 
         /// <summary>
