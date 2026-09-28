@@ -821,11 +821,6 @@ namespace WUInity
             ShowPaintedTexture(Painter.GetEvacGroupTexture(), "the evacuation group areas");
         }
 
-        public void DisplayPopulationMask()
-        {
-            _simulationDomainVisualizer.SetSimulationPlaneTexture(Painter.GetPopulationMaskTexture());
-        }
-
         /// <summary>
         /// Shows population density over the domain. The renderer for this already existed, complete
         /// with its density colour ramp; nothing ever called it, because WorkingData.PopulationMap is
@@ -1071,6 +1066,10 @@ namespace WUInity
         public void UpdateInput(PREACTInput input)
         {
             _input = input;
+            //A different scenario is a different grid. The painter used to keep the first grid it resolved
+            //for the whole session, textures and group ownership included, and wrote the next scenario's
+            //masks with the previous one's cell count.
+            _painter.ResetForScenario();
             _painter.SetLCPData(_input.WildfireModule.Data.LandscapeData);
 
             //Every route into a scenario passes through here - loading a file, saving a new one, the

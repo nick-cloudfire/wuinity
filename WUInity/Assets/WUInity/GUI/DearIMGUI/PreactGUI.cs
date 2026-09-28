@@ -79,7 +79,27 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }           
         }
 
+        /// <summary>Kept for windows that still float and refuse to dock (the campaign window uses it).</summary>
         public static ImGuiWindowFlags NoDockingNoCollapse = ImGuiWindowFlags.NoDocking | ImGuiWindowFlags.NoCollapse;
+
+        /// <summary>
+        /// What tool windows use: dockable, not collapsible. Every window used to be NoDocking although a
+        /// dockspace covers the whole viewport, so nothing could be arranged and four windows opened on top
+        /// of each other at ImGui's default position.
+        /// </summary>
+        public static readonly ImGuiWindowFlags ToolWindowFlags = ImGuiWindowFlags.NoCollapse;
+
+        /// <summary>
+        /// Puts the next window near the middle of the screen at <paramref name="size"/> the first time it is
+        /// ever shown; after that it stays wherever it was put.
+        /// </summary>
+        public static void PlaceNextWindow(Vector2 size)
+        {
+            ImGuiViewportPtr viewport = ImGui.GetMainViewport();
+            Vector2 centre = viewport.WorkPos + 0.5f * viewport.WorkSize;
+            ImGui.SetNextWindowPos(centre, ImGuiCond.FirstUseEver, new Vector2(0.5f, 0.5f));
+            ImGui.SetNextWindowSize(size, ImGuiCond.FirstUseEver);
+        }
 
         private static ImGuiWindowFlags mainDockspace =
             ImGuiWindowFlags.NoTitleBar |

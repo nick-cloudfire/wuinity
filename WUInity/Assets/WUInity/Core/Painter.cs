@@ -27,9 +27,6 @@ namespace WUInity
         Color[] activeColorArray;
         private int _brushSize;
 
-        //general evac stuff
-        Vector2d evacDataRealSize;
-        Vector2int evacDataCellCount;
         //evac groups
         Texture2D evacGroupTex;
         int evacGroupIndex;
@@ -70,9 +67,38 @@ namespace WUInity
         Texture2D initialIgnitionTex;
         Color[] initialIgnitionColorArray;
 
-        //population mask painter
-        Texture2D populationMaskTex;
-        Color[] populationMaskColorArray;
+        //Which raster the grid above was read from (scenario-relative), what to call it in messages, and -
+        //when there is none - why not. Kept so a change of fire module, case folder or imported arrival
+        //times is noticed: the grid used to be resolved once per session and never again, so after loading
+        //a second scenario the painter wrote scenario B's masks with scenario A's cell count.
+        string _gridReference;
+        string _gridDescription;
+        string _gridProblem;
+
+        //Group masks already read from the scenario's MaskFiles for the current grid.
+        bool _evacGroupMasksLoaded;
+
+        /// <summary>Fire-area strokes made since the areas were last saved or loaded.</summary>
+        public bool UnsavedFireStrokes { get; private set; }
+
+        /// <summary>Evacuation-group strokes made since the group masks were last saved or loaded.</summary>
+        public bool UnsavedGroupStrokes { get; private set; }
+
+        /// <summary>The raster the paint grid comes from, relative to the scenario, or null before one is resolved.</summary>
+        public string GridReference { get => _haveFireGrid ? _gridReference : null; }
+
+        /// <summary>A one-line description of the paint grid, or of why there is none.</summary>
+        public string GridDescription
+        {
+            get
+            {
+                if (_haveFireGrid)
+                {
+                    return $"{_gridDescription}: {fireDataCellCount.x} x {fireDataCellCount.y} cells of {_fireGridCellSize:F1} m";
+                }
+                return string.IsNullOrEmpty(_gridProblem) ? "No paint grid yet." : _gridProblem;
+            }
+        }
 
         private Vector3 _offset;
 
@@ -107,23 +133,6 @@ namespace WUInity
                 CheckDataResources(evacGroupTex, evacGroupColorArray);
             }
             return evacGroupTex;
-        }
-
-        public Texture2D GetPopulationMaskTexture()
-        {
-            if (populationMaskTex == null)
-            {
-                Texture2D tex = (Texture2D)_manager.SimulationDomainVisualizer.GetPopulationMaskTexture();
-                if (tex != null)
-                {
-                    populationMaskTex = tex;
-                }
-                else
-                {
-                    CheckDataResources(populationMaskTex, populationMaskColorArray);
-                }                
-            }
-            return populationMaskTex;
         }
 
         public Texture2D GetWUIAreaTexture()
@@ -173,16 +182,6 @@ namespace WUInity
             SetColor(addArea ? 1 : 0);
         }
 
-        public void SetTriggerBufferColor(bool addArea)
-        {
-            SetColor(addArea ? 1 : 0);
-        }
-
-        public void SetMaskGPWColor(bool addArea)
-        {
-            SetColor(addArea ? 1 : 0);
-        }
-
         private void SetColor(int arrayIndex = 0)
         {
             if(paintMode == PaintMode.WUIArea || paintMode == PaintMode.RandomIgnitionArea || paintMode == PaintMode.InitialIgnition)
@@ -211,94 +210,122 @@ namespace WUInity
         }
 
         /// <summary>
-        /// Establishes the grid every paint mode works on: cell count, extent, the lower-left corner in
-        /// simulation coordinates and the cell size.
-        ///
-        /// The landscape is used when there is one. When there is not, the imported arrival time raster
-        /// is - and that is not a fallback but the normal case for the module the trigger pipeline uses:
-        /// WildfireData deliberately skips loading an LCP for AscImport, so every paint mode used to
-        /// refuse outright with "LCP data is not loaded" for exactly the scenarios that need a WUI area
-        /// and evacuation groups painted. That raster is also the grid k-PERIL computes on, so a mask
-        /// painted against it lines up with the boundary cell for cell, which is what matters.
+        /// The ELMFIRE case's DEM, relative to the scenario folder: the grid of record for an ELMFIRE scenario.
         /// </summary>
-        /// <summary>
-        /// The ELMFIRE case's DEM, relative to the scenario folder, or null if the case has none yet.
-        /// </summary>
-        /// <remarks>
-        /// The DEM rather than an output raster because it exists as soon as the case is built, and because
-        /// it is the grid of record: ELMFIRE reads its domain, CRS and cell size from this file, so every
-        /// raster it writes lands on it. Painting before the first run is the normal order - the ignition
-        /// mask is an input to the run.
-        /// </remarks>
-        private static bool TryFindElmfireGridReference(PREACT.Input.PREACTInput input, out string reference)
+        public static string ElmfireGridReference(PREACT.Input.PREACTInput input)
         {
-            reference = null;
-
-            string caseDirectory = input.WildfireModule.ElmfireInput?.CaseDirectory;
+            string caseDirectory = input?.WildfireModule?.ElmfireInput?.CaseDirectory;
             if (string.IsNullOrEmpty(caseDirectory))
             {
-                return false;
+                caseDirectory = "elmfire";
             }
+            return caseDirectory.Replace('\\', '/').TrimEnd('/') + "/inputs/dem.tif";
+        }
 
-            string relative = caseDirectory.Replace('\\', '/').TrimEnd('/') + "/inputs/dem.tif";
-            if (!System.IO.File.Exists(System.IO.Path.Combine(input.RootFolder, relative)))
+        /// <summary>
+        /// The raster the paint grid has to come from for this scenario as it stands, or null when the
+        /// scenario names none. Only a path - nothing is read.
+        /// </summary>
+        /// <remarks>
+        /// One grid of record per fire module, and no fallbacks between them:
+        ///
+        ///   ELMFIRE   - the case's <c>inputs/dem.tif</c>. ELMFIRE reads its domain, CRS and cell size from
+        ///               that file, so the fire, its outputs, the masks the case builder writes and k-PERIL are
+        ///               all on it. Nothing else will do: a mask painted on the scenario's own DEM (Mati:
+        ///               616 x 590 at 27.6 m, against the case's 566 x 541 at 30 m) cannot be applied to the
+        ///               case, and k-PERIL refuses it at run time.
+        ///   AscImport - the imported arrival times, which is the grid the fire is read on.
+        ///   none      - the landscape, for a scenario with no fire that still wants areas painted.
+        ///
+        /// The old order put <c>AscImportInput.TimeOfArrivalFile</c> first whatever the module - and a run
+        /// fills that in for an ELMFIRE fire, so what the painter used depended on whether a run had happened
+        /// yet this session.
+        /// </remarks>
+        public static string ExpectedGridReference(PREACT.Input.PREACTInput input)
+        {
+            if (input == null || input.WildfireModule == null)
             {
-                return false;
+                return null;
             }
 
-            reference = relative;
-            return true;
+            switch (input.WildfireModule.Module)
+            {
+                case PREACT.Input.WildfireModuleInput.WildfireModules.ELMFIRE:
+                    // V1-INTEGRATION: C2 - the case build converts painted masks against the case grid and fails
+                    // otherwise; painting only ever on dem.tif is the GUI's half of that.
+                    return ElmfireGridReference(input);
+
+                case PREACT.Input.WildfireModuleInput.WildfireModules.AscImport:
+                    string toa = input.WildfireModule.AscImportInput?.TimeOfArrivalFile;
+                    return string.IsNullOrEmpty(toa) ? null : toa.Replace('\\', '/');
+
+                default:
+                    return input.Landscape != null && !string.IsNullOrEmpty(input.Landscape.GetReferenceFile())
+                        ? input.Landscape.GetReferenceFile().Replace('\\', '/')
+                        : null;
+            }
+        }
+
+        /// <summary>
+        /// Forgets the grid when the scenario now names a different raster than the one it came from - a
+        /// module switched, a case folder renamed, an imported fire replaced.
+        /// </summary>
+        private void DropGridIfStale()
+        {
+            if (!_haveFireGrid || _manager == null || _manager.PREACTInput == null)
+            {
+                return;
+            }
+
+            string expected = ExpectedGridReference(_manager.PREACTInput) ?? "(landscape)";
+            if (expected != _gridReference)
+            {
+                Engine.Message(null, Engine.LogType.Log, "The paint grid is now " + expected + " rather than "
+                    + _gridReference + "; painting starts again from the scenario's saved areas on the new grid.");
+                ResetForScenario();
+            }
         }
 
         private bool ResolveFireGrid()
         {
             if (_manager == null || _manager.PREACTInput == null)
             {
+                _gridProblem = "Load a scenario first.";
                 Engine.Message(null, Engine.LogType.Warning, "The painter has no scenario to paint on; load one first.");
                 return false;
             }
 
             PREACT.Input.PREACTInput input = _manager.PREACTInput;
+            PREACT.Input.WildfireModuleInput.WildfireModules module = input.WildfireModule.Module;
 
-            //Any georeferenced raster on the domain will do, in this order of preference:
-            //
-            //  1. the fire's own grid - the arrival times for an imported fire, the case's DEM for an
-            //     ELMFIRE one. This is the grid the fire is on and the grid k-PERIL computes on, so a mask
-            //     painted against it needs no reconciling at all;
-            //  2. the loaded landscape, or the landscape files, whatever of them exists;
-            //  3. the elevation on its own - a DEM, which can be had for anywhere on Earth and is
-            //     therefore the one thing a scenario outside LANDFIRE coverage can always have.
-            //
-            //The fire's grid comes first, ahead of the loaded landscape. It used to come second, in effect:
-            //an `if (_lcpData != null)` returned the landscape grid before this list was consulted at all.
-            //So a scenario with both - which every prepared ELMFIRE case is - could only ever paint on the
-            //landscape, and k-PERIL then refused the mask for being on the wrong grid however many times it
-            //was repainted, with the message telling the user to do the one thing that could not work. The
-            //two genuinely differ: Mati's landscape is 616 x 590 at 27.6 m and its fire grid 566 x 541 at 30 m.
-            //
-            //Nothing is invented when none of them is there. A grid made up from the domain and an
+            //Nothing is invented when the raster is not there. A grid made up from the domain and an
             //arbitrary cell size would let painting proceed and produce masks that line up with nothing,
-            //which is worse than not painting: the misalignment would only surface as a trigger boundary
-            //in the wrong place, with no error anywhere.
-            string reference = string.Empty;
-            string what = string.Empty;
+            //which is worse than not painting: the misalignment would only surface as a trigger boundary in
+            //the wrong place, with no error anywhere.
+            string reference = ExpectedGridReference(input);
+            string what;
 
-            if (!string.IsNullOrEmpty(input.WildfireModule.AscImportInput.TimeOfArrivalFile))
+            if (module == PREACT.Input.WildfireModuleInput.WildfireModules.ELMFIRE)
             {
-                //Set for an imported fire, and set by HazardManager once ELMFIRE has run - either way it is
-                //the arrival-time raster the fire is actually read from. No longer gated on
-                //Module == AscImport, which excluded the ELMFIRE case that most needs it.
-                reference = input.WildfireModule.AscImportInput.TimeOfArrivalFile;
-                what = "the fire's arrival times";
+                what = "the fire case's DEM";
+                if (!System.IO.File.Exists(System.IO.Path.Combine(input.RootFolder, reference)))
+                {
+                    _gridProblem = "Build the fire case first (workflow step 5): an ELMFIRE scenario is painted on "
+                        + reference + ", the grid the fire, the case's masks and k-PERIL share, and it does not "
+                        + "exist yet.";
+                    Engine.Message(null, Engine.LogType.Warning, _gridProblem);
+                    return false;
+                }
             }
-            else if (input.WildfireModule.Module == PREACT.Input.WildfireModuleInput.WildfireModules.ELMFIRE
-                     && TryFindElmfireGridReference(input, out string elmfireReference))
+            else if (module == PREACT.Input.WildfireModuleInput.WildfireModules.AscImport)
             {
-                //Before the first run there is no arrival-time raster, but the case's DEM is the grid of
-                //record: ELMFIRE takes its domain, CRS and cell size from that file, so its output lands on
-                //exactly this grid. That makes the mask paintable before the fire has ever been computed.
-                reference = elmfireReference;
-                what = "the ELMFIRE case's DEM, which its output lands on";
+                what = "the imported fire's arrival times";
+                if (string.IsNullOrEmpty(reference))
+                {
+                    _gridProblem = "Set the imported fire's TimeOfArrivalFile first: an imported fire is painted on its grid.";
+                    Engine.Message(null, Engine.LogType.Warning, _gridProblem);
+                    return false;
+                }
             }
             else if (_lcpData != null)
             {
@@ -307,37 +334,38 @@ namespace WUInity
                 _fireGridOrigin = _lcpData.OriginOffset;
                 _fireGridCellSize = fireDataCellCount.x > 0 ? fireDataRealSize.x / fireDataCellCount.x : 0.0;
                 _haveFireGrid = _fireGridCellSize > 0.0;
+                _gridReference = "(landscape)";
+                _gridDescription = "the loaded landscape";
+                _evacGroupMasksLoaded = false;
                 return _haveFireGrid;
             }
-            else if (input.Landscape != null && !string.IsNullOrEmpty(input.Landscape.GetReferenceFile()))
+            else
             {
-                reference = input.Landscape.GetReferenceFile();
-                what = reference == input.Landscape.ElevationFile ? "the elevation raster" : "the landscape";
-            }
-
-            if (string.IsNullOrEmpty(reference))
-            {
-                Engine.Message(null, Engine.LogType.Warning,
-                    "There is nothing to paint on. Painting needs a raster that defines the cells and where they are: "
-                    + "an imported fire's time of arrival, a landscape, or just an elevation raster - a DEM is enough, "
-                    + "and one can be downloaded for anywhere. Add one under the Landscape section.");
-                return false;
+                what = "the landscape";
+                if (string.IsNullOrEmpty(reference))
+                {
+                    _gridProblem = "There is nothing to paint on. With no fire module, painting needs the scenario's "
+                        + "landscape or elevation raster to define the cells.";
+                    Engine.Message(null, Engine.LogType.Warning, _gridProblem);
+                    return false;
+                }
             }
 
             //A .lcp holds no georeferencing this can read, but LandscapeData does read one - so it would
             //have been caught by the branch above if it had loaded.
             if (reference.ToLowerInvariant().EndsWith(".lcp"))
             {
-                Engine.Message(null, Engine.LogType.Warning,
-                    "The landscape file could not be loaded, so there is no grid to paint on.");
+                _gridProblem = "The landscape file could not be loaded, so there is no grid to paint on.";
+                Engine.Message(null, Engine.LogType.Warning, _gridProblem);
                 return false;
             }
 
-            string path = System.IO.Path.Combine(input.RootFolder, reference);
+            string path = System.IO.Path.IsPathRooted(reference) ? reference : System.IO.Path.Combine(input.RootFolder, reference);
             PREACT.Utility.AscRaster.Header header = PREACT.Utility.AscRaster.ReadHeader(path, out bool ok);
             if (!ok)
             {
-                Engine.Message(null, Engine.LogType.Warning, "Could not read a cell grid from " + path + ".");
+                _gridProblem = "Could not read a cell grid from " + path + ".";
+                Engine.Message(null, Engine.LogType.Warning, _gridProblem);
                 return false;
             }
 
@@ -348,6 +376,10 @@ namespace WUInity
             _fireGridOrigin = new Vector2d(header.XllCorner, header.YllCorner) - input.Simulation.Data.UTMOrigin;
             _fireGridCellSize = header.CellSize;
             _haveFireGrid = true;
+            _gridReference = reference;
+            _gridDescription = what + " (" + reference + ")";
+            _gridProblem = null;
+            _evacGroupMasksLoaded = false;
 
             Engine.Message(null, Engine.LogType.Log,
                 $"Painting on the grid of {what}: {header.Ncols} x {header.Nrows} cells of {header.CellSize:F1} m.");
@@ -355,8 +387,6 @@ namespace WUInity
             //A fire grid that does not reach the domain at all cannot be painted on usefully - the
             //brush would be somewhere off-screen - and the cause is always the same: the raster and the
             //simulation origin are in different UTM zones, so subtracting their eastings is meaningless.
-            //Said here because the offset is otherwise invisible, and the same subtraction is what
-            //AscFireImport places the fire itself with, so the fire is displaced by just as much.
             Vector2d domain = input.Simulation.DomainSize;
             bool overlaps = _fireGridOrigin.x < domain.x && _fireGridOrigin.y < domain.y
                             && _fireGridOrigin.x + fireDataRealSize.x > 0.0
@@ -394,7 +424,8 @@ namespace WUInity
             }
             else
             {
-                Engine.Message(null, Engine.LogType.SimulationError, "Desired paint mode not yet implemented.");
+                //A warning, not SimulationError: that type also stops any running simulation.
+                Engine.Message(null, Engine.LogType.Warning, "Desired paint mode not yet implemented.");
             }
         }
 
@@ -405,23 +436,225 @@ namespace WUInity
         /// </summary>
         public void SetEvacGroups(string[] names, Color[] colors)
         {
-            _evacGroupNames = names ?? new string[0];
+            names = names ?? new string[0];
+
+            //Cells are owned by index, and the index is a position in this list - so a group added, removed
+            //or renamed since the last call shifts every index after it. Ownership is carried across by name,
+            //and a group that is gone leaves its cells unowned rather than handing them to its neighbour.
+            if (_evacGroupCells != null && !SameNames(_evacGroupNames, names))
+            {
+                int[] remap = new int[_evacGroupNames.Length];
+                for (int i = 0; i < _evacGroupNames.Length; ++i)
+                {
+                    remap[i] = System.Array.IndexOf(names, _evacGroupNames[i]);
+                }
+
+                for (int c = 0; c < _evacGroupCells.Length; ++c)
+                {
+                    int owner = _evacGroupCells[c];
+                    _evacGroupCells[c] = owner >= 0 && owner < remap.Length ? remap[owner] : -1;
+                }
+
+                DestroyTexture(ref evacGroupTex);
+                evacGroupColorArray = null;
+            }
+
+            _evacGroupNames = names;
             _evacGroupColors = colors ?? new Color[0];
         }
 
-        public string[] GetEvacGroupNames()
+        private static bool SameNames(string[] a, string[] b)
         {
-            return _evacGroupNames;
+            if (a.Length != b.Length) return false;
+            for (int i = 0; i < a.Length; ++i)
+            {
+                if (a[i] != b[i]) return false;
+            }
+            return true;
+        }
+
+        /// <summary>Whether any group owns any cell, i.e. whether there is anything to save.</summary>
+        public bool HasEvacGroupCells
+        {
+            get
+            {
+                if (_evacGroupCells == null) return false;
+                for (int i = 0; i < _evacGroupCells.Length; ++i)
+                {
+                    if (_evacGroupCells[i] >= 0) return true;
+                }
+                return false;
+            }
         }
 
         /// <summary>
-        /// Cell ownership as painted, indexed x + y*width with y running north, matching the WUI mask
-        /// and k-PERIL. -1 means no group owns the cell.
+        /// Reads the groups' existing masks into the painter, so painting carries on from what the scenario
+        /// has instead of starting empty - and then overwriting every group that got a stroke on save.
         /// </summary>
-        public int[] GetEvacGroupCells(out Vector2int cellCount)
+        /// <remarks>
+        /// A mask is taken only when it is on the paint grid: same cell count, same corner to within half a
+        /// cell, same cell size. The masks are written with the grid's simulation-space corner, which is the
+        /// frame EvacuationGroup.LoadMask reads them in, so that is the frame they are compared in. One on
+        /// another grid is reported and left alone; painting that group again replaces it.
+        /// </remarks>
+        /// <returns>How many groups' masks were read; problems are added to <paramref name="problems"/>.</returns>
+        public int LoadEvacGroupMasks(System.Collections.Generic.IList<PREACT.Evacuation.EvacuationGroupInput> groups,
+            string rootFolder, System.Collections.Generic.List<string> problems)
         {
-            cellCount = fireDataCellCount;
-            return _evacGroupCells;
+            if (groups == null || (!_haveFireGrid && !ResolveFireGrid()))
+            {
+                return 0;
+            }
+
+            int cells = fireDataCellCount.x * fireDataCellCount.y;
+            if (_evacGroupCells == null || _evacGroupCells.Length != cells)
+            {
+                _evacGroupCells = new int[cells];
+                for (int i = 0; i < cells; ++i) _evacGroupCells[i] = -1;
+            }
+
+            int loaded = 0;
+            for (int g = 0; g < groups.Count; ++g)
+            {
+                string mask = groups[g].MaskFile;
+                if (string.IsNullOrEmpty(mask))
+                {
+                    continue;
+                }
+
+                int index = System.Array.IndexOf(_evacGroupNames, groups[g].Name);
+                if (index < 0)
+                {
+                    continue;
+                }
+
+                string path = System.IO.Path.IsPathRooted(mask) ? mask
+                    : System.IO.Path.Combine(rootFolder, mask.Replace('\\', '/'));
+                if (!System.IO.File.Exists(path))
+                {
+                    problems?.Add($"Group {groups[g].Name}: its mask {mask} does not exist.");
+                    continue;
+                }
+
+                float[,] data = PREACT.Utility.AscRaster.Read(path, out PREACT.Utility.AscRaster.Header header, out bool ok);
+                if (!ok || data == null)
+                {
+                    problems?.Add($"Group {groups[g].Name}: could not read {mask}.");
+                    continue;
+                }
+
+                double tolerance = 0.5 * _fireGridCellSize;
+                bool sameGrid = header.Ncols == fireDataCellCount.x && header.Nrows == fireDataCellCount.y
+                                && System.Math.Abs(header.CellSize - _fireGridCellSize) < 1e-3
+                                && System.Math.Abs(header.XllCorner - _fireGridOrigin.x) < tolerance
+                                && System.Math.Abs(header.YllCorner - _fireGridOrigin.y) < tolerance;
+                if (!sameGrid)
+                {
+                    problems?.Add($"Group {groups[g].Name}: {mask} is {header.Ncols} x {header.Nrows} cells of "
+                        + $"{header.CellSize:F1} m at {header.XllCorner:F0}, {header.YllCorner:F0}, not on the paint grid "
+                        + $"({fireDataCellCount.x} x {fireDataCellCount.y} of {_fireGridCellSize:F1} m at "
+                        + $"{_fireGridOrigin.x:F0}, {_fireGridOrigin.y:F0}). Paint the group again to replace it.");
+                    continue;
+                }
+
+                int taken = 0;
+                for (int y = 0; y < header.Nrows; ++y)
+                {
+                    for (int x = 0; x < header.Ncols; ++x)
+                    {
+                        float v = data[x, y];
+                        if (v > 0f && v != (float)header.NoDataValue)
+                        {
+                            _evacGroupCells[x + y * header.Ncols] = index;
+                            ++taken;
+                        }
+                    }
+                }
+
+                ++loaded;
+                Engine.Message(null, Engine.LogType.Log, $"Evacuation group {groups[g].Name}: read {taken} painted cells from {mask}.");
+            }
+
+            _evacGroupMasksLoaded = true;
+            UnsavedGroupStrokes = false;
+            //Rebuilt from the ownership just read the next time it is shown.
+            DestroyTexture(ref evacGroupTex);
+            evacGroupColorArray = null;
+            return loaded;
+        }
+
+        /// <summary>True once the scenario's group masks have been read for the current grid.</summary>
+        public bool EvacGroupMasksLoaded { get => _evacGroupMasksLoaded; }
+
+        /// <summary>
+        /// Forgets the paint grid and everything built on it, so the next use resolves the grid again from
+        /// the scenario as it now stands.
+        /// </summary>
+        /// <remarks>
+        /// Called when a scenario is opened, when the fire case has been (re)built, and whenever the raster
+        /// the grid should come from is no longer the one it came from. The painted masks themselves live on
+        /// the scenario (WildfireData) and in its files, not here, so nothing painted and saved is lost.
+        /// </remarks>
+        public void ResetForScenario()
+        {
+            if (_manager != null && gameObject.activeSelf)
+            {
+                _manager.StopPainter();
+            }
+
+            DestroyTexture(ref wuiAreaTex);
+            DestroyTexture(ref randomIgnitionTex);
+            DestroyTexture(ref initialIgnitionTex);
+            DestroyTexture(ref evacGroupTex);
+            DestroyTexture(ref _evacGroupOverlayTex);
+            wuiAreaColorArray = randomIgnitionColorArray = initialIgnitionColorArray = evacGroupColorArray = null;
+
+            activeTexture = null;
+            activeColorArray = null;
+            activeCellCount = new Vector2int(0, 0);
+            activeRealSize = Vector2d.zero;
+
+            _haveFireGrid = false;
+            fireDataCellCount = new Vector2int(0, 0);
+            fireDataRealSize = Vector2d.zero;
+            _fireGridOrigin = Vector2d.zero;
+            _fireGridCellSize = 0.0;
+            _gridReference = null;
+            _gridDescription = null;
+            _gridProblem = null;
+
+            _evacGroupCells = null;
+            _evacGroupMasksLoaded = false;
+            UnsavedFireStrokes = false;
+            UnsavedGroupStrokes = false;
+
+            _lcpData = _manager?.PREACTInput?.WildfireModule?.Data?.LandscapeData;
+
+            if (_manager != null && _manager.FireDomainVisualizer != null)
+            {
+                _manager.FireDomainVisualizer.SetVisibility(false);
+            }
+        }
+
+        /// <summary>Called once the fire areas have been written to disk.</summary>
+        public void MarkFireAreasSaved()
+        {
+            UnsavedFireStrokes = false;
+        }
+
+        /// <summary>Called once the group masks have been written to disk.</summary>
+        public void MarkGroupMasksSaved()
+        {
+            UnsavedGroupStrokes = false;
+        }
+
+        private static void DestroyTexture(ref Texture2D texture)
+        {
+            if (texture != null)
+            {
+                Destroy(texture);
+                texture = null;
+            }
         }
 
         /// <summary>
@@ -487,6 +720,7 @@ namespace WUInity
                 written.Add(fileName);
             }
 
+            UnsavedGroupStrokes = false;
             return written.ToArray();
         }
 
@@ -544,7 +778,8 @@ namespace WUInity
 
         void SetPainterEvacGroup(int groupIndex)
         {
-            if (!ResolveFireGrid())
+            DropGridIfStale();
+            if (!_haveFireGrid && !ResolveFireGrid())
             {
                 return;
             }
@@ -559,7 +794,8 @@ namespace WUInity
 
         void SetPainterWUIArea()
         {
-            if (!ResolveFireGrid())
+            DropGridIfStale();
+            if (!_haveFireGrid && !ResolveFireGrid())
             {
                 return;
             }
@@ -573,7 +809,8 @@ namespace WUInity
 
         void SetPainterRandomIgnition()
         {
-            if (!ResolveFireGrid())
+            DropGridIfStale();
+            if (!_haveFireGrid && !ResolveFireGrid())
             {
                 return;
             }
@@ -586,7 +823,8 @@ namespace WUInity
         }
         void SetPainterInitialIgnition()
         {
-            if (!ResolveFireGrid())
+            DropGridIfStale();
+            if (!_haveFireGrid && !ResolveFireGrid())
             {
                 return;
             }
@@ -619,6 +857,7 @@ namespace WUInity
         public bool TryGetPaintGrid(out Vector2d realSize, out Vector2d originOffset,
             out Vector2int cellCount, out double cellSize)
         {
+            DropGridIfStale();
             if (!_haveFireGrid && !ResolveFireGrid())
             {
                 realSize = Vector2d.zero;
@@ -651,6 +890,7 @@ namespace WUInity
                 return null;
             }
 
+            DropGridIfStale();
             if (!_haveFireGrid && !ResolveFireGrid())
             {
                 Engine.Message(null, Engine.LogType.Warning,
@@ -679,6 +919,7 @@ namespace WUInity
 
             GraphicalFireInput.SaveGraphicalFireInput(path, fireData, fireDataCellCount.x, fireDataCellCount.y);
             fireData.PaintedCellCount = fireDataCellCount;
+            UnsavedFireStrokes = false;
 
             Engine.Message(null, Engine.LogType.Log,
                 $"Wrote {name}: {Count(fireData.WuiArea)} WUI cells, {Count(fireData.RandomIgnition)} ignition area "
@@ -854,17 +1095,8 @@ namespace WUInity
             //EvacGroup belongs with the others: groups are painted on the fire grid, which is the
             //grid k-PERIL and the WUI mask use, so a painted group lines up with them cell for cell.
             //Falling through to the evac branch would have used a cell count of zero.
-            if (paintMode == PaintMode.WUIArea || paintMode == PaintMode.RandomIgnitionArea
-                || paintMode == PaintMode.InitialIgnition || paintMode == PaintMode.EvacGroup)
-            {
-                activeCellCount = fireDataCellCount;
-                activeRealSize = fireDataRealSize;
-            }
-            else
-            {
-                activeCellCount = evacDataCellCount;
-                activeRealSize = evacDataRealSize;
-            }
+            activeCellCount = fireDataCellCount;
+            activeRealSize = fireDataRealSize;
             activeTexture = requestedTexture;
             activeColorArray = requestedColorArray;
         }      
@@ -994,6 +1226,15 @@ namespace WUInity
                 return;
             }
             colorArray[x + y * activeTexture.width] = c;
+
+            if (paintMode == PaintMode.EvacGroup)
+            {
+                UnsavedGroupStrokes = true;
+            }
+            else
+            {
+                UnsavedFireStrokes = true;
+            }
 
             if(paintMode == PaintMode.WUIArea)
             {

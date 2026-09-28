@@ -64,6 +64,8 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             + "named point, use the ignition point editor - it is exact, and it is kept in the scenario.",
         };
 
+        private static bool _subscribed;
+
         public static void Open()
         {
             if (!_isOpen)
@@ -71,6 +73,12 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                 PreactGUI.DrawWindow(Draw);
             }
             _isOpen = true;
+
+            if (!_subscribed)
+            {
+                _subscribed = true;
+                ScenarioSession.ScenarioChanged += () => { _savedAs = string.Empty; _startFailed = false; };
+            }
         }
 
         public static void Draw()
@@ -130,12 +138,10 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                 {
                     StartPainting();
                 }
-                ImGui.TextDisabled("Painted on the fire grid: the landscape's, or the imported time of arrival");
-                ImGui.TextDisabled("raster's when the fire comes from one, or a DEM's.");
+                ImGui.TextDisabled(PreactGUI.WUInity.Painter.GridDescription);
                 if (_startFailed)
                 {
-                    ImGui.TextColored(new Vector4(0.9f, 0.7f, 0.2f, 1f),
-                        "The fire grid could not be established - see the console for what is missing.");
+                    ImGui.TextColored(Fields.Warning, "No paint grid - see above.");
                 }
             }
             else
