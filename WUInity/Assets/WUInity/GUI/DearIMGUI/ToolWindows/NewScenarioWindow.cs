@@ -1,4 +1,4 @@
-﻿using ImGuiNET;
+using ImGuiNET;
 using PREACT;
 using PREACT.Input;
 using PREACT.Math;
@@ -73,8 +73,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
             {
                 return;
             }
-
-            ScenarioDataSteps.FlushStepLog();
 
             ImGui.Begin("New scenario creator", ref _isOpen, PreactGUI.NoDockingNoCollapse);
 

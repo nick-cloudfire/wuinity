@@ -23,9 +23,63 @@ namespace Assets.WUInity.GUI.DearIMGUI
         /// write a file or fill the clipboard otherwise do their work with no visible effect at all.</summary>
         private static string _status;
 
+        //What is shown: everything, or only the lines that say something went wrong. The first error of a
+        //failed run is usually buried under hundreds of ordinary lines, so this is the quickest way to it.
+        private enum Filter { All, WarningsAndErrors, Errors }
+        private static Filter _filter = Filter.All;
+        private static readonly string[] FilterNames = { "All messages", "Warnings and errors", "Errors only" };
+
+        //Indices into the message list by severity, extended as lines arrive rather than rebuilt: scanning
+        //the whole session every frame to filter it would cost more the longer the session ran.
+        private static readonly List<int> _warningOrWorse = new List<int>();
+        private static readonly List<int> _errors = new List<int>();
+        private static int _indexed;
+
+        public static bool IsOpen { get => _open; }
+
         public static void Open()
         {
             _open = true;
+        }
+
+        public static void Toggle()
+        {
+            _open = !_open;
+        }
+
+        private static bool IsError(string line)
+        {
+            return line.Contains("ERROR:") || line.Contains("EXCEPTION:") || line.Contains("FAILED");
+        }
+
+        private static bool IsWarning(string line)
+        {
+            return line.Contains("WARNING:");
+        }
+
+        private static void IndexNewLines(IReadOnlyList<string> messages)
+        {
+            //Cleared underneath us.
+            if (messages.Count < _indexed)
+            {
+                _indexed = 0;
+                _warningOrWorse.Clear();
+                _errors.Clear();
+            }
+
+            for (; _indexed < messages.Count; ++_indexed)
+            {
+                string line = messages[_indexed] ?? string.Empty;
+                bool error = IsError(line);
+                if (error)
+                {
+                    _errors.Add(_indexed);
+                }
+                if (error || IsWarning(line))
+                {
+                    _warningOrWorse.Add(_indexed);
+                }
+            }
         }
 
         public static void Draw(IReadOnlyList<string> messages)
@@ -35,7 +89,14 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 return;
             }
 
-            ImGui.Begin("Console", ref _open, ImGuiWindowFlags.NoCollapse);
+            IndexNewLines(messages);
+
+            ImGui.SetNextWindowSize(new Vector2(700f, 220f), ImGuiCond.FirstUseEver);
+            if (!ImGui.Begin("Console###Console", ref _open, ImGuiWindowFlags.NoCollapse))
+            {
+                ImGui.End();
+                return;
+            }
 
             if (ImGui.Button("Copy all"))
             {
@@ -65,7 +126,24 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
 
             ImGui.SameLine();
-            int hidden = messages.Count - MaxDrawnLines;
+            int filterIndex = (int)_filter;
+            ImGui.SetNextItemWidth(170f);
+            if (ImGui.Combo("###ConsoleFilter", ref filterIndex, FilterNames, FilterNames.Length))
+            {
+                _filter = (Filter)filterIndex;
+            }
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip($"{_errors.Count} error line(s), {_warningOrWorse.Count - _errors.Count} warning(s) this session.");
+            }
+
+            IReadOnlyList<int> subset = _filter == Filter.Errors ? _errors
+                : _filter == Filter.WarningsAndErrors ? _warningOrWorse
+                : null;
+            int available = subset != null ? subset.Count : messages.Count;
+
+            ImGui.SameLine();
+            int hidden = available - MaxDrawnLines;
             ImGui.TextDisabled(hidden > 0
                 ? $"right-click a line to copy it - {hidden} older line(s) not shown"
                 : "right-click a line to copy it");
@@ -78,16 +156,24 @@ namespace Assets.WUInity.GUI.DearIMGUI
             ImGui.BeginChild("ConsoleLines", new Vector2(0f, -footer), (ImGuiChildFlags)0);
 
             //Newest first, as this console has always shown them.
-            int oldest = Math.Max(0, messages.Count - MaxDrawnLines);
-            for (int i = messages.Count - 1; i >= oldest; --i)
+            int oldest = Math.Max(0, available - MaxDrawnLines);
+            for (int k = available - 1; k >= oldest; --k)
             {
-                //Wrapped rather than ImGui.Text: an unwrapped line simply ran off the right edge of
-                //the window, and with no horizontal scrollbar there was no way to read the end of it.
-                ImGui.TextWrapped(messages[i]);
+                int i = subset != null ? subset[k] : k;
+                string line = messages[i] ?? string.Empty;
+
+                //Coloured by severity so the eye finds the problem without filtering. Wrapped rather than
+                //ImGui.Text: an unwrapped line ran off the right edge with no way to read the end of it.
+                bool error = IsError(line);
+                bool warning = !error && IsWarning(line);
+                if (error) ImGui.PushStyleColor(ImGuiCol.Text, Fields.Alert);
+                else if (warning) ImGui.PushStyleColor(ImGuiCol.Text, Fields.Warning);
+                ImGui.TextWrapped(line);
+                if (error || warning) ImGui.PopStyleColor();
 
                 if (ImGui.IsItemHovered() && ImGui.IsMouseClicked(ImGuiMouseButton.Right))
                 {
-                    ImGui.SetClipboardText(messages[i]);
+                    ImGui.SetClipboardText(line);
                     _status = "Copied that line to the clipboard.";
                 }
             }

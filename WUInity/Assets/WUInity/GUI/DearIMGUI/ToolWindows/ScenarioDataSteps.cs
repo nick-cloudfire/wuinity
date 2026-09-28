@@ -39,11 +39,10 @@ namespace Assets.WUInity.GUI.DearIMGUI
         public static string Status { get => _status; }
         public static bool Busy { get => _busy; }
 
-        //Steps run on a background thread, but the console is a LinkedList the GUI thread walks while
-        //drawing - appending to it from another thread risks corrupting that walk. Messages are
-        //queued here and flushed into the engine log from the GUI thread instead.
+        //The progress window's own copy of what the running step said. Written from the step's worker
+        //thread and read while drawing, hence the lock; the console gets the same lines through
+        //PreactGUI.Post, which delivers them on the main thread.
         private static readonly object _logSync = new object();
-        private static readonly System.Collections.Generic.List<string> _pendingLog = new System.Collections.Generic.List<string>();
 
         //Progress window. The fraction is negative while a step runs without a measurable total,
         //which the bar renders as a sweep rather than pretending to a percentage it does not have.
@@ -356,34 +355,20 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
         }
 
-        /// <summary>Queues a message for the console and the progress window; safe to call from a
+        /// <summary>Records a message in the progress window and the console; safe to call from a
         /// step's worker thread.</summary>
         public static void LogStep(string message)
         {
             lock (_logSync)
             {
-                _pendingLog.Add(message);
                 _progressLog.Add(message);
                 //bounded so a chatty step cannot grow this without limit
                 if (_progressLog.Count > 200) _progressLog.RemoveAt(0);
             }
-        }
 
-        /// <summary>
-        /// Moves queued step messages into the engine log, from the GUI thread. Engine.Message
-        /// ultimately appends to the console's LinkedList and calls Debug.Log, neither of which is
-        /// safe to touch from the worker threads the steps run on. Call it from a window's Draw.
-        /// </summary>
-        public static void FlushStepLog()
-        {
-            lock (_logSync)
-            {
-                for (int i = 0; i < _pendingLog.Count; ++i)
-                {
-                    Engine.Message(null, Engine.LogType.Log, _pendingLog[i]);
-                }
-                _pendingLog.Clear();
-            }
+            //Engine.Message appends to the engine's own log and calls back into the GUI, so it is sent to
+            //the main thread rather than called from the worker.
+            PreactGUI.Post(() => Engine.Message(null, Engine.LogType.Log, message));
         }
 
         /// <summary>

@@ -1274,13 +1274,14 @@ namespace WUInity
             }
             _wuiGUI.NewMessage(message);
         }
+        //Required by IExternalManager. The engine never calls SimulationStarted (nor PauseSimulations or
+        //StopSimulations below, which the GUI calls itself); SimulationsFinished runs on the main thread
+        //after the run's task completes, and the GUI follows that task directly instead.
         public void SimulationStarted()
         {
-            _wuiGUI.SimulationStarted();
         }
         public void SimulationsFinished()
         {
-            _wuiGUI.SimulationsFinished();
         }
 
         public void PauseSimulations()

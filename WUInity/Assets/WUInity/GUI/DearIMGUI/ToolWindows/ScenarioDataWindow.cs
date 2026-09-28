@@ -123,8 +123,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 return;
             }
 
-            ScenarioDataSteps.FlushStepLog();
-
             ImGui.Begin("Prepare scenario data", ref _isOpen, PreactGUI.NoDockingNoCollapse);
 
             PREACTInput input = ScenarioEditorWindow.Input;

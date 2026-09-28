@@ -2,6 +2,7 @@ using Assets.WUInity.GUI.DearIMGUI.Editors;
 using ImGuiNET;
 using PREACT;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using UImGui;
@@ -59,7 +60,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
         //draws menus
         private void OnLayout(UImGui.UImGui obj)
-        {            
+        {
+            DrainMainThreadQueues();
+
             if(_wuinityManager == null)
             {
                 return;
@@ -144,18 +147,24 @@ namespace Assets.WUInity.GUI.DearIMGUI
         }
 
         //Static like _engine and _wuinityManager above, so the menu bar - which is static - can
-        //clear it. Without this the Console/Clear item had nothing to act on and did nothing.
+        //clear it.
         //
         //Oldest first, and the whole session: the console draws only the tail of it, but copying and
-        //saving want everything. This used to be a 100-entry ring buffer, which meant the earliest
-        //messages - where the first error in a failed run usually is - were gone before they could be
-        //read. The engine keeps its own log the same way, unbounded, for the same reason.
-        static List<string> _messages = new List<string>();
+        //saving want everything. The engine keeps its own log the same way, unbounded, for the same reason.
+        //
+        //Main thread only. Messages arrive from every thread there is - the simulation (the whole run is a
+        //Task.Run), the data steps' workers, the downloaders' own tasks - and this list used to be appended
+        //to directly from all of them while the console iterated it by index on the main thread, which is a
+        //torn read at best and an exception from inside a resize at worst. They are queued now and moved
+        //across at the start of every frame by DrainMainThreadQueues.
+        static readonly List<string> _messages = new List<string>();
+        static readonly ConcurrentQueue<string> _incomingMessages = new ConcurrentQueue<string>();
         public static IReadOnlyList<string> Messages { get => _messages; }
 
+        /// <summary>Queues a console line. Safe from any thread.</summary>
         public void NewMessage(string message)
         {
-            _messages.Add(message);
+            _incomingMessages.Enqueue(message);
         }
 
         public static void ClearMessages()
@@ -163,16 +172,56 @@ namespace Assets.WUInity.GUI.DearIMGUI
             _messages.Clear();
         }
 
-        bool _simulationRunning = false;
-        public void SimulationStarted()
+        //Work handed to the main thread: path writes from data steps, campaign status, anything that
+        //touches the scenario, ImGui or a UnityEngine object. Run in order, once each, at the start of the
+        //next frame.
+        static readonly ConcurrentQueue<Action> _posted = new ConcurrentQueue<Action>();
+
+        /// <summary>
+        /// Runs <paramref name="action"/> on the main thread at the start of the next frame. Safe from any
+        /// thread; the one way worker code should reach the scenario, the GUI or Unity.
+        /// </summary>
+        public static void Post(Action action)
         {
-            _messages.Clear();
-            _simulationRunning = true;
+            if (action != null)
+            {
+                _posted.Enqueue(action);
+            }
         }
 
-        public void SimulationsFinished()
+        /// <summary>
+        /// Moves queued console lines into the list and runs posted work. Called from Update and again at
+        /// the start of the ImGui layout, so it happens every frame whether or not the GUI is drawing.
+        /// </summary>
+        private static void DrainMainThreadQueues()
         {
-            _simulationRunning = false;
+            while (_incomingMessages.TryDequeue(out string message))
+            {
+                _messages.Add(message);
+            }
+
+            //Bounded per frame, so something that posts from inside a posted action cannot keep this
+            //loop alive forever; the remainder runs next frame.
+            int budget = 256;
+            while (budget-- > 0 && _posted.TryDequeue(out Action action))
+            {
+                try
+                {
+                    action();
+                }
+                catch (Exception e)
+                {
+                    //Reported, not rethrown: one faulty completion must not take down the frame, or every
+                    //window after it, with it.
+                    _messages.Add("[" + DateTime.Now.ToLongTimeString() + "] EXCEPTION: " + e.Message);
+                    Debug.LogException(e);
+                }
+            }
+        }
+
+        private void Update()
+        {
+            DrainMainThreadQueues();
         }
 
         public void ApplyTheme()
