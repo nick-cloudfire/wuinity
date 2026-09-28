@@ -33,9 +33,6 @@ PREACT.exe Examples/NFDRS4_Behave/Roxborough/Roxborough_no_smoke.wui
 | Folder | Notes |
 |--------|-------|
 | `CFFDRS/Lytton/` | Rich Canadian scenario (SUMO, wildfire rasters, groups, a QGIS project). Sprawling but useful as a reference. |
-| `Development/` | A developer "kitchen sink". Its `.wui` selects the `SimpleWildfireCA` fire module, which has been **removed**, so it will not load as-is — kept only for its data files. |
-| `CFFDRS/Dogrib/` | Historic scenario referencing a removed fire module; will not load as-is. |
-| `ASDRF/` | A lookup-table fragment only (`BFC_lookup_table.csv`); no `.wui`, not runnable on its own. |
 
 > Several older examples select modules that have since been [removed](modules.md)
 > (e.g. `SimpleWildfireCA`, `MacroTrafficSim`). They will fail to load against the
