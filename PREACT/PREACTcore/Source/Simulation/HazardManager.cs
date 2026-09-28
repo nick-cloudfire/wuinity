@@ -121,12 +121,17 @@ namespace PREACT
         ///
         /// ELMFIRE is a batch program, so there is no stepping it alongside the evacuation: it computes the
         /// whole fire, writes rasters, and exits. Once it has, those rasters are a pre-computed fire - which
-        /// is exactly what <see cref="AscFireImport"/> reads - so the paths are written into the AscImport
-        /// settings and that reader is used, rather than a second implementation of the same thing. An
-        /// ELMFIRE fire and an imported one are therefore the same code from here on.
+        /// is exactly what <see cref="AscFireImport"/> reads - so that reader is handed the paths and used,
+        /// rather than a second implementation of the same thing.
         ///
-        /// This blocks for as long as ELMFIRE takes, which is minutes on a real domain. Output for an
-        /// unchanged case is reused, so the wait falls on the first run rather than on every one.
+        /// Nothing is written into the scenario (contract C4). The rasters go into a runtime copy of the
+        /// AscImport settings, and the weather the fire ran on - its midflame wind, its wind direction series
+        /// and band interval, the case's WUI area - into <see cref="FireWeatherRasters"/> for the trigger
+        /// boundary. These used to be written into <c>[AscImport]</c> and <c>[kPERIL]</c>, so saving after a run
+        /// pinned one run's derived paths into the scenario.
+        ///
+        /// This blocks for as long as ELMFIRE takes, which is minutes on a real domain. Output computed from the
+        /// same namelist and inputs is reused.
         /// </summary>
         private bool CreateElmfireModule(Simulation simulation, PREACTInput input)
         {
@@ -140,60 +145,65 @@ namespace PREACT
 
             if (!fire.Ok)
             {
-                Engine.Message(simulation, Engine.LogType.SimulationError, "ELMFIRE did not produce a fire: " + fire.Message);
+                Engine.Message(simulation, Engine.LogType.SimulationError,
+                    (fire.Cancelled ? "ELMFIRE was stopped: " : "ELMFIRE did not produce a fire: ") + fire.Message);
                 return false;
             }
 
-            //Written into the AscImport settings because that is where the reader looks. Done here rather
-            //than in the scenario, so nothing is saved: these paths are an artefact of this run.
-            AscImportInput asc = input.WildfireModule.AscImportInput;
+            AscImportInput asc = input.WildfireModule.AscImportInput.Clone();
             asc.StartDateTime = input.Simulation.StartDateTime;
 
-            //ELMFIRE writes the simulation clock straight into time_of_arrival, in seconds. The reader's
-            //other sources - FARSITE, FlamMap, Prometheus - use minutes, which is its default, so this has to
-            //be said or the fire arrives 60 times too late.
+            //ELMFIRE writes the simulation clock straight into time_of_arrival, in seconds. The reader's other
+            //sources - FARSITE, FlamMap, Prometheus - use minutes, so this has to be said.
             asc.TimeOfArrivalUnits = AscImportInput.TimeUnits.Seconds;
 
             asc.TimeOfArrivalFile = fire.TimeOfArrivalFile;
             asc.RateOfSpreadFile = fire.RateOfSpreadFile;
             asc.SpreadDirectionFile = fire.SpreadDirectionFile;
             asc.FirelineIntensityFile = fire.FirelineIntensityFile;
+            asc.MidflameWindSpeedFile = fire.MidflameWindSpeedFile;
 
-            //Display only, and the reason the output window's fuel model mode showed nothing: the reader had no
-            //fuel raster to hand it, since an imported fire needs none to spread.
+            //Display only: the output window's fuel model mode draws the fuel the fire was computed against.
             asc.FuelModelFile = fire.FuelModelFile;
 
             //The weather the fire was actually computed against. ELMFIRE's weather comes from a historical peak
-            //fire-weather day drawn out of the ERA5 record, while the scenario is dated whenever the evacuation
-            //is being modelled - so the temperature, humidity and fire-danger indices the platform reported were
-            //from a date the fire knew nothing about. Rebasing here rather than at construction because the
-            //weather manager exists before this module does, and building the case is what draws the day.
+            //fire-weather day drawn out of the ERA5 record, while the scenario is dated whenever the evacuation is
+            //being modelled - so the reported temperature, humidity and fire-danger indices would otherwise be
+            //from a date the fire knew nothing about.
             if (fire.WeatherAnchor != default)
             {
                 string archive = string.IsNullOrEmpty(fire.WeatherArchiveFile) ? null : fire.WeatherArchiveFile;
                 simulation.Weather.Rebase(fire.WeatherAnchor, archive, simulation.Time);
             }
 
-            //k-PERIL gets the same wind the fire was computed with, unless the scenario names its own. Two
-            //wind fields for one fire is a disagreement waiting to happen: k-PERIL derives how elongated
-            //spread is from this, so a field belonging to another case, another hour or another grid changes
-            //the boundary without changing anything visible.
-            Input.kPERILInput peril = input.TriggerBufferModule.kPERILInput;
-            if (!string.IsNullOrEmpty(fire.WindSpeedFile) && string.IsNullOrEmpty(peril.WindSpeedFile))
+            //The wind k-PERIL uses is the fire's own - its midflame wind for the spread ellipse, its wind direction
+            //series sampled at each cell's arrival time - never a field configured separately, which can silently
+            //disagree with the fire and changes the boundary without changing anything visible.
+            var weather = new FireWeatherRasters
             {
-                peril.WindSpeedFile = fire.WindSpeedFile;
-                peril.WindDirectionFile = fire.WindDirectionFile;
-                Engine.Message(simulation, Engine.LogType.Log,
-                    "The trigger boundary will use the ELMFIRE case's own wind rasters (" + fire.WindSpeedFile
-                    + ", " + fire.WindDirectionFile + ").");
-            }
+                MidflameWindSpeedFile = Absolute(input.RootFolder, fire.MidflameWindSpeedFile),
+                WindSpeedFile = Absolute(input.RootFolder, fire.WindSpeedFile),
+                WindDirectionFile = Absolute(input.RootFolder, fire.WindDirectionFile),
+                SecondsPerBand = fire.SecondsPerBand,
+                StartBand = fire.StartBand,
+                WuiAreaFile = Absolute(input.RootFolder, fire.WuiAreaFile),
+                Authoritative = true,
+                Origin = "the ELMFIRE run (" + fire.RunNamelistFile + ")",
+            };
 
-            _wildfire = new AscFireImport(simulation);
+            _wildfire = new AscFireImport(simulation, asc, weather);
             Engine.Message(simulation, Engine.LogType.Log,
                 fire.Reused
-                    ? "Wildfire module ELMFIRE initiated from output already in the case folder."
+                    ? "Wildfire module ELMFIRE initiated from output computed earlier from the same namelist and inputs."
                     : "Wildfire module ELMFIRE initiated from a fresh ELMFIRE run.");
             return true;
+        }
+
+        /// <summary>A scenario-relative path made absolute; null for an empty one.</summary>
+        private static string Absolute(string root, string path)
+        {
+            if (string.IsNullOrEmpty(path)) return null;
+            return System.IO.Path.IsPathRooted(path) ? path : System.IO.Path.GetFullPath(System.IO.Path.Combine(root, path));
         }
 
         private void CreateWildfireModule(Simulation simulation, PREACTInput input, WeatherManager weather, TimeManager time, out bool success)

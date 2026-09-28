@@ -23,6 +23,12 @@ namespace PREACT.Wildfire
         }
 
         /// <summary>
+        /// The weather this fire was computed against, when the module knows it, for the trigger boundary. Null
+        /// when it does not; the trigger boundary then relies on the scenario's <c>[kPERIL]</c> section.
+        /// </summary>
+        public FireWeatherRasters FireWeather { get; protected set; }
+
+        /// <summary>
         /// The fire module might be able to take longer time steps compared to other modules, so this information is needed if only doing fire simulation.
         /// </summary>
         /// <returns></returns>

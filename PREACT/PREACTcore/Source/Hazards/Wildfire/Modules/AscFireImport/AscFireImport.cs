@@ -40,17 +40,32 @@ namespace PREACT.Wildfire
         List<Vector2int> _newlyIgnitedCells;
         float[] _sootInjection;
 
-        public AscFireImport(Simulation simulation) : base(simulation)
+        /// <summary>The fire rasters this module reads. The scenario's own <c>[AscImport]</c> for an imported fire;
+        /// a runtime copy for an ELMFIRE fire, so a run never writes its derived paths into the scenario (C4).</summary>
+        private readonly AscImportInput _fire;
+
+        public AscFireImport(Simulation simulation) : this(simulation, null, null)
         {
-            _startTime = (float)_simulation.Time.GetSimulationTime(_simulation.Input.WildfireModule.AscImportInput.StartDateTime);
-            string TOAFile = Path.Combine(_simulation.Engine.WorkingFolder, _simulation.Input.WildfireModule.AscImportInput.TimeOfArrivalFile);
-            string ROSFile = Path.Combine(_simulation.Engine.WorkingFolder, _simulation.Input.WildfireModule.AscImportInput.RateOfSpreadFile);
+        }
+
+        /// <param name="fire">The rasters to read; null reads the scenario's <c>[AscImport]</c> section.</param>
+        /// <param name="weather">
+        /// The weather the fire was computed against, when the caller knows it (the ELMFIRE module does). Null
+        /// builds it from <c>[AscImport] MidflameWindSpeedFile</c> when that is set.
+        /// </param>
+        public AscFireImport(Simulation simulation, AscImportInput fire, FireWeatherRasters weather) : base(simulation)
+        {
+            _fire = fire ?? _simulation.Input.WildfireModule.AscImportInput;
+
+            _startTime = (float)_simulation.Time.GetSimulationTime(_fire.StartDateTime);
+            string TOAFile = Path.Combine(_simulation.Engine.WorkingFolder, _fire.TimeOfArrivalFile);
+            string ROSFile = Path.Combine(_simulation.Engine.WorkingFolder, _fire.RateOfSpreadFile);
             //Left null when no raster is named, rather than combined unconditionally. Path.Combine with an
             //empty second argument returns the folder, so an absent fireline intensity produced the scenario
             //directory as a path - which ReadOutput then found non-empty, tried to read as a raster, and
             //warned about on every single run. The raster is genuinely optional, and this is what says so.
-            string FIFile = NullIfNotNamed(_simulation.Input.WildfireModule.AscImportInput.FirelineIntensityFile);
-            string SDFile = Path.Combine(_simulation.Engine.WorkingFolder, _simulation.Input.WildfireModule.AscImportInput.SpreadDirectionFile);
+            string FIFile = NullIfNotNamed(_fire.FirelineIntensityFile);
+            string SDFile = Path.Combine(_simulation.Engine.WorkingFolder, _fire.SpreadDirectionFile);
             ReadOutput(TOAFile, ROSFile, FIFile, SDFile);
 
             Vector2d ascUTM = new Vector2d(_xllcorner, _yllcorner);
@@ -61,6 +76,18 @@ namespace PREACT.Wildfire
             _firelineIntensityData = new float[ncols * nrows];
             _newlyIgnitedCells = new List<Vector2int>();
             _sootInjection = new float[ncols * nrows];
+
+            FireWeather = weather;
+            if (FireWeather == null && !string.IsNullOrWhiteSpace(_fire.MidflameWindSpeedFile))
+            {
+                //Not authoritative: an imported fire's midflame wind is the fire's own, but the direction, the
+                //band interval and the WUI area stay the scenario's [kPERIL] business.
+                FireWeather = new FireWeatherRasters
+                {
+                    MidflameWindSpeedFile = NullIfNotNamed(_fire.MidflameWindSpeedFile),
+                    Origin = "[AscImport] " + nameof(AscImportInput.MidflameWindSpeedFile),
+                };
+            }
 
             Engine.Message(_simulation, Engine.LogType.Log, "Wildfire ASCII data offset by (x/y) meters: " + _originOffset.x + ", " + _originOffset.y);
         }
@@ -306,7 +333,7 @@ namespace PREACT.Wildfire
             //.asc products this module was originally written for. It was hardcoded to minutes, so an
             //ELMFIRE fire arrived 60 times too late and barely moved over an evacuation - with nothing
             //anywhere saying so, which is why the unit is logged below whichever way it goes.
-            AscImportInput.TimeUnits units = _simulation.Input.WildfireModule.AscImportInput.TimeOfArrivalUnits;
+            AscImportInput.TimeUnits units = _fire.TimeOfArrivalUnits;
             float toSeconds = units == AscImportInput.TimeUnits.Seconds ? 1f : 60f;
             Engine.Message(_simulation, Engine.LogType.Log,
                 $"Fire arrival times read as {units.ToString().ToLowerInvariant()}.");
@@ -414,11 +441,6 @@ namespace PREACT.Wildfire
             return _simulation.Input.Simulation.DeltaTime;
         }
 
-        public FireRasterData[,] GetCompleteFireData()
-        {
-            return _data;
-        }
-
         public override float[] GetFireLineIntensityData()
         {
             return _firelineIntensityData;
@@ -458,7 +480,7 @@ namespace PREACT.Wildfire
                 return _fuelModelData;
             }
 
-            string relative = _simulation.Input.WildfireModule.AscImportInput.FuelModelFile;
+            string relative = _fire.FuelModelFile;
             if (string.IsNullOrWhiteSpace(relative))
             {
                 _fuelModelUnavailable = true;

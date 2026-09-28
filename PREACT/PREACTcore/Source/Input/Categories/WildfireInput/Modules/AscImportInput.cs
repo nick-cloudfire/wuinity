@@ -24,6 +24,18 @@ namespace PREACT.Input
         public string FirelineIntensityFile = string.Empty;
 
         /// <summary>
+        /// Midflame wind speed in <b>ft/min</b> on the fire grid, as ELMFIRE writes it to <c>mfws_*.tif</c>
+        /// (<c>DUMP_MIDFLAME_WINDSPEED</c>): valid where the fire spread, nodata elsewhere. Optional.
+        /// </summary>
+        /// <remarks>
+        /// This is the wind k-PERIL's length-to-breadth ratio is defined for, and when it is set the trigger
+        /// boundary uses it instead of <c>[kPERIL] WindSpeedFile</c>. A campaign realization gets it from its own
+        /// ELMFIRE run. A fire imported from elsewhere usually has none, and then k-PERIL falls back to the 10 m
+        /// wind and says so loudly, because 10 m wind read as midflame over-elongates every spread ellipse.
+        /// </remarks>
+        public string MidflameWindSpeedFile = string.Empty;
+
+        /// <summary>
         /// Fuel model raster on the same grid, for display only. Optional, and read by nothing that computes.
         /// </summary>
         /// <remarks>
@@ -58,6 +70,12 @@ namespace PREACT.Input
 
         }
 
+        /// <summary>A copy, so a run can fill in the rasters it produced without touching the scenario's own.</summary>
+        public AscImportInput Clone()
+        {
+            return (AscImportInput)MemberwiseClone();
+        }
+
         public static AscImportInput Parse(string[] inputLines, int startIndex, string rootFolder, out bool success)
         {
             success = false;
@@ -70,7 +88,8 @@ namespace PREACT.Input
             nameOfInput = nameof(StartDateTime);
             if (inputToParse.TryGetValue(nameOfInput, out userInput))
             {
-                 success = DateTime.TryParse(userInput, out newInput.StartDateTime);
+                 success = DateTime.TryParse(userInput, System.Globalization.CultureInfo.InvariantCulture,
+                     System.Globalization.DateTimeStyles.None, out newInput.StartDateTime);
             }
             else
             {
@@ -159,6 +178,22 @@ namespace PREACT.Input
             else
             {
                 PREACTInput.InputNotFoundMessage(nameOfInput);
+            }
+
+            //Not critical: without it k-PERIL falls back to [kPERIL] WindSpeedFile and warns. Named but missing is
+            //said here, since the fallback would otherwise hide a wrong path.
+            nameOfInput = nameof(MidflameWindSpeedFile);
+            if (inputToParse.TryGetValue(nameOfInput, out userInput) && userInput.Length > 0)
+            {
+                newInput.MidflameWindSpeedFile = userInput;
+                PREACTInput.CheckIfFileExist(nameOfInput, ref newInput.MidflameWindSpeedFile, rootFolder,
+                    out bool midflameExists, critical: false);
+                if (!midflameExists)
+                {
+                    Engine.Message(null, Engine.LogType.Warning,
+                        nameOfInput + " was specified but not found; k-PERIL will fall back to the 10 m wind: " + userInput);
+                    newInput.MidflameWindSpeedFile = string.Empty;
+                }
             }
 
             //Not critical, and silent when absent: it is a display layer, so its absence costs one output

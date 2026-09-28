@@ -264,38 +264,89 @@ namespace PREACT.Evacuation
         }
 
         /// <summary>
-        /// Reads a wind raster onto the fire grid, returning null if it is missing, unreadable or
-        /// the wrong size. AscRaster handles both .asc and .tif and returns [x, y] with a lower-left
-        /// origin, which is the same convention GetMaxROS() uses - k-PERIL takes totalX/totalY from
-        /// the ROS raster and throws on a size mismatch, so a transposed grid would be caught, but
-        /// only on a non-square domain. Checking here means a square domain cannot slip through
-        /// silently transposed.
-        /// </summary>
-        /// <summary>
-        /// One wind value per cell, taken from the band covering the hour the fire reached that cell.
+        /// The midflame wind speed an ELMFIRE fire reported (<c>mfws_*.tif</c>, ft/min), in the mi/h k-PERIL's
+        /// length-to-breadth correlation takes. Null when it is missing, unreadable or not on the fire grid.
         /// </summary>
         /// <remarks>
-        /// k-PERIL's solver has no time axis: the wind enters it once, as the length-to-breadth ratio of the
-        /// spread ellipse at each cell. A multi-hour fire therefore has to be collapsed to a single field,
-        /// and this picks the hour that is actually true of each cell - the one the front passed through it
-        /// in. It used to take one band for the whole domain, so an eight-hour burn was evaluated entirely
-        /// on its first hour however the wind turned; a fire that swung 90 degrees mid-run had its later
-        /// half analysed against wind it never saw.
-        ///
-        /// Cells the fire never reached take the last band. They lie ahead of the front, so the latest wind
-        /// is the closest thing to relevant, and they need some value because k-PERIL evaluates the whole
-        /// grid rather than the burned footprint.
+        /// ELMFIRE writes it only where the fire spread, which is also the only place k-PERIL uses it: the ellipse
+        /// is built per cell from a valid rate of spread, and a cell without one contributes no spread. Cells
+        /// without a value are set to calm rather than left at the nodata marker, which k-PERIL does not test for.
         /// </remarks>
-        private float[,] LoadWindRaster(string windFile, string rootFolder, int xCount, int yCount, string what,
-            bool isDirection, WildfireModule wildfire, double secondsPerBand)
+        private float[,] LoadMidflameWindMph(string path, int xCount, int yCount, float[,] rateOfSpread)
         {
-            if (string.IsNullOrEmpty(windFile))
+            float[,] raster = Utility.AscRaster.Read(path, 1, out Utility.AscRaster.Header header, out bool ok, out int _);
+            if (!ok || raster == null)
+            {
+                Engine.Message(null, Engine.LogType.InputError, "The midflame wind raster could not be read: " + path);
+                return null;
+            }
+
+            if (header.Ncols != xCount || header.Nrows != yCount)
+            {
+                Engine.Message(null, Engine.LogType.InputError,
+                    $"The midflame wind raster is {header.Ncols}x{header.Nrows} but the fire grid is {xCount}x{yCount}: {path}");
+                return null;
+            }
+
+            var mph = new float[xCount, yCount];
+            int valid = 0, spreadWithoutWind = 0;
+            double sum = 0.0;
+            float max = 0f;
+
+            for (int x = 0; x < xCount; ++x)
+            {
+                for (int y = 0; y < yCount; ++y)
+                {
+                    float v = raster[x, y];
+                    bool spread = rateOfSpread != null && rateOfSpread[x, y] >= 0f && rateOfSpread[x, y] > -9000f;
+
+                    if (v < 0f || float.IsNaN(v) || v <= -9000f)
+                    {
+                        if (spread) ++spreadWithoutWind;
+                        continue;
+                    }
+
+                    float value = (float)(v / Utility.ElmfireStems.FeetPerMinutePerMph);
+                    mph[x, y] = value;
+                    sum += value;
+                    if (value > max) max = value;
+                    ++valid;
+                }
+            }
+
+            if (valid == 0)
+            {
+                Engine.Message(null, Engine.LogType.InputError, "The midflame wind raster has no valid cell: " + path);
+                return null;
+            }
+
+            Engine.Message(null, Engine.LogType.Log,
+                $"k-PERIL wind speed: the fire's own midflame wind ({System.IO.Path.GetFileName(path)}), "
+                + $"mean {sum / valid:F2} mi/h and max {max:F1} mi/h over the {valid} cells the fire reached."
+                + (spreadWithoutWind > 0 ? $" {spreadWithoutWind} cell(s) with a spread rate have no midflame wind and are taken as calm." : ""));
+            return mph;
+        }
+
+        /// <summary>
+        /// Reads a wind raster onto the fire grid, one value per cell: a single band as it is, a series sampled per
+        /// cell at the band covering the hour the fire reached that cell. Null if it is missing, unreadable or the
+        /// wrong size.
+        /// </summary>
+        /// <remarks>
+        /// k-PERIL's solver has no time axis: the wind enters it once, as the length-to-breadth ratio of the spread
+        /// ellipse at each cell. A multi-hour fire therefore has to be collapsed to a single field, and this picks
+        /// the hour that is true of each cell - the one the front passed through it in. Cells the fire never reached
+        /// take the last band; they lie ahead of the front, so the latest wind is the closest thing to relevant.
+        /// </remarks>
+        private float[,] LoadWindRaster(string path, int xCount, int yCount, string what,
+            bool isDirection, WildfireModule wildfire, double secondsPerBand, int startBand)
+        {
+            if (string.IsNullOrEmpty(path))
             {
                 Engine.Message(null, Engine.LogType.InputError, what + " was not specified; k-PERIL needs a wind field.");
                 return null;
             }
 
-            string path = System.IO.Path.Combine(rootFolder, windFile);
             float[,] raster = Utility.AscRaster.Read(path, 1, out Utility.AscRaster.Header header, out bool ok,
                 out int bandCount);
             if (!ok || raster == null)
@@ -313,7 +364,7 @@ namespace PREACT.Evacuation
             if (bandCount > 1)
             {
                 raster = ComposeWindAtArrivalTime(raster, path, xCount, yCount, bandCount, what, wildfire,
-                    secondsPerBand);
+                    secondsPerBand, startBand);
                 if (raster == null)
                 {
                     return null;
@@ -342,19 +393,15 @@ namespace PREACT.Evacuation
                 return null;
             }
 
-            //An all-zero or otherwise flat wind field is almost always the wrong file rather than a
-            //real calm. It is worth saying so, because it fails silently: zero wind gives a
-            //length-to-breadth ratio of 1, so the spread template turns into a circle and the
-            //trigger boundary comes out isotropic instead of wind-driven.
-            if (min == max)
+            //An all-zero or otherwise flat wind speed field is almost always the wrong file rather than a real calm:
+            //zero wind gives a length-to-breadth ratio of 1, so the spread template turns into a circle.
+            if (min == max && !isDirection)
             {
                 Engine.Message(null, Engine.LogType.Warning, $"{what} is constant at {min}; the spread ellipse will be circular. Check that the weather pipeline actually produced this raster.");
             }
 
-            //Directions outside [0, 360] mean the field was resampled in angle space, which
-            //interpolates across the 0/360 wrap: averaging 350 and 10 yields 180, the opposite
-            //direction. Overshoot past the ends is the visible symptom of it. Wind rasters have to
-            //be warped as u/v components, which is what WindNinjaRunner does.
+            //Directions outside [0, 360] mean the field was resampled in angle space, which interpolates across
+            //the 0/360 wrap: averaging 350 and 10 yields 180, the opposite direction.
             if (isDirection && (min < -0.001f || max > 360.001f))
             {
                 Engine.Message(null, Engine.LogType.Warning, $"{what} spans {min} to {max} degrees, outside 0-360. It was most likely resampled as angles rather than as u/v components, so directions near the 0/360 wrap are wrong.");
@@ -367,26 +414,30 @@ namespace PREACT.Evacuation
         /// Replaces <paramref name="firstBand"/> cell by cell with the band covering that cell's arrival time.
         /// </summary>
         /// <remarks>
-        /// Read one band at a time rather than all of them at once: a band of the Mati grid is 1.2 MB and
-        /// there can be days of them in an ensemble case, and only the cells belonging to a band are needed
-        /// while it is in hand.
+        /// Band <paramref name="startBand"/> covers the first <paramref name="secondsPerBand"/> of the fire -
+        /// ELMFIRE's METEOROLOGY_BAND_START - so a fire started at band 5 of a series reads band 5 at time 0, not
+        /// band 1. Read one band at a time: a band of the Mati grid is 1.2 MB and only the cells belonging to it
+        /// are needed while it is in hand.
         /// </remarks>
         private float[,] ComposeWindAtArrivalTime(float[,] firstBand, string path, int xCount, int yCount,
-            int bandCount, string what, WildfireModule wildfire, double secondsPerBand)
+            int bandCount, string what, WildfireModule wildfire, double secondsPerBand, int startBand)
         {
             if (wildfire == null || secondsPerBand <= 0.0)
             {
-                //Nothing to map arrival times onto bands with. The first band is what the old behaviour used,
-                //so this degrades to that rather than failing - but it is worth saying, because the boundary
-                //is then computed against one hour of an N-hour fire.
                 Engine.Message(null, Engine.LogType.Warning,
                     $"{what} holds {bandCount} bands but the arrival times or the band interval are unknown, so "
                     + "band 1 is used for the whole domain.");
                 return firstBand;
             }
 
-            //Which band each cell wants, and how many cells want each - the counts are only for the summary,
-            //but a distribution is the one thing that shows at a glance whether this did anything.
+            if (startBand < 1) startBand = 1;
+            if (startBand > bandCount)
+            {
+                Engine.Message(null, Engine.LogType.Warning,
+                    $"{what} has {bandCount} bands but the fire started at band {startBand}; using band 1.");
+                startBand = 1;
+            }
+
             var wanted = new int[xCount, yCount];
             var perBand = new int[bandCount + 1];
             int unburned = 0;
@@ -405,10 +456,10 @@ namespace PREACT.Evacuation
                     }
                     else
                     {
-                        //Bands are 1-based and cover [ (b-1)*dt, b*dt ). Clamped at both ends: an arrival
-                        //before the first band belongs to it, and one past the last - which a fire outliving
-                        //its weather produces - belongs to the last.
-                        band = (int)System.Math.Floor(arrival / secondsPerBand) + 1;
+                        //Bands cover [(b - start) * dt, (b - start + 1) * dt). Clamped at both ends: an arrival
+                        //before the first belongs to it, one past the last - a fire outliving its weather, which
+                        //ELMFIRE allows for a one-band series - belongs to the last.
+                        band = (int)System.Math.Floor(arrival / secondsPerBand) + startBand;
                         if (band < 1) band = 1;
                         if (band > bandCount) band = bandCount;
                     }
@@ -460,31 +511,126 @@ namespace PREACT.Evacuation
 
             Engine.Message(null, Engine.LogType.Log,
                 $"{what}: sampled per cell at the fire's arrival time across {bandCount} band(s) of "
-                + $"{secondsPerBand:F0} s. Cells per band - {string.Join(", ", used)}"
+                + $"{secondsPerBand:F0} s from band {startBand}. Cells per band - {string.Join(", ", used)}"
                 + (unburned > 0 ? $"; {unburned} cell(s) the fire never reached took the last band." : "."));
 
             return composed;
         }
 
         /// <summary>
-        /// Seconds covered by one band of the weather rasters.
+        /// The wind k-PERIL is given, and where each part came from.
+        /// </summary>
+        private struct TriggerWind
+        {
+            public string SpeedFile;
+            public bool SpeedIsMidflame;
+            public string DirectionFile;
+            public double SecondsPerBand;
+            public int StartBand;
+        }
+
+        /// <summary>
+        /// Decides which wind k-PERIL is given (decision 2 of the v1 plan).
         /// </summary>
         /// <remarks>
-        /// The ELMFIRE settings state it, and for an ELMFIRE fire that is authoritative - it is the same
-        /// value written into the namelist the fire was computed with. For a fire imported from elsewhere
-        /// there is nothing in the scenario that says, and hourly is the convention of every product this
-        /// reads, so an hour is assumed and said.
+        /// <para>
+        /// Speed: the fire's own midflame wind whenever the fire module has one - an ELMFIRE run's
+        /// <c>mfws_*.tif</c>, or <c>[AscImport] MidflameWindSpeedFile</c> for a campaign realization. k-PERIL's
+        /// length-to-breadth correlation is defined for midflame wind, and the 10 m wind it used to be handed is
+        /// several times larger (Mati realization 13: 14.4 mi/h at 10 m, 2.75 mi/h midflame) - with L/B growing
+        /// exponentially in it, every ellipse became a needle. Only without one is <c>[kPERIL] WindSpeedFile</c>
+        /// (or the fire's own 10 m series) used, and that is said as a warning, because it is used <i>as</i>
+        /// midflame wind.
+        /// </para>
+        /// <para>
+        /// Direction: from the weather the fire ran on, sampled at each cell's arrival time. For an ELMFIRE fire run
+        /// by this simulation that is authoritative and the scenario's key is ignored if it names another file; for
+        /// an imported fire the scenario's <c>[kPERIL] WindDirectionFile</c> is the source.
+        /// </para>
         /// </remarks>
-        private double ResolveSecondsPerWeatherBand()
+        private TriggerWind ResolveTriggerWind(Simulation simulation, kPERILInput peril)
         {
-            if (_input.WildfireModule.Module == Input.WildfireModuleInput.WildfireModules.ELMFIRE
-                && _input.WildfireModule.ElmfireInput?.Namelist != null
-                && _input.WildfireModule.ElmfireInput.Namelist.DT_METEOROLOGY > 0.0)
+            FireWeatherRasters fire = simulation.Hazards.Wildfire.FireWeather;
+            var wind = new TriggerWind
             {
-                return _input.WildfireModule.ElmfireInput.Namelist.DT_METEOROLOGY;
+                SecondsPerBand = peril.WindBandSeconds > 0.0 ? peril.WindBandSeconds : kPERILInput.DefaultWindBandSeconds,
+                StartBand = 1,
+            };
+
+            string scenarioSpeed = ResolveScenarioFile(peril.WindSpeedFile);
+            string scenarioDirection = ResolveScenarioFile(peril.WindDirectionFile);
+
+            if (fire != null && !string.IsNullOrEmpty(fire.MidflameWindSpeedFile))
+            {
+                wind.SpeedFile = fire.MidflameWindSpeedFile;
+                wind.SpeedIsMidflame = true;
+                if (scenarioSpeed != null)
+                {
+                    Engine.Message(simulation, Engine.LogType.Log,
+                        "[kPERIL] WindSpeedFile is not used: the fire brings its own midflame wind, which is what "
+                        + "k-PERIL's spread ellipse is defined for.");
+                }
             }
 
-            return 3600.0;
+            if (fire != null && fire.Authoritative)
+            {
+                wind.DirectionFile = fire.WindDirectionFile;
+                wind.SecondsPerBand = fire.SecondsPerBand > 0.0 ? fire.SecondsPerBand : wind.SecondsPerBand;
+                wind.StartBand = fire.StartBand;
+
+                if (scenarioDirection != null && !SamePath(scenarioDirection, fire.WindDirectionFile))
+                {
+                    Engine.Message(simulation, Engine.LogType.Warning,
+                        $"[kPERIL] WindDirectionFile ({peril.WindDirectionFile}) is not used: the trigger boundary takes "
+                        + $"the wind direction the fire itself ran on, from {fire.Origin}.");
+                }
+
+                if (wind.SpeedFile == null)
+                {
+                    wind.SpeedFile = fire.WindSpeedFile;
+                }
+            }
+            else
+            {
+                wind.DirectionFile = scenarioDirection ?? fire?.WindDirectionFile;
+                if (wind.SpeedFile == null)
+                {
+                    wind.SpeedFile = scenarioSpeed ?? fire?.WindSpeedFile;
+                }
+            }
+
+            if (!wind.SpeedIsMidflame && wind.SpeedFile != null)
+            {
+                Engine.Message(simulation, Engine.LogType.Warning,
+                    "k-PERIL has no midflame wind for this fire, so " + System.IO.Path.GetFileName(wind.SpeedFile)
+                    + " is being used AS midflame wind. If it is 10 m wind (as ws.tif from the weather pipeline is), "
+                    + "every spread ellipse comes out too elongated and the boundary too narrow across the wind. An "
+                    + "ELMFIRE build from a7fb9d6 on writes the midflame wind itself (DUMP_MIDFLAME_WINDSPEED); for an "
+                    + "imported fire set [AscImport] MidflameWindSpeedFile.");
+            }
+
+            return wind;
+        }
+
+        /// <summary>A scenario-relative path made absolute, or null when unset.</summary>
+        private string ResolveScenarioFile(string file)
+        {
+            if (string.IsNullOrWhiteSpace(file)) return null;
+            return System.IO.Path.IsPathRooted(file) ? file : System.IO.Path.Combine(_input.RootFolder, file);
+        }
+
+        private static bool SamePath(string a, string b)
+        {
+            if (a == null || b == null) return false;
+            try
+            {
+                return string.Equals(System.IO.Path.GetFullPath(a), System.IO.Path.GetFullPath(b),
+                    System.StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         /// <summary>One WUI area to protect, and a label used to name its output.</summary>
@@ -566,9 +712,23 @@ namespace PREACT.Evacuation
 
             if (peril.WuiAreaSource == kPERILInput.WuiAreaSources.Raster)
             {
-                //As before: an explicit mask when given, otherwise whatever the wildfire data carried.
-                bool[] wuiArea = LoadWuiAreaMask(peril.WuiAreaFile, _input.RootFolder, xCount, yCount)
-                                 ?? PaintedWuiArea(simulation, xCount, yCount);
+                //An explicit mask when given; otherwise the fire case's own wui_area.tif, which the case builder
+                //exported from the painting onto the fire grid; only then the painting itself. The case's mask was
+                //never handed over, so an ELMFIRE run with a painted WUI area fell through to the painting, which
+                //is on the landscape grid (616 x 590 on Mati against the fire's 566 x 541) and was refused - two
+                //log lines after the builder had written the right mask.
+                string caseWuiArea = simulation.Hazards.Wildfire.FireWeather?.WuiAreaFile;
+                bool[] wuiArea = LoadWuiAreaMask(peril.WuiAreaFile, _input.RootFolder, xCount, yCount);
+                if (wuiArea == null && !string.IsNullOrEmpty(caseWuiArea))
+                {
+                    wuiArea = LoadWuiAreaMask(caseWuiArea, _input.RootFolder, xCount, yCount);
+                    if (wuiArea != null)
+                    {
+                        Engine.Message(simulation, Engine.LogType.Log,
+                            "WUI area: the fire case's own " + System.IO.Path.GetFileName(caseWuiArea) + ".");
+                    }
+                }
+                wuiArea = wuiArea ?? PaintedWuiArea(simulation, xCount, yCount);
                 if (wuiArea != null)
                 {
                     runs.Add(new WuiAreaRun { WuiArea = wuiArea, Label = "wui" });
@@ -837,13 +997,14 @@ namespace PREACT.Evacuation
                         //terrain-driven variation the WindNinja step exists to produce.
                         //Sampled per cell at the hour the fire reached it, so a multi-hour burn is not
                         //evaluated against a single hour's wind. Needs the fire module for its arrival times.
-                        double secondsPerBand = ResolveSecondsPerWeatherBand();
-                        float[,] windSpeedMph = LoadWindRaster(_input.TriggerBufferModule.kPERILInput.WindSpeedFile,
-                            _input.RootFolder, xCount, yCount, nameof(kPERILInput.WindSpeedFile), false,
-                            simulation.Hazards.Wildfire, secondsPerBand);
-                        float[,] windDirectionDegrees = LoadWindRaster(_input.TriggerBufferModule.kPERILInput.WindDirectionFile,
-                            _input.RootFolder, xCount, yCount, nameof(kPERILInput.WindDirectionFile), true,
-                            simulation.Hazards.Wildfire, secondsPerBand);
+                        TriggerWind wind = ResolveTriggerWind(simulation, _input.TriggerBufferModule.kPERILInput);
+                        float[,] windSpeedMph = wind.SpeedIsMidflame
+                            ? LoadMidflameWindMph(wind.SpeedFile, xCount, yCount, simulation.Hazards.Wildfire.GetMaxROS())
+                            : LoadWindRaster(wind.SpeedFile, xCount, yCount, nameof(kPERILInput.WindSpeedFile), false,
+                                simulation.Hazards.Wildfire, wind.SecondsPerBand, wind.StartBand);
+                        float[,] windDirectionDegrees = LoadWindRaster(wind.DirectionFile, xCount, yCount,
+                            nameof(kPERILInput.WindDirectionFile), true,
+                            simulation.Hazards.Wildfire, wind.SecondsPerBand, wind.StartBand);
 
                         if (windSpeedMph == null || windDirectionDegrees == null)
                         {
@@ -885,12 +1046,13 @@ namespace PREACT.Evacuation
                             //indistinguishable from one that was genuinely threatened.
                             if (!FireReachedArea(simulation, runs[i].WuiArea, xCount, yCount, out int burnedCells))
                             {
+                                string longer = _input.WildfireModule.Module == Input.WildfireModuleInput.WildfireModules.ELMFIRE
+                                    ? "raise [ELMFIRE] SimulationTstopHours to give the fire time to arrive"
+                                    : "the fire these rasters came from would have to run longer (in a campaign, the hours per realization)";
                                 Engine.Message(simulation, Engine.LogType.Warning,
                                     $"The fire never reached {runs[i].Label}, so no trigger boundary was computed for "
                                     + "it. Either it is not threatened in this scenario, or the fire was not run for "
-                                    + "long enough to get there - a probabilistic campaign runs ELMFIRE for days for "
-                                    + "exactly this reason. Raise [ELMFIRE] SimulationTstopHours to give the fire "
-                                    + "time to arrive.");
+                                    + $"long enough to get there - {longer}.");
                                 continue;
                             }
 

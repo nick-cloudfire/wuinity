@@ -41,16 +41,26 @@ namespace PREACT.Input
         public WuiAreaSources WuiAreaSource = WuiAreaSources.Raster;
 
         /// <summary>
-        /// Mid-flame wind speed raster, in MILES PER HOUR.
+        /// Wind speed raster in MILES PER HOUR, used by k-PERIL <b>only when the fire brings no midflame wind of
+        /// its own</b>.
         ///
-        /// The unit is not a free choice. k-PERIL spends this value in one place - the Anderson
-        /// (1983) length-to-breadth ratio of the Huygens ellipse - and that correlation is defined
-        /// for mid-flame wind in mi/h. It is also what WindNinjaRunner already writes to ws.tif, so
-        /// the pipeline output drops straight in. Feeding m/s instead silently produces
-        /// grossly over-elongated spread ellipses: 5 mi/h gives L/B of about 3.2, while the same
-        /// figure read as m/s (11.2 mi/h) gives about 16.
+        /// k-PERIL spends wind in one place - the Anderson (1983) length-to-breadth ratio of the Huygens
+        /// ellipse - and that correlation is defined for <b>midflame</b> wind in mi/h. An ELMFIRE fire supplies
+        /// exactly that (its <c>mfws_*.tif</c>, see <c>[AscImport] MidflameWindSpeedFile</c>), and then this key is
+        /// not used. For a fire imported without one, this raster is taken <i>as</i> midflame wind and the run
+        /// warns: the 10 m wind WindNinja writes to ws.tif is several times the midflame wind (realization 13 of
+        /// the Mati campaign: 14.4 mi/h at 10 m, 2.75 mi/h midflame), and L/B grows exponentially with it.
         /// </summary>
         public string WindSpeedFile = string.Empty;
+
+        /// <summary>
+        /// Seconds each band of <see cref="WindDirectionFile"/> (and <see cref="WindSpeedFile"/>) covers, so each
+        /// cell can take the band covering the hour the fire reached it. The fire's DT_METEOROLOGY; 3600 unless
+        /// said. An ELMFIRE fire run by the simulation supplies its own and this is not read.
+        /// </summary>
+        public double WindBandSeconds = DefaultWindBandSeconds;
+
+        public const double DefaultWindBandSeconds = 3600.0;
 
         /// <summary>
         /// Wind direction raster, in DEGREES. As written by WindNinjaRunner to wd.tif.
@@ -114,6 +124,19 @@ namespace PREACT.Input
 
             //A WindBand key from an older scenario is simply ignored - the band is now per cell, from the
             //fire's arrival times.
+            nameOfInput = nameof(WindBandSeconds);
+            if (inputToParse.TryGetValue(nameOfInput, out userInput) && userInput.Length > 0)
+            {
+                if (double.TryParse(userInput, System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out double seconds) && seconds > 0.0)
+                {
+                    newInput.WindBandSeconds = seconds;
+                }
+                else
+                {
+                    PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
+                }
+            }
 
             //Optional. It names the output files and nothing reads it back, so its absence cannot make a
             //run wrong - yet a missing key used to abort the whole section, which presented as "this
