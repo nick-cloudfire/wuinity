@@ -28,6 +28,9 @@ namespace PREACT.Traffic
         private int _injectionAttempts, _injectionErrors, _injectionUnrouted;
         private string _firstInjectionError;
         private bool _injectionAbandoned;
+
+        /// <summary>Cars SUMO no longer knows although they never arrived; the smoke speed update skips them.</summary>
+        private readonly HashSet<string> _vehiclesLostBySumo = new HashSet<string>();
         private List<string> output;
 
         private double[,] _usageMap;
@@ -251,8 +254,23 @@ namespace PREACT.Traffic
                 foreach (KeyValuePair<string, SUMOVehicle> sV in _sumoVehicles)
                 {
                     SUMOVehicle vehicle = sV.Value;
+                    if (_vehiclesLostBySumo.Contains(sV.Key)) continue;
+
                     double speedFactor = vehicle.InitialSpeedFactor * GetSmokeSpeedReductionFactor(vehicle.SimulationPos);
-                    LIBSUMO.Vehicle.setSpeedFactor(vehicle.GetSumoVehicleID(), speedFactor);
+                    try
+                    {
+                        LIBSUMO.Vehicle.setSpeedFactor(vehicle.GetSumoVehicleID(), speedFactor);
+                    }
+                    catch (Exception e)
+                    {
+                        //A car SUMO removed without it arriving - teleported out, a redirect that failed - is unknown
+                        //to libsumo, which throws. That used to be one warning per step; since failures stop a run,
+                        //it stopped the whole simulation (review MI-5). Said once per car, and the car left alone.
+                        _vehiclesLostBySumo.Add(sV.Key);
+                        Engine.Message(_simulation, Engine.LogType.Warning,
+                            $"Car {sV.Key} ({vehicle.NumberOfPeople} people) is no longer in SUMO although it has not "
+                            + $"arrived, so smoke no longer slows it and its people are not counted as evacuated: {e.Message}");
+                    }
                 }
             }           
 
