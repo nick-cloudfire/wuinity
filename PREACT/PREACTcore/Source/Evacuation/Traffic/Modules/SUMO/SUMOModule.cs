@@ -23,6 +23,11 @@ namespace PREACT.Traffic
         private uint totalVehiclesArrived, totalPeopleArrived, totalSumoVehiclesArrived;
         private int currentVehiclessInSystem;
         private int totalVehiclesInjected, totalSumoVehiclesInjected;
+
+        //Cars handed to SUMO and what became of them, for telling a broken SUMO from a few unroutable cars.
+        private int _injectionAttempts, _injectionErrors, _injectionUnrouted;
+        private string _firstInjectionError;
+        private bool _injectionAbandoned;
         private List<string> output;
 
         private double[,] _usageMap;
@@ -351,10 +356,57 @@ namespace PREACT.Traffic
             }
         }
 
+        /// <summary>How many cars have to have been tried before a failure rate means anything.</summary>
+        public const int InjectionCheckMinimumCars = 25;
+
+        /// <summary>The share of cars that may fail to enter SUMO before the run is stopped as broken.</summary>
+        public const double InjectionFailureLimit = 0.9;
+
+        /// <summary>
+        /// Why a run whose cars mostly do not reach SUMO cannot continue, or null while it can: after
+        /// <see cref="InjectionCheckMinimumCars"/> cars, more than <see cref="InjectionFailureLimit"/> of them not
+        /// injected.
+        /// </summary>
+        /// <remarks>
+        /// Each failed car used to be one warning and the run carried on: on Linux with the Windows SWIG glue all
+        /// 928 of Mati's cars failed ("Unable to find an entry point named '?' in shared library 'libsumocs'"), the
+        /// evacuation finished with nobody in it, and only k-PERIL's "no arrivals" gave the run a non-zero exit - and a
+        /// run without k-PERIL none at all (e2e F5). A few unroutable cars are normal; nearly all of them is a SUMO,
+        /// binding or network problem, and nothing computed from the rest would mean anything.
+        /// </remarks>
+        public static string DescribeInjectionFailure(int attempted, int injected, int errors, int unrouted, string firstError)
+        {
+            if (attempted < InjectionCheckMinimumCars) return null;
+            int failed = attempted - injected;
+            if (failed <= InjectionFailureLimit * attempted) return null;
+
+            string why = errors > 0
+                ? $"{errors} were refused by SUMO itself (first: {firstError})"
+                : "none was refused by SUMO";
+            string hint = firstError != null && firstError.IndexOf("entry point", StringComparison.OrdinalIgnoreCase) >= 0
+                ? " The C# bindings (Runtimes/Managed/Eclipse.Sumo.Libsumo) do not match this SUMO's libsumocs: they have "
+                  + "to be the files SWIG generated for the same SUMO build (the committed ones match the Windows SUMO "
+                  + "1.22; for another build, copy its build/src/libsumo/cs/*.cs over them)."
+                : unrouted > errors
+                    ? " Most had no route to their destination: check that the SUMO network covers the population and the "
+                      + "destinations, and is in the simulation's UTM zone."
+                    : string.Empty;
+
+            return $"{failed} of the first {attempted} cars could not be put into SUMO ({why}; {unrouted} had no route), "
+                   + "so the evacuation would run without them. Stopping the run." + hint;
+        }
+
         public override void HandleNewCars()
         {
+            if (_injectionAbandoned)
+            {
+                _carsToInject.Clear();
+                return;
+            }
+
             foreach (InjectedCar injectedCar in _carsToInject)
             {
+                ++_injectionAttempts;
                 EvacuationDestination evacuationGoal = injectedCar.evacuationDestination;
                 uint numberOfPeopleInCar = injectedCar.numberOfPeopleInCar;
                 Vector2d startLatLon = injectedCar.startLatLon;                
@@ -396,6 +448,8 @@ namespace PREACT.Traffic
                         Engine.Message(null, Engine.LogType.Warning, $"Car could not be injected as no valid route was found or cached. Origin (lat/lon) {startLatLon.x}, {startLatLon.y}, dest. (lat/lon) {destinationLatLon.x}, {destinationLatLon.y}.");
                     }
 
+                    if (!foundRoute) ++_injectionUnrouted;
+
                     if(foundRoute)
                     {
                         uint carID = GetNewCarID();
@@ -412,8 +466,19 @@ namespace PREACT.Traffic
                 }
                 catch (Exception e)
                 {
+                    ++_injectionErrors;
+                    if (_firstInjectionError == null) _firstInjectionError = e.Message;
                     Engine.Message(null, Engine.LogType.Warning, "Issue injecting vehicle into SUMO: " + e.Message);
-                }              
+                }
+
+                string failure = DescribeInjectionFailure(_injectionAttempts, totalVehiclesInjected, _injectionErrors,
+                    _injectionUnrouted, _firstInjectionError);
+                if (failure != null)
+                {
+                    _injectionAbandoned = true;
+                    Engine.Message(_simulation, Engine.LogType.SimulationError, failure);
+                    break;
+                }
             } 
             
             _carsToInject.Clear();
