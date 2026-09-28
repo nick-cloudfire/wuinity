@@ -28,6 +28,32 @@ namespace PREACT.Tests
             runner.Add("format: CDF problems are reported", CdfValidation);
             runner.Add("format: ASC headers in any order, with centres and without nodata", AscHeaders);
             runner.Add("format: a missing landscape file keeps the ignition points, through load and save", MissingLandscapeKeepsIgnitions);
+            runner.Add("format: the shipped examples load without a single warning", ExamplesLoadQuietly);
+        }
+
+        /// <summary>
+        /// e2e F11: the examples carried retired keys, left out OutputRasterSize, had fire rasters without a CRS and
+        /// were told k-PERIL needs a WUI area while k-PERIL was off - every load warned four or five times, which
+        /// teaches a user to ignore warnings.
+        /// </summary>
+        private static List<string> ExamplesLoadQuietly()
+        {
+            var warnings = new List<string>();
+            string repo = Program.FindRepositoryRoot();
+            if (repo == null)
+            {
+                warnings.Add("the repository's Examples folder was not found; skipped");
+                return warnings;
+            }
+
+            foreach (string wui in RoundTrip.Examples(repo))
+            {
+                Program.Log.Take();
+                PREACTInput.LoadFromDisk(wui, out bool _);
+                List<string> said = Program.Log.Take().Where(m => m.Contains("WARNING:") || m.Contains("ERROR:")).ToList();
+                Assert.True(said.Count == 0, Path.GetFileName(wui) + " warns: " + string.Join(" | ", said));
+            }
+            return warnings;
         }
 
         /// <summary>

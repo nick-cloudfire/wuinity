@@ -77,7 +77,7 @@ namespace PREACT.Tests
             return runner.RunAll() ? 0 : 1;
         }
 
-        private static string FindRepositoryRoot()
+        internal static string FindRepositoryRoot()
         {
             string dir = AppContext.BaseDirectory;
             while (!string.IsNullOrEmpty(dir))

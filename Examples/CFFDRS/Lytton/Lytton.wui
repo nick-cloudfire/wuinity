@@ -32,9 +32,6 @@ AllowMoreThanOneCar=true
 MaxCars=2
 MaxCarsProbability=1.0
 
-[Evacuation]
-UseTriggerBufferEvacuation=false
-
 [Destination]
 Name=Highway12
 LatLon=50.276342, -121.598340
@@ -90,6 +87,7 @@ VisibilityAffectsSpeed=false
 
 [SUMO]
 ConfigurationFile=sumo/osm.sumocfg
+OutputRasterSize=25
 SmokeAlpha=0.4967
 SmokeBeta=-0.02910
 

@@ -137,6 +137,7 @@ VisibilityAffectsSpeed=false
 
 [SUMO]
 ConfigurationFile=sumo/rox.sumocfg
+OutputRasterSize=25
 SmokeAlpha=0.4967
 SmokeBeta=-0.02910
 

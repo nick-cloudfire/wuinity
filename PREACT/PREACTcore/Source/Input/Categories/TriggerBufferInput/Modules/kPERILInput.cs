@@ -178,8 +178,10 @@ namespace PREACT.Input
                     Engine.Message(null, Engine.LogType.Warning, nameOfInput + " was specified but not found: " + userInput);
                 }
             }
-            else if (needed)
+            else if (needed && !PREACTInput.ReadingSwitchedOffSection)
             {
+                //Only when the boundary is on: a scenario with k-PERIL switched off (every shipped example) said this
+                //on every load.
                 Engine.Message(null, Engine.LogType.Warning, nameOfInput + " was not specified; k-PERIL needs a WUI area to "
                     + "compute a trigger boundary. Building the ELMFIRE case writes one from the painted WUI area.");
             }
