@@ -353,8 +353,15 @@ namespace Assets.WUInity.GUI.DearIMGUI
             global::WUInity.Painter painter = PreactGUI.WUInity?.Painter;
             if (painter != null && painter.UnsavedGroupStrokes)
             {
+                //What happens to the original is said, not left to be found out (review R7): the GUI switches to the copy
+                //either way, and the original .wui is not rewritten - so without saving here the strokes are gone from both.
                 ConfirmPrompt.AskChoice("Evacuation group areas were painted and not saved. The copy is made from the scenario's "
-                    + "files, and those strokes are only on screen.", "Save them here, then copy", () =>
+                    + "files, and those strokes are only on screen; after copying, the copy is opened.\n\n"
+                    + "Save them here, then copy: the group masks are written into this scenario's folder first, so the copy "
+                    + "has them. This scenario's .wui is not rewritten: it reads the new masks only where it already names "
+                    + "those mask files.\n\n"
+                    + "Copy without them: the copy has the group areas as last saved, and the strokes are lost - from the "
+                    + "copy and from this scenario, which is left as it was last saved.", "Save them here, then copy", () =>
                     {
                         Editors.EvacuationGroupPaintWindow.SaveMasksFor(_input);
                         CopyToNow(destinationParent, includeOutputs);
