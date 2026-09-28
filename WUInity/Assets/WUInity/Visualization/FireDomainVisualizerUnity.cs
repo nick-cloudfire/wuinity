@@ -22,15 +22,150 @@ namespace WUInity.Visualization
         //reused when a texture on a different grid arrives.
         Vector2d _planeSize, _planeOffset;
         //textures
-        Texture2D _fuelModelsTexture, _elevationTexture, _slopeTexture, _aspectTexture, _triggerBufferTexture;
+        Texture2D _fuelModelsTexture, _elevationTexture, _slopeTexture, _aspectTexture;
           
+
+        //A plane of its own for results (trigger boundaries, probabilities, arrival times), above the painted
+        //areas' plane, so a result can be looked at against what was painted.
+        private GameObject _rasterPlane;
+        private MeshRenderer _rasterRenderer;
+        private Vector2d _rasterPlaneSize, _rasterPlaneOffset;
+        private Texture2D _rasterTexture;
+
+        /// <summary>How a displayed raster's values become colours.</summary>
+        public enum RasterRamp
+        {
+            /// <summary>0..1, transparent at 0, yellow to dark red.</summary>
+            Probability,
+            /// <summary>Times: red for the earliest valid value to blue for the latest.</summary>
+            Arrival,
+            /// <summary>A trigger boundary: banded reds over the cells it covers.</summary>
+            Boundary,
+            /// <summary>A mask: any positive value, one colour.</summary>
+            Mask,
+        }
 
         public FireDomainVisualizerUnity(Transform parent)
         {
             _lcpDomainPlane = new GameObject("WildfireDomain");
             _lcpDomainPlane.transform.parent = parent;
             _lcpDomainPlane.transform.position += Vector3.up;
-            _lcpDomainPlane.isStatic = true;            
+            _lcpDomainPlane.isStatic = true;
+
+            _rasterPlane = new GameObject("ResultOverlay");
+            _rasterPlane.transform.parent = parent;
+            _rasterPlane.transform.position += 2f * Vector3.up;
+            _rasterPlane.isStatic = true;
+            _rasterPlane.SetActive(false);
+        }
+
+        public bool IsRasterVisible { get => _rasterPlane != null && _rasterPlane.activeSelf; }
+
+        public void HideRaster()
+        {
+            if (_rasterPlane != null) _rasterPlane.SetActive(false);
+        }
+
+        /// <summary>
+        /// Shows a raster over the map: <paramref name="data"/> is [columns, rows] with row 0 at the south, as
+        /// AscRaster reads it, on a grid of <paramref name="size"/> metres whose south-west corner is at
+        /// <paramref name="originOffset"/> in simulation coordinates. Cells at or below zero, or equal to
+        /// <paramref name="noData"/>, are transparent. Reports the range of the values it coloured.
+        /// </summary>
+        public bool DisplayRaster(float[,] data, double noData, Vector2d size, Vector2d originOffset, RasterRamp ramp,
+            out float min, out float max)
+        {
+            min = float.MaxValue;
+            max = float.MinValue;
+            if (data == null)
+            {
+                return false;
+            }
+
+            int xPixels = data.GetLength(0);
+            int yPixels = data.GetLength(1);
+
+            for (int y = 0; y < yPixels; y++)
+            {
+                for (int x = 0; x < xPixels; x++)
+                {
+                    float v = data[x, y];
+                    if (!Valid(v, noData, ramp)) continue;
+                    if (v < min) min = v;
+                    if (v > max) max = v;
+                }
+            }
+
+            if (min > max)
+            {
+                min = max = 0f;
+            }
+
+            if (_rasterRenderer == null || DomainVisualizerUnity.NeedNewPlane(_rasterPlaneSize, size, _rasterPlaneOffset, originOffset))
+            {
+                _rasterRenderer = DomainVisualizerUnity.CreateDomainPlane(_rasterPlane, _rasterRenderer, size, originOffset);
+                _rasterPlaneSize = size;
+                _rasterPlaneOffset = originOffset;
+            }
+
+            if (DomainVisualizerUnity.NeedNewTexture(new Vector2int(xPixels, yPixels), _rasterTexture))
+            {
+                if (_rasterTexture != null) Object.Destroy(_rasterTexture);
+                _rasterTexture = new Texture2D(xPixels, yPixels, TextureFormat.RGBA32, false);
+                _rasterTexture.filterMode = FilterMode.Point;
+            }
+
+            float range = max - min;
+            var pixels = new Color32[xPixels * yPixels];
+            for (int y = 0; y < yPixels; y++)
+            {
+                for (int x = 0; x < xPixels; x++)
+                {
+                    float v = data[x, y];
+                    Color c = new Color(0f, 0f, 0f, 0f);
+                    if (Valid(v, noData, ramp))
+                    {
+                        switch (ramp)
+                        {
+                            case RasterRamp.Probability:
+                                float p = UnityEngine.Mathf.Clamp01(v);
+                                c = Color.Lerp(new Color(1f, 0.9f, 0.2f), new Color(0.55f, 0f, 0f), p);
+                                c.a = 0.35f + 0.5f * p;
+                                break;
+                            case RasterRamp.Arrival:
+                                float t = range > 0f ? (v - min) / range : 0f;
+                                c = Color.HSVToRGB(0.66f * t, 0.9f, 1f);
+                                c.a = 0.7f;
+                                break;
+                            case RasterRamp.Boundary:
+                                float band = (int)(UnityEngine.Mathf.Clamp01(range > 0f ? (v - min) / range : 1f) * 5f) / 5f;
+                                c = Color.red * (0.8f * band + 0.2f);
+                                c.a = 0.8f;
+                                break;
+                            default:
+                                c = new Color(0.1f, 0.85f, 1f, 0.5f);
+                                break;
+                        }
+                    }
+                    pixels[x + y * xPixels] = c;
+                }
+            }
+
+            _rasterTexture.SetPixels32(pixels);
+            _rasterTexture.Apply();
+            _rasterRenderer.material.mainTexture = _rasterTexture;
+            _rasterPlane.SetActive(true);
+            return true;
+        }
+
+        private static bool Valid(float v, double noData, RasterRamp ramp)
+        {
+            if (float.IsNaN(v) || float.IsInfinity(v) || UnityEngine.Mathf.Approximately(v, (float)noData) || v <= -9999f)
+            {
+                return false;
+            }
+            //Arrival times start at zero, which is a real value (ignition); everything else treats 0 as "none".
+            return ramp == RasterRamp.Arrival ? v >= 0f : v > 0f;
         }
 
         public void SetLCPPlaneTexture(Texture2D tex)
@@ -107,7 +242,8 @@ namespace WUInity.Visualization
             }
             else if (lcpViewMode == LcpViewMode.TriggerBuffer)
             {
-                _lcpDomainMeshRenderer.material.mainTexture = _triggerBufferTexture;
+                //Shown on the result overlay's own plane now (DisplayRaster).
+                _rasterPlane.SetActive(true);
             }
         }
         private void CheckIfNeedNewFireDomainPlane(LandscapeData newLCPData)
@@ -190,6 +326,10 @@ namespace WUInity.Visualization
             SetVisibility(true);
         }
 
+        /// <summary>
+        /// A trigger boundary on the loaded landscape's grid. What the Results window uses is
+        /// <see cref="DisplayRaster"/>, which takes the grid explicitly; this keeps the engine's interface.
+        /// </summary>
         public override void DisplayTriggerBuffer(float[,] data)
         {
             if(_lcpData == null)
@@ -198,41 +338,14 @@ namespace WUInity.Visualization
                 return;
             }
 
-            int xPixels = data.GetLength(0);
-            int yPixels = data.GetLength(1);
             bool sameSize = _lcpData.GetCellCountX() == data.GetLength(0) && _lcpData.GetCellCountY() == data.GetLength(1);
             if (!sameSize)
             {
                 Engine.Message(null, Engine.LogType.Warning, "Trigger buffer provided does not match the given LCP data.");
                 return;
-            }                     
-
-            if(DomainVisualizerUnity.NeedNewTexture(new Vector2int(xPixels, yPixels), _triggerBufferTexture))
-            {
-                _triggerBufferTexture = new Texture2D(xPixels, yPixels, TextureFormat.RGBA32, false);
-                _triggerBufferTexture.filterMode = FilterMode.Point;
             }
 
-            for (int y = 0; y < yPixels; y++)
-            {
-                for (int x = 0; x < xPixels; x++)
-                {
-                    float value = data[x, y];
-                    //add banding
-                    float band = (int)(value * 5) / 5f;
-                    Color c = Color.red * (0.8f * band + 0.2f);
-                    c.a = 1.0f;
-                    if (value == 0f)
-                    {
-                        c.a = 0f;
-                    }
-                    _triggerBufferTexture.SetPixel(x, y, c);
-                }
-            }
-
-            _triggerBufferTexture.Apply();
-            SetLCPViewMode(LcpViewMode.TriggerBuffer);
-            SetVisibility(true);
+            DisplayRaster(data, -9999.0, _lcpData.GetSize(), _lcpData.OriginOffset, RasterRamp.Boundary, out float _, out float _);
         }
 
         public override void SetVisibility(bool visible)
