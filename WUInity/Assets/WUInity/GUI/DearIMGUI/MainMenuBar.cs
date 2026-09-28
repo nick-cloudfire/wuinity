@@ -378,6 +378,10 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 Tooltip("The lanes of the scenario's SUMO network - the roads traffic is actually routed on. Needs the "
                     + "SUMO network to have been built (step 2).");
 
+                bool markers = visualizer == null || visualizer.MarkersVisible;
+                if (ImGui.MenuItem("Markers", string.Empty, markers, visualizer != null)) { visualizer.SetMarkersVisible(!markers); }
+                Tooltip("The destinations (in their colours) and the ignition points (white).");
+
                 bool result = ResultsWindow.IsShowing;
                 if (ImGui.MenuItem("Result overlay", string.Empty, result, result)) { ResultsWindow.Hide(); }
                 Tooltip(result ? "Hides the result raster (Results > Show on map puts one up)." : "No result is on the map (Results > Show on map).");

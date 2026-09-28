@@ -27,6 +27,27 @@ namespace WUInity.Visualization
         //markers
         GameObject[] _goalMarkers;
         GameObject[] _ignitionMarkers;
+        bool _markersVisible = true;
+
+        /// <summary>Whether the destination and ignition markers are shown (View &gt; Map layers &gt; Markers).</summary>
+        public bool MarkersVisible { get => _markersVisible; }
+
+        /// <summary>Shows or hides every destination and ignition marker, now and for markers spawned later.</summary>
+        public void SetMarkersVisible(bool visible)
+        {
+            _markersVisible = visible;
+            SetActive(_goalMarkers, visible);
+            SetActive(_ignitionMarkers, visible);
+        }
+
+        private static void SetActive(GameObject[] markers, bool visible)
+        {
+            if (markers == null) return;
+            foreach (GameObject marker in markers)
+            {
+                if (marker != null) marker.SetActive(visible);
+            }
+        }
 
         public SimulationDomainVisualizerUnity(Transform parent)
         {
@@ -125,6 +146,7 @@ namespace WUInity.Visualization
 
                 ++index;
             }
+            SetActive(_goalMarkers, _markersVisible);
         }
 
         public void SpawnEvacuationGoalMarkers(PREACTInput input, System.Collections.Generic.List<EvacuationDestination> destinations, GameObject markerPrefab)
@@ -152,6 +174,7 @@ namespace WUInity.Visualization
 
                 ++index;
             }
+            SetActive(_goalMarkers, _markersVisible);
         }
 
         public void SpawnWildfireIgnitionMarkers(PREACTInput input, GameObject markerPrefab)
@@ -175,6 +198,7 @@ namespace WUInity.Visualization
 
                 ++index;
             }
+            SetActive(_ignitionMarkers, _markersVisible);
         }
 
         private void ClearDestinationMarkers()
