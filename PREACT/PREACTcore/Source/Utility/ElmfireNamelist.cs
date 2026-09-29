@@ -240,6 +240,34 @@ namespace PREACT.Utility
         /// The mask's filename without extension, resolved by ELMFIRE under
         /// <c>FUELS_AND_TOPOGRAPHY_DIRECTORY</c>. The caller is expected to have checked it is there.
         /// </param>
+        /// <summary>
+        /// Stops ELMFIRE reading the case's phi raster, so the ignition this namelist specifies is the one that
+        /// happens.
+        /// </summary>
+        /// <remarks>
+        /// **This is load-bearing, and the failure it prevents is total and silent.** ELMFIRE decides where a
+        /// fire starts in <c>elmfire_init.f90</c> with
+        ///
+        /// <code>if (any(PHI0%R4 .gt. 0)) then ... "Using input Phi grid as ignition source"</code>
+        ///
+        /// and everything else — <c>X_IGN</c>, <c>Y_IGN</c>, the random ignition mask — sits in the
+        /// <c>else</c> branch. But the level-set convention is that phi greater than zero means *unburned*, so
+        /// a phi raster of all ones says "nothing is alight anywhere". The test reads that as an ignition
+        /// source, takes the branch, and never looks at the ignition the namelist asked for.
+        ///
+        /// Measured: a case whose <c>phi.tif</c> was constant 1.0 ran 200 realizations that each drew their own
+        /// ignition point, wrote it correctly into <c>X_IGN(1)</c>, and then died at "LESS THAN 2 NODES TAGGED
+        /// FOR FIRE SPREAD" with no fire at all — while reporting a successful ELMFIRE run.
+        ///
+        /// Commented rather than deleted, so a realization's namelist still records what the case carried.
+        /// Both ignition modes call this: whoever samples, the point is that this namelist is the authority.
+        /// </remarks>
+        public static string[] DropPhiIgnitionSource(string[] lines)
+        {
+            return CommentOutKeyInGroup(lines, ElmfireNamelistKeys.InputsGroup, "PHI_FILENAME",
+                       "an all-unburned phi grid is still read as the ignition source, hiding this namelist's");
+        }
+
         public static string[] ForceRandomIgnition(string[] lines, string ignitionMaskStem)
         {
             const string why = "not used in a campaign; the ignition is drawn from the mask";

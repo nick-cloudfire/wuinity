@@ -121,5 +121,92 @@ namespace PREACTcli
                 try { File.Delete(path); } catch { }
             }
         }
+
+        /// <summary>
+        /// Deletes the per-realization ELMFIRE run directories under <c>_elmfire</c>, so a restart begins with
+        /// nothing on disk that a reader could mistake for this campaign's work.
+        /// </summary>
+        /// <remarks>
+        /// Deleted rather than archived, unlike <see cref="ArchivePrevious"/>. These are reproducible - a
+        /// namelist, a log, and dumps that a re-run rewrites - and they are large: on a measured campaign,
+        /// ten run directories held ELMFIRE's ENVI scratch conversions of the whole input stack, which for an
+        /// 88 MB weather series is most of a gigabyte per realization. Keeping every restart's copy fills the
+        /// disk long before anyone reads the third one.
+        ///
+        /// The aggregate directories, and the per-realization boundaries in <c>_output</c>, are
+        /// <see cref="ArchivePrevious"/>'s business and are not touched here: those cost hours to produce and
+        /// cannot be regenerated from anything left on disk.
+        ///
+        /// <paramref name="keepLogs"/> exists because the logs are the exception to "reproducible": a
+        /// realization that already failed cannot be re-run into the same failure once its inputs are gone,
+        /// and <c>elmfire.log</c> is the only record of what it said. They are small enough that keeping them
+        /// costs nothing.
+        /// </remarks>
+        public static void ClearRunDirectories(string caseDir, bool keepLogs = true)
+        {
+            if (string.IsNullOrEmpty(caseDir)) return;
+
+            string root = Path.Combine(caseDir, "_elmfire");
+            if (!Directory.Exists(root)) return;
+
+            string archive = null;
+            int cleared = 0, keptLogs = 0;
+            long freed = 0;
+            var stuck = new List<string>();
+
+            foreach (string dir in Directory.GetDirectories(root))
+            {
+                //Only the numbered realization directories. _elmfire also holds shared working folders the
+                //driver set up before the first realization - weather_single_band for one - and deleting
+                //those would take out inputs this campaign is about to read.
+                string name = Path.GetFileName(dir);
+                bool numbered = name.Length > 0;
+                foreach (char c in name)
+                {
+                    if (!char.IsDigit(c)) { numbered = false; break; }
+                }
+                if (!numbered) continue;
+
+                try
+                {
+                    foreach (string file in Directory.GetFiles(dir, "*", SearchOption.AllDirectories))
+                    {
+                        try { freed += new FileInfo(file).Length; } catch { }
+                    }
+
+                    string log = Path.Combine(dir, "elmfire.log");
+                    if (keepLogs && File.Exists(log))
+                    {
+                        if (archive == null)
+                        {
+                            archive = Path.Combine(root, "previous_logs_" + DateTime.Now.ToString("yyyyMMdd_HHmmss"));
+                            Directory.CreateDirectory(archive);
+                        }
+                        File.Move(log, Path.Combine(archive, name + ".log"));
+                        ++keptLogs;
+                    }
+
+                    Directory.Delete(dir, recursive: true);
+                    ++cleared;
+                }
+                catch (Exception e)
+                {
+                    stuck.Add(name + " (" + e.Message + ")");
+                }
+            }
+
+            if (cleared == 0 && stuck.Count == 0) return;
+
+            Console.WriteLine($"Previous run directories: {cleared} cleared, {freed / (1024.0 * 1024.0):F0} MB freed"
+                + (keptLogs > 0 ? $", {keptLogs} log(s) kept in {archive}" : "") + ".");
+
+            if (stuck.Count > 0)
+            {
+                //Named, because a run directory that could not be emptied is one whose old dumps this
+                //campaign's raster glob can still pick up.
+                Console.Error.WriteLine("WARNING: could not clear " + string.Join(", ", stuck)
+                    + ". Old ELMFIRE dumps left there may be read back as this campaign's.");
+            }
+        }
     }
 }

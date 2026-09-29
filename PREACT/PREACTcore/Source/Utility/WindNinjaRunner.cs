@@ -230,6 +230,7 @@ namespace PREACT.Utility
                 p.OutputDataReceived += (_, e) => Take(e.Data);
                 p.ErrorDataReceived += (_, e) => Take(e.Data);
                 p.Start();
+                ChildProcessJob.Track(p);
                 p.BeginOutputReadLine();
                 p.BeginErrorReadLine();
                 p.WaitForExit();

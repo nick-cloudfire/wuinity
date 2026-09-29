@@ -146,6 +146,43 @@ namespace Assets.WUInity.GUI.DearIMGUI
         //"0 people with access to road network" in a log line that is easy to miss. WorldPopDownloader
         //names it by appending _UTM, which is what is repeated here.
         public static string WorldPopUtmFile => DownloadsFolder + "/" + WorldPopBaseName + "_UTM.tif";
+        /// <summary>
+        /// The built case's fuel raster, whose name follows the standard the case was built with.
+        /// </summary>
+        /// <remarks>
+        /// Not <see cref="Named"/> like the terrain downloads: this one is written by
+        /// <c>ElmfireCaseBuilder</c> under the stem ELMFIRE expects, which is fixed by the fuel model standard
+        /// rather than by the scenario name.
+        /// </remarks>
+        public static string FuelRasterFile => LandscapeFolder + "/" + (UseAnderson13 ? "fbfm13" : "fbfm40") + ".tif";
+
+        /// <summary>
+        /// The fuel model roads become. 101 is GR1, the sparsest spreading grass in the Scott and Burgan set -
+        /// enough to carry fire across a road without making the road a fast corridor.
+        /// </summary>
+        public static int RoadFuelModel = 101;
+
+        /// <summary>
+        /// How wide to paint the roads, in metres. Zero means one cell per road, which at a 30 m cell is
+        /// already several times the width of most of them.
+        /// </summary>
+        public static double RoadWidthMetres;
+
+        /// <summary>
+        /// Leave cells the building spread model owns alone.
+        /// </summary>
+        /// <remarks>
+        /// On by default, and it only does anything when the case has the layer. Roads run through the
+        /// built-up area by definition, so without this the conversion paints surface grass into exactly the
+        /// cells ELMFIRE is meant to burn as buildings - giving that ground two independent ways to burn and
+        /// letting the faster one decide, which makes the building model's separation distances and hardening
+        /// factors moot.
+        /// </remarks>
+        public static bool ProtectBuildingCells = true;
+
+        /// <summary>The building-area raster, which is the footprint the other building layers share.</summary>
+        public static string BuildingAreaFile => LandscapeFolder + "/baa.tif";
+
         public static string DemFile => LandscapeFolder + "/" + Named("_dem.tif");
         //Written out rather than only computed in memory. ELMFIRE takes all three as separate GeoTIFF
         //inputs, and a derived raster that exists only inside a load cannot be handed to anything else,
@@ -547,6 +584,146 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 SumoNetworkBuilt = true;
                 LogStep("Scenario now points at " + SumoConfigFile + ".");
 
+                return System.Threading.Tasks.Task.CompletedTask;
+            });
+        }
+
+        /// <summary>
+        /// Paints the road network into a copy of the built case's fuel raster as a spreadable fuel model.
+        /// </summary>
+        /// <remarks>
+        /// Runs against the case's <c>inputs/fbfm40.tif</c> rather than the scenario's source fuel layer,
+        /// because the road network's coordinates only mean something on the simulation's own grid: lanes come
+        /// back from SUMO in metres from the UTM origin, and the case rasters are the ones already warped into
+        /// that system. A source layer may be in any projection at any resolution.
+        ///
+        /// The original is never touched - a new <c>_roads101.tif</c> is written beside it, and the namelist's
+        /// <c>FBFM_FILENAME</c> is re-pointed at that stem, so undoing this is one key rather than a rebuild.
+        ///
+        /// Whether it is worth doing is a question the step answers rather than assumes: it reports the islet
+        /// and patch counts before and after, and on the case it was written for those barely moved. See
+        /// <see cref="PREACT.Utility.RoadFuelRasterizer"/>.
+        /// </remarks>
+        /// <summary>
+        /// Converts the road network into fuel in a named case, reporting through <paramref name="log"/>.
+        /// </summary>
+        /// <remarks>
+        /// Takes the two paths explicitly rather than deriving them from the loaded scenario, because the
+        /// campaign window legitimately points at a different case than the one open in the editor - its
+        /// namelist and inputs folder are editable fields for exactly that reason. Both callers share this so
+        /// the two buttons cannot drift into doing different things to the same case.
+        ///
+        /// Throws rather than returning a status: both callers already wrap it in something that turns an
+        /// exception into a message, and half of the failures here are one-liners about a missing file.
+        /// </remarks>
+        /// <param name="fuelRasterPath">The case's warped fuel raster. Read only.</param>
+        /// <param name="namelistPath">The case's <c>elmfire.data</c>, whose FBFM_FILENAME is re-pointed.</param>
+        public static PREACT.Utility.RoadFuelRasterizer.Result ConvertRoadsToFuelIn(
+            string fuelRasterPath, string namelistPath, System.Action<string> log)
+        {
+            if (PreactGUI.WUInity == null)
+            {
+                throw new System.Exception("No scenario is loaded, so there is no road network to convert.");
+            }
+
+            //Taken from the manager rather than from this class's own Input field, which is only assigned when
+            //the Prepare scenario data window has drawn: the campaign window can reach this without that ever
+            //having happened, and did, with a null reference for its trouble.
+            //
+            //It is also the more correct source. GetRoadNetwork loads the lanes against the manager's scenario,
+            //so reading the UTM origin from anywhere else risks measuring the roads from one origin and the
+            //raster from another - which does not fail, it just puts the roads somewhere else.
+            PREACTInput scenario = PreactGUI.WUInity.PREACTInput;
+            if (scenario?.Simulation?.Data == null)
+            {
+                throw new System.Exception("The loaded scenario has no simulation origin yet, so road "
+                    + "coordinates cannot be placed on the fuel raster.");
+            }
+
+            var network = PreactGUI.WUInity.GetRoadNetwork();
+            if (network == null || network.LaneCount == 0)
+            {
+                throw new System.Exception("No road network. Build the SUMO network first.");
+            }
+
+            if (!File.Exists(fuelRasterPath))
+            {
+                throw new FileNotFoundException(
+                    "Build the ELMFIRE case first: its warped fuel raster is what gets converted.",
+                    fuelRasterPath);
+            }
+
+            //Beside the fuel raster, since that is the case's own inputs folder whichever case it is.
+            string buildings = Path.Combine(
+                Path.GetDirectoryName(fuelRasterPath) ?? ".", "baa.tif");
+
+            //Only passed when the case actually has the layer: asking for protection a case cannot provide
+            //would fail the step, and a case without buildings has nothing to protect.
+            bool protect = ProtectBuildingCells && File.Exists(buildings);
+
+            log($"{network.LaneCount} lanes against {Path.GetFileName(fuelRasterPath)}"
+                + (protect ? ", leaving building cells to the building spread model" : "") + "...");
+
+            if (ProtectBuildingCells && !protect)
+            {
+                log("No baa.tif beside the fuel raster, so there are no building cells to protect.");
+            }
+
+            var result = PREACT.Utility.RoadFuelRasterizer.Run(
+                new PREACT.Utility.RoadFuelRasterizer.Options
+                {
+                    FuelRasterPath = fuelRasterPath,
+                    Lanes = network.Lanes,
+                    UtmOrigin = scenario.Simulation.Data.UTMOrigin,
+                    RoadFuelModel = RoadFuelModel,
+                    RoadWidthMetres = RoadWidthMetres,
+                    BuildingAreaRasterPath = protect ? buildings : null,
+                    Log = log,
+                });
+
+            if (!result.Ok)
+            {
+                throw new System.Exception(result.Message);
+            }
+
+            //Written straight into the case's namelist rather than onto the scenario, because
+            //FBFM_FILENAME is not a scenario field: ElmfireCaseBuilder derives it from whichever fuel stem
+            //it found. Editing the key in place is what makes this take effect without a case rebuild -
+            //and a rebuild would overwrite it, which the message below says.
+            //
+            //By stem, not by path: ELMFIRE composes the file name from the stem and its own fuels
+            //directory, so a full path here would be read as a name.
+            string stem = Path.GetFileNameWithoutExtension(result.OutputPath);
+            if (!File.Exists(namelistPath))
+            {
+                throw new FileNotFoundException(
+                    "The raster was written but there is no namelist to point at it.", namelistPath);
+            }
+
+            File.WriteAllLines(namelistPath, PREACT.Utility.ElmfireNamelist.SetKeyInGroup(
+                File.ReadAllLines(namelistPath), PREACT.Utility.ElmfireNamelistKeys.InputsGroup,
+                "FBFM_FILENAME", stem, quoted: true));
+
+            log($"{Path.GetFileName(namelistPath)}: FBFM_FILENAME now reads '{stem}'. The original "
+                + $"{Path.GetFileNameWithoutExtension(fuelRasterPath)}.tif is untouched - set the key back to "
+                + "undo this. Rebuilding the case rewrites the key, so redo this after a rebuild.");
+
+            if (result.IsletsBefore == result.IsletsAfter && result.PatchesBefore == result.PatchesAfter)
+            {
+                //Said plainly, because a step that ran successfully and achieved nothing otherwise reads as
+                //a fix that worked.
+                log("No change in connectivity: the roads this case knows about were not what was "
+                    + "splitting the fuel. Consider setting the key back.");
+            }
+
+            return result;
+        }
+
+        public static void ConvertRoadsToFuel()
+        {
+            RunStep("Converting road pixels to fuel", () =>
+            {
+                ConvertRoadsToFuelIn(FindInRoot(FuelRasterFile), FindInRoot(ElmfireNamelistFile), LogStep);
                 return System.Threading.Tasks.Task.CompletedTask;
             });
         }

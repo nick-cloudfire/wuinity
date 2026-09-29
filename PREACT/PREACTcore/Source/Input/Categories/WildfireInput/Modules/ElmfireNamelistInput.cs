@@ -869,8 +869,14 @@ namespace PREACT.Input
         /// <remarks>
         /// Only written when the case actually carries the complete set of five building rasters, or when
         /// constant parameters are used instead. A partial set makes ELMFIRE read a raster nobody wrote.
+        ///
+        /// Defaulted on because that guard makes it safe to: a case without the rasters is downgraded by
+        /// <c>ElmfireNamelistBuilder</c> and says so, so the default cannot produce an unrunnable namelist.
+        /// Off by default meant the opposite failure, which is quieter - a WUI case that had gone to the
+        /// trouble of building all five rasters ran as pure wildland spread, with nothing in the namelist or
+        /// the log to say the buildings were being ignored.
         /// </remarks>
-        public bool USE_BLDG_SPREAD_MODEL = false;
+        public bool USE_BLDG_SPREAD_MODEL = true;
 
         /// <summary>Use the constants below instead of the case's building rasters.</summary>
         public bool USE_CONSTANT_BLDG_SPREAD_MODEL_PARAMS = false;

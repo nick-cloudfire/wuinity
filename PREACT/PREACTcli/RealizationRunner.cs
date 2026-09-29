@@ -255,6 +255,7 @@ namespace PREACTcli
             {
                 using (Process p = Process.Start(psi))
                 {
+                    PREACT.Utility.ChildProcessJob.Track(p);
                     p.WaitForExit();
                     return p.ExitCode;
                 }
@@ -276,6 +277,7 @@ namespace PREACTcli
                 p.ErrorDataReceived += (_, e) => Write(e.Data);
 
                 p.Start();
+                PREACT.Utility.ChildProcessJob.Track(p);
                 p.BeginOutputReadLine();
                 p.BeginErrorReadLine();
                 p.WaitForExit();

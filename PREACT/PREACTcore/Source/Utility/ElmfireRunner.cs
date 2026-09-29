@@ -422,9 +422,15 @@ namespace PREACT.Utility
             // Kept rather than discarded: ELMFIRE's per-timestep chatter is far too noisy for the
             // console at --parallel width, but it is the only record of what the fire actually did
             // and is needed to diagnose a realization after the fact.
+            //
+            // Written through, not buffered. A StreamWriter's default 1 KB buffer only reaches disk when it
+            // is disposed - which here is when ELMFIRE exits - so every log in a running campaign read as
+            // empty, and the one question worth asking mid-run, "is this realization advancing or stuck?",
+            // had no answer until the answer no longer mattered. AutoFlush costs one write per line of
+            // chatter against a simulation that spends minutes per timestep.
             string logPath = Path.Combine(runDir, "elmfire.log");
 
-            using (var log = new StreamWriter(logPath, append: false))
+            using (var log = new StreamWriter(logPath, append: false) { AutoFlush = true })
             using (var p = new Process { StartInfo = psi })
             {
                 object sync = new object();
@@ -447,6 +453,11 @@ namespace PREACT.Utility
                 };
 
                 p.Start();
+
+                //Immediately after Start, before any waiting: an MPI binary ignores every polite request to
+                //stop, so the only thing that reliably ends it is the OS doing it when this process goes.
+                ChildProcessJob.Track(p);
+
                 p.BeginOutputReadLine();
                 p.BeginErrorReadLine();
 

@@ -143,13 +143,59 @@ namespace PREACT.Utility
             ds.Dispose();
         }
 
-        /// <summary>Creates a Float32 GeoTIFF carrying the master grid's geotransform and CRS.</summary>
-        private static Dataset CreateOnGrid(MasterGrid grid, int ncols, int nrows, int bandCount, string outputPath)
+        /// <summary>
+        /// Writes a single-band <b>Int16</b> GeoTIFF, in the same lower-left-origin convention as
+        /// <see cref="WriteBand"/>.
+        /// </summary>
+        /// <remarks>
+        /// Needed because ELMFIRE reads some rasters into typed arrays and does not convert. The fuel model
+        /// raster is the one that bites: it is read into <c>FBFM%I2</c>, an <c>INTEGER*2</c> array, so a
+        /// Float32 file of the right dimensions and CRS is reinterpreted byte-for-byte as garbage. Every cell
+        /// then fails the burnability test, and the symptom is not an error but a fire that will not spread -
+        /// "IGNITION CELL IS NONBURNABLE" on the random-ignition path, or a single burning cell that tags no
+        /// neighbours on the fixed-ignition path.
+        ///
+        /// A raster that reads back correctly through GDAL proves nothing here: the type is what matters, and
+        /// GDAL will happily hand back the Float32 values it stored.
+        /// </remarks>
+        public static void WriteBandInt16(MasterGrid grid, float[,] data, string outputPath)
+        {
+            int ncols = data.GetLength(0);
+            int nrows = data.GetLength(1);
+
+            if (ncols != grid.Header.Ncols || nrows != grid.Header.Nrows)
+            {
+                throw new System.ArgumentException(
+                    $"Raster is {ncols}x{nrows} but the master grid is {grid.Header.Ncols}x{grid.Header.Nrows}.", nameof(data));
+            }
+
+            short[] buffer = new short[ncols * nrows];
+            for (int row = 0; row < nrows; ++row)
+            {
+                int yIndex = nrows - 1 - row; //flip: GDAL row 0 is north, y index 0 is south
+                for (int x = 0; x < ncols; ++x)
+                {
+                    double v = System.Math.Round(data[x, yIndex]);
+                    buffer[row * ncols + x] = (short)System.Math.Min(System.Math.Max(v, short.MinValue), short.MaxValue);
+                }
+            }
+
+            Dataset ds = CreateOnGrid(grid, ncols, nrows, 1, outputPath, DataType.GDT_Int16);
+            Band band = ds.GetRasterBand(1);
+            band.SetNoDataValue(grid.Header.NoDataValue);
+            band.WriteRaster(0, 0, ncols, nrows, buffer, ncols, nrows, 0, 0);
+            ds.FlushCache();
+            ds.Dispose();
+        }
+
+        /// <summary>Creates a GeoTIFF carrying the master grid's geotransform and CRS. Float32 unless told otherwise.</summary>
+        private static Dataset CreateOnGrid(MasterGrid grid, int ncols, int nrows, int bandCount, string outputPath,
+            DataType dataType = DataType.GDT_Float32)
         {
             Gdal.AllRegister();
 
             Driver drv = Gdal.GetDriverByName("GTiff");
-            Dataset ds = drv.Create(outputPath, ncols, nrows, bandCount, DataType.GDT_Float32, null);
+            Dataset ds = drv.Create(outputPath, ncols, nrows, bandCount, dataType, null);
             if (ds == null)
             {
                 throw new System.Exception("Could not create GeoTIFF: " + outputPath);

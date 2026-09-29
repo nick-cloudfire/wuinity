@@ -53,9 +53,25 @@ namespace Assets.WUInity.GUI.DearIMGUI
         private static string _elmfireTemplate = string.Empty;
         private static string _elmfireInputs = string.Empty;
         private static string _gdalBin = string.Empty;
-        /// <summary>Hours of fire per realization. 72 h (three days) matches the CLI default; see the
-        /// tooltip where it is drawn for why it is that long.</summary>
-        private static int _tstopHours = 72;
+        /// <summary>
+        /// Hours of fire per realization.
+        /// </summary>
+        /// <remarks>
+        /// Deliberately absurd by default: 9999 h is not a duration anyone wants simulated, it is a way of
+        /// saying "run until the fire stops spreading". ELMFIRE ends a case when the phi field stops moving, so
+        /// a stop time past any plausible fire lets each realization take exactly as long as its own fire needs
+        /// instead of being cut at a fixed horizon - a slow fire is not truncated, and a fire that dies in an
+        /// hour does not spend the remaining budget marching an empty clock.
+        ///
+        /// This only works on the one-band weather path. A multi-band series must cover the run, so ELMFIRE
+        /// refuses a stop time longer than the weather - which is what the CLI now checks up front rather than
+        /// discovering once per realization. Per-realization weather writes one band, so it is exempt.
+        ///
+        /// 2000 h rather than something larger because ELMFIRE names every dump after the run time in seconds
+        /// in a seven-character field: past 9,999,999 s (2777 h) the name overflows to asterisks and the run
+        /// writes no rasters at all. 9999 h was tried and did exactly that, for 200 realizations.
+        /// </remarks>
+        private static int _tstopHours = 2000;
 
         /// <summary>
         /// Each realization gets its own weather rather than the case's one series. On by default: a
@@ -102,6 +118,29 @@ namespace Assets.WUInity.GUI.DearIMGUI
         private static double[] _area;
         private static double?[] _delta;
         private static string _liveRasterPath;
+
+        /// <summary>
+        /// One row per compute core, from the CLI's PROGRESS_SLOTS lines.
+        /// </summary>
+        /// <remarks>
+        /// Kept as a fixed-length array indexed by slot rather than a list, so a row holds still while the
+        /// realization in it changes. The interleaved log this replaces made the one question worth asking
+        /// mid-run - is anything still moving? - unanswerable: at --parallel width every realization wrote into
+        /// the same stream, and a long ELMFIRE run wrote nothing at all.
+        /// </remarks>
+        private struct SlotRow
+        {
+            public bool Busy;
+            public string Realization;
+            public string Stage;
+            public string Detail;
+            public double StageSeconds;
+            public double TotalSeconds;
+            public double FireHours;      // negative when ELMFIRE has not reported one
+        }
+
+        private static SlotRow[] _slots = new SlotRow[0];
+        private static double _slotTstopHours;
 
         // ---- live run state (written from the process reader thread, read on the UI thread) ----
         private static readonly object _sync = new object();
@@ -316,13 +355,21 @@ namespace Assets.WUInity.GUI.DearIMGUI
                     //weather: ELMFIRE refuses a run with fewer bands than hours.
                     ImGui.InputInt("Hours per realization", ref _tstopHours);
                     if (_tstopHours < 1) _tstopHours = 1;
-                    Fields.Hint($"{_tstopHours} h of fire per realization. Three days (72 h) is the default:",
-                                "ignitions are drawn from the whole domain, and the ones furthest away decide",
-                                "how far out the boundary must sit.",
+                    Fields.Hint($"{_tstopHours} h of fire per realization. The default of 2000 h is deliberately",
+                                "absurd: ELMFIRE ends a case once the fire front stops moving, so a stop time",
+                                "past any plausible fire means each realization runs exactly as long as its own",
+                                "fire needs. Nothing is truncated, and a fire that dies early stops there.",
                                 "",
-                                $"A multi-band weather series must cover the run - {_tstopHours} hourly bands",
-                                "here - or ELMFIRE refuses every realization. A one-band series is exempt and",
-                                "is held for the whole fire, which is what the box below writes.");
+                                "Do not raise this past 2777 h. ELMFIRE names every output after the run time",
+                                "in seconds in a seven-character field, and past 9999999 s the name overflows",
+                                "to asterisks and the run writes no rasters at all.",
+                                "",
+                                $"This needs one weather band. A multi-band series must cover the run - {_tstopHours}",
+                                "hourly bands here - or ELMFIRE refuses it, and the campaign now says so before",
+                                "any realization starts. Per-realization weather writes one band and is exempt.",
+                                "",
+                                "Set a real number instead if you want every realization cut at the same horizon,",
+                                "e.g. 72 h for three days.");
                     if (string.IsNullOrEmpty(_elmfireExe))
                     {
                         Fields.Warn("No elmfire.exe found, so no realization can compute a fire.");
@@ -535,15 +582,24 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 Fields.Hint("Not used: ELMFIRE names its own output when generating realizations.");
             }
 
+            //Offered here as well as under Prepare scenario data because this is the window where the fuel map
+            //is about to be run hundreds of times, and it acts on the case these fields name - which is not
+            //necessarily the one open in the editor.
+            if (_convergeMode && _generateWithElmfire)
+            {
+                DrawRoadFuelConversion();
+            }
+
             ImGui.Checkbox("Resume (skip realizations already computed)", ref _resume);
             Fields.Hint("On: realizations that already have a trigger boundary are reused, and only the",
                         "missing ones run.",
                         "",
                         "Off: everything is computed again. The previous campaign's boundaries, probability",
                         "raster and ensemble rasters are moved into _output/previous_campaign_<timestamp>",
-                        "rather than deleted, and each realization's ELMFIRE outputs and scratch are emptied",
-                        "before it runs - otherwise a file from last time can be read back as this run's",
-                        "result without anything saying so.");
+                        "rather than deleted, and the numbered _elmfire run directories are cleared outright -",
+                        "each realization's elmfire.log is kept in _elmfire/previous_logs_<timestamp> first.",
+                        "Otherwise a raster from last time can be read back as this run's result without",
+                        "anything saying so.");
             FileRow("Output raster (optional)", () => _outPath, v => _outPath = v, false, "Raster (*.asc *.tif)");
 
             ImGui.EndDisabled();
@@ -572,6 +628,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
             ImGui.Text(_status);
 
             DrawConvergence();
+
+            DrawSlotTable();
 
             // Log
             ImGui.SeparatorText("Log");
@@ -704,22 +762,188 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
         }
 
+        /// <summary>
+        /// Paints the road network into the campaign's fuel raster as a spreadable fuel model.
+        /// </summary>
+        /// <remarks>
+        /// Acts on the case the fields above name, not on the scenario open in the editor, since the two are
+        /// allowed to differ here. The road network itself still comes from the loaded scenario - it is the
+        /// only place one exists - so converting a case belonging to a different scenario would paint the wrong
+        /// roads. That is why the fuel raster is resolved from the inputs folder rather than assumed.
+        ///
+        /// Run inline rather than on a worker: it is a few seconds on a million-cell raster, and a campaign
+        /// must not be started while it is half done.
+        /// </remarks>
+        private static void DrawRoadFuelConversion()
+        {
+            if (!ImGui.CollapsingHeader("Roads as fuel (optional)")) return;
+
+            ImGui.TextWrapped("For a fuel map where roads and urban cells enclose burnable ground, leaving "
+                + "islets an ignition can never grow out of. Writes a new raster and points the namelist at "
+                + "it; the original fuel raster is never modified.");
+
+            ImGui.SetNextItemWidth(120f);
+            ImGui.InputInt("Road fuel model", ref ScenarioDataSteps.RoadFuelModel);
+            if (ScenarioDataSteps.RoadFuelModel < 1) ScenarioDataSteps.RoadFuelModel = 1;
+
+            float width = (float)ScenarioDataSteps.RoadWidthMetres;
+            ImGui.SetNextItemWidth(120f);
+            if (ImGui.InputFloat("Road width (m, 0 = one cell)", ref width))
+            {
+                ScenarioDataSteps.RoadWidthMetres = width < 0f ? 0.0 : width;
+            }
+
+            ImGui.Checkbox("Leave building cells to the building spread model",
+                ref ScenarioDataSteps.ProtectBuildingCells);
+            Fields.Hint("On by default, and it matters whenever USE_BLDG_SPREAD_MODEL is on. Roads run",
+                        "through the built-up area, and those cells are non-burnable in the fuel map because",
+                        "ELMFIRE is meant to burn them as buildings. Painting grass into them would give the",
+                        "same ground two independent ways to burn and let the faster one decide, so the",
+                        "building model's separation distances and hardening factors would stop mattering.");
+
+            bool canRun = !_running
+                          && !string.IsNullOrEmpty(_elmfireInputs) && Directory.Exists(_elmfireInputs)
+                          && !string.IsNullOrEmpty(_elmfireTemplate) && File.Exists(_elmfireTemplate);
+
+            ImGui.BeginDisabled(!canRun);
+            if (ImGui.Button("Convert road pixels to fuel"))
+            {
+                try
+                {
+                    //Whichever standard the case was built with. Named here rather than taken from the
+                    //scenario's flag because this window may be pointed at a case the scenario did not build.
+                    string fuel = Path.Combine(_elmfireInputs, "fbfm40.tif");
+                    if (!File.Exists(fuel)) fuel = Path.Combine(_elmfireInputs, "fbfm13.tif");
+
+                    var r = ScenarioDataSteps.ConvertRoadsToFuelIn(fuel, _elmfireTemplate, AppendLog);
+                    _status = r.Summary;
+                }
+                catch (Exception e)
+                {
+                    //Type included: a bare "Object reference not set to an instance of an object" says nothing
+                    //about which object, and the stack is the only thing that does. It goes to the log rather
+                    //than the status line so the one-line summary stays readable.
+                    _status = "Road conversion failed: " + e.Message;
+                    AppendLog(_status);
+                    AppendLog(e.GetType().Name + ": " + e.StackTrace);
+                }
+            }
+            ImGui.EndDisabled();
+
+            if (!canRun && !_running)
+            {
+                Fields.Warn("Needs the ELMFIRE namelist and inputs folder above to point at a built case.");
+            }
+
+            ImGui.TextColored(new Vector4(0.9f, 0.45f, 0.3f, 1f),
+                "Fuel model 101 is GR1 - sparse grass that does spread fire, slowly. This adds burnable area "
+                + "across the whole landscape, so it makes every fire bigger, not only the islet ones.");
+        }
+
+        /// <summary>
+        /// What each compute core is doing right now, one row per core.
+        /// </summary>
+        /// <remarks>
+        /// The fire-time column is the one that answers "is this stuck?": it is ELMFIRE's own simulated time,
+        /// read from the dump-time log it rewrites as the front advances, so a row whose wall clock climbs while
+        /// its fire time does not is stalled rather than slow. Blank outside the ELMFIRE stage, where there is
+        /// no such thing.
+        /// </remarks>
+        private static void DrawSlotTable()
+        {
+            SlotRow[] rows;
+            double tstopHours;
+            lock (_sync)
+            {
+                if (_slots.Length == 0) return;
+                rows = (SlotRow[])_slots.Clone();
+                tstopHours = _slotTstopHours;
+            }
+
+            int busy = 0;
+            for (int i = 0; i < rows.Length; ++i) if (rows[i].Busy) ++busy;
+
+            ImGui.SeparatorText($"Compute cores ({busy} of {rows.Length} busy)");
+
+            //Numeric flags for the same reason the log's child window uses them: the ImGuiTableFlags members
+            //were renamed across ImGui.NET versions and this file has to compile against whichever the uimgui
+            //package pins. 1 = Resizable, 8 = Borders inner vertical, 0x40 = RowBg.
+            if (!ImGui.BeginTable("prob_slots", 6, (ImGuiTableFlags)(1 | 8 | 0x40)))
+            {
+                return;
+            }
+
+            ImGui.TableSetupColumn("Core");
+            ImGui.TableSetupColumn("Realization");
+            ImGui.TableSetupColumn("Stage");
+            ImGui.TableSetupColumn("In stage");
+            ImGui.TableSetupColumn("Fire time");
+            ImGui.TableSetupColumn("Weather drawn");
+            ImGui.TableHeadersRow();
+
+            for (int i = 0; i < rows.Length; ++i)
+            {
+                SlotRow r = rows[i];
+                ImGui.TableNextRow();
+
+                ImGui.TableNextColumn(); ImGui.TextUnformatted(i.ToString(CultureInfo.InvariantCulture));
+
+                if (!r.Busy)
+                {
+                    ImGui.TableNextColumn(); ImGui.TextDisabled("idle");
+                    ImGui.TableNextColumn();
+                    ImGui.TableNextColumn();
+                    ImGui.TableNextColumn();
+                    ImGui.TableNextColumn();
+                    continue;
+                }
+
+                ImGui.TableNextColumn(); ImGui.TextUnformatted(r.Realization ?? "");
+                ImGui.TableNextColumn(); ImGui.TextUnformatted(r.Stage ?? "");
+                ImGui.TableNextColumn(); ImGui.TextUnformatted(Duration(r.StageSeconds));
+
+                ImGui.TableNextColumn();
+                if (r.FireHours >= 0.0)
+                {
+                    ImGui.TextUnformatted(tstopHours > 0.0
+                        ? $"{r.FireHours:0.#} / {tstopHours:0.#} h"
+                        : $"{r.FireHours:0.#} h");
+                }
+
+                ImGui.TableNextColumn(); ImGui.TextUnformatted(r.Detail ?? "");
+            }
+
+            ImGui.EndTable();
+        }
+
+        private static string Duration(double seconds)
+        {
+            if (seconds < 60.0) return $"{seconds:0}s";
+            if (seconds < 3600.0) return $"{(int)(seconds / 60.0)}m {(int)(seconds % 60.0):00}s";
+            return $"{(int)(seconds / 3600.0)}h {(int)((seconds % 3600.0) / 60.0):00}m";
+        }
+
         private static void AppendLog(string line)
         {
             if (line == null) return;
-            lock (_sync)
+
+            //Parsed first, so a line that is purely machine-readable can be kept out of the log it would
+            //otherwise flood. PROGRESS_SLOTS arrives every two seconds for the whole campaign and is already
+            //on screen as the table above; PROGRESS_JSON is the convergence panel. Both are noise as text,
+            //and the point of the table is that the log becomes readable.
+            bool machineOnly = ParseProgressSlots(line) | ParseProgressJson(line) | ParseProgressRaster(line);
+            if (!machineOnly)
             {
-                _log.Add(line);
+                lock (_sync)
+                {
+                    _log.Add(line);
+                }
+                ParseProgress(line);
             }
-            ParseProgress(line);
         }
 
         private static void ParseProgress(string line)
         {
-            if (ParseProgressJson(line) || ParseProgressRaster(line))
-            {
-                return;
-            }
 
             // "PROGRESS <done>/<total> ..."
             const string tag = "PROGRESS ";
@@ -737,6 +961,88 @@ namespace Assets.WUInity.GUI.DearIMGUI
                     ? $"{done} of at most {total} realizations..."
                     : $"Processing realization {done + 1} of {total}...";
             }
+        }
+
+        /// <summary>
+        /// Reads one PROGRESS_SLOTS line - the whole per-core table, as one object with a "slots" array.
+        /// </summary>
+        /// <remarks>
+        /// Hand-parsed, like <see cref="ParseProgressJson"/>, and for the same reasons: fixed shape, emitted by
+        /// code in this repository, and running on the child process's output thread where an exception would be
+        /// swallowed and simply stop the display updating.
+        ///
+        /// The array is rebuilt from the highest slot index present rather than from --parallel, because the CLI
+        /// may have chosen the width itself (--parallel 0 means CPU count) and the GUI does not know what it
+        /// picked. It only ever grows, so a tick in which some cores happen to be idle does not shrink the table
+        /// and make the rows jump.
+        /// </remarks>
+        private static bool ParseProgressSlots(string line)
+        {
+            const string tag = "PROGRESS_SLOTS ";
+            int idx = line.IndexOf(tag, StringComparison.Ordinal);
+            if (idx < 0) return false;
+
+            string json = line.Substring(idx + tag.Length);
+
+            try
+            {
+                if (TryGetDouble(json, "tstopHours", out double tstop)) _slotTstopHours = tstop;
+
+                int open = json.IndexOf("\"slots\":[", StringComparison.Ordinal);
+                if (open < 0) return true;
+                int close = json.LastIndexOf(']');
+                if (close <= open) return true;
+
+                string body = json.Substring(open + "\"slots\":[".Length, close - open - "\"slots\":[".Length);
+
+                var rows = new List<SlotRow>();
+                var indices = new List<int>();
+
+                //Split on the object boundary rather than on commas: every field is comma-separated too.
+                foreach (string chunk in body.Split(new[] { "},{" }, StringSplitOptions.None))
+                {
+                    string obj = chunk.Trim().Trim('{', '}');
+                    if (obj.Length == 0) continue;
+                    if (!TryGetInt(obj, "slot", out int slot)) continue;
+
+                    var row = new SlotRow { Busy = true, FireHours = -1.0 };
+                    row.Realization = GetString(obj, "realization");
+                    row.Stage = GetString(obj, "stage");
+                    row.Detail = GetString(obj, "detail");
+                    if (TryGetDouble(obj, "stageSeconds", out double ss)) row.StageSeconds = ss;
+                    if (TryGetDouble(obj, "totalSeconds", out double ts)) row.TotalSeconds = ts;
+                    if (TryGetDouble(obj, "fireHours", out double fh)) row.FireHours = fh;
+
+                    rows.Add(row);
+                    indices.Add(slot);
+                }
+
+                int width = 0;
+                for (int i = 0; i < indices.Count; ++i) width = Mathf.Max(width, indices[i] + 1);
+
+                lock (_sync)
+                {
+                    if (_slots.Length < width)
+                    {
+                        var grown = new SlotRow[width];
+                        Array.Copy(_slots, grown, _slots.Length);
+                        _slots = grown;
+                    }
+
+                    //Cleared then filled: a slot absent from this tick is idle, and leaving its last row up
+                    //would show a finished realization as though it were still running.
+                    for (int i = 0; i < _slots.Length; ++i) _slots[i] = default;
+                    for (int i = 0; i < rows.Count; ++i)
+                    {
+                        if (indices[i] >= 0 && indices[i] < _slots.Length) _slots[indices[i]] = rows[i];
+                    }
+                }
+            }
+            catch
+            {
+                //a malformed progress line must never take down the reader thread
+            }
+            return true;
         }
 
         private static bool ParseProgressRaster(string line)
@@ -803,6 +1109,50 @@ namespace Assets.WUInity.GUI.DearIMGUI
             int end = at;
             while (end < json.Length && (char.IsDigit(json[end]) || json[end] == '-')) ++end;
             return end > at && int.TryParse(json.Substring(at, end - at), NumberStyles.Any, CultureInfo.InvariantCulture, out value);
+        }
+
+        private static bool TryGetDouble(string json, string key, out double value)
+        {
+            value = 0;
+            string token = "\"" + key + "\":";
+            int at = json.IndexOf(token, StringComparison.Ordinal);
+            if (at < 0) return false;
+
+            at += token.Length;
+            int end = at;
+            while (end < json.Length && (char.IsDigit(json[end]) || json[end] == '-' || json[end] == '.'
+                                         || json[end] == 'e' || json[end] == 'E' || json[end] == '+'))
+            {
+                ++end;
+            }
+            return end > at && double.TryParse(json.Substring(at, end - at), NumberStyles.Any,
+                                   CultureInfo.InvariantCulture, out value);
+        }
+
+        /// <summary>
+        /// A quoted string value, or null when the key is absent. Only the two escapes the emitter produces
+        /// are undone, because that is all it can produce.
+        /// </summary>
+        private static string GetString(string json, string key)
+        {
+            string token = "\"" + key + "\":\"";
+            int at = json.IndexOf(token, StringComparison.Ordinal);
+            if (at < 0) return null;
+
+            at += token.Length;
+            var sb = new System.Text.StringBuilder();
+            for (int i = at; i < json.Length; ++i)
+            {
+                char c = json[i];
+                if (c == '\\' && i + 1 < json.Length)
+                {
+                    sb.Append(json[++i]);
+                    continue;
+                }
+                if (c == '"') break;
+                sb.Append(c);
+            }
+            return sb.ToString();
         }
 
         private static string GetArrayBody(string json, string key)
@@ -896,6 +1246,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
             lock (_sync)
             {
                 _log.Clear();
+                _slots = new SlotRow[0];
+                _slotTstopHours = 0.0;
                 _deciles = null;
                 _area = null;
                 _delta = null;
@@ -995,6 +1347,14 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
                 _running = true;
                 _process.Start();
+
+                //Ties the driver to this editor/player process. It in turn ties ELMFIRE and WindNinja to
+                //itself, so closing Unity - or having it crash, or killing it - takes the whole tree down.
+                //Without this a campaign outlived the session that started it: a driver launched at lunchtime
+                //was still running the next morning with thirteen elmfire.exe under it, invisible except in
+                //Task Manager, holding cores and keeping the binaries locked against a rebuild.
+                PREACT.Utility.ChildProcessJob.Track(_process);
+
                 _process.BeginOutputReadLine();
                 _process.BeginErrorReadLine();
                 AppendLog("Launched: " + _cliExe + (_convergeMode ? " converge-trigger ..." : " probabilistic-trigger ..."));
@@ -1039,8 +1399,12 @@ namespace Assets.WUInity.GUI.DearIMGUI
             {
                 if (_process != null && !_process.HasExited)
                 {
-                    _process.Kill(); // best effort; a child PREACT.exe may need a moment to stop
-                    AppendLog("Cancel requested — killing process.");
+                    //Killing the driver is now enough to take ELMFIRE and WindNinja with it: the driver holds
+                    //the only handle to the job they are in, so terminating it closes that job and the OS
+                    //ends them. Before, this killed the driver alone and left its children running until the
+                    //machine was rebooted.
+                    _process.Kill();
+                    AppendLog("Cancel requested — killing the driver and everything it started.");
                 }
             }
             catch (Exception ex)

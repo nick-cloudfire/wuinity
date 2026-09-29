@@ -1137,6 +1137,17 @@ namespace WUInity
                 return null;
             }
 
+            //A scenario need not have a traffic module at all - an ELMFIRE-only case does not - and reaching
+            //through it for the configuration threw a bare NullReferenceException, which says nothing about
+            //which object was missing. Callers already handle "no network"; this is one of the ways there is
+            //none.
+            if (_input.TrafficModule?.SumoInput == null)
+            {
+                Engine.Message(null, Engine.LogType.Warning,
+                    "This scenario has no SUMO traffic module, so it has no road network.");
+                return null;
+            }
+
             //The same resolver the engine starts SUMO with, so what is drawn is what will be run - or, when
             //the scenario's path is wrong, the same substitution with the same warning rather than a second
             //opinion about where the network is. Geometry can come from a bare .net.xml too, hence false.

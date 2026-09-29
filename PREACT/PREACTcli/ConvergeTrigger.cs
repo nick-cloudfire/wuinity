@@ -139,6 +139,10 @@ namespace PREACTcli
                 if (opts.WindToWui && !SetUpWindToWui(opts)) return 1;
 
                 if (opts.RealizationWeather && !SetUpRealizationWeather(opts)) return 1;
+
+                if (!CheckTstopIsNameable(opts)) return 1;
+
+                if (!CheckSharedWeatherCoversRun(opts)) return 1;
             }
             if (opts.Streak <= 0 || opts.Tolerance <= 0)
             {
@@ -175,6 +179,13 @@ namespace PREACTcli
             CampaignReset.ArchivePrevious(outputDir, caseDir, includeBoundaries: !opts.Resume,
                 new[] { opts.OutPath, opts.DiagnosticsPath });
 
+            //Not when resuming: a resumed campaign reuses the boundaries in _output, and the run directories
+            //are what produced them. --resume-only never runs ELMFIRE at all, so it has nothing to clear.
+            if (!opts.Resume && !opts.ResumeOnly)
+            {
+                CampaignReset.ClearRunDirectories(caseDir);
+            }
+
             //After the reset, so it belongs to this campaign rather than being archived as the last one's.
             if (opts.WeatherStatistics != null)
             {
@@ -206,6 +217,18 @@ namespace PREACTcli
             /// boundary derived from it. Empty in --resume-only, which never touches the source rasters.
             /// </summary>
             public string ToaPath;
+
+            /// <summary>
+            /// Why this realization produced nothing, in ELMFIRE's own terms, or null when it succeeded.
+            /// </summary>
+            /// <remarks>
+            /// Because "no boundary" on its own sends the reader to the wrong place. Two realizations of a
+            /// measured campaign produced none, and the plausible explanation - the fire was stopped by a
+            /// barrier before it reached the community - was wrong: they had stalled at 0.2 and 8.0 acres, both
+            /// reporting "End of simulation reached successfully". A fire that never grew is an ignition or
+            /// fuel-continuity problem, and nothing about a missing boundary says so.
+            /// </remarks>
+            public string Reason;
         }
 
         /// <summary>
@@ -543,6 +566,89 @@ namespace PREACTcli
                 + $"{discarded} later band(s) are not used, so every realization burns its whole "
                 + $"{opts.TstopSeconds / 3600.0:F0} h under that one hour's wind and moisture.");
             return true;
+        }
+
+        /// <summary>
+        /// Refuses a run whose stop time the shared weather series cannot cover, before any realization pays
+        /// for the discovery.
+        /// </summary>
+        /// <remarks>
+        /// ELMFIRE requires a multi-band weather series to reach the stop time, and says so with
+        /// <c>[ERROR] Not enough weather bands for given SIMULATION TSTOP</c> - on stdout, followed by a bare
+        /// STOP that skips MPI_FINALIZE, so the visible ending is MPICH complaining about a barrier. That is
+        /// invisible at --parallel width and identical in every realization, which is the expensive part: a
+        /// campaign in this state does not fail, it fails hundreds of times, each time after mapping the whole
+        /// weather stack. One measured instance cost ten realizations about 2500 CPU-seconds each against an
+        /// 88 MB, 72-band series and a 300 h stop time.
+        ///
+        /// A single-band series is exempt, and deliberately so: holding one hour's weather for the whole fire
+        /// is how a run is given an absurd stop time and left to end when the front stalls. The check therefore
+        /// only bites when there are bands to run out of.
+        ///
+        /// Only the shared series is checked. Per-realization weather is written by the pipeline against this
+        /// same stop time, so it covers the run by construction.
+        /// </remarks>
+        /// <summary>
+        /// The largest stop time ELMFIRE can name its output files after, in seconds.
+        /// </summary>
+        /// <remarks>
+        /// Not a physical limit but a formatting one, and it is hard. Every dump is named
+        /// <c>&lt;prefix&gt;_&lt;case&gt;_&lt;seconds&gt;</c> where the seconds field is built in
+        /// <c>elmfire_io.f90</c> with <c>WRITE(CTSEC,'(I7)') NINT(T)</c> into a <c>CHARACTER(7)</c>. Past seven
+        /// digits the edit descriptor overflows and Fortran fills the field with asterisks, so the run ends
+        /// with "Problem opening output bil file ./scratch\crown_fire_0000001_*******.bil" and writes nothing.
+        ///
+        /// Measured: a campaign set to 9999 h (35,996,400 s) completed 200 realizations and produced no rasters
+        /// at all for this reason. The stall-exit trick still works - it just has to stay inside the field.
+        /// </remarks>
+        private const double MaxNameableTstopSeconds = 9999999.0;
+
+        /// <summary>
+        /// Refuses a stop time ELMFIRE cannot name its output after.
+        /// </summary>
+        private static bool CheckTstopIsNameable(Options opts)
+        {
+            if (opts.TstopSeconds <= MaxNameableTstopSeconds) return true;
+
+            Console.Error.WriteLine(
+                $"ERROR: --tstop {opts.TstopSeconds:F0} s ({opts.TstopSeconds / 3600.0:F0} h) is longer than "
+                + $"ELMFIRE can name its output files after. The dump filename carries the time in seconds in a "
+                + $"seven-character field, so the limit is {MaxNameableTstopSeconds:F0} s "
+                + $"({MaxNameableTstopSeconds / 3600.0:F0} h); past it every dump is written to a name full of "
+                + "asterisks and the run produces no rasters.");
+            Console.Error.WriteLine(
+                "       Use a shorter stop time. A fire that has not stopped spreading in 2777 h is not going "
+                + "to, and ELMFIRE ends a case early once its front stalls anyway.");
+            return false;
+        }
+
+        private static bool CheckSharedWeatherCoversRun(Options opts)
+        {
+            if (opts.RealizationWeather || opts.TstopSeconds <= 0 || opts.SecondsPerBand <= 0) return true;
+
+            string source = opts.WeatherDirectory ?? opts.ElmfireInputs;
+            string ws = Path.Combine(source, "ws.tif");
+            if (!File.Exists(ws)) return true;
+
+            int bands;
+            try { bands = AscRaster.GetBandCount(ws); }
+            catch { return true; }
+
+            if (bands <= 1) return true;
+
+            double covered = bands * opts.SecondsPerBand;
+            if (covered >= opts.TstopSeconds) return true;
+
+            Console.Error.WriteLine(
+                $"ERROR: the shared weather series covers {covered / 3600.0:F0} h "
+                + $"({bands} bands x {opts.SecondsPerBand:F0} s) but each realization runs for "
+                + $"{opts.TstopSeconds / 3600.0:F0} h. ELMFIRE refuses that, once per realization, after "
+                + "reading the whole series.");
+            Console.Error.WriteLine(
+                $"       Either give each realization its own weather (--realization-weather), which writes "
+                + $"one band and is exempt, or shorten the run to --tstop {covered:F0} or less, or supply a "
+                + $"longer series in {source}.");
+            return false;
         }
 
         /// <summary>
@@ -920,7 +1026,8 @@ namespace PREACTcli
         }
 
         private static bool TryGenerateRasters(Options opts, string caseDir, string idx, int index,
-            out string toa, out string ros, out string sd, out string fi)
+            out string toa, out string ros, out string sd, out string fi,
+            CampaignProgress progress = null, int slot = -1)
         {
             toa = ros = sd = fi = null;
 
@@ -963,9 +1070,24 @@ namespace PREACTcli
             // own historical peak fire-weather day, which is what makes the ensemble vary in
             // weather rather than only in ignition location. Terrain still comes from the one
             // shared copy - only the five weather stems are private.
+            progress?.Stage(slot, CampaignProgress.StageWeather);
             string weatherDir = TryGenerateWeather(opts, runDir, idx, index,
                                     out WeatherRasterPipeline.Result weather, drawn?.WindFromDeg);
             string weatherSource = weatherDir ?? opts.WeatherDirectory ?? opts.ElmfireInputs;
+
+            //Carried on the slot for the rest of the realization, so the progress table says what this fire is
+            //burning under and not only how long it has been doing it.
+            if (weather?.Drawn != null)
+            {
+                ClimatologySampler.DrawnFireWeather d = weather.Drawn.Value;
+                progress?.Detail(slot, $"{d.Temperature:F0} C, RH {d.RelativeHumidity:F0}%, "
+                    + $"wind {weather.MeanWindSpeedMph:F0} mph"
+                    + (d.LiveDrawn ? $", live {d.LiveHerbaceousPercent:F0}/{d.LiveWoodyPercent:F0}%" : ""));
+            }
+            else if (weather?.Day != null)
+            {
+                progress?.Detail(slot, weather.Day.Value.Date.ToString("yyyy-MM-dd"));
+            }
 
             //A bearing computed and then not applied would be silent: the fire would run on the drawn day's own
             //wind while the log said otherwise. Only reachable if the weather chain fell back to the shared
@@ -1010,6 +1132,8 @@ namespace PREACTcli
                             "USE_CONSTANT_LW", ".TRUE.");
             }
 
+            progress?.Stage(slot, CampaignProgress.StageNamelist);
+
             lines = ElmfireNamelist.SetKeyInGroup(lines, ElmfireNamelistKeys.OutputsGroup,
                         ElmfireNamelistKeys.OutputsDirectory, "./outputs", quoted: true);
             lines = ElmfireNamelist.SetKeyInGroup(lines, ElmfireNamelistKeys.MiscellaneousGroup,
@@ -1033,6 +1157,8 @@ namespace PREACTcli
                 lines = ElmfireNamelist.SetKeyInGroup(lines, ElmfireNamelistKeys.TimeControlGroup,
                             ElmfireNamelistKeys.SimulationTstop, opts.TstopSeconds.ToString(CultureInfo.InvariantCulture));
             }
+
+            progress?.Stage(slot, CampaignProgress.StageElmfire);
 
             var r = ElmfireRunner.Run(opts.ElmfireExe, runDir, idx, lines, opts.Resume, Console.Out, opts.PathToGdal);
             if (!r.Ok)
@@ -1248,16 +1374,40 @@ namespace PREACTcli
         }
 
         private static RealizationOutcome RunRealization(string preactExe, string caseDir, string baseName, string[] baseLines,
-            int index, Options opts, string outputDir)
+            int index, Options opts, string outputDir, CampaignProgress progress)
         {
             string idx = index.ToString().PadLeft(opts.Pad, '0');
+            string runDir = Path.Combine(caseDir, "_elmfire", idx);
+
+            //Claimed here rather than inside the generate branch so the slot covers the boundary computation
+            //too, which is the other stage that can take minutes.
+            int slot = progress?.Acquire(idx, runDir) ?? -1;
+            try
+            {
+                return RunRealizationBody(preactExe, caseDir, baseName, baseLines, index, opts, outputDir,
+                                          progress, slot, idx, runDir);
+            }
+            finally
+            {
+                progress?.Release(slot);
+            }
+        }
+
+        private static RealizationOutcome RunRealizationBody(string preactExe, string caseDir, string baseName,
+            string[] baseLines, int index, Options opts, string outputDir, CampaignProgress progress, int slot,
+            string idx, string runDir)
+        {
             string toa, ros, sd, fi;
 
             if (opts.GenerateRealizations && !opts.ResumeOnly)
             {
-                if (!TryGenerateRasters(opts, caseDir, idx, index, out toa, out ros, out sd, out fi))
+                if (!TryGenerateRasters(opts, caseDir, idx, index, out toa, out ros, out sd, out fi,
+                        progress, slot))
                 {
-                    return new RealizationOutcome { Ok = false, Idx = idx };
+                    return new RealizationOutcome
+                    {
+                        Ok = false, Idx = idx, Reason = CampaignProgress.DescribeFire(runDir),
+                    };
                 }
             }
             else if (opts.RasterDir != null)
@@ -1280,13 +1430,21 @@ namespace PREACTcli
                 toa = ros = sd = fi = string.Empty;
             }
 
+            progress?.Stage(slot, CampaignProgress.StageBoundary);
+
             bool ok = RealizationRunner.TryRun(
                 preactExe, caseDir, baseName, baseLines, idx, toa, ros, sd, fi,
                 outputDir, opts.Resume, opts.ResumeOnly,
                 out float[,] boundary, out AscRaster.Header h,
                 opts.ElmfireInputs);
 
-            return new RealizationOutcome { Ok = ok, Idx = idx, Boundary = boundary, Header = h, ToaPath = toa };
+            return new RealizationOutcome
+            {
+                Ok = ok, Idx = idx, Boundary = boundary, Header = h, ToaPath = toa,
+                //Only when there is something to explain: a successful realization's fire size is already in
+                //the ensemble statistics, and repeating it on the completion line would be noise.
+                Reason = ok ? null : CampaignProgress.DescribeFire(runDir),
+            };
         }
 
         private static async Task<int> RunAsync(Options opts, string caseDir, string outputDir, string preactExe,
@@ -1313,13 +1471,17 @@ namespace PREACTcli
 
             var pending = new List<Task<RealizationOutcome>>();
 
+            //As wide as the gate below, so every worker has a row and the display's row count is the machine's
+            //actual concurrency rather than the number of realizations in flight at some past moment.
+            using var progress = new CampaignProgress(opts.Parallelism, opts.TstopSeconds);
+
             while (true)
             {
                 while (pending.Count < opts.Parallelism && launched < opts.MaxRealizations && !converged)
                 {
                     int index = opts.Start + launched;
                     ++launched;
-                    pending.Add(Task.Run(() => RunRealization(preactExe, caseDir, baseName, baseLines, index, opts, outputDir)));
+                    pending.Add(Task.Run(() => RunRealization(preactExe, caseDir, baseName, baseLines, index, opts, outputDir, progress)));
                 }
 
                 if (pending.Count == 0) break;
@@ -1329,7 +1491,9 @@ namespace PREACTcli
                 RealizationOutcome result = await finishedTask;
                 ++completed;
 
-                Console.WriteLine($"PROGRESS {completed}/{opts.MaxRealizations} realization {result.Idx}");
+                Console.WriteLine($"PROGRESS {completed}/{opts.MaxRealizations} realization {result.Idx}"
+                    + (result.Ok ? "" : " — no boundary"
+                        + (result.Reason != null ? ": " + result.Reason : "")));
 
                 if (!result.Ok)
                 {

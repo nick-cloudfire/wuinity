@@ -114,6 +114,42 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
 
             ImGui.TextDisabled("Source layers (fuel, canopy, buildings) are named under Hazards > Fire.");
+
+            //Placed after the build button because it operates on what that button produced, not on the source
+            //layers: the road network's coordinates only mean anything on the case's own warped grid.
+            ImGui.SeparatorText("Roads as fuel (optional)");
+
+            ImGui.SetNextItemWidth(120f);
+            ImGui.InputInt("Road fuel model", ref ScenarioDataSteps.RoadFuelModel);
+            if (ScenarioDataSteps.RoadFuelModel < 1) ScenarioDataSteps.RoadFuelModel = 1;
+
+            float width = (float)ScenarioDataSteps.RoadWidthMetres;
+            ImGui.SetNextItemWidth(120f);
+            if (ImGui.InputFloat("Road width (m, 0 = one cell)", ref width))
+            {
+                ScenarioDataSteps.RoadWidthMetres = width < 0f ? 0.0 : width;
+            }
+
+            ImGui.Checkbox("Leave building cells to the building spread model",
+                ref ScenarioDataSteps.ProtectBuildingCells);
+            ImGui.TextDisabled("On by default. Roads run through the built-up area, and those cells are "
+                + "non-burnable in the fuel map because ELMFIRE is meant to burn them as buildings. Painting "
+                + "grass into them would give the same ground two ways to burn and let the faster one win.");
+
+            if (ImGui.Button("Convert road pixels to fuel"))
+            {
+                ScenarioDataSteps.ConvertRoadsToFuel();
+            }
+
+            ImGui.TextDisabled("Writes a new fbfm*_roads*.tif and points the namelist at it. The original fuel "
+                + "raster is never modified. Only cells that are currently non-burnable (91-99) are changed, so "
+                + "a road crossing forest cannot downgrade the forest.");
+            ImGui.TextDisabled("For fuel maps where roads and urban cells enclose burnable ground, making "
+                + "isolated cells an ignition can never grow out of. It reports the islet count before and "
+                + "after — if those match, the roads were not the problem and the change is not worth keeping.");
+            ImGui.TextColored(new Vector4(0.9f, 0.45f, 0.3f, 1f),
+                "Fuel model 101 is GR1 — sparse grass that does spread fire, slowly. This changes the physics; "
+                + "it is not a bookkeeping fix.");
         }
 
         public static void Draw()

@@ -275,7 +275,16 @@ namespace PREACT
                             preactRun.Arguments = WorkingFile + " " + 1 + " " + 1 + " " + simulationIndex;//filePath, number of runs, batchsize, simulation index offset
                             preactRun.CreateNoWindow = false;
                             preactRun.UseShellExecute = true;
-                            tasks[j] = Task.Run(() => Process.Start(preactRun).WaitForExit());
+                            //Tracked so a batch of these dies with the session that launched it, like every
+                            //other external process. Process.Start can return null under UseShellExecute when
+                            //the shell reuses an existing instance, hence the guard.
+                            tasks[j] = Task.Run(() =>
+                            {
+                                Process started = Process.Start(preactRun);
+                                if (started == null) return;
+                                PREACT.Utility.ChildProcessJob.Track(started);
+                                started.WaitForExit();
+                            });
                         }
                         catch (Exception)
                         {

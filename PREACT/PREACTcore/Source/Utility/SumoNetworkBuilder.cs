@@ -86,6 +86,8 @@ namespace PREACT.Utility
             {
                 using (Process process = Process.Start(psi))
                 {
+                    ChildProcessJob.Track(process);
+
                     //Both pipes have to be drained at the same time. Reading one to the end and only
                     //then the other deadlocks: netconvert emits thousands of warnings on stderr while
                     //it works, that pipe's buffer fills, and it blocks on the write while this side
