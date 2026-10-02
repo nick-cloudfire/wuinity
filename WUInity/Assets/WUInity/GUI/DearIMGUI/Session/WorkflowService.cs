@@ -225,6 +225,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 case WorkflowAction.ReadSourcesFromCase:
                 case WorkflowAction.BuildFireCase:
                 case WorkflowAction.RebuildFireCase:
+                case WorkflowAction.RebuildWeather:
                 case WorkflowAction.AdoptCaseTerrain:
                 case WorkflowAction.KeepCaseNamelist:
                 case WorkflowAction.UseSetAsideNamelist:
@@ -339,6 +340,10 @@ namespace Assets.WUInity.GUI.DearIMGUI
                     ConfirmPrompt.AskToConfirm("Rebuild the fire case from scratch? Every layer, the weather and the namelist are "
                         + "made again - which takes minutes - and canopy with no source is refilled with zeros.", "Rebuild",
                         () => ConfirmPrompt.AskToSave("rebuilding the fire case", () => ScenarioDataSteps.BuildElmfireCase(true)));
+                    break;
+                case WorkflowAction.RebuildWeather:
+                    //From the scenario as it is in memory - its start time and fire duration - so nothing needs saving first.
+                    ScenarioDataSteps.RebuildWeatherOnly();
                     break;
                 case WorkflowAction.AdoptCaseTerrain:
                     ScenarioDataSteps.AdoptCaseTerrain(input);

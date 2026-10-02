@@ -89,6 +89,7 @@ PREACTcli build-case --wui <scenario.wui> [--out <case dir>] [options]
 | `--painted-grid <raster>` | the `[Landscape]` reference raster | The grid a legacy painting was made on. |
 | `--canopy-dataset <dir>` | `[ELMFIRE] CanopyDatasetFolder` | FIRE-RES pan-European canopy rasters, for any of cc/ch/cbh/cbd not named individually. |
 | `--rebuild` | off | Replace every layer the case already has (`[ELMFIRE] RebuildExistingLayers`). |
+| `--weather-only` | off | Make the case's weather (`ws`/`wd`/`m1`/`m10`/`m100`) again for the scenario's start, `--hours` and the weather options below, and nothing else: no layer is warped or re-cut, and `elmfire.data` keeps every key but its time base and weather band keys. Source-layer flags are ignored; with `--rebuild` it is refused. Only the `[Weather]` keys are printed or written. |
 | `--update-wui` | off | Point the scenario at the case, as the GUI's build does: write the keys listed below into the `.wui`. Only those keys change; every other line, comment and unknown key stays, and the file keeps its line endings. |
 | `--fbfm40`, `--fbfm13`, `--cc`, `--ch`, `--cbh`, `--cbd`, `--bldg_area_avg`, `--bldg_separation_distance`, `--bldg_nonburnable_frac`, `--bldg_footprint_frac`, `--bldg_fuel_model`, `--ignition_mask`, `--barriers` `<tif>` | the scenario's `[ELMFIRE]` source layers | A source raster for that stem, warped onto the grid. Overrides the scenario. |
 | **Weather** | | |

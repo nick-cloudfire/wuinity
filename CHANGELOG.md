@@ -7,6 +7,13 @@
 - A case build checks for a fuel model before it downloads or computes anything, and refuses at once without one
   (it used to fail in its validation, after ERA5 and minutes of WindNinja). Workflow step 5 is blocked by step 4
   when `[ELMFIRE] FuelModelFile` names a file that is not there.
+- **Rebuild weather only** (workflow step 5, `PREACTcli build-case --weather-only`, and a run whose fire outlasts the
+  case's weather): makes `ws/wd/m1/m10/m100` again for the scenario's start, duration and draw and changes nothing
+  else; `elmfire.data` keeps every key but its time base and weather band keys. "Rebuild the weather now" used to
+  rebuild the whole case.
+- `case_sources.txt` records what the weather was made for (`WeatherStart`, `WeatherHours`, `WeatherSeed`,
+  `WeatherDay`); a build for another start hour makes the weather again, and step 5 says so.
+- Step 5 no longer reports every case's weather one band short (it asked for ceil(hours) + 1 bands).
 
 ## v1.0
 

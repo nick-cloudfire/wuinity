@@ -246,8 +246,21 @@ A case's weather is a **historical peak fire-weather day**:
 Each stage falls back to uniform values on its own (`--wind`, `--wind-dir`, `--m1/--m10/--m100`) and says so;
 `--no-climatology` writes uniform weather deliberately.
 
-The weather is **kept** by later builds when it covers the fire. A run whose fire is longer than the case's
-weather extends it by rebuilding the weather (one WindNinja solve per hour of fire); with a `NamelistTemplate`
+The weather is **kept** by later builds when it covers the fire and was made for its start hour:
+`case_sources.txt` records what it was made for (`WeatherStart`, `WeatherHours`, `WeatherSeed`, the day it came from
+as `WeatherDay`, and `WeatherDate` when a day was named), and a build for another start hour of day makes it again.
+A case built before that record existed is judged by its band count alone.
+
+**Rebuild weather only** (workflow step 5; `build-case --weather-only`) makes the five rasters again for the
+scenario's current start, fire duration and draw, and changes nothing else: no layer is warped or re-cut, no mask
+placed. The case's own `elmfire.data` keeps every key but its time base (`CURRENT_YEAR`, `BAND_ONE_HOUR_OF_YEAR`,
+`HOUR_OF_YEAR`, `FORECAST_START_HOUR`, `SIMULATION_TSTOP`) and its weather band keys, which are fitted to the new
+weather; when it is the namelist the last build wrote, the record of its hash follows it, so the next build does not
+take it for a hand edit. A `NamelistTemplate` is left alone (a run fits its band keys). It refuses a case whose grid
+no longer covers the scenario's padded domain — that needs a full build — and a stop leaves the old weather in place.
+
+A run whose fire is longer than the case's weather makes the weather again in the same way (one WindNinja solve per
+hour of fire), and nothing else; with a `NamelistTemplate`
 the run is refused before ELMFIRE starts instead, naming both numbers (`the weather covers 24 h (24 bands) and the
 fire runs 30 h`), since that case is the user's to rebuild. The check is made on the namelist as it will run - its
 stop time and its band keys - so a band key a namelist was not fitted to is named too. A one-band series is legal

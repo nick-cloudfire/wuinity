@@ -1433,6 +1433,24 @@ namespace Assets.WUInity.GUI.DearIMGUI
         }
 
         /// <summary>
+        /// Makes the fire case's weather again for the scenario's start time and fire duration, and nothing else: no layer
+        /// is warped or re-cut, and the namelist keeps every key but its time base and weather band keys.
+        /// </summary>
+        public static void RebuildWeatherOnly()
+        {
+            RunStep("Rebuilding the fire case's weather", WorkflowStepId.FireCase, c =>
+            {
+                //[Weather] WeatherAnchorDateTime and WeatherFile are set in place to the day the new weather came from.
+                if (!PREACT.Utility.ElmfireCoupling.RebuildWeatherOnly(c.Input, LogStep, out string problem))
+                {
+                    throw new Exception(problem ?? "the weather could not be rebuilt");
+                }
+                c.ChangedInPlace = true;
+                return Task.CompletedTask;
+            });
+        }
+
+        /// <summary>
         /// Builds the case again, keeping its layers (unless its grid has to be re-cut), so newly painted masks
         /// become its ignition_mask.tif and wui_area.tif ("Apply to case"). The namelist is written again too.
         /// </summary>

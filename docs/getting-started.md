@@ -142,7 +142,11 @@ OpenTopography, cuts every source layer onto the terrain's grid, fetches the wea
 and turns it into wind and fuel moisture rasters through WindNinja and the Nelson model, and writes the
 namelist. Once built, the button reads **Update the case**, which builds only what is missing and keeps the
 rest; **Rebuild everything** replaces every layer, the weather and the namelist — for a changed domain, cell
-size or source layer.
+size or source layer. **Rebuild weather only** makes the wind and fuel moisture again for the scenario's current
+start time and fire duration and touches nothing else (the namelist's time and weather band keys follow); the step
+offers it when the case's weather is shorter than the fire or was made for another start hour.
+
+The build checks first that the case will have a fuel model, and refuses before downloading anything without one.
 
 The step says before you build what will not work: no OpenTopography key (it blocks the build), no ELMFIRE
 executable, no GDAL tools, no WindNinja (the case then has one wind value for the whole domain, and a trigger

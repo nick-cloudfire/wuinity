@@ -147,7 +147,51 @@ namespace PREACT.Utility
                             + "would have left elmfire.data behind the rasters it describes.");
             }
 
-            foreach (ScenarioKey key in CaseKeysForScenario(input.RootFolder, caseDir, input.Simulation.Name, built))
+            ApplyCaseKeys(input, CaseKeysForScenario(input.RootFolder, caseDir, input.Simulation.Name, built), built, log);
+            log?.Invoke("  Save the scenario to keep these.");
+            return true;
+        }
+
+        /// <summary>
+        /// Makes the scenario's ELMFIRE case's weather again for its current start, fire duration and draw, and nothing
+        /// else (<see cref="ElmfireCaseBuilder.RebuildWeather"/>): the GUI's "Rebuild weather only" and workflow step 5's
+        /// "Rebuild the weather now".
+        /// </summary>
+        /// <remarks>
+        /// On success the scenario's <c>[Weather] WeatherAnchorDateTime</c> and <c>WeatherFile</c> are set to the day the new
+        /// weather was drawn from, as a full build sets them (contract C1); nothing else in it changes. A stop leaves the
+        /// case's weather as it was and the scenario alone.
+        /// </remarks>
+        public static bool RebuildWeatherOnly(PREACTInput input, Action<string> log, out string problem)
+        {
+            problem = null;
+            long generation = ElmfireProcesses.Generation;
+
+            ElmfireInput settings = input?.WildfireModule?.ElmfireInput;
+            if (settings == null)
+            {
+                problem = "The scenario has no ELMFIRE settings to rebuild a case's weather from.";
+                return false;
+            }
+
+            string caseDir = CaseDirectoryPath(input.RootFolder, settings);
+            if (!TryBuildCase(input, settings, caseDir, generation, log, out problem, out ElmfireCaseBuilder.Result built,
+                    weatherOnly: true))
+            {
+                return false;
+            }
+
+            List<ScenarioKey> weather = CaseKeysForScenario(input.RootFolder, caseDir, input.Simulation.Name, built)
+                .FindAll(k => k.Section == "Weather");
+            ApplyCaseKeys(input, weather, built, log);
+            if (weather.Count > 0) log?.Invoke("  Save the scenario to keep these.");
+            return true;
+        }
+
+        /// <summary>Sets what a case build records (<see cref="CaseKeysForScenario"/>) on the scenario it was built for.</summary>
+        private static void ApplyCaseKeys(PREACTInput input, List<ScenarioKey> keys, ElmfireCaseBuilder.Result built, Action<string> log)
+        {
+            foreach (ScenarioKey key in keys)
             {
                 switch (key.Section + "|" + key.Key)
                 {
@@ -179,9 +223,6 @@ namespace PREACT.Utility
                         break;
                 }
             }
-
-            log?.Invoke("  Save the scenario to keep these.");
-            return true;
         }
 
         /// <summary>One <c>[Section] Key=Value</c> of a scenario, as a case build records it.</summary>
@@ -333,9 +374,11 @@ namespace PREACT.Utility
                     return result;
                 }
 
-                Log("The case's weather is too short for this fire (" + weatherProblem + "); extending it - one "
-                    + "WindNinja solve per hour of fire.");
-                if (!TryBuildCase(input, settings, caseDir, generation, Log, out string extendProblem, out ElmfireCaseBuilder.Result extended))
+                //The weather and nothing else: the case's other layers do not depend on how long the fire runs.
+                Log("The case's weather is too short for this fire (" + weatherProblem + "); making it again for the whole "
+                    + "fire - one WindNinja solve per hour - and nothing else.");
+                if (!TryBuildCase(input, settings, caseDir, generation, Log, out string extendProblem, out ElmfireCaseBuilder.Result extended,
+                        weatherOnly: true))
                 {
                     result.Cancelled = ElmfireProcesses.CancelledSince(generation);
                     result.Message = "Could not extend the case's weather: " + extendProblem;
@@ -734,8 +777,9 @@ namespace PREACT.Utility
         /// Builds the case's rasters and namelist for the scenario's own domain. A <see cref="ElmfireRunner.CancelAll"/>
         /// after <paramref name="generation"/> stops it at the builder's next safe point.
         /// </summary>
+        /// <remarks>With <paramref name="weatherOnly"/> only the case's weather is made again (<see cref="ElmfireCaseBuilder.RebuildWeather"/>).</remarks>
         private static bool TryBuildCase(PREACTInput input, ElmfireInput settings, string caseDir, long generation,
-            Action<string> log, out string problem, out ElmfireCaseBuilder.Result built)
+            Action<string> log, out string problem, out ElmfireCaseBuilder.Result built, bool weatherOnly = false)
         {
             problem = null;
             built = null;
@@ -761,7 +805,9 @@ namespace PREACT.Utility
 
                 //Waited on rather than awaited: module creation is synchronous, and a fire that has not been
                 //computed cannot be evacuated from, so there is nothing useful to do meanwhile.
-                built = ElmfireCaseBuilder.Build(options).GetAwaiter().GetResult();
+                built = weatherOnly
+                    ? ElmfireCaseBuilder.RebuildWeather(options).GetAwaiter().GetResult()
+                    : ElmfireCaseBuilder.Build(options).GetAwaiter().GetResult();
 
                 //Refused here rather than in the builder: a case with a misregistered layer is still worth having
                 //on disk to inspect, but running it is not - ELMFIRE reads rasters cell-for-cell without comparing

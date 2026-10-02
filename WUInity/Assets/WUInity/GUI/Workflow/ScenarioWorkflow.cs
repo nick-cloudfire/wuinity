@@ -383,6 +383,7 @@ namespace WUInity.Workflow
                 case WorkflowAction.DownloadLandfire:
                 case WorkflowAction.BuildFireCase:
                 case WorkflowAction.RebuildFireCase:
+                case WorkflowAction.RebuildWeather:
                 case WorkflowAction.DownloadDemOnly:
                 case WorkflowAction.ApplyFireAreasToCase:
                 case WorkflowAction.MovePaintingToCaseGrid:
@@ -831,15 +832,17 @@ namespace WUInity.Workflow
                 //Weather long enough for the fire.
                 RasterInfo ws = Raster(ScenarioFiles.CaseInput(_in, "ws.tif"));
                 double dt = e.Namelist.DT_METEOROLOGY > 0 ? e.Namelist.DT_METEOROLOGY : 3600.0;
-                int needed = (int)Math.Ceiling(e.SimulationTstopHours * 3600.0 / dt) + 1;
+                //The rule the builder writes by and ELMFIRE reads by: one band per DT_METEOROLOGY of fire, rounded up. It
+                //said one more, so every case built for its fire was reported short and offered a rebuild.
+                int needed = (int)Math.Ceiling(e.SimulationTstopHours * 3600.0 / dt - 1e-9);
                 if (ws != null && ws.Bands < needed)
                 {
                     //The run extends a generated case's weather itself; one on the scenario's own template it cannot.
                     if (string.IsNullOrEmpty(e.NamelistTemplate))
                     {
                         s.Info($"ws.tif holds {ws.Bands} weather band(s) and a {e.SimulationTstopHours:0.#} h fire needs {needed}: "
-                            + "the run extends the case's weather first (a WindNinja solve per extra hour).",
-                            WorkflowAction.RebuildFireCase, "Rebuild the weather now");
+                            + "the run makes the case's weather again first (a WindNinja solve per hour of fire).",
+                            WorkflowAction.RebuildWeather, "Rebuild the weather now");
                     }
                     else
                     {
@@ -847,6 +850,19 @@ namespace WUInity.Workflow
                             + "the scenario runs its own NamelistTemplate, so the run is refused: extend that template's weather.",
                             WorkflowAction.OpenFireModelSettings, "Fire duration");
                     }
+                }
+
+                //Weather made for another start hour: band 1 is the hour the case's weather was drawn for, and the
+                //namelist the next build writes says it is the scenario's. The build would make it again; this says so
+                //before, and offers the cheap way.
+                string madeFor = ManifestValue(Abs(_case + "/" + PREACT.Utility.ElmfireCaseBuilder.SourceManifestName), "WeatherStart");
+                DateTime start = _in.Simulation.StartDateTime;
+                if (madeFor != null && DateTime.TryParse(madeFor, System.Globalization.CultureInfo.InvariantCulture,
+                        System.Globalization.DateTimeStyles.None, out DateTime weatherStart)
+                    && Math.Abs((weatherStart.TimeOfDay - start.TimeOfDay).TotalMinutes) >= 1.0)
+                {
+                    s.Warn($"The case's weather was made for a fire starting at {weatherStart:HH:mm}, and the scenario now starts at "
+                        + $"{start:HH:mm}: its first band is the wrong hour of the day.", WorkflowAction.RebuildWeather, "Rebuild weather only");
                 }
 
                 NamelistProvenance(s, e, namelist);
@@ -906,6 +922,12 @@ namespace WUInity.Workflow
                 + "set aside as elmfire.data.kept-<time>. Takes minutes.");
             s.Secondary.Add(new StepAction(WorkflowAction.RebuildFireCase, "Rebuild everything",
                 "Replaces every layer, the weather and the namelist - for a changed domain, cell size or source layer."));
+            var weatherOnly = new StepAction(WorkflowAction.RebuildWeather, "Rebuild weather only",
+                "Makes ws, wd, m1, m10 and m100 again for the scenario's start time and fire duration - a historical fire-weather "
+                + "day, WindNinja and Nelson - and fits the namelist's time and weather band keys to them. Nothing else is touched: "
+                + "no layer is warped or re-cut. A WindNinja solve per hour of fire.");
+            if (_caseGrid == null) weatherOnly.Disable("Build the case first: its weather is made on its grid (inputs/dem.tif).");
+            s.Secondary.Add(weatherOnly);
             s.Secondary.Add(new StepAction(WorkflowAction.OpenFireModelSettings, "Fire model settings"));
             s.Secondary.Add(new StepAction(WorkflowAction.OpenFireBehaviour, "Fire behaviour"));
             s.Secondary.Add(new StepAction(WorkflowAction.PreviewNamelist, "Preview namelist"));

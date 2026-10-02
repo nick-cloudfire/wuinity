@@ -304,6 +304,13 @@ namespace PREACT.Utility
             public WeatherRasterPipeline.Result Weather;
 
             /// <summary>
+            /// What the case's weather was made for (recorded in case_sources.txt): this build's when it made the weather,
+            /// the record of the build that did when it kept it, null when nothing records it (a case built before the
+            /// record existed).
+            /// </summary>
+            public WeatherRecord WeatherRecord;
+
+            /// <summary>
             /// Whether the case's rasters actually agree with each other, checked once the case is complete.
             /// Null only if validation could not be attempted at all.
             /// </summary>
@@ -577,14 +584,18 @@ namespace PREACT.Utility
             //of a case's own wind and freshly sampled moisture is not a description of any day. Kept only when
             //the series covers the fire: ELMFIRE refuses a multi-band series shorter than SIMULATION_TSTOP ("Not
             //enough weather bands"), and a case kept at 8 bands for a 72 h fire failed that way on every run.
-            double secondsPerBand = o.Namelist != null && o.Namelist.DT_METEOROLOGY > 0 ? o.Namelist.DT_METEOROLOGY : 3600.0;
-            string keptWeatherProblem = DescribeKeptWeather(inputs, o.SimulationTstopSeconds, secondsPerBand);
+            //Also made again when it was made for another fire - another start hour, or another draw - which the case's
+            //record says (case_sources.txt); a case built before the record existed is judged by its band count alone.
+            double secondsPerBand = SecondsPerBand(o);
+            string keptWeatherProblem = DescribeKeptWeather(inputs, o.SimulationTstopSeconds, secondsPerBand)
+                                        ?? DescribeWeatherMadeForAnotherFire(o);
 
             if (keptWeatherProblem == null && !o.OverwriteExistingLayers && previousGridDirectory == null)
             {
                 Log("  weather: the case already has ws/wd/m1/m10/m100 covering the fire; keeping them.");
                 result.Reused.AddRange(ElmfireStems.Weather);
                 result.Written.AddRange(ElmfireStems.Weather);
+                result.WeatherRecord = ReadWeatherRecord(o.OutputDirectory);
                 WarnIfKeptWindIsUniform(ElmfireStems.Tif(inputs, ElmfireStems.WindSpeed), Log);
             }
             else
@@ -594,44 +605,9 @@ namespace PREACT.Utility
                     Log("  weather: " + keptWeatherProblem + "; building it again.");
                 }
 
-                Log("Building baseline weather (climatology -> WindNinja -> Nelson)...");
-
-                WeatherRasterPipeline.Options w = o.Weather ?? new WeatherRasterPipeline.Options();
-                w.Grid = grid;
-                w.InputsDirectory = inputs;
-                if (w.Cancelled == null) w.Cancelled = o.Cancelled;
-
-                //The weather series has to span the fire and be read at the interval it was written at.
-                //DT_METEOROLOGY comes from the namelist settings so the two cannot disagree - a series
-                //written hourly and read at any other interval is silently stretched in time.
-                w.SimulationStartDateTime = o.StartDateTime;
-                if (w.StartTimeZone == null) w.StartTimeZone = LocalTime.ZoneAt(o.LowerLeftLatLon.x, o.LowerLeftLatLon.y);
-                w.SimulationTstopSeconds = o.SimulationTstopSeconds;
-                w.SecondsPerBand = secondsPerBand;
-
-                //A single case wants the whole series, one band per hour of fire: the cap exists for campaigns.
-                w.MaxBands = 0;
-
-                //WindNinja is not resolved here: the pipeline probes for it itself when none is named, so no
-                //caller can forget to and quietly get a uniform wind field.
-
-                w.LatLon = new Vector2d(0.5 * (southWest.x + northEast.x), 0.5 * (southWest.y + northEast.y));
-                w.Log = o.Log;
-                if (string.IsNullOrEmpty(w.ArchiveCsvPath))
-                {
-                    //Beside the case rather than inside inputs/: it is a cache shared by every
-                    //realization, not one of ELMFIRE's inputs.
-                    w.ArchiveCsvPath = ArchivePath(o.OutputDirectory, o.Name);
-                }
-
-                result.Weather = await WeatherRasterPipeline.Run(w);
-                if (result.Weather.Cancelled)
-                {
-                    throw new OperationCanceledException("The case build was stopped while its weather was being made: "
-                        + "no wind was written (and no uniform field in its place), elmfire.data was not written again, "
-                        + "and the next build makes the weather.");
-                }
-                result.Written.AddRange(ElmfireStems.Weather);
+                await MakeWeather(o, result, grid, inputs, southWest, northEast, secondsPerBand,
+                    "The case build was stopped while its weather was being made: no wind was written (and no uniform field "
+                    + "in its place), elmfire.data was not written again, and the next build makes the weather.");
             }
 
             //---------------------------------------------------------------- 8. Loose files
@@ -696,6 +672,312 @@ namespace PREACT.Utility
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// Makes the case's weather again - <c>ws</c>, <c>wd</c>, <c>m1</c>, <c>m10</c>, <c>m100</c> - for the fire
+        /// <paramref name="o"/> describes (its start, its duration and the draw of <see cref="Options.Weather"/>), and
+        /// changes nothing else: no DEM, fuel, canopy, mask or WUI area is made, warped or re-cut, and the namelist keeps
+        /// every key but its time base and weather band keys, which are fitted to the new weather.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// "Rebuild the weather now" used to rebuild the whole case - every layer checked, the painted areas placed again,
+        /// the namelist written again - to change five rasters that depend only on the grid, the terrain and the clock.
+        /// </para>
+        /// <para>
+        /// The case has to be on the scenario's grid: weather for a grid the scenario no longer asks for would be the
+        /// wrong answer made carefully, so that is refused and left to a full build. The namelist is fitted only when it is
+        /// the case's own <c>elmfire.data</c>: a <c>NamelistTemplate</c> is the user's file, and a run fits its band keys
+        /// to the weather itself. When <c>elmfire.data</c> is the one the last build wrote, the record of its hash follows
+        /// it, so the next build still knows it from a hand edit; a hand-edited one is fitted and stays a hand edit.
+        /// </para>
+        /// <para>
+        /// A stop (<see cref="Options.Cancelled"/>) before the wind is written leaves the case as it was - the five
+        /// rasters are written together or not at all - and throws <see cref="OperationCanceledException"/>.
+        /// </para>
+        /// </remarks>
+        public static async Task<Result> RebuildWeather(Options o)
+        {
+            if (string.IsNullOrEmpty(o.OutputDirectory)) throw new ArgumentException("OutputDirectory is required.");
+            void Log(string m) => o.Log?.Invoke(m);
+
+            string inputs = Path.Combine(o.OutputDirectory, InputsFolder);
+            string demPath = ElmfireStems.Tif(inputs, ElmfireStems.Dem);
+            if (!File.Exists(demPath))
+            {
+                throw new FileNotFoundException($"There is no case in {o.OutputDirectory} to rebuild the weather of (no "
+                    + "inputs/dem.tif): build the fire case first.", demPath);
+            }
+            if (IsCarryPending(inputs))
+            {
+                throw new InvalidDataException($"An earlier build set the case's old grid aside (inputs/{PreviousGridFolder}) "
+                    + "and did not finish carrying its layers onto the new one; build the whole case to finish that first.");
+            }
+
+            (Vector2d southWest, Vector2d northEast) = PaddedBounds(o);
+            MasterGrid grid = MasterGrid.FromRasterFile(demPath);
+            string mismatch = DescribeGridMismatch(grid, o, southWest, northEast);
+            if (mismatch != null)
+            {
+                throw new InvalidDataException($"The case's dem.tif is not this scenario's grid any more ({mismatch}), so its "
+                    + "weather cannot be rebuilt on its own: build the whole case, which cuts the grid again and carries the "
+                    + "other layers onto it.");
+            }
+
+            var result = new Result { Grid = grid, InputsDirectory = inputs };
+            Log($"Rebuilding the weather only: {o.SimulationTstopSeconds / 3600.0:0.##} h of fire from "
+                + $"{o.StartDateTime:yyyy-MM-dd HH:mm}, on the case's {grid.Header.Ncols}x{grid.Header.Nrows} grid; every "
+                + "other layer is left as it is.");
+            StopIfCancelled(o, "before its weather was rebuilt; the case is as it was.");
+
+            await MakeWeather(o, result, grid, inputs, southWest, northEast, SecondsPerBand(o),
+                "The weather rebuild was stopped before the wind was written; the case's weather is as it was.");
+
+            FitNamelistToWeather(o, result, Log);
+
+            var record = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (KeyValuePair<string, string> kv in WeatherRecord.Keys(result.WeatherRecord)) record[kv.Key] = kv.Value;
+            if (result.NamelistSha256 != null) record[GeneratedNamelistKey] = result.NamelistSha256;
+            UpdateManifest(o.OutputDirectory, record, Log);
+
+            string[] template = ReadTemplate(o.TemplateNamelistPath) ?? ReadTemplate(Path.Combine(o.OutputDirectory, "elmfire.data"));
+            result.FuelStem = ElmfireStems.FuelStem(template, inputs);
+            result.Validation = ElmfireCaseValidator.Validate(inputs, grid, result.FuelStem, OptionalStems(), Log);
+            return result;
+        }
+
+        /// <summary>DT_METEOROLOGY from the scenario's namelist settings: the interval the weather is written at and read at.</summary>
+        private static double SecondsPerBand(Options o)
+        {
+            return o.Namelist != null && o.Namelist.DT_METEOROLOGY > 0 ? o.Namelist.DT_METEOROLOGY : 3600.0;
+        }
+
+        /// <summary>
+        /// The weather chain for the case's grid and the fire <paramref name="o"/> describes, writing all five rasters into
+        /// <paramref name="inputs"/>; throws <see cref="OperationCanceledException"/> with <paramref name="stoppedMessage"/>
+        /// when stopped first. Shared by a full build and <see cref="RebuildWeather"/>, so the two make the same weather.
+        /// </summary>
+        private static async Task MakeWeather(Options o, Result result, MasterGrid grid, string inputs,
+            Vector2d southWest, Vector2d northEast, double secondsPerBand, string stoppedMessage)
+        {
+            o.Log?.Invoke("Building baseline weather (climatology -> WindNinja -> Nelson)...");
+
+            WeatherRasterPipeline.Options w = o.Weather ?? new WeatherRasterPipeline.Options();
+            w.Grid = grid;
+            w.InputsDirectory = inputs;
+            if (w.Cancelled == null) w.Cancelled = o.Cancelled;
+
+            //The weather series has to span the fire and be read at the interval it was written at.
+            //DT_METEOROLOGY comes from the namelist settings so the two cannot disagree - a series
+            //written hourly and read at any other interval is silently stretched in time.
+            w.SimulationStartDateTime = o.StartDateTime;
+            if (w.StartTimeZone == null) w.StartTimeZone = LocalTime.ZoneAt(o.LowerLeftLatLon.x, o.LowerLeftLatLon.y);
+            w.SimulationTstopSeconds = o.SimulationTstopSeconds;
+            w.SecondsPerBand = secondsPerBand;
+
+            //A single case wants the whole series, one band per hour of fire: the cap exists for campaigns.
+            w.MaxBands = 0;
+
+            //WindNinja is not resolved here: the pipeline probes for it itself when none is named, so no
+            //caller can forget to and quietly get a uniform wind field.
+
+            w.LatLon = new Vector2d(0.5 * (southWest.x + northEast.x), 0.5 * (southWest.y + northEast.y));
+            w.Log = o.Log;
+            if (string.IsNullOrEmpty(w.ArchiveCsvPath))
+            {
+                //Beside the case rather than inside inputs/: it is a cache shared by every
+                //realization, not one of ELMFIRE's inputs.
+                w.ArchiveCsvPath = ArchivePath(o.OutputDirectory, o.Name);
+            }
+
+            result.Weather = await WeatherRasterPipeline.Run(w);
+            if (result.Weather.Cancelled)
+            {
+                throw new OperationCanceledException(stoppedMessage);
+            }
+            result.Written.AddRange(ElmfireStems.Weather);
+            result.WeatherRecord = new WeatherRecord
+            {
+                Start = o.StartDateTime,
+                Hours = o.SimulationTstopSeconds / 3600.0,
+                Seed = w.Seed,
+                ForcedDate = w.ForceDate,
+                Day = result.Weather.Day?.Date,
+            };
+        }
+
+        /// <summary>
+        /// What a case's weather was made for, as <c>case_sources.txt</c> records it: the fire's start (band 1 is its hour
+        /// of day), its duration, and the draw - the seed, and the historical day when one was asked for. The day the
+        /// bands came from is recorded too, for whoever reads the file.
+        /// </summary>
+        public sealed class WeatherRecord
+        {
+            public DateTime Start;
+            public double Hours;
+            public int Seed;
+            public DateTime? ForcedDate;
+            public DateTime? Day;
+
+            internal const string StartKey = "WeatherStart", HoursKey = "WeatherHours", SeedKey = "WeatherSeed",
+                ForcedDateKey = "WeatherDate", DayKey = "WeatherDay";
+
+            /// <summary>Its keys and values for the manifest; every key with a null value for a null record (removed).</summary>
+            internal static IEnumerable<KeyValuePair<string, string>> Keys(WeatherRecord r)
+            {
+                string Date(DateTime? d) => d.HasValue ? d.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) : null;
+                yield return new KeyValuePair<string, string>(StartKey,
+                    r?.Start.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture));
+                yield return new KeyValuePair<string, string>(HoursKey, r?.Hours.ToString("0.###", CultureInfo.InvariantCulture));
+                yield return new KeyValuePair<string, string>(SeedKey, r?.Seed.ToString(CultureInfo.InvariantCulture));
+                yield return new KeyValuePair<string, string>(ForcedDateKey, r == null ? null : Date(r.ForcedDate));
+                yield return new KeyValuePair<string, string>(DayKey, r == null ? null : Date(r.Day));
+            }
+        }
+
+        /// <summary>The record of what the case's weather was made for, or null when the case records none.</summary>
+        public static WeatherRecord ReadWeatherRecord(string caseDirectory)
+        {
+            string start = ReadManifestValue(caseDirectory, WeatherRecord.StartKey);
+            if (string.IsNullOrEmpty(start)
+                || !DateTime.TryParse(start, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime when))
+            {
+                return null;
+            }
+
+            DateTime? Date(string key) =>
+                DateTime.TryParse(ReadManifestValue(caseDirectory, key) ?? string.Empty, CultureInfo.InvariantCulture,
+                    DateTimeStyles.None, out DateTime d) ? d : (DateTime?)null;
+
+            return new WeatherRecord
+            {
+                Start = when,
+                Hours = double.TryParse(ReadManifestValue(caseDirectory, WeatherRecord.HoursKey), NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out double h) ? h : 0.0,
+                Seed = int.TryParse(ReadManifestValue(caseDirectory, WeatherRecord.SeedKey), NumberStyles.Integer,
+                    CultureInfo.InvariantCulture, out int s) ? s : 0,
+                ForcedDate = Date(WeatherRecord.ForcedDateKey),
+                Day = Date(WeatherRecord.DayKey),
+            };
+        }
+
+        /// <summary>
+        /// Why the case's weather, by its record, was made for another fire than <paramref name="o"/> describes, or null:
+        /// another start hour of day (band 1 is that hour, and the namelist this build writes says it is the new one), or
+        /// another historical day asked for by name. Null when the case records nothing. The seed is not compared: the
+        /// GUI never sets one, so a case drawn on the command line with <c>--weather-seed</c> would be redrawn by every
+        /// GUI build.
+        /// </summary>
+        public static string DescribeWeatherMadeForAnotherFire(Options o)
+        {
+            WeatherRecord made = ReadWeatherRecord(o.OutputDirectory);
+            if (made == null) return null;
+
+            if (System.Math.Abs((made.Start.TimeOfDay - o.StartDateTime.TimeOfDay).TotalMinutes) >= 1.0)
+            {
+                return $"the weather was made for a fire starting at {made.Start:HH:mm} and this one starts at "
+                       + $"{o.StartDateTime:HH:mm}";
+            }
+
+            DateTime? asked = o.Weather?.ForceDate;
+            if (asked.HasValue && (!made.ForcedDate.HasValue || made.ForcedDate.Value.Date != asked.Value.Date))
+            {
+                return $"the weather is " + (made.ForcedDate.HasValue ? $"from {made.ForcedDate.Value:yyyy-MM-dd}" : "a drawn day")
+                       + $" and this build asks for {asked.Value:yyyy-MM-dd}";
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Fits the case's own <c>elmfire.data</c> to weather made by <see cref="RebuildWeather"/>: its time base (the
+        /// fire's start and stop) and its weather band keys, through <see cref="ElmfireNamelistBuilder.FitTimeAndWeather"/>,
+        /// with what changed logged. A <c>NamelistTemplate</c> is not the case's to change, and is left alone.
+        /// </summary>
+        private static void FitNamelistToWeather(Options o, Result result, Action<string> log)
+        {
+            string path = Path.Combine(o.OutputDirectory, "elmfire.data");
+            result.NamelistPath = path;
+
+            if (!string.IsNullOrEmpty(o.TemplateNamelistPath))
+            {
+                log(IsSameFile(o.TemplateNamelistPath, path)
+                    ? "  namelist: the scenario names elmfire.data as its NamelistTemplate, so it is left as it is; a run fits "
+                      + "its weather band keys to the new weather."
+                    : $"  namelist: the scenario runs its own NamelistTemplate ({Path.GetFileName(o.TemplateNamelistPath)}), "
+                      + "which is left as it is; a run fits its weather band keys to the new weather.");
+                return;
+            }
+
+            if (!File.Exists(path))
+            {
+                log("  namelist: the case has no elmfire.data yet; building the case writes one for this weather.");
+                return;
+            }
+
+            string recorded = ReadManifestValue(o.OutputDirectory, GeneratedNamelistKey);
+            string before = ElmfireFingerprint.HashFile(path);
+            bool generated = recorded != null && string.Equals(recorded, before, StringComparison.OrdinalIgnoreCase);
+
+            string[] lines = File.ReadAllLines(path);
+            int bands = AscRaster.GetBandCount(ElmfireStems.Tif(result.InputsDirectory, ElmfireStems.WindSpeed));
+            string[] fitted = ElmfireNamelistBuilder.FitTimeAndWeather(lines, o.StartDateTime, o.SimulationTstopSeconds, bands);
+            List<string> changed = ElmfireNamelist.DescribeDifferences(lines, fitted);
+            if (changed.Count == 0)
+            {
+                log("  namelist: its time and weather band keys already fit the new weather; not rewritten.");
+            }
+            else
+            {
+                File.WriteAllLines(path, fitted);
+                log($"  namelist: {changed.Count} time and weather band key(s) fitted to the new weather:");
+                foreach (string d in changed) log("    " + d);
+            }
+
+            //The record follows only the namelist the last build wrote; a hand edit stays one, and the next build sets it
+            //aside as it would have.
+            if (generated) result.NamelistSha256 = ElmfireFingerprint.HashFile(path);
+        }
+
+        /// <summary>
+        /// Sets <paramref name="values"/> in the case's <see cref="SourceManifestName"/>, each replacing the line of its key
+        /// or added at the end (a null value removes the key), and leaves every other line as it was.
+        /// </summary>
+        private static void UpdateManifest(string caseDirectory, IDictionary<string, string> values, Action<string> log)
+        {
+            string path = Path.Combine(caseDirectory, SourceManifestName);
+            try
+            {
+                var lines = File.Exists(path) ? File.ReadAllLines(path).ToList() : new List<string>();
+                foreach (KeyValuePair<string, string> kv in values)
+                {
+                    int at = lines.FindIndex(l =>
+                    {
+                        string t = l.Trim();
+                        int eq = t.IndexOf('=');
+                        return !t.StartsWith("#") && eq > 0 && string.Equals(t.Substring(0, eq).Trim(), kv.Key, StringComparison.OrdinalIgnoreCase);
+                    });
+                    if (kv.Value == null)
+                    {
+                        if (at >= 0) lines.RemoveAt(at);
+                    }
+                    else if (at >= 0)
+                    {
+                        lines[at] = kv.Key + "=" + kv.Value;
+                    }
+                    else
+                    {
+                        lines.Add(kv.Key + "=" + kv.Value);
+                    }
+                }
+                File.WriteAllLines(path, lines);
+            }
+            catch (Exception e)
+            {
+                //As for the full manifest: never fatal, and only what the next build can tell from it is lost.
+                log($"  sources: could not update {SourceManifestName} ({e.Message}).");
+            }
         }
 
         /// <summary>
@@ -1465,6 +1747,13 @@ namespace PREACT.Utility
                     //its own namelist from one edited by hand, which it keeps aside rather than overwriting.
                     GeneratedNamelistKey + "=" + (result.NamelistSha256 ?? string.Empty),
                 };
+
+                //What the weather was made for, so a later build (and the GUI) can tell weather made for another fire -
+                //another start hour - from weather that fits, and "Rebuild weather only" can say what it replaced.
+                foreach (KeyValuePair<string, string> kv in WeatherRecord.Keys(result.WeatherRecord))
+                {
+                    if (kv.Value != null) lines.Add(kv.Key + "=" + kv.Value);
+                }
 
                 if (!string.IsNullOrWhiteSpace(o.CanopyDatasetFolder))
                 {

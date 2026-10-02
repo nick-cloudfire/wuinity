@@ -1151,6 +1151,12 @@ namespace PREACT.Utility
 
         private static string Num(string key, double value)
         {
+            return $"{key,KeyWidth} = {NumberText(value)}";
+        }
+
+        /// <summary>A REAL as the namelist writes it.</summary>
+        private static string NumberText(double value)
+        {
             //"R" would give 1E-3 as 0.001 and 999999 as 999999, both fine, but it also gives things like
             //0.66700000000000004. G17 is round-trippable without that.
             string text = value.ToString("G9", CultureInfo.InvariantCulture);
@@ -1162,7 +1168,44 @@ namespace PREACT.Utility
                 text += ".0";
             }
 
-            return $"{key,KeyWidth} = {text}";
+            return text;
+        }
+
+        /// <summary>
+        /// An existing namelist made to fit weather that was made again for a fire starting at <paramref name="start"/>
+        /// and running <paramref name="tstopSeconds"/>, in <paramref name="bands"/> bands: the time base <see cref="Build"/>
+        /// writes from those facts (<c>CURRENT_YEAR</c>, <c>BAND_ONE_HOUR_OF_YEAR</c>, <c>HOUR_OF_YEAR</c>,
+        /// <c>FORECAST_START_HOUR</c>, <c>SIMULATION_TSTOP</c>) and the weather band keys
+        /// (<see cref="ElmfireNamelist.FitWeatherBands"/>), and nothing else. A key that already holds its value is left as
+        /// it is written, so a namelist that fits comes back line for line.
+        /// </summary>
+        public static string[] FitTimeAndWeather(string[] lines, DateTime start, double tstopSeconds, int bands)
+        {
+            int hourOfYear = (int)(start - new DateTime(start.Year, 1, 1)).TotalHours;
+            string group = ElmfireNamelistKeys.TimeControlGroup;
+
+            string[] Set(string[] l, string key, string value, bool number)
+            {
+                string current = ElmfireNamelist.GetKeyInGroup(l, group, key);
+                bool same = current != null && (number
+                    ? double.TryParse(current.Replace('d', 'e').Replace('D', 'E'), NumberStyles.Float, CultureInfo.InvariantCulture, out double a)
+                      && double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double b) && System.Math.Abs(a - b) <= 1e-9 * System.Math.Max(1.0, System.Math.Abs(b))
+                    : string.Equals(current.Trim(), value, StringComparison.Ordinal));
+                return same ? l : ElmfireNamelist.SetKeyInGroup(l, group, key, value);
+            }
+
+            lines = Set(lines, "CURRENT_YEAR", start.Year.ToString(CultureInfo.InvariantCulture), true);
+            lines = Set(lines, "BAND_ONE_HOUR_OF_YEAR", hourOfYear.ToString(CultureInfo.InvariantCulture), true);
+            lines = Set(lines, "HOUR_OF_YEAR", hourOfYear.ToString(CultureInfo.InvariantCulture), true);
+            lines = Set(lines, "FORECAST_START_HOUR", NumberText(start.TimeOfDay.TotalHours), true);
+            if (tstopSeconds > 0.0)
+            {
+                lines = Set(lines, ElmfireNamelistKeys.SimulationTstop, NumberText(tstopSeconds), true);
+            }
+
+            //Through the one rule every run uses, so a single run and a rebuild cannot disagree on what fits.
+            string[] fitted = ElmfireNamelist.FitWeatherBands(lines, bands);
+            return ElmfireNamelist.DescribeDifferences(lines, fitted).Count == 0 ? lines : fitted;
         }
     }
 }

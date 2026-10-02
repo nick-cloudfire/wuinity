@@ -38,7 +38,7 @@ namespace PREACTcli
             double? cellSize = null, padding = null, hours = null;
             int? fromYear = null, toYear = null, conditioning = null, burnFrom = null, burnTo = null, seed = null;
             DateTime? weatherDate = null;
-            bool noClimatology = false, rebuild = false, updateWui = false;
+            bool noClimatology = false, rebuild = false, updateWui = false, weatherOnly = false;
             double? wind = null, windDir = null, m1 = null, m10 = null, m100 = null;
             var copies = new List<string>();
             var rasters = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -87,6 +87,7 @@ namespace PREACTcli
                 .Value("--painted", v => painted = v)
                 .Value("--painted-grid", v => paintedGrid = v)
                 .Switch("--rebuild", () => rebuild = true)
+                .Switch("--weather-only", () => weatherOnly = true)
                 .Switch("--update-wui", () => updateWui = true)
                 .Retired("--tstop", "the fire duration is --hours now, in hours (default: the scenario's "
                                     + "[ELMFIRE] SimulationTstopHours).")
@@ -101,6 +102,11 @@ namespace PREACTcli
             {
                 parser.Parse(args);
                 if (string.IsNullOrEmpty(wui)) throw new ArgumentException("--wui is required.");
+                if (weatherOnly && rebuild)
+                {
+                    throw new ArgumentException("--weather-only makes the weather again and nothing else; --rebuild makes "
+                                                + "every layer again. Pass one of them.");
+                }
             }
             catch (ArgumentException e)
             {
@@ -189,8 +195,12 @@ namespace PREACTcli
 
             try
             {
-                ElmfireCaseBuilder.Result r = ElmfireCaseBuilder.Build(o).GetAwaiter().GetResult();
-                PrintResult(wuiPath, r);
+                //The weather and nothing else: no layer is warped or re-cut, and the namelist keeps every key but its
+                //time base and weather band keys.
+                ElmfireCaseBuilder.Result r = weatherOnly
+                    ? ElmfireCaseBuilder.RebuildWeather(o).GetAwaiter().GetResult()
+                    : ElmfireCaseBuilder.Build(o).GetAwaiter().GetResult();
+                PrintResult(wuiPath, r, weatherOnly);
 
                 //A non-zero exit for a case that cannot legitimately be run, so a script that builds and then runs
                 //stops here. The rasters stay on disk to inspect, and the scenario is not pointed at them.
@@ -205,6 +215,7 @@ namespace PREACTcli
                 //Only the keys the scenario does not already say: a scenario that points at its case is told so.
                 string[] scenarioLines = File.ReadAllLines(wuiPath);
                 List<ElmfireCoupling.ScenarioKey> keys = ElmfireCoupling.CaseKeysForScenario(input.RootFolder, caseDir, input.Simulation.Name, r)
+                    .Where(k => !weatherOnly || k.Section == "Weather")
                     .Where(k => !string.Equals(PREACTInput.NormalisePath(WuiText.Get(scenarioLines, k.Section, k.Key) ?? string.Empty),
                                     k.Value, StringComparison.Ordinal))
                     .ToList();
@@ -248,10 +259,12 @@ namespace PREACTcli
             }
         }
 
-        private static void PrintResult(string wuiPath, ElmfireCaseBuilder.Result r)
+        private static void PrintResult(string wuiPath, ElmfireCaseBuilder.Result r, bool weatherOnly)
         {
             Console.WriteLine();
-            Console.WriteLine($"Case built in {Path.GetDirectoryName(r.NamelistPath)}");
+            Console.WriteLine(weatherOnly
+                ? $"Weather rebuilt in {Path.GetDirectoryName(r.NamelistPath)}; nothing else in the case changed."
+                : $"Case built in {Path.GetDirectoryName(r.NamelistPath)}");
             Console.WriteLine($"  grid      {r.Grid.Header.Ncols}x{r.Grid.Header.Nrows} @ {r.Grid.Header.CellSize:F1} m ({r.Grid.Epsg}), "
                               + $"{r.Grid.XMin:F0},{r.Grid.YMin:F0} to {r.Grid.XMax:F0},{r.Grid.YMax:F0}"
                               + (r.GridRebuilt ? " - cut again: the old grid did not cover the padded domain" : ""));
@@ -352,6 +365,9 @@ namespace PREACTcli
             Console.WriteLine("      --copy <file>      copy a loose file (e.g. building_fuel_models.csv) into inputs/");
             Console.WriteLine("      --painted <file>   --painted-grid <raster>   override the scenario's painted areas / legacy paint grid");
             Console.WriteLine("      --rebuild          replace every layer the case already has");
+            Console.WriteLine("      --weather-only     make the case's weather (ws/wd/m1/m10/m100) again for the scenario's start, --hours");
+            Console.WriteLine("                         and the draw below, and nothing else: no layer is warped or re-cut, and elmfire.data");
+            Console.WriteLine("                         keeps every key but its time base and weather band keys (source-layer flags are ignored)");
             Console.WriteLine("      --update-wui       point the scenario at the case, as the GUI's build does: write [Landscape] Elevation/");
             Console.WriteLine("                         Slope/AspectFile, [kPERIL] WuiAreaFile and the [Weather] anchor into the .wui");
             Console.WriteLine("                         (only those keys; without it they are printed)");

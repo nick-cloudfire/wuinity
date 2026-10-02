@@ -52,6 +52,7 @@ namespace WUInity.Workflow
 
         BuildFireCase,
         RebuildFireCase,
+        RebuildWeather,
         AdoptCaseTerrain,
         OpenFireModelSettings,
         OpenFireBehaviour,
