@@ -380,6 +380,25 @@ namespace PREACT.Tests
                 (PREACTcli.Campaigns.Campaign stale, string why) = Inspect();
                 Assert.True(stale == null && why.Contains("is not the WUI area of the scenario's evacuation groups")
                             && why.Contains("Build the case again"), "a stale one is refused, saying what to do: " + why);
+
+                //Review R2 MI-3: a mask of the scenario's own on another grid is refused up front, not by k-PERIL after
+                //every realization's fire and evacuation.
+                var small = new MasterGrid
+                {
+                    Header = new AscRaster.Header { Ncols = 10, Nrows = 10, CellSize = 30, CellSizeY = 30, NoDataValue = -9999 },
+                    Epsg = "EPSG:32634",
+                };
+                MasterGrid caseGrid = MasterGrid.FromRasterFile(ElmfireStems.Tif(Path.Combine(c.Folder, "case", "inputs"), ElmfireStems.Dem));
+                small.Header.XllCorner = caseGrid.XMin + 300.0;
+                small.Header.YllCorner = caseGrid.YMin + 300.0;
+                var ones = new float[10, 10];
+                for (int x = 0; x < 10; ++x) for (int y = 0; y < 10; ++y) ones[x, y] = 1f;
+                GeoTiffRasterWriter.WriteBand(small, ones, Path.Combine(c.Folder, "my_wui.tif"));
+                File.WriteAllLines(wui, File.ReadAllLines(wui).Select(l => l == "WuiAreaSource=EvacuationGroupsCombined"
+                    ? "WuiAreaSource=Raster\nWuiAreaFile=my_wui.tif" : l).SelectMany(l => l.Split('\n')));
+                (PREACTcli.Campaigns.Campaign offGrid, string whyOff) = Inspect();
+                Assert.True(offGrid == null && whyOff.Contains("[kPERIL] WuiAreaFile") && whyOff.Contains("is 10x10 cells")
+                            && whyOff.Contains("Make the mask on the case grid"), "an own mask on another grid is refused up front: " + whyOff);
             }
         }
 

@@ -60,6 +60,8 @@
 - A campaign checks that the case's `wui_area.tif` is the groups' union as they are now, and refuses a stale one;
   every realization protects that file and a fire that does not reach it counts as not threatened, whatever the
   `WuiAreaSource` (it was checked for `Raster` only, so an unreached combined-groups realization counted as failed).
+  A `WuiAreaFile` of the scenario's own that is not on the case grid is refused before the first fire (it used to
+  fail every realization in k-PERIL, after its fire and evacuation).
 - Evacuation groups from a shapefile keep their rings apart (holes and multipolygons were joined into one outline)
   and are read in the layer's CRS.
 - **Fire areas paints only the ignition area.** The WUI-area and initial-ignition brushes are gone; the `.gfi` keeps

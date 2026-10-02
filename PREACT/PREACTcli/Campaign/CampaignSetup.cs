@@ -184,6 +184,11 @@ namespace PREACTcli.Campaigns
                 string stale = DescribeStaleWuiArea(input, c, caseWui);
                 if (stale != null) return Fail(stale);
             }
+            else
+            {
+                string offGrid = DescribeOffGridMask(c, named);
+                if (offGrid != null) return Fail(offGrid);
+            }
 
             c.WuiAreaFile = wuiArea;
             c.WuiCentreX = wx;
@@ -319,6 +324,39 @@ namespace PREACTcli.Campaigns
         /// area. Every realization protects that file, so a campaign on it would answer for other ground than the
         /// scenario evacuates.
         /// </summary>
+        /// <summary>
+        /// Why the scenario's own WUI mask ([kPERIL] WuiAreaSource=Raster with a WuiAreaFile) cannot be used on the case's
+        /// fire grid, or null when it lies on it: same size, cell size and origin (to a tenth of a cell) as
+        /// <c>inputs/dem.tif</c>.
+        /// </summary>
+        /// <remarks>
+        /// Review R2 MI-3: a mask on another grid passed the centroid check, and then every realization ran its fire for
+        /// hours, ran its evacuation (the "does the fire reach it" test could not compare and let it through) and failed in
+        /// k-PERIL ("could not be used on the fire grid"). The GUI's step 10 said so; a campaign from a shell did not.
+        /// </remarks>
+        private static string DescribeOffGridMask(Campaign c, string mask)
+        {
+            MasterGrid grid, own;
+            try { grid = MasterGrid.FromRasterFile(ElmfireStems.Tif(c.InputsDir, ElmfireStems.Dem)); }
+            catch { return null; }
+            try { own = MasterGrid.FromRasterFile(mask); }
+            catch (Exception e) { return "the scenario's [kPERIL] WuiAreaFile, " + mask + ", cannot be read as a raster (" + e.Message + ")."; }
+
+            double cell = grid.Header.CellSize;
+            bool onGrid = own.Header.Ncols == grid.Header.Ncols && own.Header.Nrows == grid.Header.Nrows
+                          && System.Math.Abs(own.Header.CellSize - cell) <= 0.001 * cell
+                          && System.Math.Abs(own.XMin - grid.XMin) <= 0.1 * cell && System.Math.Abs(own.YMax - grid.YMax) <= 0.1 * cell;
+            if (onGrid) return null;
+
+            string I(double v) => v.ToString("F0", CultureInfo.InvariantCulture);
+            return $"the scenario's [kPERIL] WuiAreaFile, {mask}, is {own.Header.Ncols}x{own.Header.Nrows} cells of "
+                   + $"{own.Header.CellSize.ToString("0.##", CultureInfo.InvariantCulture)} m from ({I(own.XMin)}, {I(own.YMax)}), but the "
+                   + $"case's fire grid (inputs/dem.tif) is {grid.Header.Ncols}x{grid.Header.Nrows} cells of "
+                   + $"{cell.ToString("0.##", CultureInfo.InvariantCulture)} m from ({I(grid.XMin)}, {I(grid.YMax)}). k-PERIL takes the "
+                   + "WUI area on the fire grid, so every realization would run its fire and its evacuation and then fail. Make "
+                   + "the mask on the case grid, or clear WuiAreaFile to protect the evacuation groups (the case's wui_area.tif).";
+        }
+
         private static string DescribeStaleWuiArea(PREACTInput input, Campaign c, string caseWui)
         {
             var problems = new List<string>();
