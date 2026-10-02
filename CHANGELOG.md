@@ -29,7 +29,9 @@
 - **DEM**: OpenTopography is asked for a margin that covers the UTM grid to its corners (Auburn2's padded domain
   was 0.0002 deg short, and its grid corners about 500 m beyond the box asked for).
 - **Burn roads into the fuel** (optional, step 4): Nick's road-to-fuel conversion (RoadFuelRasterizer), burning the
-  SUMO lanes into the case's fuel as GR1 where it is non-burnable, with the islet counts before and after.
+  SUMO lanes into the case's fuel as GR1 where it is non-burnable, with the islet counts before and after. When the
+  scenario names no fuel layer, the case's own is copied to `downloads/<Name>_fbfm40_original.tif` first, which the
+  roads raster then records, so it can be undone.
 - The "names no SUMO configuration" warning is given once, not on every destination click; the map rereads the
   network after the roads step builds it.
 - `Spatial/Maps/OverpassClient.cs` is removed: nothing used it once the OSM download got its own Overpass client.

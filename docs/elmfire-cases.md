@@ -161,9 +161,10 @@ canopy and buildings) burns the SUMO network's lanes into the case's `fbfm40` (o
 (GR1; 1 for Anderson 13), only where the fuel is non-burnable (91–99), has data, and no building model owns the
 cell. It keeps the result as `downloads/<Name>_fbfm40_roads101.tif`, names it as `FuelModelFile` and puts it in the
 case, and reports the burnable patches and single-cell islets before and after: if they do not change, the roads
-were not the problem. GR1 does spread fire, slowly, so this changes the physics. To undo it, name the original
-layer again (the roads raster records it as `ROADS_BURNED_FROM`) and rebuild; after a domain or padding change, do
-that first and burn the roads again.
+were not the problem. GR1 does spread fire, slowly, so this changes the physics. A scenario that names no
+`FuelModelFile` has only the case's own `fbfm40.tif`, so that is copied first to `downloads/<Name>_fbfm40_original.tif`.
+To undo it, name the original layer again (the roads raster records it as `ROADS_BURNED_FROM`) and rebuild; after a
+domain or padding change, do that first and burn the roads again.
 
 **FIRE-RES (Europe).** Point `[ELMFIRE] CanopyDatasetFolder` at a folder holding `panEu_canopyCover.tif`,
 `panEu_canopyHeight.tif`, `panEu_cbh.tif` and `panEu_cbd.tif`; each case is clipped out of them. These are in

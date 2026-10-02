@@ -253,7 +253,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
             {
                 ImGui.SetTooltip("Needs the fire case (step 5) and the SUMO network (step 2). Writes "
                     + ScenarioFiles.DownloadsFolder + "/<name>_fbfm40_roads" + model + ".tif, names it as FuelModelFile and puts it "
-                    + "in the case; the original layer is kept, and the new raster records which it was.");
+                    + "in the case. The original layer is kept - the scenario's FuelModelFile, or, when it names none, a copy of "
+                    + "the case's own as " + ScenarioFiles.DownloadsFolder + "/<name>_fbfm40_original.tif - and the new raster "
+                    + "records which it was.");
             }
             Fields.Caution($"Fuel model {model} spreads fire (slowly): this changes the physics, it is not a bookkeeping fix.");
             ImGui.TreePop();

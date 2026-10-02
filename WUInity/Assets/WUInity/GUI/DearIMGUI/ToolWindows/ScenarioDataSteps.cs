@@ -1151,11 +1151,34 @@ namespace Assets.WUInity.GUI.DearIMGUI
             string inputs = Path.Combine(b.CaseDirectory, "inputs");
             string caseFuel = PREACT.Utility.ElmfireStems.Tif(inputs, b.Stem);
 
-            //What the roads are burned from, for undoing it: the original layer, also when this is done a second time.
+            //What the roads are burned from, for undoing it: the original layer, also when this is done a second time. A
+            //scenario that names no fuel layer (Mati) has only the case's own fbfm40.tif, which the burn replaces, so that is
+            //copied aside first - the undo then names a file that exists (review R2 MA-2).
             string source = string.IsNullOrEmpty(b.FuelModelFile) ? null : GuiFiles.Resolve(ctx.Root, b.FuelModelFile);
-            string original = source != null && File.Exists(source)
-                ? PREACT.Utility.RoadFuelRasterizer.BurnedFrom(source) ?? b.FuelModelFile
-                : "the case's own " + b.Stem + ".tif";
+            string original;
+            if (source != null && File.Exists(source))
+            {
+                original = PREACT.Utility.RoadFuelRasterizer.BurnedFrom(source) ?? b.FuelModelFile;
+            }
+            else
+            {
+                original = PREACT.Utility.RoadFuelRasterizer.BurnedFrom(caseFuel);
+                if (original == null)
+                {
+                    string keptRelative = ScenarioFiles.DownloadsFolder + "/" + ctx.Name + "_" + b.Stem + "_original.tif";
+                    string kept = ctx.InRootForWriting(keptRelative);
+                    if (File.Exists(kept))
+                    {
+                        keptRelative = ScenarioFiles.DownloadsFolder + "/" + ctx.Name + "_" + b.Stem + "_original_"
+                                       + DateTime.Now.ToString("yyyyMMdd_HHmmss", System.Globalization.CultureInfo.InvariantCulture) + ".tif";
+                        kept = ctx.InRootForWriting(keptRelative);
+                    }
+                    File.Copy(caseFuel, kept);
+                    if (File.Exists(caseFuel + ".aux.xml")) File.Copy(caseFuel + ".aux.xml", kept + ".aux.xml", true);
+                    original = keptRelative;
+                    LogStep($"The scenario names no fuel layer of its own, so the case's {b.Stem}.tif is kept first, as {keptRelative}.");
+                }
+            }
 
             string relative = ScenarioFiles.DownloadsFolder + "/" + ctx.Name + "_" + b.Stem + "_roads" + b.RoadFuelModel + ".tif";
             string output = ctx.InRootForWriting(relative);
