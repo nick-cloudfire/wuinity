@@ -76,16 +76,16 @@ Verification/tools/linux-sumo-glue.sh /home/claude/runs/r2-fix/glue
 
 | Case | What it runs | What it checks |
 |---|---|---|
-| [1 flat, wind](../Verification/cases/case1_flat_wind/README.md) | Anderson model 1 on level ground, 6 m/s from the west, point ignition, 2 h; a WUI box 1.2 km downwind with one household; a 1 x 1 km twin with the fuel typed Int16 and Int32; GR2 | Head and backing rate, midflame wind, spread direction, L/B, elliptical shape, symmetry; the car's arrival; the WUI area `build-case` makes from the evacuation group; the boundary's upwind extent, side and symmetry, and the engine's boundary against a re-computation of k-PERIL's algorithm; the fuel raster's type (D1, fixed); a dynamic model; k-PERIL's L/B against the fire's (D2) |
-| [2 slope](../Verification/cases/case2_slope/README.md) | The same fuel on a 20° plane and on level ground, calm; then the plane with 6 m/s blowing up it and a WUI box upslope | R0; the slope and aspect rasters; the upslope rate and its ratio 1 + φ_s; the map projection; the backing rate; wind and slope adding; k-PERIL's effective wind (D6) and its rate on a slope (D7) |
+| [1 flat, wind](../Verification/cases/case1_flat_wind/README.md) | Anderson model 1 on level ground, 6 m/s from the west, point ignition, 2 h; a WUI box 1.2 km downwind with one household; a 1 x 1 km twin with the fuel typed Int16 and Int32; GR2 | Head and backing rate, midflame wind, spread direction, L/B, elliptical shape, symmetry; the car's arrival; the WUI area `build-case` makes from the evacuation group; the boundary's upwind extent, side and symmetry, and the engine's boundary against a re-computation of k-PERIL's algorithm; the fuel raster's type (D1, fixed); a dynamic model; k-PERIL's L/B against the fire's (D2, fixed) |
+| [2 slope](../Verification/cases/case2_slope/README.md) | The same fuel on a 20° plane and on level ground, calm; then the plane with 6 m/s blowing up it and a WUI box upslope | R0; the slope and aspect rasters; the upslope rate and its ratio 1 + φ_s; the map projection; the backing rate; wind and slope adding; k-PERIL's effective wind (D6, fixed) and its rate on a slope (D7) |
 | [3 evacuation](../Verification/cases/case3_evacuation/README.md) | A one-way corridor 1 / 1 / 1.5 km at 30 / 50 / 90 km/h, three households, no fire; four households and an imported front moving at 1 m/s; three scenarios the checklist accepts | Response, walk and arrival times; departures triggered by the front at 500 m; a group with no area (D3), no demographics (D4), no routable car (D5) — all three fixed |
 | [4 campaign](../Verification/cases/case4_campaign/README.md) | `converge-trigger` on a case with one ignitable cell and constant ERA5-style weather, `--streak 3`, then again from scratch | Convergence after streak + 1 boundaries; the convergence table and probability raster against a re-aggregation of the kept boundaries; the per-realization seeds; the drawn weather; bit-identical realizations on the rerun |
 
 ## Results
 
-On the Linux bench (2 cores), v1.1 (branch r2-fix: v1 with round 2's four packages and their integration fixes),
-ELMFIRE a7fb9d6, GDAL 3.8 tools / 3.10 library, SUMO 1.22 with the scratch bindings; 65 s, exit 0 — 61 PASS, 3 XFAIL,
-1 INFO:
+On the Linux bench (2 cores), v1.1 (round 2's packages and their integration fixes, with k-PERIL from the kPERIL
+submodule), ELMFIRE a7fb9d6, GDAL 3.8 tools / 3.10 library, SUMO 1.22 with the scratch bindings; about 105 s, exit 0 —
+63 PASS, 1 XFAIL, 1 INFO:
 
 ```
 Case  Check                                                               Measured        Expected        Tolerance          Result
@@ -103,9 +103,9 @@ Case  Check                                                               Measur
 1     the car's arrival vs response + road length / limit                 1269 s          1268 s          3 s                PASS
 1     k-PERIL boundary upwind extent vs RSET x head ROS                   480.0 m         480.0 m         1 cell             PASS
 1     k-PERIL boundary upwind: bearing WUI -> boundary centroid           270.0 deg       270.0 deg       5 deg              PASS
-1     k-PERIL boundary symmetric about the wind axis (Jaccard)            0.9991          1.000           >= 0.99            PASS
+1     k-PERIL boundary symmetric about the wind axis (Jaccard)            0.9996          1.000           >= 0.99            PASS
 1     k-PERIL boundary vs its algorithm re-computed (Jaccard)             1.000           1.000           >= 0.99 (Jaccard)  PASS
-1     k-PERIL boundary vs the same with the fire's own L/B (Jaccard)      0.92            1.000           >= 0.99            XFAIL (D2)
+1     k-PERIL boundary vs the same with the fire's own L/B (Jaccard)      1.000           1.000           >= 0.99            PASS
 1     1b fire on an Int16 fuel raster burns                               224.1 ac        -               > 0 ac             PASS
 1     1b an Int32 fuel source is stored in the case as Int16              int16           int16           exact              PASS
 1     1b the same fire on an Int32 fuel raster (LFPS's type): same area   224.1 ac        224.1 ac        0.1 %              PASS
@@ -124,7 +124,7 @@ Case  Check                                                               Measur
 2     2c upslope wind + slope: head ROS vs R0 (1 + phi_w + phi_s)         30.393 m/min    30.377 m/min    1 %                PASS
 2     2c k-PERIL boundary vs its algorithm re-computed (Jaccard)          1.000           1.000           >= 0.99            PASS
 2     2c boundary reach below the box vs RSET x the fire's map speed      640.0 m         600.0 m         1 cell             XFAIL (D7)
-2     2c boundary vs the same with wind and slope terms adding (Jaccard)  0.9534          1.000           >= 0.99            XFAIL (D6)
+2     2c boundary vs the same with wind and slope terms adding (Jaccard)  1.000           1.000           >= 0.99            PASS
 3     3a PREACT run exits 0                                               0               0               exact              PASS
 3     3a households respond at the response curve's time                  600.0 s         600.0 s         1 s                PASS
 3     3a households reach their car (100 m walk at 1 m/s)                 701.0 s         700.0 s         1 s                PASS
@@ -162,15 +162,15 @@ wind-plus-slope rates, for a static and a dynamic fuel model; its level set grow
 Anderson's L/B describe (to about 1 % of the rates and 3 % of the area); slope and aspect are derived correctly;
 SUMO's travel times match length over limit within 1.2 s; the households' reaction to the front is right to the
 refresh interval; k-PERIL's boundary is exactly its algorithm applied to the fire it is handed (orientation, units
-and layout are right), on the upwind side and symmetric; the campaign's convergence bookkeeping is exact and its
-realizations reproducible bit for bit. Of the seven discrepancies the cases found, four are fixed in v1.1 and three
-are open; all are below.
+and layout are right), on the upwind side and symmetric, with the fire's own ellipse and its wind and slope adding; the campaign's convergence bookkeeping is exact and its
+realizations reproducible bit for bit. Of the seven discrepancies the cases found, six are fixed in v1.1 and one
+is open; all are below.
 
 ## Discrepancies
 
-Found by these cases, with the evidence the checks print. **D1, D3, D4 and D5 are fixed in v1.1**; their checks are
-ordinary checks now, and each paragraph ends with what was done. **D2, D6 and D7 are open**: each is a modelling
-decision (listed in the [backlog](backlog.md)), and its check stays marked as known (XFAIL) until it is made.
+Found by these cases, with the evidence the checks print. **D1, D2, D3, D4, D5 and D6 are fixed in v1.1**; their
+checks are ordinary checks now, and each paragraph ends with what was done. **D7 is open**: a modelling decision
+(listed in the [backlog](backlog.md)), and its check stays marked as known (XFAIL) until it is made.
 
 **D1 — a fuel raster typed Int32 burns nothing (MEDIUM).** ELMFIRE reads the fuel model raster as 16-bit integers
 (`FBFM%I2` throughout `elmfire_*.f90`); an Int32 raster is decoded by `READ_BSQ_RASTER_SLICE` into its float buffer
@@ -195,7 +195,11 @@ FARSITE. At case 1's 4.23 mi/h midflame wind the fire spreads with L/B 1.47 (mea
 rates: 1.468) and k-PERIL builds its boundary from L/B 2.62; the same algorithm with the fire's L/B gives a boundary
 8.7 % larger (5098 against 4690 cells, Jaccard 0.92), 9 cells deep downwind instead of 6. Which unit is right is
 Nick's call; whichever it is, the other half should use the same (and docs/elmfire-cases.md's "defined for midflame
-wind in mi/h" should say which).
+wind in mi/h" should say which). *Fixed in v1.1* in k-PERIL itself (the kPERIL repository, now a submodule at
+`PREACT/ThirdParty/kPERIL`): kPERILcore uses ELMFIRE's form, 0.936 e^(0.1147 U) + 0.461 e^(−0.0692 U) − 0.397 with U
+the midflame wind in mi/h, capped at `MaxLengthToBreadth` — the run's `MAX_LOW`, which PREACT reads from the namelist
+ELMFIRE ran (8, ELMFIRE's default, for an imported fire). Case 1's boundary is now the fire's ellipse's: 5098 cells,
+9 deep downwind (Jaccard 1.000). A `WSMFEFF_LOW_MULT` other than ELMFIRE's ft/min-to-mi/h would separate them again.
 
 **D3 — an evacuation group with neither MaskFile nor ShapeFile crashes the run (MEDIUM).** The checklist calls a
 single such group a warning ("every household is outside the group and is assigned to it as the default group",
@@ -226,7 +230,11 @@ vector pointing where the wind blows **from** (`wd.tif`'s convention). A wind bl
 the effective wind and one blowing down it increases it: in case 2c, 4.23 mi/h up a 20° slope gives |4.23 − 1.20| =
 3.03 mi/h where 5.43 is meant, and the boundary is 5 % larger than with the two adding (Jaccard 0.953). Fix in
 kPERILcore (turn the wind to where it blows) or in the hand-over, and state the convention; kPERILcore's own
-`interpolateSlope` produces yet another aspect convention (a mathematical angle of the downhill direction).
+`interpolateSlope` produces yet another aspect convention (a mathematical angle of the downhill direction). *Fixed in
+v1.1* in kPERILcore: both vectors point where they push the fire (the wind towards its 'from' direction + 180°, the
+slope term upslope, aspect + 180°), and the aspect it derives from an elevation raster is the compass bearing of the
+downhill direction, as a supplied one is. Case 2c: 4.23 + 1.20 = 5.43 mi/h, the boundary 5958 cells (Jaccard 1.000
+with the terms added as numbers); kPERILcore.Tests checks upslope, downslope and cross-slope winds.
 
 **D7 — k-PERIL reads ELMFIRE's along-slope rate as a map rate (LOW–MEDIUM, conservative).** ELMFIRE's `vs` is the
 rate along the slope (`C%VELOCITY`, "parallel to slope"); the fire covers `vs` x cos(slope) of map distance, as case 2

@@ -5,8 +5,8 @@
 // 'System.Runtime.CompilerServices.IsExternalInit' is not defined or imported" -- currently the
 // Nelson-Dead-Fuel-Moisture submodule's WxsHelpers.cs, whose real build is a .NET 8 project where
 // the type exists. Roslyn only needs the type to be present somewhere in the assembly being
-// compiled; it emits no code and has no runtime cost. The vendored kPERILcore needed the same
-// shim for the same reason (see its source/PriorityQueueShim.cs).
+// compiled; it emits no code and has no runtime cost. kPERILcore (PREACT/ThirdParty/kPERIL) carries
+// the same shim for the same reason (see its source/PriorityQueueShim.cs).
 //
 // Declared here rather than inside the submodule so the fix lives in our own tree and survives
 // re-cloning or updating that submodule. Everything in Assets without an .asmdef compiles into

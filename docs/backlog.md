@@ -11,15 +11,10 @@ Found by `verify.sh` and reported with their evidence in [verification.md](verif
 a modelling choice rather than a bug with one obvious fix, so the checks stay marked as known (XFAIL) until it is
 made; the check then shows XPASS, and its `known=` marker and its paragraph come out.
 
-- **D2 — k-PERIL's ellipse is not the fire's.** ELMFIRE-WUINITY (since 3a0a60a) evaluates Anderson's
-  length-to-breadth with the midflame wind in m/s (`0.1147*WSMFEFF*WSMFEFF_LOW_MULT`); upstream ELMFIRE, FARSITE and
-  k-PERIL use mi/h (0.2566). At case 1's wind the fire's L/B is 1.47 and k-PERIL's 2.62, and a boundary made with
-  the fire's own L/B is 8.7 % larger. Pick the unit; the other side and
-  [elmfire-cases.md](elmfire-cases.md) ("defined for midflame wind in mi/h") follow.
-- **D6 — k-PERIL subtracts an upslope wind from the slope.** `perilData.GetEffectiveWindWithSlope` adds a vector
-  towards where the wind comes from to one pointing upslope, so a wind blowing up a slope reduces the effective wind
-  (case 2c: 3.03 mi/h where 5.43 is meant; the boundary 5 % larger). Decide the convention (kPERILcore or the
-  hand-over in `EvacuationManager`), and state it.
+- ~~**D2 — k-PERIL's ellipse is not the fire's.**~~ Done in v1.1: kPERILcore uses ELMFIRE-WUINITY's form (U in
+  mi/h, coefficients 0.1147 and 0.0692), capped at the run's `MAX_LOW`; case 1's check passes.
+- ~~**D6 — k-PERIL subtracts an upslope wind from the slope.**~~ Done in v1.1 in kPERILcore: the wind and slope
+  vectors both point where they push the fire (case 2c: 5.43 mi/h); its derived aspect is a compass bearing.
 - **D7 — k-PERIL reads ELMFIRE's along-slope rate as a map rate.** `vs` is along the slope; on a 20° slope k-PERIL
   takes the fire to be 6.4 % faster than it crosses the map (15 % at 30°). Conservative. Decide whether to hand
   k-PERIL the map-plane rate.

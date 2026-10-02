@@ -552,16 +552,16 @@ namespace PREACT.Evacuation
         /// because it is used <i>as</i> midflame wind.
         /// </para>
         /// <para>
-        /// What the midflame wind changes is the length-to-breadth ratio (L/B) each cell's ellipse is built from.
-        /// What it does not change much is the boundary. kPERILcore breaks the ellipse down along its parametric
-        /// angle, so the rate towards an angle psi off the head is |(a sin psi, c + b cos psi)|, and once L/B is
-        /// above about 3 that is close to ROS (1 + cos psi) / 2 whatever L/B is: the flank rate is 0.51 of the head
-        /// rate at 5.9 mi/h (L/B 4) and 0.50 at 16.3 mi/h (L/B 60). The wind moves the flank and backing rates only
-        /// below about 3 mi/h of effective midflame wind (0.55 at 2.75 mi/h). On two Mati realizations midflame
-        /// against 10 m wind changed the boundary by 1-2 % (Jaccard 0.99). So neither "a 10 m wind makes needles"
-        /// nor "midflame wind widens the boundary" is true of this k-PERIL; nothing here caps L/B, and whether the
-        /// breakdown should follow the true polar ellipse, under which both the wind and a cap would matter a great
-        /// deal, is k-PERIL's author's call.
+        /// What the midflame wind changes is the length-to-breadth ratio (L/B) each cell's ellipse is built from:
+        /// kPERILcore uses ELMFIRE's form, 0.936 e^(0.1147 U) + 0.461 e^(-0.0692 U) - 0.397 with U in mi/h, capped at
+        /// the run's MAX_LOW (v1.1; it used to apply Anderson's per-m/s coefficients to mi/h, so its ellipses were far
+        /// longer than the fire's). kPERILcore breaks the ellipse down along its parametric angle, so the rate towards
+        /// an angle psi off the head is |(a sin psi, c + b cos psi)|; once L/B is above about 3 that is close to
+        /// ROS (1 + cos psi) / 2 whatever L/B is - the flank rate is 0.52 of the head rate at 10 mi/h (L/B 2.8) and
+        /// 0.50 at 16.3 mi/h (L/B 5.8) - so the wind moves the flank and backing rates mainly below about 10 mi/h of
+        /// effective midflame wind (flank 0.62, backing 0.24 of the head at 2.75 mi/h). Whether the breakdown should
+        /// follow the true polar ellipse, under which the wind and the cap would matter a great deal more, is
+        /// k-PERIL's author's call.
         /// </para>
         /// <para>
         /// Direction: from the weather the fire ran on, sampled at each cell's arrival time. For an ELMFIRE fire run
@@ -1108,13 +1108,15 @@ namespace PREACT.Evacuation
                             }
 
                             //Topography goes in with the rate of spread. k-PERIL vector-adds 0.06 of
-                            //the slope to the wind before deriving how elongated spread is, so
+                            //the slope (pointing upslope) to the wind (pointing where it blows) before deriving
+                            //how elongated spread is, capped at the fire's own MAX_LOW when it is known, so
                             //leaving these out - which is what happened, the optional arguments
                             //defaulting to null and k-PERIL standing in zeros - meant every boundary
                             //was computed as if the ground were level.
                             _triggerBufferModule = new kPERIL(wrsetMinutes, runs[i].WuiArea, windSpeedMph, windDirectionDegrees,
                                 simulation.Hazards.Wildfire.GetMaxROS(), simulation.Hazards.Wildfire.GetMaxROSAzimuth(),
-                                simulation.Hazards.Wildfire.GetCellSizeX(), elevation, slope, aspect);
+                                simulation.Hazards.Wildfire.GetCellSizeX(), elevation, slope, aspect,
+                                (float)(simulation.Hazards.Wildfire.FireWeather?.MaxLengthToBreadth ?? 0.0));
 
                             Engine.Message(simulation, Engine.LogType.Log,
                                 $"k-PERIL run {i + 1} of {runs.Count}: {runs[i].Label}, which the fire reached in "

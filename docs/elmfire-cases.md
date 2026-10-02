@@ -377,15 +377,17 @@ Every run sets `DUMP_MIDFLAME_WINDSPEED = .TRUE.` (ELMFIRE-WUINITY a7fb9d6 and l
 `outputs/mfws_<case>_<seconds>.tif` on the final dump: the **midflame wind speed in ft/min** for every cell the
 fire reached (the 20 ft wind times the wind adjustment factor), nodata (-9999) elsewhere.
 
-k-PERIL's length-to-breadth ratio (Anderson 1983) is defined for midflame wind in mi/h, so k-PERIL is given
-`mfws / 88`. It used to be given the 10 m wind: on Mati realization 13, 14.4 mi/h at 10 m against 2.75 mi/h
+k-PERIL's length-to-breadth ratio is ELMFIRE's own (Anderson 1983 in the form `elmfire_level_set.f90` writes it,
+0.936 e^(0.1147 U) + 0.461 e^(−0.0692 U) − 0.397 with U the midflame wind in mi/h, capped at the run's `MAX_LOW`), so
+k-PERIL is given `mfws / 88`. It used to be given the 10 m wind: on Mati realization 13, 14.4 mi/h at 10 m against 2.75 mi/h
 midflame. The direction comes from the run's own `wd.tif`, each cell taking the band covering the time the fire
 reached it; cells the fire never reached take the last band.
 
-What this changes: the ellipse's length-to-breadth ratio. What it does not change much: the boundary. kPERILcore
-breaks the ellipse down along its parametric angle, so above about 3 mi/h the flank rate is about half the head
-rate whatever the ratio; on two Mati realizations midflame against 10 m wind moved the boundary by 1–2 % (Jaccard
-0.98–0.99). Nothing caps the ratio.
+What this changes: the ellipse's length-to-breadth ratio. kPERILcore breaks the ellipse down along its parametric
+angle, so once the ratio is above about 3 (about 10 mi/h) the flank rate is about half the head rate whatever the
+ratio; below that the wind moves the flank and backing rates. On two Mati realizations midflame against 10 m wind
+moved the boundary by 1–2 % (Jaccard 0.98–0.99; measured before v1.1, when k-PERIL's ratio was much larger than the
+fire's). The ratio is capped at the namelist's `MAX_LOW` (8 by default); an imported fire gets 8.
 
 For an imported fire, name its midflame raster as `[AscImport] MidflameWindSpeedFile`. Without one, k-PERIL
 takes `[kPERIL] WindSpeedFile` *as* midflame wind and warns loudly.

@@ -1,9 +1,9 @@
-"""A reference re-computation of k-PERIL's trigger boundary, written from the algorithm as PREACT/kPERILcore
-documents and implements it (kperil.cs, perilData.cs), in plain Python.
+"""A reference re-computation of k-PERIL's trigger boundary, written from the algorithm as kPERILcore
+(PREACT/ThirdParty/kPERIL/kPERILcore: kperil.cs, perilData.cs) documents and implements it, in plain Python.
 
 It is not an independent physical expectation - it reproduces k-PERIL's own modelling choices (its 8-neighbour
-travel-time graph, its parametric-angle ellipse breakdown, Anderson's L/B applied to mi/h, its 0.06 x slope
-effective wind) - but it is independent of the engine's wiring: which rasters k-PERIL is handed, in which layout and
+travel-time graph, its parametric-angle ellipse breakdown, ELMFIRE's L/B with U in mi/h capped at MAX_LOW, its
+0.06 x slope effective wind) - but it is independent of the engine's wiring: which rasters k-PERIL is handed, in which layout and
 units. A boundary that differs from this one means the engine fed k-PERIL something other than the fire it ran.
 """
 
@@ -14,13 +14,18 @@ import math
 NEIGHBOURS = [(0, -1), (1, -1), (1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1)]
 
 
-def anderson_lb(u):
-    return 0.936 * math.exp(0.2566 * u) + 0.461 * math.exp(-0.1548 * u) - 0.397
+MAX_LOW = 8.0   # ELMFIRE's default cap on L/B, which kPERILcore takes as its own default
 
 
-def directional_rates(ros, direction_deg, u_eff):
+def length_to_breadth(u_mph, max_low=MAX_LOW):
+    """kPERILcore's L/B (kperil.cs LengthToBreadth): ELMFIRE's form with U in mi/h, capped, never below 1."""
+    lb = 0.936 * math.exp(0.1147 * u_mph) + 0.461 * math.exp(-0.0692 * u_mph) - 0.397
+    return max(1.0, min(lb, max_low))
+
+
+def directional_rates(ros, direction_deg, u_eff, lb_of=length_to_breadth):
     """k-PERIL's rate towards each of the 8 neighbour bearings for one cell (kperil.cs breakdownRateOfSpread)."""
-    lb = anderson_lb(u_eff)
+    lb = lb_of(u_eff)
     s = math.sqrt(max(lb * lb - 1.0, 0.0))
     hb = (lb + s) / (lb - s)
     a = ros / (2.0 * lb) * (1.0 + 1.0 / hb)
@@ -37,30 +42,21 @@ def directional_rates(ros, direction_deg, u_eff):
 
 
 def effective_wind(wind_mph, wind_from_deg, slope_deg, aspect_deg):
-    """perilData.GetEffectiveWindWithSlope, as written (both vectors through cos for x and sin for y)."""
-    s = 0.06 * slope_deg
-    x2 = wind_mph * math.cos(math.radians(wind_from_deg))
-    y2 = wind_mph * math.sin(math.radians(wind_from_deg))
-    up = math.radians(aspect_deg + 180.0)
-    x1 = s * math.cos(up)
-    y1 = s * math.sin(up)
-    return math.hypot(x1 + x2, y1 + y2)
-
-
-def effective_wind_aligned(wind_mph, wind_from_deg, slope_deg, aspect_deg):
-    """The effective wind with both vectors pointing the way they push the fire: the wind towards wind_from + 180,
-    the slope term upslope (aspect + 180, aspect being the downhill bearing PREACT hands k-PERIL)."""
+    """perilData.GetEffectiveWindWithSlope: both vectors pointing the way they push the fire, the wind towards
+    wind_from + 180, the slope term upslope (aspect + 180, aspect being the downhill bearing PREACT hands k-PERIL)."""
     s = 0.06 * slope_deg
     w = math.radians(wind_from_deg + 180.0)
     up = math.radians(aspect_deg + 180.0)
     return math.hypot(wind_mph * math.sin(w) + s * math.sin(up), wind_mph * math.cos(w) + s * math.cos(up))
 
 
-def boundary(ros, direction, wind_mph, wind_from, slope, aspect, wui, rset_min, cell, effective=None):
+def boundary(ros, direction, wind_mph, wind_from, slope, aspect, wui, rset_min, cell, effective=None, lb_of=None):
     """All rasters are Grids on the fire grid (ros in m/min, nodata None); `wui` is a set of (col, row). Returns the
     set of cells (outside the WUI area) from which the fire reaches a WUI perimeter cell within rset_min.
-    `effective` replaces k-PERIL's effective-wind rule (default: as perilData implements it)."""
+    `effective` replaces k-PERIL's effective-wind rule and `lb_of` its L/B of the effective wind in mi/h (defaults:
+    as kPERILcore implements them)."""
     effective = effective or effective_wind
+    lb_of = lb_of or length_to_breadth
     ncols, nrows = ros.ncols, ros.nrows
     rates = {}
     for r in range(nrows):
@@ -71,7 +67,7 @@ def boundary(ros, direction, wind_mph, wind_from, slope, aspect, wui, rset_min, 
             u = effective(wind_mph.values[r][c] or 0.0, wind_from.values[r][c] or 0.0,
                                (slope.values[r][c] or 0.0) if slope else 0.0,
                                (aspect.values[r][c] or 0.0) if aspect else 0.0)
-            rates[(c, r)] = directional_rates(v, direction.values[r][c] or 0.0, u)
+            rates[(c, r)] = directional_rates(v, direction.values[r][c] or 0.0, u, lb_of)
 
     def travel(c, r, d):
         """Time for the fire to go from (c, r) to its neighbour in direction d (kperil.cs getTravelTime...), with

@@ -30,6 +30,10 @@ while read -r version _; do
 done < <(dotnet --list-sdks)
 (( sdk_ok )) || fail "no .NET SDK 8 or newer found ('dotnet --list-sdks'). Install the .NET 8 SDK."
 
+# k-PERIL is a git submodule; a clone made without --recursive has an empty folder there.
+[[ -f "$ROOT/PREACT/ThirdParty/kPERIL/kPERILcore/kPERILcore.csproj" ]] ||
+    fail "the k-PERIL submodule is not checked out (PREACT/ThirdParty/kPERIL). Run 'git submodule update --init --recursive' in $ROOT, then build again."
+
 build() {
     printf '\n==> dotnet build %s -c Release\n' "$1"
     dotnet build "$ROOT/$1" -c Release -nologo || fail "$1 did not build (see the errors above)."

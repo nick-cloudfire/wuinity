@@ -90,14 +90,14 @@ Notes before relying on the boundary's shape:
 - **Orientation.** Before v1 the rasters were handed to kPERILcore in the engine's own array layout, which
   kPERILcore reads rotated by 90°: every boundary lay on the wrong side of the WUI area. Fixed in v1 — a fire
   spreading east now gives a boundary extending west. See the [changelog](../CHANGELOG.md).
-- **Wind barely changes the boundary.** kPERILcore evaluates the ellipse at its parametric angle, so once the
-  length-to-breadth ratio is above about 3 the flank rate is about half the head rate whatever the wind: 0.51 at
-  5.9 mi/h, 0.50 at 16.3 mi/h. Only below about 3 mi/h of effective midflame wind does the wind matter (0.55 at
-  2.75 mi/h). Moving from 10 m to midflame wind changed Mati boundaries by 1–2 %. Nothing caps the ratio. Whether
-  the breakdown should follow the true polar ellipse is for k-PERIL's author to decide.
-- **The slope vector.** The wind is added at its "from" bearing and the slope at its upslope bearing, so an
-  upslope wind is subtracted from the slope term rather than added. It affects only the ratio's magnitude, so its
-  effect on the boundary is small for the reason above.
+- **The ellipse is the fire's.** Since v1.1 kPERILcore's length-to-breadth ratio is ELMFIRE's (U, the effective
+  midflame wind, in mi/h; capped at the run's `MAX_LOW`, 8 by default). It evaluates the ellipse at its parametric
+  angle, so once the ratio is above about 3 (about 10 mi/h) the flank rate is about half the head rate whatever the
+  wind: 0.52 at 10 mi/h, 0.50 at 16.3 mi/h; below that the wind moves the flank and backing rates (flank 0.62,
+  backing 0.24 of the head at 2.75 mi/h). Whether the breakdown should follow the true polar ellipse is for
+  k-PERIL's author to decide.
+- **The slope vector.** The wind and 0.06 x the slope (degrees) are added as vectors pointing where each pushes
+  the fire, so an upslope wind adds to the slope term (v1.1; before, it was subtracted).
 - **A boundary is conditional on its fire.** One run's boundary is one fire's; a [trigger
   campaign](trigger-campaigns.md) gives the probability over many.
 

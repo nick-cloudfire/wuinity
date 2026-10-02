@@ -41,7 +41,7 @@ area's fire-weather history until the probability of each cell lying inside the 
 | **ELMFIRE** (submodule) | The fire model, run as an external Fortran program. PREACT builds its case, runs it and reads its rasters back. |
 | **Household model** (`MacroHouseholdSim`) | Households respond on a departure-time curve, or earlier when the fire front comes near their home, walk to their car and drive. |
 | **SUMO** | Traffic simulation of the cars, through libsumo. |
-| **k-PERIL** (`PREACT/kPERILcore`) | Trigger boundaries: back-propagates the fire's spread from the WUI area for the evacuation's required time. |
+| **k-PERIL** (`PREACT/ThirdParty/kPERIL`, a submodule) | Trigger boundaries: back-propagates the fire's spread from the WUI area for the evacuation's required time. |
 | **WUInity** (`WUInity/`) | The Unity visualizer and GUI: a thirteen-step workflow panel from an empty folder to a trigger campaign. |
 | **PREACT.exe** (`PREACT/PREACTexecute`) | Runs a scenario without Unity. |
 | **PREACTcli** (`PREACT/PREACTcli`) | Builds ELMFIRE cases (`build-case`), runs trigger campaigns (`converge-trigger`), makes population files. |

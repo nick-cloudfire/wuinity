@@ -45,8 +45,8 @@ namespace PREACT.Utility
         /// The fire reader needs the first three rasters, and SPREAD_RATE_IN_M is the one that is not an error
         /// anywhere when wrong: without it ELMFIRE dumps ft/min and the fire spreads 3.28 times too fast. The
         /// midflame wind is what k-PERIL's length-to-breadth ratio is defined for; without it the trigger boundary
-        /// falls back to the 10 m wind, which overstates every ellipse's length-to-breadth ratio (though with
-        /// kPERILcore's breakdown the boundary changes little - see EvacuationManager.ResolveTriggerWind). One list, so the case builder, the
+        /// falls back to the 10 m wind, which overstates every ellipse's length-to-breadth ratio (see
+        /// EvacuationManager.ResolveTriggerWind for how much that moves the boundary). One list, so the case builder, the
         /// single-run patch and every campaign realization force the same set.
         /// </remarks>
         public static readonly (string Key, string Value)[] RequiredOutputs =
@@ -112,6 +112,12 @@ namespace PREACT.Utility
         /// case — one fire, one set of output rasters — per realization.
         /// </summary>
         public const string MeteorologyBandStart = "METEOROLOGY_BAND_START";
+
+        /// <summary>
+        /// The cap on the fire's length-to-width ratio (&amp;SIMULATOR, 8 by default), which k-PERIL takes as the cap on
+        /// its own spread ellipse so the boundary's ellipse is the fire's.
+        /// </summary>
+        public const string MaxLow = "MAX_LOW";
 
         /// <inheritdoc cref="MeteorologyBandStart"/>
         public const string MeteorologyBandStop = "METEOROLOGY_BAND_STOP";

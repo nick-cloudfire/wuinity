@@ -7,14 +7,14 @@
 
 using PREACT.Math;
 using System.IO;
-// The vendored k-PERIL engine (PREACT/kPERILcore). Aliased because its class name
+// The k-PERIL algorithm (kPERILcore, from the kPERIL submodule at PREACT/ThirdParty/kPERIL). Aliased because its class name
 // (kPERIL.kPERIL) collides with this wrapper class (PREACT.kPERIL).
 using PerilCore = global::kPERIL.kPERIL;
 
 namespace PREACT
 {
     /// <summary>
-    /// WUInity wrapper around the vendored k-PERIL trigger-boundary engine.
+    /// WUInity wrapper around the k-PERIL trigger-boundary algorithm (kPERILcore).
     /// Pipeline: import ROS + direction, wind, topography and the WUI area, then
     /// breakdownRateOfSpread -> getTravelTime -> getTriggerBoundary(RSET).
     /// RSET (WRSET) is the evacuation time in MINUTES.
@@ -40,14 +40,17 @@ namespace PREACT
         private float[,]? _elevation;
         private float[,]? _slope;
         private float[,]? _aspect;
+        private float _maxLengthToBreadth;
 
         /// <summary>
         /// Takes the rate-of-spread field (and azimuth) the fire module produced - for ELMFIRE, its
         /// <c>vs</c> and <c>spread_dir</c> rasters. Slope/aspect are used directly when supplied (an
         /// ELMFIRE case has slp/asp); otherwise they are derived from elevation, or assumed flat if
-        /// neither is available.
+        /// neither is available. <paramref name="maxLengthToBreadth"/> caps each cell's spread ellipse - the fire's own
+        /// cap (ELMFIRE's MAX_LOW) when it is known; 0 or less takes kPERILcore's default (8, ELMFIRE's default).
         /// </summary>
-        public kPERIL(float rsetMinutes, bool[] wuiArea, float[,] windSpeedMph, float[,] windDirectionDegrees, float[,] maxROS, float[,] rosAzimuth, float cellSize, float[,]? elevation = null, float[,]? slope = null, float[,]? aspect = null)
+        public kPERIL(float rsetMinutes, bool[] wuiArea, float[,] windSpeedMph, float[,] windDirectionDegrees, float[,] maxROS, float[,] rosAzimuth, float cellSize, float[,]? elevation = null, float[,]? slope = null, float[,]? aspect = null,
+            float maxLengthToBreadth = 0f)
         {
             _xDim = maxROS.GetLength(0);
             _yDim = maxROS.GetLength(1);
@@ -63,6 +66,7 @@ namespace PREACT
             _elevation = elevation;
             _slope = slope;
             _aspect = aspect;
+            _maxLengthToBreadth = maxLengthToBreadth > 0f ? maxLengthToBreadth : PerilCore.DefaultMaxLengthToBreadth;
         }
 
         /// <summary>
@@ -72,7 +76,7 @@ namespace PREACT
         /// Every raster is handed to kPERILcore in kPERILcore's own layout and the boundary is converted back, at
         /// this one place (<see cref="ToCoreLayout"/>, <see cref="FromCoreLayout"/>). The engine keeps rasters as
         /// <c>[x = column (east), y = row from the bottom (north)]</c>; kPERILcore keeps them as
-        /// <c>[row from the top, column]</c> - its own GeoTIFF/ASCII reader fills them that way - and its geometry
+        /// <c>[row from the top, column]</c> - kPERIL's own GeoTIFF/ASCII reader (kPERILdll) fills them that way - and its geometry
         /// is written for that: direction 0 is the neighbour one row up (north), and the rate towards direction
         /// <c>d</c> is the spread ellipse evaluated at compass bearing <c>45 d</c> against the compass spread
         /// direction. The engine's arrays used to go in as they were, so direction 0 was the neighbour one column
@@ -86,6 +90,7 @@ namespace PREACT
                 + _RSET.ToString(System.Globalization.CultureInfo.InvariantCulture) + " minutes.");
 
             PerilCore peril = new PerilCore();
+            peril.MaxLengthToBreadth = _maxLengthToBreadth;
 
             //ROS must be imported first so perilData knows the raster dimensions.
             peril.perilData.importFireRastersByVariable(ToCoreLayout(_maxROS), ToCoreLayout(_rosAzimuth));
@@ -99,7 +104,7 @@ namespace PREACT
                 //The real elevation when there is one, rather than a grid of zeros. k-PERIL works from the
                 //slope and aspect given here, so the elevation is not what drives the result, but handing
                 //it a flat surface alongside a slope field is a contradiction worth not writing down.
-                peril.perilData.importTopographyRastersByFileName(ToCoreLayout(_elevation ?? new float[_xDim, _yDim]),
+                peril.perilData.importTopographyRastersByVariable(ToCoreLayout(_elevation ?? new float[_xDim, _yDim]),
                     ToCoreLayout(_slope), ToCoreLayout(_aspect));
                 Engine.Message(null, Engine.LogType.Log, "k-PERIL is using the supplied slope and aspect.");
             }
@@ -122,7 +127,8 @@ namespace PREACT
             //wind before using it. The field goes in as a raster: k-PERIL does not model weather
             //changing over TIME, but it handles wind varying over SPACE perfectly well, and the
             //weather pipeline runs WindNinja precisely to resolve that variation over terrain.
-            //Speeds are in mi/h, the unit Anderson's length-to-breadth correlation expects.
+            //Speeds are in mi/h, the unit of ELMFIRE's length-to-breadth correlation that kPERILcore uses, capped
+            //at the fire's own MAX_LOW. Directions are where the wind blows from; aspect the downhill bearing.
             peril.perilData.importWeatherRastersByVariable(ToCoreLayout(_windSpeedMph), ToCoreLayout(_windDirectionDegrees));
 
             peril.perilData.importWuiRastersByVariable(ToCoreLayout(BuildWuiRaster(_wuiArea, _xDim, _yDim)));
@@ -131,7 +137,8 @@ namespace PREACT
             var travelTime = peril.getTravelTimeFromBrokenDownRos(brokenDownROS);
             _triggerBufferOutput = FromCoreLayout(peril.getTriggerBoundary(travelTime, _RSET));
 
-            Engine.Message(null, Engine.LogType.Log, "k-PERIL trigger boundary calculated.");
+            Engine.Message(null, Engine.LogType.Log, "k-PERIL trigger boundary calculated (length-to-breadth capped at "
+                + _maxLengthToBreadth.ToString(System.Globalization.CultureInfo.InvariantCulture) + ").");
         }
 
         /// <summary>

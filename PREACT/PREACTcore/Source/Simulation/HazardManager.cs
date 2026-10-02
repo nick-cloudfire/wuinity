@@ -219,6 +219,7 @@ namespace PREACT
                 WindDirectionFile = Absolute(input.RootFolder, fire.WindDirectionFile),
                 SecondsPerBand = fire.SecondsPerBand,
                 StartBand = fire.StartBand,
+                MaxLengthToBreadth = fire.MaxLengthToBreadth,
                 ElevationFile = Absolute(input.RootFolder, fire.ElevationFile),
                 SlopeFile = Absolute(input.RootFolder, fire.SlopeFile),
                 AspectFile = Absolute(input.RootFolder, fire.AspectFile),

@@ -62,6 +62,9 @@ namespace PREACT.Utility
             public double SecondsPerBand = 3600.0;
             public int StartBand = 1;
 
+            /// <summary>The run's MAX_LOW (the cap on the fire's length-to-width ratio); 0 when it cannot be read.</summary>
+            public double MaxLengthToBreadth;
+
             /// <summary>
             /// The terrain the fire burned on - the run namelist's DEM, slope and aspect rasters, on the fire grid - relative
             /// to the root; empty when one of them is not there.
@@ -481,6 +484,8 @@ namespace PREACT.Utility
             result.SecondsPerBand = ReadDouble(runLines, ElmfireNamelistKeys.InputsGroup, ElmfireNamelistKeys.DtMeteorology, 3600.0);
             result.StartBand = (int)ReadDouble(runLines, ElmfireNamelistKeys.MonteCarloGroup, ElmfireNamelistKeys.MeteorologyBandStart, 1.0);
             if (result.StartBand < 1) result.StartBand = 1;
+            //ELMFIRE's own default when the namelist does not say, as ELMFIRE itself would run.
+            result.MaxLengthToBreadth = ReadDouble(runLines, ElmfireNamelistKeys.SimulatorGroup, ElmfireNamelistKeys.MaxLow, 8.0);
 
             //The terrain the fire ran on, for k-PERIL's slope term: the case's own dem/slp/asp, on the fire grid by
             //construction, where the scenario's [Landscape] may still be the DEM it was drawn on (mati.wui's 616x590

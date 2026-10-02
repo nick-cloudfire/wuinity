@@ -2,7 +2,6 @@ using System.Globalization;
 using OSGeo.GDAL;
 using PREACT.Utility;
 using PerilCore = global::kPERIL.kPERIL;
-using PerilIO = global::kperil.perilInputOutput;
 
 namespace PREACT.Tests
 {
@@ -20,6 +19,7 @@ namespace PREACT.Tests
             runner.Add("k-PERIL: a real Mati realization matches kPERILcore's own layout (data permitting)", RealRealizationMatchesCore);
             runner.Add("k-PERIL: the saved boundary is north-up at the grid's corner, with a .prj, as GDAL reads it", SavedBoundaryGeoreferenced);
             runner.Add("k-PERIL: a boundary's file name always has an extension", BoundaryFileNames);
+            runner.Add("k-PERIL: the spread ellipse is capped at the fire's MAX_LOW", LengthToBreadthCap);
         }
 
         private static void BoundaryFileNames()
@@ -38,7 +38,7 @@ namespace PREACT.Tests
         /// Uniform fire, flat ground, 3x3 WUI area at the centre, RSET 30 min: the reviewer's synthetic case. The
         /// wind blows the way the fire spreads (from the opposite bearing), as it does in an ELMFIRE run.
         /// </summary>
-        private static float[,] UniformBoundary(float spreadDirection, float windMph = 10f)
+        private static float[,] UniformBoundary(float spreadDirection, float windMph = 10f, float maxLengthToBreadth = 0f)
         {
             var ros = new float[N, N];
             var sd = new float[N, N];
@@ -63,7 +63,7 @@ namespace PREACT.Tests
                 for (int y = WuiLow; y <= WuiHigh; ++y) wui[x + y * N] = true;
             }
 
-            var k = new kPERIL(30f, wui, ws, wd, ros, sd, 30f, null, slope, aspect);
+            var k = new kPERIL(30f, wui, ws, wd, ros, sd, 30f, null, slope, aspect, maxLengthToBreadth);
             k.Run();
             return k.TriggerBufferOutput;
         }
@@ -100,6 +100,21 @@ namespace PREACT.Tests
             Assert.True(System.Math.Abs(n - s) <= 1, "the boundary is symmetric across the wind (north/south): " + reach);
         }
 
+        /// <summary>
+        /// At 20 mi/h ELMFIRE's L/B (11.4) is above the default cap of 8, so the boundary is the same at the default and
+        /// at 8 given explicitly; a cap of 1.5 makes the ellipse rounder - faster flanks and back - so the boundary
+        /// covers more cells. Its head-fire reach upwind is the same: the head rate is the ROS whatever the ellipse.
+        /// </summary>
+        private static void LengthToBreadthCap()
+        {
+            Assert.Near(8.0, global::kPERIL.kPERIL.LengthToBreadth(20.0), 0.0, "L/B at 20 mi/h is capped at 8 by default");
+            float[,] at8 = UniformBoundary(90f, 20f, 8f), atDefault = UniformBoundary(90f, 20f), at15 = UniformBoundary(90f, 20f, 1.5f);
+            int Cells(float[,] b) => b.Cast<float>().Count(v => v == 1f);
+            Assert.Equal(Cells(at8), Cells(atDefault), "the default cap is 8");
+            Assert.Equal(Reach(at8).West, Reach(at15).West, "the upwind (head fire) reach does not depend on the cap");
+            Assert.True(Cells(at15) > Cells(at8), $"a rounder ellipse gives a larger boundary ({Cells(at15)} cells at a cap of 1.5, {Cells(at8)} at 8)");
+        }
+
         private static void FireSpreadingNorth()
         {
             (int w, int e, int n, int s) = Reach(UniformBoundary(0f));
@@ -131,19 +146,19 @@ namespace PREACT.Tests
         private static (double Jaccard, int Cells, float[,] Boundary) CompareWithCore(PerilFiles f)
         {
             // ---- kPERILcore on its own, in its own layout
-            float[,] cRos = PerilIO.ReadRaster(f.Ros);
-            float[,] cSd = PerilIO.ReadRaster(f.SpreadDirection);
-            float[,] cWs = Map(PerilIO.ReadRaster(f.WindSpeed), f.WindSpeedToMph);
-            float[,] cWd = PerilIO.ReadRaster(f.WindDirection);
-            float[,] cSlope = PerilIO.ReadRaster(f.Slope);
-            float[,] cAspect = PerilIO.ReadRaster(f.Aspect);
-            float[,] cWui = Map(PerilIO.ReadRaster(f.Wui), v => v > 0f && v != -9999f ? 1f : 0f);
+            float[,] cRos = ReadCoreLayout(f.Ros);
+            float[,] cSd = ReadCoreLayout(f.SpreadDirection);
+            float[,] cWs = Map(ReadCoreLayout(f.WindSpeed), f.WindSpeedToMph);
+            float[,] cWd = ReadCoreLayout(f.WindDirection);
+            float[,] cSlope = ReadCoreLayout(f.Slope);
+            float[,] cAspect = ReadCoreLayout(f.Aspect);
+            float[,] cWui = Map(ReadCoreLayout(f.Wui), v => v > 0f && v != -9999f ? 1f : 0f);
 
             var core = new PerilCore();
             core.perilData.importFireRastersByVariable(cRos, cSd);
             core.perilData.cellSize = f.CellSize;
             core.perilData.noDataValue = -9999f;
-            core.perilData.importTopographyRastersByFileName(new float[cRos.GetLength(0), cRos.GetLength(1)], cSlope, cAspect);
+            core.perilData.importTopographyRastersByVariable(new float[cRos.GetLength(0), cRos.GetLength(1)], cSlope, cAspect);
             core.perilData.importWeatherRastersByVariable(cWs, cWd);
             core.perilData.importWuiRastersByVariable(cWui);
             float[,] native = core.getTriggerBoundary(core.getTravelTimeFromBrokenDownRos(core.breakdownRateOfSpread()), f.RsetMinutes);
@@ -197,6 +212,29 @@ namespace PREACT.Tests
             Assert.True(cells > 0, "the boundary is not empty");
             Assert.Equal(0, different, "cells whose value differs between the wrapper and kPERILcore's own layout");
             return (either == 0 ? 1.0 : (double)both / either, cells, engine);
+        }
+
+        /// <summary>
+        /// A GeoTIFF's first band the way kPERIL's own reader (kPERILdll's <c>perilInputOutput.ReadGeoTiff</c>, which
+        /// kPERILcore leaves out so it needs no GDAL) fills it: <c>[row from the top, column]</c>.
+        /// </summary>
+        private static float[,] ReadCoreLayout(string path)
+        {
+            Gdal.AllRegister();
+            using (Dataset ds = Gdal.Open(path, Access.GA_ReadOnly))
+            {
+                Assert.True(ds != null, "open " + path);
+                Band band = ds.GetRasterBand(1);
+                int width = band.XSize, height = band.YSize;
+                var buffer = new float[width * height];
+                band.ReadRaster(0, 0, width, height, buffer, width, height, 0, 0);
+                var data = new float[height, width];
+                for (int y = 0; y < height; ++y)
+                {
+                    for (int x = 0; x < width; ++x) data[y, x] = buffer[y * width + x];
+                }
+                return data;
+            }
         }
 
         private static float[,] Map(float[,] raster, Func<float, float> f)

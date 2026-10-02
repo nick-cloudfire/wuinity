@@ -50,6 +50,13 @@ foreach ($line in @(& dotnet --list-sdks)) {
 }
 if (-not $sdkOk) { Fail "no .NET SDK 8 or newer found ('dotnet --list-sdks'). Install the .NET 8 SDK." }
 
+# k-PERIL is a git submodule; a clone made without --recursive has an empty folder there.
+$KperilCore = [System.IO.Path]::Combine($Root, 'PREACT', 'ThirdParty', 'kPERIL', 'kPERILcore', 'kPERILcore.csproj')
+if (-not (Test-Path -LiteralPath $KperilCore)) {
+    Fail ("the k-PERIL submodule is not checked out (PREACT\ThirdParty\kPERIL). Run " +
+          "'git submodule update --init --recursive' in $Root, then build again.")
+}
+
 function Build-Project([string]$Project) {
     Write-Host ''
     Write-Host "==> dotnet build $Project -c Release" -ForegroundColor Cyan

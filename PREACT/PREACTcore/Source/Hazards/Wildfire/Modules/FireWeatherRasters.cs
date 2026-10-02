@@ -40,6 +40,13 @@ namespace PREACT.Wildfire
         public int StartBand = 1;
 
         /// <summary>
+        /// The cap the fire put on its spread ellipse's length-to-breadth ratio - an ELMFIRE run's MAX_LOW - which
+        /// k-PERIL then applies to its own; 0 when the fire module does not know it, and k-PERIL uses its default
+        /// (8, ELMFIRE's default).
+        /// </summary>
+        public double MaxLengthToBreadth;
+
+        /// <summary>
         /// The terrain the fire burned on - elevation, slope and aspect rasters on the fire grid (an ELMFIRE case's
         /// dem/slp/asp) - for k-PERIL's slope term; null when the fire module does not know it, and the trigger
         /// boundary then samples the scenario's <c>[Landscape]</c>.

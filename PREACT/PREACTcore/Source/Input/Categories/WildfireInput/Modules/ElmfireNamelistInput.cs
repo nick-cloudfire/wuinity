@@ -335,15 +335,18 @@ namespace PREACT.Input
         /// <summary>
         /// The cap on the fire's length-to-width ratio - its ellipse, ELMFIRE's <c>C%LOW</c> ("L over W"), Anderson's
         /// length-to-breadth - which ELMFIRE computes from the effective midflame wind (<c>elmfire_level_set.f90</c>).
-        /// Dimensionless; 8 by default. Not a wind speed and not a "low-wind branch".
+        /// Dimensionless; 8 by default. Not a wind speed and not a "low-wind branch". k-PERIL caps its own spread
+        /// ellipse at the run's value, so the trigger boundary's ellipse is the fire's.
         /// </summary>
         public double MAX_LOW = 8.0;
 
         /// <summary>
         /// The factor that turns the effective midflame wind <c>WSMFEFF</c> (ft/min) into the unit of ELMFIRE's
         /// length-to-width correlation: <c>60.0/5280.0</c> converts ft/min to mi/h (ELMFIRE's default, written that way).
-        /// ELMFIRE-WUINITY's coefficients in that correlation (0.1147, 0.0692) are Anderson's per m/s, applied to mi/h;
-        /// upstream ELMFIRE and k-PERIL use 0.2566 and 0.1548 per mi/h - an open question (docs/verification.md, D2).
+        /// ELMFIRE-WUINITY's coefficients in that correlation (0.1147, 0.0692) are Anderson's per m/s expressed per
+        /// mi/h; k-PERIL uses the same form since v1.1 (it used to apply 0.2566 and 0.1548 to mi/h, as upstream
+        /// ELMFIRE does - docs/verification.md, D2). k-PERIL takes its wind in mi/h whatever this is set to, so a
+        /// different multiplier makes the fire's ellipse and the boundary's differ again.
         /// </summary>
         public double WSMFEFF_LOW_MULT = 60.0 / 5280.0;
 

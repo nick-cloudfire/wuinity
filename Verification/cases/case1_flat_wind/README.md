@@ -28,10 +28,10 @@ depth 1 ft, dead moisture of extinction 12 %, heat content 8000 Btu/lb; 1-h mois
 | The burned area vs the ellipse predicted from R, R/HB and L/B after 100 min | Jaccard ≥ 0.95 | as above, nothing measured | 0.95: the ~1 % level-set overshoot in every direction is ~2 % of the area. Measured 0.97. |
 
 **Anderson's unit.** Anderson's coefficients 0.2566 and 0.1548 are applied to U in **m/s** by ELMFIRE-WUINITY (since
-3a0a60a, its code says 0.1147 and 0.0692 per mi/h, i.e. 0.2566 × 0.44704), and to U in **mi/h** by upstream ELMFIRE,
-FARSITE and k-PERIL. The fire checks follow the fire model the platform runs, so they verify that ELMFIRE's level set
-reproduces the L/B its spread equations use (with mi/h the L/B would be 2.617). That the two halves of the platform
-disagree is discrepancy **D2** below.
+3a0a60a, its code says 0.1147 and 0.0692 per mi/h, i.e. 0.2566 × 0.44704), and to U in **mi/h** by upstream ELMFIRE
+and FARSITE. The fire checks follow the fire model the platform runs, so they verify that ELMFIRE's level set
+reproduces the L/B its spread equations use (with mi/h the L/B would be 2.617). k-PERIL used the mi/h reading until
+v1.1, so the two halves of the platform disagreed (discrepancy **D2** below); kPERILcore now uses ELMFIRE's form.
 
 ## The evacuation and the k-PERIL boundary
 
@@ -46,8 +46,8 @@ boundary uses RSET = the car's arrival.
 | Upwind extent of the boundary on the wind axis | ⌊RSET x R / 10 m⌋ cells = 480 m at RSET 21.15 min | every cell upwind of the box on the axis burned as head fire with `vs` = R and direction 90°; k-PERIL's rate from such a cell towards the WUI (its head direction) is R, and its cell-to-cell time is cell / R, so the boundary reaches as far as the head fire travels in RSET | 1 cell |
 | The boundary lies upwind | bearing 270° ± 5° from the WUI centroid to the centroid of the boundary cells outside it | a head fire from the west must be stopped west of the WUI | 5° |
 | Mirror symmetry of the boundary about the wind axis | Jaccard ≥ 0.99 | the fire and the box are symmetric | 0.99 |
-| The engine's boundary vs a re-computation of k-PERIL's algorithm (`vlib/kperil_ref.py`) from the fire's `vs`, `spread_dir`, `mfws`/88, `wd`, `slp` and `asp` | Jaccard ≥ 0.99 (measured 1.000) | not an independent physical expectation: it reproduces k-PERIL's modelling, so it checks the *wiring* — the rasters, their layout (the pre-v1 90° rotation) and units | 0.99 |
-| **D2** (known): the boundary vs the same algorithm with the fire's own L/B (U in m/s) | Jaccard ≥ 0.99 | the boundary's ellipse should be the fire's | measured 0.92: k-PERIL's L/B is 2.62 where the fire's is 1.47; the boundary is 4690 cells where the fire's ellipse gives 5098, its downwind extent 6 cells against 9 (XFAIL). |
+| The engine's boundary vs a re-computation of k-PERIL's algorithm (`vlib/kperil_ref.py`: ELMFIRE's L/B with U in mi/h capped at 8, the wind and slope terms pointing where they push) from the fire's `vs`, `spread_dir`, `mfws`/88, `wd`, `slp` and `asp` | Jaccard ≥ 0.99 (measured 1.000) | not an independent physical expectation: it reproduces k-PERIL's modelling, so it checks the *wiring* — the rasters, their layout (the pre-v1 90° rotation) and units | 0.99 |
+| **D2** (fixed in v1.1): the boundary vs the same algorithm with the fire's own L/B (Anderson's with U in m/s, `vlib/rothermel.py`, capped at ELMFIRE's default `MAX_LOW` 8) | Jaccard ≥ 0.99 | the boundary's ellipse should be the fire's | 0.99. Measured 1.000: k-PERIL's L/B is 1.468, the fire's 1.468; 5098 cells, 9 deep downwind. Before v1.1 k-PERIL's L/B was 2.62 and the boundary 4690 cells, 6 deep downwind (Jaccard 0.92). |
 
 The downwind extent is not checked against a closed form: k-PERIL's 8-neighbour graph lets a backing fire step
 diagonally, so its effective backing rate is set by the ellipse at ψ = 225°, not by the backing rate at 180°.

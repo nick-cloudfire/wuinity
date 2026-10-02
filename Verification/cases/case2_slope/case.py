@@ -178,14 +178,15 @@ def slope_wind(ctx, folder):
                         "the fire covers %.2f m/min of map upslope (vs x cos 20); k-PERIL reads vs = %.2f m/min as map "
                         "speed: %d cells" % (head * cos, head, math.floor(rset * head / grid.cell + 1e-9)), known="D7"))
 
-    # D6: the same algorithm with the wind and slope terms pointing the way they push the fire.
-    aligned = kperil_ref.boundary(vs, sd, mph, wd, slp, asp, wui_cells, rset, grid.cell,
-                                  effective=kperil_ref.effective_wind_aligned)
-    ja = shape.jaccard(outside, aligned)
+    # D6 (fixed in v1.1): the same algorithm with the effective wind written out for this case - wind and slope both
+    # push the head north, so the two terms add as plain numbers - rather than kperil_ref's vector rule.
     u = umf / rothermel.MPH_TO_FTMIN
     s_term = 0.06 * SLOPE_DEG
+    aligned = kperil_ref.boundary(vs, sd, mph, wd, slp, asp, wui_cells, rset, grid.cell,
+                                  effective=lambda w, w_from, slope_deg, aspect_deg: w + 0.06 * slope_deg)
+    ja = shape.jaccard(outside, aligned)
     checks.append(Check(CASE, "2c boundary vs the same with wind and slope terms adding (Jaccard)", ja, 1.0,
                         ">= 0.99", ja >= 0.99, "",
-                        "k-PERIL's effective wind %.2f mi/h (|%.2f - %.2f|), aligned %.2f; %d vs %d cells"
-                        % (abs(u - s_term), u, s_term, u + s_term, len(outside), len(aligned)), known="D6"))
+                        "effective wind %.2f + %.2f = %.2f mi/h; %d vs %d cells" % (u, s_term, u + s_term, len(outside),
+                                                                                 len(aligned))))
     return checks

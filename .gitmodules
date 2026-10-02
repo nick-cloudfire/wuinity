@@ -8,3 +8,6 @@
 [submodule "WUInity/Assets/ThirdParty/Nelson-Dead-Fuel-Moisture"]
 	path = WUInity/Assets/ThirdParty/Nelson-Dead-Fuel-Moisture
 	url = https://github.com/nick-cloudfire/Nelson-Dead-Fuel-Moisture.git
+[submodule "PREACT/ThirdParty/kPERIL"]
+	path = PREACT/ThirdParty/kPERIL
+	url = https://github.com/nick-cloudfire/kPERIL.git

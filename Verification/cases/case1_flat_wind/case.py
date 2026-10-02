@@ -225,10 +225,13 @@ def run(ctx, folder):
     checks.append(Check(CASE, "k-PERIL boundary vs its algorithm re-computed (Jaccard)",
                         jr, 1.0, ">= 0.99 (Jaccard)", jr >= 0.99, "",
                         "%d cells (engine) vs %d (reference)" % (len(outside), len(ref))))
-    # D2: the same algorithm with the ellipse the fire itself spread with (Anderson's L/B with U in m/s).
-    mps = rasters.Grid(mph.ncols, mph.nrows, mph.xll, mph.yll, mph.cell,
-                       [[v * rothermel.MPH_TO_MS for v in row] for row in mph.values])
-    consistent = kperil_ref.boundary(vs, sd, mps, wd, slp, asp, wui_cells, rset, cell)
+    # D2 (fixed in v1.1): the same algorithm with the ellipse the fire itself spread with - Anderson's L/B with U in
+    # m/s, as ELMFIRE-WUINITY applies it, under ELMFIRE's default MAX_LOW - written here from rothermel.py rather than
+    # from kperil_ref, so k-PERIL's own L/B is checked against the fire's.
+    def fire_lb(u_mph):
+        return max(1.0, min(rothermel.anderson_lb(u_mph * rothermel.MPH_TO_MS, "m/s"), kperil_ref.MAX_LOW))
+
+    consistent = kperil_ref.boundary(vs, sd, mph, wd, slp, asp, wui_cells, rset, cell, lb_of=fire_lb)
     jd = shape.jaccard(outside, consistent)
     down = shape.extent_along(outside, wx1, ir, 1, 0)
     down_c = shape.extent_along(consistent, wx1, ir, 1, 0)
@@ -237,8 +240,8 @@ def run(ctx, folder):
                         ">= 0.99", jd >= 0.99, "",
                         "k-PERIL L/B %.3f at %.2f mi/h midflame, the fire's %.3f; %d vs %d cells; downwind %d vs %d cells "
                         "(the fire backs %.1f cells in RSET)"
-                        % (rothermel.anderson_lb(u_mph, "mi/h"), u_mph, exp["lb"], len(outside), len(consistent),
-                           down, down_c, rset * back / cell), known="D2"))
+                        % (kperil_ref.length_to_breadth(u_mph), u_mph, exp["lb"], len(outside), len(consistent),
+                           down, down_c, rset * back / cell)))
 
     checks += fuel_type_checks(ctx, folder)
     checks.append(gr2_check(ctx, folder))

@@ -65,8 +65,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Vendored k-PERIL trigger-boundary engine (retargeted to netstandard2.1). -->
-    <ProjectReference Include="..\kPERILcore\kPERILcore.csproj" />
+    <!-- The k-PERIL trigger-boundary algorithm (netstandard2.1, no GDAL), from the kPERIL repository, a git
+         submodule: clone with recurse-submodules or run git submodule update with init and recursive. -->
+    <ProjectReference Include="..\ThirdParty\kPERIL\kPERILcore\kPERILcore.csproj" />
   </ItemGroup>
 
   <ItemGroup>

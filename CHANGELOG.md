@@ -12,6 +12,9 @@
   cells, one cell is 2-3.6 acres) a short or slow fire that stays inside its ignition cell counts as not spread.
 - **A run in which no car got into SUMO fails** (D5), however few cars were tried.
 - **LANDFIRE "closest"** picks from the releases LFPS serves: a 2026 scenario now gets LF2025, where v1 asked for LF2024.
+- **Every k-PERIL boundary changes** (D2, D6, see "k-PERIL"): its spread ellipse is now the fire's, and an upslope wind
+  adds to the slope. The head-fire reach upwind is unchanged; flanks and back reach further at low wind. Verification
+  case 1: 4690 → 5098 cells (+8.7 %); a Mati realization at an RSET of 116 min: 1.46 → 1.51 km² (+2.9 %, Jaccard 0.97).
 
 ### Data downloads and data steps
 
@@ -125,15 +128,29 @@
   have. Without the font the GUI uses Dear ImGui's own instead of failing.
 - A fire case built in a standalone player gets the OpenTopography key the GUI shows. The key is built into the
   player, and the engine used to look for it on disk.
+### k-PERIL
+
+- **k-PERIL is a submodule** (`PREACT/ThirdParty/kPERIL`, [nick-cloudfire/kPERIL](https://github.com/nick-cloudfire/kPERIL)),
+  and PREACTcore builds its `kPERILcore` project (netstandard2.1, the algorithm without GDAL). The copy kept in
+  `PREACT/kPERILcore` is gone, and with it the risk of the two drifting; its fixes (the ring one cell beyond RSET, a
+  hole in the WUI area written as 3) are in the kPERIL repository. Clone with `--recursive`, or run
+  `git submodule update --init --recursive`; the build scripts say so when it is missing.
+- **Length-to-breadth (D2)**: ELMFIRE's form, 0.936 e^(0.1147 U) + 0.461 e^(−0.0692 U) − 0.397 with U the midflame
+  wind in mi/h, capped at the run's `MAX_LOW` (read from the namelist ELMFIRE ran; 8 for an imported fire). It applied
+  0.2566 and 0.1548 to mi/h, so at 4.2 mi/h its ellipse had L/B 2.62 where the fire's had 1.47.
+- **Wind and slope (D6)**: both vectors point where they push the fire, so an upslope wind adds to 0.06 x the slope
+  (case 2c: 5.43 mi/h, was 3.03). The aspect k-PERIL derives from an elevation raster is a compass bearing.
+
 ### Verification
 
 - **Verification cases** (`Verification/`, `verify.ps1`, `verify.sh`, [docs/verification.md](docs/verification.md)):
   synthetic cases run head-less through `build-case`, `PREACT` and `converge-trigger`, each checked against an
   expected value derived independently (Rothermel/BehavePlus, Anderson's L/B, road length over limit, the documented
-  convergence rule). They found seven discrepancies. Four are fixed (below): an Int32 fuel raster burned nothing (D1),
-  a group with no area (D3) or no existing demographics (D4) crashed the run, a run that moved no car exited 0 (D5).
-  Three are open, for a modelling decision, and stay marked as known: k-PERIL's L/B is not the fire's (D2), k-PERIL
-  subtracts an upslope wind from the slope (D6) and reads ELMFIRE's along-slope rate as a map rate (D7).
+  convergence rule). They found seven discrepancies. Six are fixed (below and under "k-PERIL"): an Int32 fuel raster
+  burned nothing (D1), a group with no area (D3) or no existing demographics (D4) crashed the run, a run that moved no
+  car exited 0 (D5), k-PERIL's L/B was not the fire's (D2) and it subtracted an upslope wind from the slope (D6). One
+  is open, for a modelling decision, and stays marked as known: k-PERIL reads ELMFIRE's along-slope rate as a map rate
+  (D7).
 - The cases protect the WUI area `build-case` now makes from the evacuation group (`WuiAreaSource` left at
   `EvacuationGroupsCombined`) and check it against the WUI box, instead of writing `wui_area.tif` themselves; the
   group's mask covers exactly the box's cells, also where the box's edges fall on cell centres (case 2c).
