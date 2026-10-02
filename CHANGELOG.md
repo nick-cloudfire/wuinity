@@ -26,6 +26,14 @@
   `WuiAreaSource` (it was checked for `Raster` only, so an unreached combined-groups realization counted as failed).
 - Evacuation groups from a shapefile keep their rings apart (holes and multipolygons were joined into one outline)
   and are read in the layer's CRS.
+- **Fire areas paints only the ignition area.** The WUI-area and initial-ignition brushes are gone; the `.gfi` keeps
+  its four layers for older versions but no longer writes either of them. An old `.gfi`'s painted WUI area is
+  ignored with one note when the scenario loads. Its initial ignition becomes one `[IgnitionPoint]` at the painted
+  cells' centroid (with a note), unless the scenario already has ignition points; the case build places points
+  only. Workflow step 6 covers the ignition area and points alone (its Apply to case waits for a painted ignition
+  area), step 9 shows the WUI area the build made from the groups (and offers to apply them when the case's
+  `wui_area.tif` is stale), step 10's k-PERIL setup protects the groups, and step 13 waits for a `wui_area.tif`
+  that is the groups' union. The Fire menu's item is **Fire areas and ignition...**.
 
 ## v1.0
 

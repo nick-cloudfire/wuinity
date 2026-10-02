@@ -180,7 +180,9 @@ namespace WUInity.Workflow
 
             _paintedPath = _in.WildfireModule.GraphicalFireInputFile;
             _painted = Exists(_paintedPath) ? _files.Read(Abs(_paintedPath), "gfi", PaintedAreasInfo.Read, null) : null;
-            PaintingOnOtherGrid = _painted != null && PaintGrid != null && !_painted.OnGrid(PaintGrid);
+            //Only a painting the case still uses has to be on its grid: one holding just an older WUI area or initial
+            //ignition (neither used any more) has nothing to move.
+            PaintingOnOtherGrid = _painted != null && _painted.IgnitionAreaCells > 0 && PaintGrid != null && !_painted.OnGrid(PaintGrid);
             PaintGridDifference = !PaintingOnOtherGrid ? null
                 : _painted.SameSize(PaintGrid) ? "is the same size but " + _painted.DescribeMismatch(PaintGrid)
                 : $"is {PaintGrid.Width} x {PaintGrid.Height}";
@@ -1057,8 +1059,6 @@ namespace WUInity.Workflow
                 else if (IsImportedFire) BlockBy(s, WorkflowStepId.Fuels, "an imported fire is painted on its arrival-time raster.");
             }
 
-            bool wuiNeeded = TriggerOn && _in.TriggerBufferModule.kPERILInput.WuiAreaSource == kPERILInput.WuiAreaSources.Raster
-                             && string.IsNullOrEmpty(_in.TriggerBufferModule.kPERILInput.WuiAreaFile);
             bool onGrid = false;
 
             if (!string.IsNullOrEmpty(_paintedPath) && _painted == null)
@@ -1069,17 +1069,17 @@ namespace WUInity.Workflow
             else if (PaintingOnOtherGrid && PaintedOnReference != null)
             {
                 //Painted on a grid the scenario still has: moving it is one step, and nothing is repainted.
-                s.Error($"The areas were painted on a {_painted.Width} x {_painted.Height} grid ({PaintedOnReference}); the fire grid "
+                s.Error($"The ignition area was painted on a {_painted.Width} x {_painted.Height} grid ({PaintedOnReference}); the fire grid "
                     + $"({PaintGridReference}) {PaintGridDifference}. Move the painting onto it: each cell of the "
                     + $"fire grid takes the painted value at its centre, in a new file beside {_paintedPath}, which is kept.",
                     WorkflowAction.MovePaintingToCaseGrid, MoveLabel);
             }
             else if (PaintingOnOtherGrid)
             {
-                s.Error($"The areas were painted on a {_painted.Width} x {_painted.Height} grid; the fire grid ({PaintGridReference}) "
-                    + $"{PaintGridDifference}, and none of the scenario's rasters is the grid they were painted on, "
-                    + "so they cannot be moved from it. Point [Landscape] at the raster they were painted on to move them, "
-                    + "or repaint them on the fire grid.",
+                s.Error($"The ignition area was painted on a {_painted.Width} x {_painted.Height} grid; the fire grid ({PaintGridReference}) "
+                    + $"{PaintGridDifference}, and none of the scenario's rasters is the grid it was painted on, "
+                    + "so it cannot be moved from it. Point [Landscape] at the raster it was painted on to move it, "
+                    + "or repaint it on the fire grid.",
                     WorkflowAction.OpenFireAreas, "Repaint");
             }
             else if (_painted != null)
@@ -1087,19 +1087,27 @@ namespace WUInity.Workflow
                 onGrid = PaintGrid != null;
             }
 
-            int wui = _painted?.WuiCells ?? 0;
             int area = _painted?.IgnitionAreaCells ?? 0;
-            int initial = _painted?.InitialIgnitionCells ?? 0;
 
-            if (wuiNeeded && wui == 0)
+            //What a painting from before round 2 holds that is no longer painted or used. Said, not counted against the
+            //step: the scenario's load has dealt with both.
+            if (_painted != null && _painted.WuiCells > 0)
             {
-                s.Info("Paint the WUI area: it is what the trigger boundary protects.");
+                s.Info($"The saved painting holds a painted WUI area ({_painted.WuiCells} cells), which is no longer used: the WUI "
+                    + "area is the evacuation groups (step 9). Saving the painted areas again leaves it out.");
+            }
+            if (_painted != null && _painted.InitialIgnitionCells > 0)
+            {
+                s.Info($"The saved painting holds a painted initial ignition ({_painted.InitialIgnitionCells} cells), which is no "
+                    + "longer used: opening the scenario made it an ignition point at its centre unless the scenario had ignition "
+                    + "points of its own. Save the scenario to keep the point.");
             }
 
-            bool hasIgnition = points > 0 || (onGrid && (area > 0 || initial > 0));
+            bool hasIgnition = points > 0 || (onGrid && area > 0);
             if (!hasIgnition)
             {
-                s.Info("No ignition: place an ignition point, or paint an initial ignition or an area fires may start in.");
+                s.Info("No ignition: place an ignition point (where a single run's fire starts), or paint an ignition area "
+                    + "(where a campaign's fires may start).");
             }
             else if (IsElmfire && area == 0 && points > 0)
             {
@@ -1109,12 +1117,9 @@ namespace WUInity.Workflow
             if (IsElmfire && onGrid)
             {
                 string mask = ScenarioFiles.CaseInput(_in, "ignition_mask.tif");
-                string wuiRaster = ScenarioFiles.CaseInput(_in, "wui_area.tif");
-                bool stale = (area > 0 && (!Exists(mask) || _files.IsNewer(Abs(_paintedPath), Abs(mask))))
-                             || (wui > 0 && (!Exists(wuiRaster) || _files.IsNewer(Abs(_paintedPath), Abs(wuiRaster))));
-                if (stale)
+                if (area > 0 && (!Exists(mask) || _files.IsNewer(Abs(_paintedPath), Abs(mask))))
                 {
-                    s.Warn("The painted areas are newer than the case's ignition_mask.tif / wui_area.tif: apply them to the case.",
+                    s.Warn("The painted ignition area is newer than the case's ignition_mask.tif: apply it to the case.",
                         WorkflowAction.ApplyFireAreasToCase, "Apply to case");
                 }
             }
@@ -1124,19 +1129,19 @@ namespace WUInity.Workflow
                 s.Warn("Painted strokes not saved yet.", WorkflowAction.Save, "Save");
             }
 
-            bool done = hasIgnition && (!wuiNeeded || (onGrid && wui > 0)) && (string.IsNullOrEmpty(_paintedPath) || onGrid);
+            bool done = hasIgnition && (string.IsNullOrEmpty(_paintedPath) || onGrid || area == 0);
             s.Status = done ? StepStatus.Done : StepStatus.ToDo;
-            s.Summary = $"WUI {wui} cells, ignition area {area} cells, {Plural(points, "ignition point")}"
+            s.Summary = $"Ignition area {area} cells, {Plural(points, "ignition point")}"
                         + (PaintGrid != null ? "; grid " + PaintGrid.Width + " x " + PaintGrid.Height : "");
 
             if (IsElmfire)
             {
                 var apply = new StepAction(WorkflowAction.ApplyFireAreasToCase, "Apply to case",
-                    "Builds the case again so the painted areas become its ignition_mask.tif and wui_area.tif. Its other layers "
-                    + "are kept (unless its grid no longer covers the domain: then it is re-cut and they are carried onto it, "
-                    + "and so is the painting), and the namelist is written again from the scenario. The build reads the "
-                    + "painted areas from their file, so unsaved strokes are saved first.");
-                if (_painted == null && !_ctx.UnsavedFireStrokes) apply.Disable("Nothing painted yet.");
+                    "Builds the case again so the painted ignition area becomes its ignition_mask.tif (and the evacuation groups "
+                    + "its wui_area.tif). Its other layers are kept (unless its grid no longer covers the domain: then it is re-cut "
+                    + "and they are carried onto it, and so is the painting), and the namelist is written again from the scenario. "
+                    + "The build reads the painted areas from their file, so unsaved strokes are saved first.");
+                if ((_painted == null || _painted.IgnitionAreaCells == 0) && !_ctx.UnsavedFireStrokes) apply.Disable("No ignition area is painted yet.");
                 else if (_painted != null && !onGrid) apply.Disable(PaintedOnReference != null
                     ? "The painted areas are on another grid; move them onto the fire-case grid first."
                     : "The painted areas are not on the case grid; repaint them first.");
@@ -1332,9 +1337,70 @@ namespace WUInity.Workflow
 
             if (_ctx.UnsavedGroupStrokes) s.Warn("Painted group strokes not saved yet.", WorkflowAction.Save, "Save");
 
+            //The groups' area is the WUI area too: the case build writes their union as wui_area.tif, which a campaign
+            //protects and aims at - so the case's copy has to be of the groups as they are now.
+            string wuiSummary = CaseWuiArea(s, groups.Values);
+
             s.Status = groups.Count > 0 && !s.HasErrors ? StepStatus.Done : StepStatus.ToDo;
-            s.Summary = Plural(groups.Count, "group");
+            s.Summary = Plural(groups.Count, "group") + wuiSummary;
             return s;
+        }
+
+        /// <summary>
+        /// Whether the case's wui_area.tif is the WUI area of <paramref name="groups"/> as they are now, warning on step 9
+        /// (with "Apply to case") when it is not there, was made from other groups or before their areas were last saved,
+        /// or by an older build from a painted WUI area. Returns a summary suffix (", WUI area N cells") or empty.
+        /// </summary>
+        private string CaseWuiArea(WorkflowStep s, IEnumerable<EvacuationGroupInput> groups)
+        {
+            if (!IsElmfire || _caseGrid == null) return string.Empty;
+
+            var names = new List<string>();
+            var files = new List<string>();
+            foreach (EvacuationGroupInput g in groups)
+            {
+                string file = !string.IsNullOrEmpty(g.MaskFile) ? g.MaskFile : g.ShapeFile;
+                if (string.IsNullOrEmpty(file) || !Exists(file)) continue;
+                names.Add(g.Name);
+                files.Add(file);
+            }
+
+            string wui = ScenarioFiles.CaseInput(_in, "wui_area.tif");
+            string manifest = Abs(_case + "/" + PREACT.Utility.ElmfireCaseBuilder.SourceManifestName);
+            string madeFrom = ManifestValue(manifest, PREACT.Utility.ElmfireCaseBuilder.WuiAreaGroupsKey);
+            string cells = ManifestValue(manifest, PREACT.Utility.ElmfireCaseBuilder.WuiAreaCellsKey);
+            bool exists = Exists(wui);
+
+            string stale = null;
+            if (names.Count == 0)
+            {
+                if (exists && TriggerOn) stale = "No group has an area, and the case still holds a wui_area.tif from an earlier build.";
+            }
+            else if (!exists)
+            {
+                stale = "The case has no WUI area yet: Apply to case writes the groups' union as wui_area.tif, what a trigger "
+                        + "campaign protects.";
+            }
+            else if (madeFrom == null)
+            {
+                stale = "The case's wui_area.tif was made by an older build from a painted WUI area, not from the groups.";
+            }
+            else if (!string.Equals(madeFrom, string.Join(",", names), StringComparison.Ordinal))
+            {
+                stale = $"The case's wui_area.tif was made from the groups {madeFrom}, and the scenario's are now {string.Join(",", names)}.";
+            }
+            else if (files.Exists(f => _files.IsNewer(Abs(f), Abs(wui))))
+            {
+                stale = "A group's area was saved after the case's wui_area.tif was made from it.";
+            }
+
+            if (stale != null && TriggerOn)
+            {
+                s.Warn(stale + " The trigger boundary of a single run reads the groups themselves; a campaign protects the case's "
+                    + "copy, and refuses one that is not the groups' union.", WorkflowAction.ApplyFireAreasToCase, "Apply to case");
+            }
+
+            return exists && stale == null && cells != null ? $", WUI area {cells} cells" : string.Empty;
         }
 
         // ------------------------------------------------------------------ 10. trigger boundary
@@ -1360,55 +1426,44 @@ namespace WUInity.Workflow
 
             kPERILInput k = _in.TriggerBufferModule.kPERILInput;
             string caseWui = ScenarioFiles.CaseInput(_in, "wui_area.tif");
-            bool caseWuiExists = IsElmfire && Exists(caseWui);
             bool protectedOk = false;
+            bool ownMask = k.WuiAreaSource == kPERILInput.WuiAreaSources.Raster && !string.IsNullOrEmpty(k.WuiAreaFile);
 
             if (IsElmfire && _caseGrid == null) BlockBy(s, WorkflowStepId.FireCase, "k-PERIL computes on the case grid.");
 
-            if (k.WuiAreaSource == kPERILInput.WuiAreaSources.Raster)
+            if (ownMask && Normalise(k.WuiAreaFile) == Normalise(caseWui))
             {
-                if (!string.IsNullOrEmpty(k.WuiAreaFile))
-                {
-                    RasterInfo wui = Exists(k.WuiAreaFile) ? Raster(k.WuiAreaFile) : null;
-                    if (wui == null) s.Error($"WuiAreaFile names {k.WuiAreaFile}, which " + (Exists(k.WuiAreaFile) ? "cannot be read." : "does not exist."),
-                        caseWuiExists ? WorkflowAction.UseCaseWuiArea : WorkflowAction.OpenTriggerBoundary, caseWuiExists ? "Use " + caseWui : "Fix");
-                    else if (PaintGrid != null && !wui.SameSize(PaintGrid)) s.Error($"WuiAreaFile is {wui.Width} x {wui.Height}, not on the fire grid "
-                        + $"({PaintGrid.Width} x {PaintGrid.Height}); k-PERIL refuses it and the run stops.",
-                        caseWuiExists ? WorkflowAction.UseCaseWuiArea : WorkflowAction.OpenTriggerBoundary, caseWuiExists ? "Use " + caseWui : "Fix");
-                    else protectedOk = true;
-                }
-                else if (_painted != null && _painted.WuiCells > 0)
-                {
-                    if (PaintingOnOtherGrid)
-                    {
-                        s.Error("No WuiAreaFile, so k-PERIL falls back to the painted WUI area - which is on another grid "
-                            + $"(the fire grid {PaintGridDifference}), so it refuses it and the run stops.",
-                            caseWuiExists ? WorkflowAction.UseCaseWuiArea
-                                : PaintedOnReference != null ? WorkflowAction.MovePaintingToCaseGrid : WorkflowAction.OpenFireAreas,
-                            caseWuiExists ? "Use " + caseWui : PaintedOnReference != null ? MoveLabel : "Repaint");
-                    }
-                    else
-                    {
-                        protectedOk = true;
-                        //A case build sets WuiAreaFile to the case's wui_area.tif itself (contract C1); this is a case
-                        //built before it did.
-                        if (caseWuiExists) s.Warn($"k-PERIL is reading the painted mask directly; the case build rasterised it as {caseWui}.",
-                            WorkflowAction.UseCaseWuiArea, "Use " + caseWui);
-                    }
-                }
-                else
-                {
-                    s.Info("Nothing to protect yet: paint the WUI area (step 6), or name a WuiAreaFile.");
-                }
+                //What an older build recorded (contract C1): the case's copy, now the groups' union - the same cells, read
+                //from a file that goes stale when the groups are painted again.
+                s.Info($"WuiAreaFile names the case's {caseWui}, which is the evacuation groups' union: protecting the groups "
+                    + "themselves is the same area and cannot go stale.", WorkflowAction.ProtectEvacuationGroups, "Protect the groups");
+                ownMask = false;
+            }
+
+            if (ownMask)
+            {
+                RasterInfo wui = Exists(k.WuiAreaFile) ? Raster(k.WuiAreaFile) : null;
+                if (wui == null) s.Error($"WuiAreaFile names {k.WuiAreaFile}, which " + (Exists(k.WuiAreaFile) ? "cannot be read." : "does not exist."),
+                    WorkflowAction.ProtectEvacuationGroups, "Protect the groups instead");
+                else if (PaintGrid != null && !wui.SameSize(PaintGrid)) s.Error($"WuiAreaFile is {wui.Width} x {wui.Height}, not on the fire grid "
+                    + $"({PaintGrid.Width} x {PaintGrid.Height}); k-PERIL refuses it and the run stops.",
+                    WorkflowAction.ProtectEvacuationGroups, "Protect the groups instead");
+                else protectedOk = true;
             }
             else
             {
+                if (k.WuiAreaSource == kPERILInput.WuiAreaSources.Raster && string.IsNullOrEmpty(k.WuiAreaFile))
+                {
+                    s.Info("WuiAreaSource is Raster with no WuiAreaFile, which protects the evacuation groups together.",
+                        WorkflowAction.ProtectEvacuationGroups, "Say so");
+                }
+
                 bool anyArea = false;
                 foreach (EvacuationGroupInput g in _in.Evacuation.EvacuationGroupInputs.Values)
                 {
                     anyArea |= !string.IsNullOrEmpty(g.MaskFile) || !string.IsNullOrEmpty(g.ShapeFile);
                 }
-                if (!anyArea) s.Error("The protected area comes from the evacuation groups, and no group has an area.",
+                if (!anyArea) s.Error("k-PERIL protects the evacuation groups' area, and no group has one (step 9).",
                     WorkflowAction.PaintGroups, "Paint groups");
                 else protectedOk = true;
             }
@@ -1434,9 +1489,11 @@ namespace WUInity.Workflow
             }
 
             s.Status = protectedOk ? StepStatus.Done : StepStatus.ToDo;
-            s.Summary = "k-PERIL, protecting " + (k.WuiAreaSource == kPERILInput.WuiAreaSources.Raster
-                ? (string.IsNullOrEmpty(k.WuiAreaFile) ? "the painted WUI area" : Path.GetFileName(k.WuiAreaFile))
-                : "the evacuation groups (" + k.WuiAreaSource + ")");
+            s.Summary = "k-PERIL, protecting " + (ownMask
+                ? Path.GetFileName(k.WuiAreaFile)
+                : k.WuiAreaSource == kPERILInput.WuiAreaSources.EvacuationGroupsSeparate
+                    ? "each evacuation group (one boundary each)"
+                    : "the evacuation groups together");
             return s;
         }
 
@@ -1832,7 +1889,12 @@ namespace WUInity.Workflow
                          || i.Fix == WorkflowAction.MovePaintingToCaseGrid
                          || i.Fix == WorkflowAction.OpenFireAreas && i.Level == IssueLevel.Error))
             {
-                BlockBy(s, WorkflowStepId.FireAreas, "the painted areas are not applied to the case (or not on its grid).");
+                BlockBy(s, WorkflowStepId.FireAreas, "the painted ignition area is not applied to the case (or not on its grid).");
+            }
+            else if (this[WorkflowStepId.EvacuationGroups]?.Issues.Exists(i => i.Fix == WorkflowAction.ApplyFireAreasToCase) == true)
+            {
+                BlockBy(s, WorkflowStepId.EvacuationGroups, "every realization protects the case's wui_area.tif, which is not the "
+                    + "evacuation groups' union as they are now - apply them to the case.");
             }
             else if (_ctx.SimulationActive)
             {

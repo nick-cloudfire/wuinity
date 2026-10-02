@@ -17,10 +17,19 @@ namespace PREACT.Input
         private LandscapeData _lcpData;
         private List<IgnitionPointInput> _ignitionPoints = new List<IgnitionPointInput>();
 
-        public bool[] WuiArea;
+        /// <summary>The painted ignition area, where a campaign draws its ignitions (the case's ignition_mask.tif).</summary>
         public bool[] RandomIgnition;
-        public bool[] InitialIgnition;
         public bool[] ManualTriggerBuffer;
+
+        /// <summary>
+        /// What a painting from before round 2 holds that is no longer used, counted for the note its load gives: a
+        /// painted WUI area (the WUI area is the evacuation groups') and a painted initial ignition (an ignition point,
+        /// which the load adds in its place - see <see cref="LoadAll(SimulationInput, WildfireModuleInput, LandscapeInput, string, out bool)"/>).
+        /// </summary>
+        public int LegacyWuiCells, LegacyInitialIgnitionCells;
+
+        //The legacy initial ignition, between reading the painting and turning it into an ignition point.
+        private bool[] _legacyInitialIgnition;
 
         /// <summary>
         /// The grid the loaded masks were painted on, or (0,0) when none were loaded.
@@ -64,15 +73,14 @@ namespace PREACT.Input
             //scenario with an imported fire had no terrain at all.
             LoadLandscape(simulationInput, wildfireInput, landscapeInput, rootFolder);
 
-            //Loaded whatever the module is, and whether or not a fire is being modelled, because the
-            //masks are not the fire module's alone: k-PERIL falls back to WuiArea for the area it
-            //protects (EvacuationManager.BuildWuiAreaRuns), and the painter needs what was painted last
-            //time in order to carry on painting it. Nothing called this at all before, which is why
-            //painting a WUI area and reopening the scenario showed nothing.
+            //Loaded whatever the module is, and whether or not a fire is being modelled: the painter needs what was
+            //painted last time in order to carry on painting it. Nothing called this at all before, which is why
+            //painting and reopening the scenario showed nothing.
             if (!string.IsNullOrEmpty(wildfireInput.GraphicalFireInputFile))
             {
-                LoadGraphicalFireInput(wildfireInput, PREACTInput.ResolvePath(rootFolder, wildfireInput.GraphicalFireInputFile),
-                    false, out bool _);
+                string painting = PREACTInput.ResolvePath(rootFolder, wildfireInput.GraphicalFireInputFile);
+                LoadGraphicalFireInput(wildfireInput, painting, false, out bool loaded);
+                if (loaded) TakeLegacyPainting(painting, simulationInput, wildfireInput, landscapeInput, rootFolder);
             }
 
             if(!wildfireInput.Enabled)
@@ -249,26 +257,19 @@ namespace PREACT.Input
             }
         }*/
 
-        public void LoadGraphicalFireInput(WildfireModuleInput fireInput, string filePath, LandscapeData lcpData, bool updateInput, out bool success)
-        {
-            GraphicalFireInput.LoadGraphicalFireInput(filePath, lcpData, out WuiArea, out RandomIgnition, out InitialIgnition, out ManualTriggerBuffer, out success);
-            PaintedGrid = null;
-            if (success)
-            {
-                PaintedCellCount = new Vector2int(lcpData.GetCellCountX(), lcpData.GetCellCountY());
-            }
-        }
-
         /// <summary>
         /// Loads painted masks on the grid the file itself declares, which is the only grid that can be
-        /// known here - see <see cref="PaintedCellCount"/>.
+        /// known here - see <see cref="PaintedCellCount"/>. A painted WUI area or initial ignition in it (a painting made
+        /// before round 2) is counted, not kept.
         /// </summary>
         public void LoadGraphicalFireInput(WildfireModuleInput fireInput, string filePath, bool updateInput, out bool success)
         {
             GraphicalFireInput.LoadGraphicalFireInput(filePath, out int ncols, out int nrows,
-                out WuiArea, out RandomIgnition, out InitialIgnition, out ManualTriggerBuffer,
+                out bool[] wuiArea, out RandomIgnition, out bool[] initialIgnition, out ManualTriggerBuffer,
                 out GraphicalFireInput.PaintedGrid grid, out success);
             PaintedGrid = success ? grid : null;
+            LegacyWuiCells = LegacyInitialIgnitionCells = 0;
+            _legacyInitialIgnition = null;
 
             if (!success)
             {
@@ -276,14 +277,127 @@ namespace PREACT.Input
             }
 
             PaintedCellCount = new Vector2int(ncols, nrows);
+            LegacyWuiCells = Count(wuiArea);
+            LegacyInitialIgnitionCells = Count(initialIgnition);
+            if (LegacyInitialIgnitionCells > 0) _legacyInitialIgnition = initialIgnition;
             Engine.Message(null, Engine.LogType.Log,
-                $"Loaded painted fire areas on a {ncols} x {nrows} grid: "
-                + $"{Count(WuiArea)} WUI cells, {Count(RandomIgnition)} ignition area cells, "
-                + $"{Count(InitialIgnition)} initial ignition cells.");
+                $"Loaded painted fire areas on a {ncols} x {nrows} grid: {Count(RandomIgnition)} ignition area cells.");
 
             if (updateInput)
             {
                 fireInput.GraphicalFireInputFile = Path.GetFileName(filePath);
+            }
+        }
+
+        //Paintings whose retired layers have been noted this session, by path and time, so the note is said once.
+        private static readonly HashSet<string> NotedPaintings = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// What a painting from before round 2 holds that is no longer used. Its WUI area is noted and dropped: the WUI area
+        /// is the evacuation groups'. Its initial ignition becomes one <c>[IgnitionPoint]</c> at the centroid of the painted
+        /// cells - what the case build used to reduce it to - unless the scenario has ignition points already, which won over
+        /// it then too; one at the centroid (a cell and a half) is that conversion, saved, and nothing is said.
+        /// </summary>
+        /// <remarks>
+        /// The centroid is placed through the grid the painting records, else the case's dem.tif or the landscape raster
+        /// when it is the painting's size; a painting on no known grid is noted and left. Said once per painting per
+        /// session: the scenario is parsed again on every reload, and the point is made again each time until it is saved.
+        /// </remarks>
+        private void TakeLegacyPainting(string file, SimulationInput simulation, WildfireModuleInput fire,
+            LandscapeInput landscape, string rootFolder)
+        {
+            if (LegacyWuiCells == 0 && _legacyInitialIgnition == null) return;
+
+            bool first;
+            lock (NotedPaintings)
+            {
+                first = NotedPaintings.Add(file + "|" + File.GetLastWriteTimeUtc(file).Ticks);
+            }
+            string name = Path.GetFileName(file);
+            void Note(string message)
+            {
+                if (first) Engine.Message(null, Engine.LogType.Warning, message);
+            }
+
+            if (LegacyWuiCells > 0)
+            {
+                Note($"{name} holds a painted WUI area ({LegacyWuiCells} cells), which is no longer used: the WUI area is the "
+                     + "evacuation groups' (workflow step 9). Saving the painted areas again leaves it out.");
+            }
+
+            bool[] initial = _legacyInitialIgnition;
+            _legacyInitialIgnition = null;
+            if (initial == null) return;
+
+            int cells = LegacyInitialIgnitionCells;
+            double sumX = 0.0, sumY = 0.0;
+            int ncols = PaintedCellCount.x;
+            for (int i = 0; i < initial.Length; ++i)
+            {
+                if (!initial[i]) continue;
+                sumX += i % ncols;
+                sumY += i / ncols;
+            }
+
+            GraphicalFireInput.PaintedGrid where = PaintedGrid
+                ?? GridOfSize(Utility.ElmfireStems.Tif(Path.Combine(Utility.ElmfireCoupling.CaseDirectoryPath(rootFolder,
+                       fire.ElmfireInput), "inputs"), Utility.ElmfireStems.Dem))
+                ?? GridOfSize(string.IsNullOrEmpty(landscape?.GetReferenceFile()) ? null : PREACTInput.ResolvePath(rootFolder, landscape.GetReferenceFile()));
+            double x = 0.0, y = 0.0, lat = 0.0, lon = 0.0;
+            bool placed = where != null && where.EpsgCode > 0;
+            if (placed)
+            {
+                //Cell centres, rows from the south, as every mask is held.
+                x = where.XllCorner + (sumX / cells + 0.5) * where.CellSize;
+                y = where.YllCorner + (sumY / cells + 0.5) * where.CellSize;
+                placed = Utility.CrsTransform.TryToWgs84("EPSG:" + where.EpsgCode, x, y, out lat, out lon);
+            }
+
+            if (!placed)
+            {
+                Note($"{name} holds a painted initial ignition ({cells} cells), which is no longer used, and it does not say "
+                     + "where its grid lies, so it could not be made an ignition point: place one in Fire areas and "
+                     + "ignition (workflow step 6).");
+                return;
+            }
+
+            var latLon = new Vector2d(lat, lon);
+            Vector2d centroid = simulation.Data.GetSimulationPosition(latLon);
+            foreach (Wildfire.IgnitionPointInput point in _ignitionPoints)
+            {
+                if (Vector2d.Distance(simulation.Data.GetSimulationPosition(point.LatLon), centroid) <= 1.5 * where.CellSize)
+                {
+                    return;
+                }
+            }
+
+            string at = $"{lat.ToString("F5", System.Globalization.CultureInfo.InvariantCulture)}, "
+                        + lon.ToString("F5", System.Globalization.CultureInfo.InvariantCulture);
+            if (_ignitionPoints.Count > 0)
+            {
+                Note($"{name} holds a painted initial ignition ({cells} cells, centred on {at}), which is no longer used; "
+                     + $"the scenario's {_ignitionPoints.Count} ignition point(s) are, as they were before.");
+                return;
+            }
+
+            _ignitionPoints.Add(new Wildfire.IgnitionPointInput(latLon, false, 0f, simulation.StartDateTime));
+            Note($"{name} holds a painted initial ignition ({cells} cells); painted initial ignitions are no longer used, "
+                 + $"so it is now an ignition point at its centre, {at} - the point the case build used to ignite. Save the "
+                 + "scenario to keep it.");
+        }
+
+        /// <summary>A raster's grid as a painting records one, when it is the painting's size; null otherwise.</summary>
+        private GraphicalFireInput.PaintedGrid GridOfSize(string raster)
+        {
+            if (string.IsNullOrEmpty(raster) || !File.Exists(raster)) return null;
+            try
+            {
+                Utility.PaintedMaskResampler.Grid grid = Utility.PaintedMaskResampler.Grid.FromRaster(raster);
+                return grid.Ncols == PaintedCellCount.x && grid.Nrows == PaintedCellCount.y ? grid.ToPaintedGrid() : null;
+            }
+            catch (System.Exception)
+            {
+                return null;
             }
         }
 
@@ -302,15 +416,6 @@ namespace PREACT.Input
             return n;
         }
 
-        public void UpdateWUIArea(bool[] wuiAreaIndices, int xCount, int yCount)
-        {
-            if (wuiAreaIndices == null)
-            {
-                wuiAreaIndices = new bool[xCount * yCount];
-            }
-            WuiArea = wuiAreaIndices;
-        }
-
         public void UpdateRandomIgnitionIndices(bool[] randomIgnitionIndices, int xCount, int yCount)
         {
             if (randomIgnitionIndices == null)
@@ -318,15 +423,6 @@ namespace PREACT.Input
                 randomIgnitionIndices = new bool[xCount * yCount];
             }
             RandomIgnition = randomIgnitionIndices;
-        }
-
-        public void UpdateInitialIgnitionIndices(bool[] initialIgnitionIndices, int xCount, int yCount)
-        {
-            if (initialIgnitionIndices == null)
-            {
-                initialIgnitionIndices = new bool[xCount * yCount];
-            }
-            InitialIgnition = initialIgnitionIndices;
         }
 
         //for painting trigger buffer manually

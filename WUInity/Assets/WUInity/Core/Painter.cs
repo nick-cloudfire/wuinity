@@ -14,8 +14,13 @@ namespace WUInity
 {
     public class Painter : MonoBehaviour
     {
-        public enum PaintMode { WUIArea, RandomIgnitionArea, InitialIgnition, EvacGroup };
-        PaintMode paintMode = PaintMode.WUIArea;
+        /// <summary>
+        /// What the brush paints: the ignition area a campaign draws its fires from, or the evacuation groups - whose union
+        /// is the WUI area k-PERIL protects. A separately painted WUI area and a painted initial ignition are gone: the
+        /// first duplicated the groups, the second an ignition point.
+        /// </summary>
+        public enum PaintMode { RandomIgnitionArea, EvacGroup };
+        PaintMode paintMode = PaintMode.RandomIgnitionArea;
 
         Color currentColor = Color.red;
         const float transparency = 0.5f;
@@ -61,17 +66,9 @@ namespace WUInity
         //saved without the record and matched by its size, as every painting was before.
         GraphicalFireInput.PaintedGrid _fireGridRecord;
 
-        //wui area stuff
-        Texture2D wuiAreaTex;
-        Color[] wuiAreaColorArray;   
-        
         //random ignition area stuff
         Texture2D randomIgnitionTex;
         Color[] randomIgnitionColorArray;
-
-        //initial ignition
-        Texture2D initialIgnitionTex;
-        Color[] initialIgnitionColorArray;
 
         //Which raster the grid above was read from (scenario-relative), what to call it in messages, and -
         //when there is none - why not. Kept so a change of fire module, case folder or imported arrival
@@ -80,6 +77,10 @@ namespace WUInity
         string _gridReference;
         string _gridDescription;
         string _gridProblem;
+
+        //The grid problem last said in the console. Every way into the painter resolves the grid - a mode, a texture, the
+        //plane it is shown on - so one click said "Build the fire case first" three or four times.
+        string _gridProblemSaid;
 
         //Group masks already read from the scenario's MaskFiles for the current grid.
         bool _evacGroupMasksLoaded;
@@ -138,15 +139,6 @@ namespace WUInity
             return evacGroupTex;
         }
 
-        public Texture2D GetWUIAreaTexture()
-        {
-            if (wuiAreaTex == null)
-            {
-                CheckDataResources(wuiAreaTex, wuiAreaColorArray);
-            }
-            return wuiAreaTex;
-        }
-
         public Texture2D GetRandomIgnitionTexture()
         {
             if (randomIgnitionTex == null)
@@ -156,23 +148,9 @@ namespace WUInity
             return randomIgnitionTex;
         }
 
-        public Texture2D GetInitialIgnitionTexture()
-        {
-            if (initialIgnitionTex == null)
-            {
-                CheckDataResources(initialIgnitionTex, initialIgnitionColorArray);
-            }
-            return initialIgnitionTex;
-        }
-
         public void SetEvacGroupColor(int groupIndex)
         {
             SetColor(groupIndex);
-        }
-
-        public void SetWUIAreaColor(bool addArea)
-        {
-            SetColor(addArea ? 1 : 0);
         }
 
         public void SetRandomIgnitionAreaColor(bool addArea)
@@ -180,14 +158,9 @@ namespace WUInity
             SetColor(addArea ? 1 : 0);
         }
 
-        public void SetInitialIgnitionAreaColor(bool addArea)
-        {
-            SetColor(addArea ? 1 : 0);
-        }
-
         private void SetColor(int arrayIndex = 0)
         {
-            if(paintMode == PaintMode.WUIArea || paintMode == PaintMode.RandomIgnitionArea || paintMode == PaintMode.InitialIgnition)
+            if (paintMode == PaintMode.RandomIgnitionArea)
             {
                 currentColor = arrayIndex == 1 ? activeAreaColor : inactiveAreaColor;
                 addingArea = arrayIndex == 1;
@@ -289,8 +262,7 @@ namespace WUInity
         {
             if (_manager == null || _manager.PREACTInput == null)
             {
-                _gridProblem = "Load a scenario first.";
-                Engine.Message(null, Engine.LogType.Warning, "The painter has no scenario to paint on; load one first.");
+                ReportGridProblem("Load a scenario first: the painter has no scenario to paint on.");
                 return false;
             }
 
@@ -309,10 +281,9 @@ namespace WUInity
                 what = "the fire case's DEM";
                 if (!System.IO.File.Exists(System.IO.Path.Combine(input.RootFolder, reference)))
                 {
-                    _gridProblem = "Build the fire case first (workflow step 5): an ELMFIRE scenario is painted on "
+                    ReportGridProblem("Build the fire case first (workflow step 5): an ELMFIRE scenario is painted on "
                         + reference + ", the grid the fire, the case's masks and k-PERIL share, and it does not "
-                        + "exist yet.";
-                    Engine.Message(null, Engine.LogType.Warning, _gridProblem);
+                        + "exist yet.");
                     return false;
                 }
             }
@@ -321,8 +292,7 @@ namespace WUInity
                 what = "the imported fire's arrival times";
                 if (string.IsNullOrEmpty(reference))
                 {
-                    _gridProblem = "Set the imported fire's TimeOfArrivalFile first: an imported fire is painted on its grid.";
-                    Engine.Message(null, Engine.LogType.Warning, _gridProblem);
+                    ReportGridProblem("Set the imported fire's TimeOfArrivalFile first: an imported fire is painted on its grid.");
                     return false;
                 }
             }
@@ -337,6 +307,7 @@ namespace WUInity
                 _gridReference = "(landscape)";
                 _gridDescription = "the loaded landscape";
                 _evacGroupMasksLoaded = false;
+                if (_haveFireGrid) _gridProblemSaid = null;
                 return _haveFireGrid;
             }
             else
@@ -344,9 +315,8 @@ namespace WUInity
                 what = "the landscape";
                 if (string.IsNullOrEmpty(reference))
                 {
-                    _gridProblem = "There is nothing to paint on. With no fire module, painting needs the scenario's "
-                        + "landscape or elevation raster to define the cells.";
-                    Engine.Message(null, Engine.LogType.Warning, _gridProblem);
+                    ReportGridProblem("There is nothing to paint on. With no fire module, painting needs the scenario's "
+                        + "landscape or elevation raster to define the cells.");
                     return false;
                 }
             }
@@ -355,8 +325,7 @@ namespace WUInity
             //have been caught by the branch above if it had loaded.
             if (reference.ToLowerInvariant().EndsWith(".lcp"))
             {
-                _gridProblem = "The landscape file could not be loaded, so there is no grid to paint on.";
-                Engine.Message(null, Engine.LogType.Warning, _gridProblem);
+                ReportGridProblem("The landscape file could not be loaded, so there is no grid to paint on.");
                 return false;
             }
 
@@ -364,8 +333,7 @@ namespace WUInity
             PREACT.Utility.AscRaster.Header header = PREACT.Utility.AscRaster.ReadHeader(path, out bool ok);
             if (!ok)
             {
-                _gridProblem = "Could not read a cell grid from " + path + ".";
-                Engine.Message(null, Engine.LogType.Warning, _gridProblem);
+                ReportGridProblem("Could not read a cell grid from " + path + ".");
                 return false;
             }
 
@@ -380,6 +348,7 @@ namespace WUInity
             _gridReference = reference;
             _gridDescription = what + " (" + reference + ")";
             _gridProblem = null;
+            _gridProblemSaid = null;
             _evacGroupMasksLoaded = false;
 
             Engine.Message(null, Engine.LogType.Log,
@@ -404,6 +373,18 @@ namespace WUInity
 
             return true;
         }
+
+        /// <summary>Why there is no paint grid, said in the console once until it changes or a grid is found.</summary>
+        private void ReportGridProblem(string problem)
+        {
+            _gridProblem = problem;
+            if (problem == _gridProblemSaid) return;
+            _gridProblemSaid = problem;
+            Engine.Message(null, Engine.LogType.Warning, problem);
+        }
+
+        /// <summary>True when the last attempt to find the paint grid failed, and the console has said why.</summary>
+        public bool HasGridProblem { get => !_haveFireGrid && !string.IsNullOrEmpty(_gridProblem); }
 
         /// <summary>
         /// The record of a grid read from <paramref name="rasterPath"/>, if it has the paint grid's size; null when GDAL
@@ -447,17 +428,9 @@ namespace WUInity
 
         public void SetPainterMode(PaintMode mode)
         {
-            if (mode == PaintMode.WUIArea)
-            {
-                SetPainterWUIArea();
-            }
-            else if (mode == PaintMode.RandomIgnitionArea)
+            if (mode == PaintMode.RandomIgnitionArea)
             {
                 SetPainterRandomIgnition();
-            }
-            else if (mode == PaintMode.InitialIgnition)
-            {
-                SetPainterInitialIgnition();
             }
             else if (mode == PaintMode.EvacGroup)
             {
@@ -679,7 +652,7 @@ namespace WUInity
 
             PREACT.Input.WildfireData fireData = _manager.PREACTInput.WildfireModule.Data;
             int cells = fireDataCellCount.x * fireDataCellCount.y;
-            if (fireData.WuiArea == null || fireData.WuiArea.Length != cells)
+            if (fireData.RandomIgnition == null || fireData.RandomIgnition.Length != cells)
             {
                 return false;
             }
@@ -707,12 +680,10 @@ namespace WUInity
                 _manager.StopPainter();
             }
 
-            DestroyTexture(ref wuiAreaTex);
             DestroyTexture(ref randomIgnitionTex);
-            DestroyTexture(ref initialIgnitionTex);
             DestroyTexture(ref evacGroupTex);
             DestroyTexture(ref _evacGroupOverlayTex);
-            wuiAreaColorArray = randomIgnitionColorArray = initialIgnitionColorArray = evacGroupColorArray = null;
+            randomIgnitionColorArray = evacGroupColorArray = null;
 
             activeTexture = null;
             activeColorArray = null;
@@ -728,6 +699,7 @@ namespace WUInity
             _gridReference = null;
             _gridDescription = null;
             _gridProblem = null;
+            _gridProblemSaid = null;
 
             _evacGroupCells = null;
             _evacGroupMasksLoaded = false;
@@ -784,10 +756,8 @@ namespace WUInity
                 _manager.StopPainter();
             }
 
-            DestroyTexture(ref wuiAreaTex);
             DestroyTexture(ref randomIgnitionTex);
-            DestroyTexture(ref initialIgnitionTex);
-            wuiAreaColorArray = randomIgnitionColorArray = initialIgnitionColorArray = null;
+            randomIgnitionColorArray = null;
             if (paintMode != PaintMode.EvacGroup)
             {
                 activeTexture = null;
@@ -940,21 +910,6 @@ namespace WUInity
             _offset = FireGridOffset();
         }
 
-        void SetPainterWUIArea()
-        {
-            DropGridIfStale();
-            if (!_haveFireGrid && !ResolveFireGrid())
-            {
-                return;
-            }
-
-            paintMode = PaintMode.WUIArea;
-            CheckDataResources(wuiAreaTex, wuiAreaColorArray);
-            SetWUIAreaColor(true);
-            _brushSize = 5;
-            _offset = FireGridOffset();
-        }
-
         void SetPainterRandomIgnition()
         {
             DropGridIfStale();
@@ -969,21 +924,6 @@ namespace WUInity
             _brushSize = 5;
             _offset = FireGridOffset();
         }
-        void SetPainterInitialIgnition()
-        {
-            DropGridIfStale();
-            if (!_haveFireGrid && !ResolveFireGrid())
-            {
-                return;
-            }
-
-            paintMode = PaintMode.InitialIgnition;
-            CheckDataResources(initialIgnitionTex, initialIgnitionColorArray);
-            SetInitialIgnitionAreaColor(true);
-            _brushSize = 3;
-            _offset = FireGridOffset();
-        }
-
         /// <summary>
         /// The grid every painted texture is built on, in the frame the scene draws in: extent in metres
         /// and the lower-left corner in simulation coordinates.
@@ -1049,16 +989,14 @@ namespace WUInity
             PREACT.Input.WildfireData fireData = _manager.PREACTInput.WildfireModule.Data;
             int cells = fireDataCellCount.x * fireDataCellCount.y;
 
-            if (!AnyPainted(fireData.WuiArea, cells) && !AnyPainted(fireData.RandomIgnition, cells)
-                && !AnyPainted(fireData.InitialIgnition, cells) && !AnyPainted(fireData.ManualTriggerBuffer, cells))
+            if (!AnyPainted(fireData.RandomIgnition, cells) && !AnyPainted(fireData.ManualTriggerBuffer, cells))
             {
                 //Refused rather than written empty, because an empty file is not the same as no file: the
                 //case builder reads an all-false ignition area as "not painted" and falls back to
                 //ignite-anywhere, so a file saying nothing looks exactly like a file that was never saved
                 //while making the checklist claim the scenario has painted areas.
                 Engine.Message(null, Engine.LogType.Warning,
-                    "Nothing has been painted, so there is nothing to save. Paint a WUI area, an ignition area "
-                    + "or an initial ignition first.");
+                    "Nothing has been painted, so there is nothing to save. Paint an ignition area first.");
                 return null;
             }
 
@@ -1073,9 +1011,10 @@ namespace WUInity
             UnsavedFireStrokes = false;
 
             Engine.Message(null, Engine.LogType.Log,
-                $"Wrote {name}: {Count(fireData.WuiArea)} WUI cells, {Count(fireData.RandomIgnition)} ignition area "
-                + $"cells, {Count(fireData.InitialIgnition)} initial ignition cells on a "
+                $"Wrote {name}: {Count(fireData.RandomIgnition)} ignition area cells on a "
                 + $"{fireDataCellCount.x} x {fireDataCellCount.y} grid of {_fireGridCellSize:F1} m.");
+            //What an older file held that is not painted any more is not written again.
+            fireData.LegacyWuiCells = fireData.LegacyInitialIgnitionCells = 0;
 
             return name;
         }
@@ -1188,7 +1127,7 @@ namespace WUInity
                 //grid changed under them - a landscape was added, or the imported fire was replaced.
                 //Strokes painted on another grid and never saved cannot be carried onto this one either, and until now
                 //still counted as unsaved; they are said to be gone, and stop counting.
-                if (UnsavedFireStrokes && fireData.WuiArea != null && fireData.WuiArea.Length != cells)
+                if (UnsavedFireStrokes && fireData.RandomIgnition != null && fireData.RandomIgnition.Length != cells)
                 {
                     Engine.Message(null, Engine.LogType.Warning, "Fire areas painted on the previous grid and not saved "
                         + $"could not be carried onto this {cellCount.x} x {cellCount.y} grid, and are dropped. What was saved is "
@@ -1210,8 +1149,8 @@ namespace WUInity
                 //The same size is still another grid when the masks record a place that is not this grid's (review MI-3):
                 //a domain moved by whole cells. Shown here they would sit on the wrong ground, and strokes added to them
                 //would be saved as this grid's. The saved file is left alone; the case build refuses it for the same reason.
-                string elsewhere = fireData.PaintedGrid != null && _fireGridRecord != null && fireData.WuiArea != null
-                                   && fireData.WuiArea.Length == cells
+                string elsewhere = fireData.PaintedGrid != null && _fireGridRecord != null && fireData.RandomIgnition != null
+                                   && fireData.RandomIgnition.Length == cells
                     ? fireData.PaintedGrid.DescribeMismatch(_fireGridRecord.XllCorner, _fireGridRecord.YllCorner,
                         _fireGridRecord.CellSize, _fireGridRecord.EpsgCode)
                     : null;
@@ -1224,21 +1163,13 @@ namespace WUInity
                         + "What was saved is still in " + (_manager.PREACTInput.WildfireModule.GraphicalFireInputFile ?? "its file")
                         + "; painting and saving again keeps it and writes a new file.");
                     UnsavedFireStrokes = false;
-                    fireData.WuiArea = fireData.RandomIgnition = fireData.InitialIgnition = fireData.ManualTriggerBuffer = null;
+                    fireData.RandomIgnition = fireData.ManualTriggerBuffer = null;
                     fireData.PaintedCellCount = new Vector2int(0, 0);
                 }
 
-                if (fireData.WuiArea == null || fireData.WuiArea.Length != cells)
-                {
-                    fireData.UpdateWUIArea(null, cellCount.x, cellCount.y);
-                }
                 if (fireData.RandomIgnition == null || fireData.RandomIgnition.Length != cells)
                 {
                     fireData.UpdateRandomIgnitionIndices(null, cellCount.x, cellCount.y);
-                }
-                if (fireData.InitialIgnition == null || fireData.InitialIgnition.Length != cells)
-                {
-                    fireData.UpdateInitialIgnitionIndices(null, cellCount.x, cellCount.y);
                 }
 
                 //From here the masks are this grid's: strokes go into them on it, and a run checks them against it.
@@ -1253,17 +1184,9 @@ namespace WUInity
                     for (int x = 0; x < cellCount.x; x++)
                     {
                         Color c = Color.white;
-                        if (paintMode == PaintMode.WUIArea)
-                        {
-                            c = _manager.PREACTInput.WildfireModule.Data.WuiArea[x + y * fireDataCellCount.x] == false ? inactiveAreaColor : activeAreaColor;
-                        }
-                        else if (paintMode == PaintMode.RandomIgnitionArea)
+                        if (paintMode == PaintMode.RandomIgnitionArea)
                         {
                             c = _manager.PREACTInput.WildfireModule.Data.RandomIgnition[x + y * fireDataCellCount.x] == false ? inactiveAreaColor : activeAreaColor;
-                        }
-                        else if (paintMode == PaintMode.InitialIgnition)
-                        {
-                            c = _manager.PREACTInput.WildfireModule.Data.InitialIgnition[x + y * fireDataCellCount.x] == false ? inactiveAreaColor : activeAreaColor;
                         }
                         else if (paintMode == PaintMode.EvacGroup)
                         {
@@ -1297,20 +1220,10 @@ namespace WUInity
                 requestedTexture.Apply();              
 
                 //fix references after created
-                if (paintMode == PaintMode.WUIArea)
-                {
-                    wuiAreaTex = requestedTexture;
-                    wuiAreaColorArray = requestedColorArray;
-                }
-                else if(paintMode == PaintMode.RandomIgnitionArea)
+                if (paintMode == PaintMode.RandomIgnitionArea)
                 {
                     randomIgnitionTex = requestedTexture;
                     randomIgnitionColorArray = requestedColorArray;
-                }
-                else if (paintMode == PaintMode.InitialIgnition)
-                {
-                    initialIgnitionTex = requestedTexture;
-                    initialIgnitionColorArray = requestedColorArray;
                 }
                 else if (paintMode == PaintMode.EvacGroup)
                 {
@@ -1470,17 +1383,9 @@ namespace WUInity
                 UnsavedFireStrokes = true;
             }
 
-            if(paintMode == PaintMode.WUIArea)
-            {
-                _manager.PREACTInput.WildfireModule.Data.WuiArea[x + y * activeCellCount.x] = addingArea;
-            }
-            else if (paintMode == PaintMode.RandomIgnitionArea)
+            if (paintMode == PaintMode.RandomIgnitionArea)
             {
                 _manager.PREACTInput.WildfireModule.Data.RandomIgnition[x + y * activeCellCount.x] = addingArea;
-            }
-            else if (paintMode == PaintMode.InitialIgnition)
-            {
-                _manager.PREACTInput.WildfireModule.Data.InitialIgnition[x + y * activeCellCount.x] = addingArea;
             }
             else if (paintMode == PaintMode.EvacGroup && _evacGroupCells != null)
             {

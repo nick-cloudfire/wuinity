@@ -222,7 +222,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 return;
             }
 
-            Item("Fire areas (WUI, ignition area)...", WorkflowAction.OpenFireAreas, WorkflowStepId.FireAreas);
+            Item("Fire areas and ignition...", WorkflowAction.OpenFireAreas, WorkflowStepId.FireAreas);
             Item("Ignition points...", WorkflowAction.OpenFireAreas, WorkflowStepId.FireAreas,
                 "Listed, added and moved in the Fire areas window, beside the painted ignition area.");
             ImGui.Separator();
@@ -347,7 +347,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             Tooltip(any ? null : kind == ResultsWindow.Kind.FireArrival || kind == ResultsWindow.Kind.TriggerBoundary
                 ? "Not written yet: run the simulation (Run > Run simulation, step 11)."
                 : kind == ResultsWindow.Kind.WuiArea
-                ? "The case has no wui_area.tif yet (steps 5 and 6)."
+                ? "The case has no wui_area.tif yet: it is the evacuation groups' union (steps 9 and 5)."
                 : "Not written yet: run a campaign (Run > Trigger campaign, step 13).");
         }
 

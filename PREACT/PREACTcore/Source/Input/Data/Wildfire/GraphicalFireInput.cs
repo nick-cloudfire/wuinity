@@ -11,10 +11,17 @@ using System.IO;
 namespace PREACT
 {
     /// <summary>
-    /// The four masks painted on the fire grid - WUI area, random ignition area, initial ignition and
-    /// a manually painted trigger buffer - as a single binary file: two integers for the grid, then one
-    /// byte per cell per mask.
+    /// The masks painted on the fire grid, as a single binary file: two integers for the grid, then one byte per cell
+    /// per mask, in four places - WUI area, random ignition area, initial ignition, and a manually painted trigger
+    /// buffer - and an optional trailer saying where the grid lies.
     /// </summary>
+    /// <remarks>
+    /// Only the ignition area is painted now (and the trigger buffer, which nothing paints, is carried). The WUI area
+    /// is the evacuation groups', and an initial ignition is an <c>[IgnitionPoint]</c>, so both places are written
+    /// empty: the layout stays, so a file written here opens in an older build, and an older file - with a painted WUI
+    /// area or initial ignition - still opens here, where the scenario's load notes the one and turns the other into
+    /// an ignition point (<see cref="WildfireData"/>).
+    /// </remarks>
     public static class GraphicalFireInput
     {
         /// <summary>The name a scenario's masks are written under when the caller has no preference.</summary>
@@ -119,9 +126,10 @@ namespace PREACT
                 {
                     bw.Write(xCount);
                     bw.Write(yCount);
-                    bw.Write(GetBytes(fireData.WuiArea, cells));
+                    //The retired WUI area and initial ignition are written empty, in their places.
+                    bw.Write(GetBytes(null, cells));
                     bw.Write(GetBytes(fireData.RandomIgnition, cells));
-                    bw.Write(GetBytes(fireData.InitialIgnition, cells));
+                    bw.Write(GetBytes(null, cells));
                     bw.Write(GetBytes(fireData.ManualTriggerBuffer, cells));
 
                     if (grid != null && grid.CellSize > 0.0)
@@ -317,34 +325,6 @@ namespace PREACT
         {
             byte[] b = br.ReadBytes(dataSize);
             return b.Length < dataSize ? new bool[dataSize] : GetBools(b, dataSize);
-        }
-
-        public static void LoadGraphicalFireInput(string file, Wildfire.LandscapeData lcpData, out bool[] wuiArea, out bool[] randomIgnitionArea, out bool[] initialIgnitionIndices, out bool[] triggerBufferIndices, out bool success)
-        {
-            LoadGraphicalFireInput(file, out int ncols, out int nrows,
-                out wuiArea, out randomIgnitionArea, out initialIgnitionIndices, out triggerBufferIndices, out success);
-
-            if (success && (ncols != lcpData.GetCellCountX() || nrows != lcpData.GetCellCountY()))
-            {
-                Engine.Message(null, Engine.LogType.Warning, "Could read GFI data but there was a mismatch with the LCP file colums/rows, creating empty default.");
-                success = false;
-            }
-
-            if (!success)
-            {
-                CreateDefault(lcpData, out wuiArea, out randomIgnitionArea, out initialIgnitionIndices, out triggerBufferIndices);
-            }
-        }
-
-        private static void CreateDefault(Wildfire.LandscapeData lcpData, out bool[] wuiArea, out bool[] randomIgnitionArea, out bool[] initialIgnitionIndices, out bool[] triggerBufferIndices)
-        {
-            //LCP file has already been read, use that for dimensions
-            int xDim = lcpData.GetCellCountX();
-            int yDim = lcpData.GetCellCountY();
-            wuiArea = new bool[xDim * yDim];
-            randomIgnitionArea = new bool[xDim * yDim];
-            initialIgnitionIndices = new bool[xDim * yDim];
-            triggerBufferIndices = new bool[xDim * yDim];
         }
     }
 }

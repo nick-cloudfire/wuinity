@@ -72,7 +72,7 @@ namespace WUInity.Workflow
         PaintGroups,
 
         OpenTriggerBoundary,
-        UseCaseWuiArea,
+        ProtectEvacuationGroups,
         ClearPinnedWind,
 
         OpenRun,

@@ -8,6 +8,39 @@ namespace PREACT.Tests
     /// weather, the WUI area as the evacuation groups' union, and painted initial ignition turned into an ignition point.
     /// On the synthetic case of <see cref="PipelineTests.SyntheticCase"/>: no network, no WindNinja, no ELMFIRE.
     /// </summary>
+    /// <summary>
+    /// A painting as builds before round 2 wrote it, with a painted WUI area and initial ignition: two int32 for the grid,
+    /// four masks of one byte per cell (WUI area, ignition area, initial ignition, trigger buffer), and the grid record
+    /// when given. The engine no longer writes the first and third, so tests of how old files are read write them here.
+    /// </summary>
+    internal static class LegacyPainting
+    {
+        public static void Write(string path, int ncols, int nrows, bool[] wui = null, bool[] area = null, bool[] initial = null,
+            GraphicalFireInput.PaintedGrid grid = null)
+        {
+            int cells = ncols * nrows;
+            using (var bw = new BinaryWriter(File.Create(path)))
+            {
+                bw.Write(ncols);
+                bw.Write(nrows);
+                foreach (bool[] mask in new[] { wui, area, initial, null })
+                {
+                    var bytes = new byte[cells];
+                    if (mask != null) for (int i = 0; i < cells && i < mask.Length; ++i) bytes[i] = mask[i] ? (byte)1 : (byte)0;
+                    bw.Write(bytes);
+                }
+                if (grid != null)
+                {
+                    bw.Write(System.Text.Encoding.ASCII.GetBytes(GraphicalFireInput.GridTrailerTag));
+                    bw.Write(grid.XllCorner);
+                    bw.Write(grid.YllCorner);
+                    bw.Write(grid.CellSize);
+                    bw.Write(grid.EpsgCode);
+                }
+            }
+        }
+    }
+
     internal static class CaseBuildTests
     {
         public static void Register(Runner runner)
@@ -19,6 +52,89 @@ namespace PREACT.Tests
             runner.Add("wui: the groups are placed on a case grid in another UTM zone than the simulation's", WuiAreaAcrossZones);
             runner.Add("wui: [kPERIL] protects the groups unless it names a mask of its own", KperilSourceDefaults);
             runner.Add("campaign: refused when the case's wui_area.tif is not the groups' union, accepted when it is", CampaignChecksWuiArea);
+            runner.Add("painting: an old .gfi's initial ignition becomes one [IgnitionPoint] at its centroid; nothing writes or places it any more", InitialIgnitionBecomesAPoint);
+        }
+
+        /// <summary>
+        /// Nick: "Why can I specify an initial ignition painting and also ignition points?" (decision: drop painted initial
+        /// ignition). Auburn2's painting holds 27 initial-ignition cells: an old painting's become one ignition point at
+        /// their centroid when the scenario is read - the point the case build used to ignite - said once; a scenario with
+        /// points of its own keeps them; and nothing writes, moves or places a painted initial ignition any more.
+        /// </summary>
+        private static void InitialIgnitionBecomesAPoint()
+        {
+            using (var c = new PipelineTests.SyntheticCase())
+            {
+                ElmfireCaseBuilder.Build(c.Options(Path.Combine(c.Folder, "case"), 150.0, new List<string>())).GetAwaiter().GetResult();
+                string caseDem = ElmfireStems.Tif(Path.Combine(c.Folder, "case", "inputs"), ElmfireStems.Dem);
+                MasterGrid g = MasterGrid.FromRasterFile(caseDem);
+                int n = g.Header.Ncols * g.Header.Nrows;
+
+                //Four cells, (20..21, 30..31): the centroid is the corner they share.
+                var initial = new bool[n];
+                var area = new bool[n];
+                foreach ((int x, int y) in new[] { (20, 30), (21, 30), (20, 31), (21, 31) }) initial[x + y * g.Header.Ncols] = true;
+                for (int i = 0; i < 300; ++i) area[i] = true;
+                var record = PaintedMaskResampler.Grid.FromRaster(caseDem).ToPaintedGrid();
+                string gfi = Path.Combine(c.Folder, "painted_fire_areas.gfi");
+                LegacyPainting.Write(gfi, g.Header.Ncols, g.Header.Nrows, area: area, initial: initial, grid: record);
+                Assert.True(CrsTransform.TryToWgs84(g.Epsg, g.XMin + 21 * 30.0, g.YMin + 31 * 30.0, out double lat, out double lon),
+                    "the centroid in WGS84");
+
+                string wui = c.WriteScenario("case", 150.0);
+                File.WriteAllLines(wui, File.ReadAllLines(wui)
+                    .Select(l => l == "Module=ELMFIRE" ? "Module=ELMFIRE\nGraphicalFireInputFile=painted_fire_areas.gfi" : l)
+                    .SelectMany(l => l.Split('\n')));
+                Input.PREACTInput input = Input.PREACTInput.LoadFromDisk(wui, out bool _);
+                List<Wildfire.IgnitionPointInput> points = input.WildfireModule.Data.IgnitionPoints;
+                Assert.Equal(1, points.Count, "one ignition point is made of the painted cells");
+                Assert.Near(lat, points[0].LatLon.x, 1e-7, "at their centroid (latitude)");
+                Assert.Near(lon, points[0].LatLon.y, 1e-7, "and longitude");
+                Assert.True(!points[0].AbsoluteTime && points[0].IgnitionTime == 0f, "at the start, as the painted one was");
+                Assert.Equal(300, input.WildfireModule.Data.RandomIgnition.Count(b => b), "the ignition area is kept");
+
+                //Saved, it is a point of the scenario's own, and reading it again makes no second one.
+                File.WriteAllLines(wui, Input.PREACTInputWriter.Write(input));
+                Assert.True(File.ReadAllText(wui).Contains("[IgnitionPoint]"), "the save writes it as an [IgnitionPoint]");
+                Input.PREACTInput again = Input.PREACTInput.LoadFromDisk(wui, out bool _);
+                Assert.Equal(1, again.WildfireModule.Data.IgnitionPoints.Count, "and it is not made twice");
+
+                //A scenario with a point of its own elsewhere keeps it; the painted one is only noted.
+                var own = new Wildfire.IgnitionPointInput(new Math.Vector2d(PipelineTests.SyntheticCase.Lat + 0.004,
+                    PipelineTests.SyntheticCase.Lon + 0.004), false, 0f, again.Simulation.StartDateTime);
+                again.WildfireModule.Data.IgnitionPoints.Clear();
+                again.WildfireModule.Data.IgnitionPoints.Add(own);
+                File.WriteAllLines(wui, Input.PREACTInputWriter.Write(again));
+                Input.PREACTInput withOwn = Input.PREACTInput.LoadFromDisk(wui, out bool _);
+                Assert.True(withOwn.WildfireModule.Data.IgnitionPoints.Count == 1
+                            && Math.Vector2d.Distance(withOwn.WildfireModule.Data.IgnitionPoints[0].LatLon, own.LatLon) < 1e-9,
+                    "a scenario's own ignition point wins, as it did over the painted one");
+
+                //The builder no longer places a painted initial ignition: only the points become X_IGN/Y_IGN.
+                var log = new List<string>();
+                ElmfireCaseBuilder.Options o = c.Options(Path.Combine(c.Folder, "case"), 150.0, log);
+                o.PaintedMasksPath = gfi;
+                ElmfireCaseBuilder.Result r = ElmfireCaseBuilder.Build(o).GetAwaiter().GetResult();
+                Assert.True(r.Ignitions.Count == 0 && log.Any(l => l.Contains("initial ignition (4 cells) is not used")),
+                    "the build leaves it out and says so: " + string.Join(" | ", log.Where(l => l.Contains("painted"))));
+
+                //Moving the painting, or saving it again, writes no initial ignition (nor WUI area).
+                string moved = Path.Combine(c.Folder, "moved.gfi");
+                PaintedMaskResampler.Result m = PaintedMaskResampler.ResampleFile(gfi, caseDem, caseDem, moved);
+                GraphicalFireInput.LoadGraphicalFireInput(moved, out int _, out int _, out bool[] wuiAfter, out bool[] areaAfter,
+                    out bool[] initialAfter, out bool[] _, out bool ok);
+                Assert.True(ok && initialAfter.Count(b => b) == 0 && wuiAfter.Count(b => b) == 0 && areaAfter.Count(b => b) == 300,
+                    "a moved painting keeps the ignition area and leaves the initial ignition out");
+                Assert.True(m.LeftOutInitialIgnitionCells == 4 && m.Describe().Any(l => l.Contains("initial ignition: 4 cells, left out")),
+                    "and says so");
+
+                string saved = Path.Combine(c.Folder, "saved.gfi");
+                GraphicalFireInput.SaveGraphicalFireInput(saved, input.WildfireModule.Data, g.Header.Ncols, g.Header.Nrows, record);
+                GraphicalFireInput.LoadGraphicalFireInput(saved, out int _, out int _, out bool[] _, out bool[] savedArea,
+                    out bool[] savedInitial, out bool[] _, out bool savedOk);
+                Assert.True(savedOk && savedInitial.Count(b => b) == 0 && savedArea.Count(b => b) == 300,
+                    "a painting saved now has the ignition area in its place and nothing in the initial ignition's");
+            }
         }
 
         // ------------------------------------------------------------------ the WUI area
@@ -139,16 +255,17 @@ namespace PREACT.Tests
                 Assert.True(ElmfireCoupling.CaseKeysForScenario(input.RootFolder, Path.Combine(c.Folder, "case"), "synthetic", r)
                     .All(k => k.Section != "kPERIL"), "no [kPERIL] key is recorded: k-PERIL reads the groups themselves");
 
-                //A painting with a WUI area (every cell) changes nothing about it, and says so once.
-                var painting = new Input.WildfireData { WuiArea = new bool[g.Header.Ncols * g.Header.Nrows] };
-                for (int i = 0; i < painting.WuiArea.Length; ++i) painting.WuiArea[i] = true;
+                //An older painting with a WUI area (every cell) changes nothing about it, and says so once.
+                int all = g.Header.Ncols * g.Header.Nrows;
+                var everywhere = new bool[all];
+                for (int i = 0; i < all; ++i) everywhere[i] = true;
                 string gfi = Path.Combine(c.Folder, "painted_fire_areas.gfi");
-                GraphicalFireInput.SaveGraphicalFireInput(gfi, painting, g.Header.Ncols, g.Header.Nrows);
+                LegacyPainting.Write(gfi, g.Header.Ncols, g.Header.Nrows, wui: everywhere);
                 string before = ElmfireFingerprint.HashFile(wuiArea);
                 log.Clear();
                 BuildFrom(c, input, log, gfi);
                 Assert.Equal(before, ElmfireFingerprint.HashFile(wuiArea), "the painted WUI area is not the case's");
-                Assert.Equal(1, log.Count(l => l.Contains($"the painting's WUI area ({painting.WuiArea.Length} cells) is not used")),
+                Assert.Equal(1, log.Count(l => l.Contains($"the painting's WUI area ({all} cells) is not used")),
                     "it is noted once: " + string.Join(" | ", log));
 
                 //One group fewer, then none.

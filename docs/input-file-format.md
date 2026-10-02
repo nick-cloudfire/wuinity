@@ -258,7 +258,7 @@ Every key is optional; an unreadable value keeps the default and says so.
 |---|---|---|---|---|
 | `Enabled` | bool | `false` | – | Missing or unreadable means off. A missing one is a notice the workflow panel shows as a warning ("Not set, so the fire module is off and the scenario runs without a fire ...", and the same for the other modules), since a section without it may well have meant the module to run; a save writes `Enabled=false`. The rest of the section, the `[IgnitionPoint]`s and the module's sections are read (and kept) either way. |
 | `Module` | `ELMFIRE` \| `AscImport` | – | yes, when enabled | `ELMFIRE` runs ELMFIRE on the scenario's case; `AscImport` reads a fire computed elsewhere. `None` with the module enabled is critical. `ElmClone`/`CellSpread` (the removed cell-based model) are reported as removed. |
-| `GraphicalFireInputFile` | `.gfi` path | – | – | The painted WUI area, ignition area and initial ignition ([below](#painted-areas-gfi)). Kept even when the file is missing, so a save does not lose the reference. |
+| `GraphicalFireInputFile` | `.gfi` path | – | – | The painted ignition area ([below](#painted-areas-gfi)). Kept even when the file is missing, so a save does not lose the reference. An older file's painted WUI area is ignored, and its painted initial ignition becomes an `[IgnitionPoint]` at its centroid when the scenario is read (unless it has points of its own). |
 
 ### `[IgnitionPoint]` — repeatable
 
@@ -498,7 +498,9 @@ rates of spread m/min (with `SPREAD_RATE_IN_M`); FARSITE/FlamMap arrival times a
 
 Written by Fire > Fire areas. A binary file: the grid's column and row counts, then one byte per cell for each of
 four masks (WUI area, random-ignition area, initial ignition, and a trigger-buffer mask nothing uses), rows
-running north. It may end with a trailer recording the grid's south-west corner, cell size and EPSG code; without
+running north. Only the random-ignition area is painted; the WUI area and initial ignition are written empty in
+their places (so older builds still read the file) and are read from an older file only to note them and turn an
+initial ignition into an ignition point. It may end with a trailer recording the grid's south-west corner, cell size and EPSG code; without
 it a painting is matched to a grid by its size alone. An ELMFIRE scenario is painted on the case's `dem.tif`; a
 painting made on another grid is moved onto it with step 6's **Move painting onto the fire-case grid**, which
 writes `<name>_<W>x<H>.gfi` beside the original — see [ELMFIRE cases](elmfire-cases.md#painted-areas).

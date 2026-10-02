@@ -232,7 +232,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 case WorkflowAction.DownloadDemOnly:
                 case WorkflowAction.ApplyFireAreasToCase:
                 case WorkflowAction.MovePaintingToCaseGrid:
-                case WorkflowAction.UseCaseWuiArea:
+                case WorkflowAction.ProtectEvacuationGroups:
                 case WorkflowAction.ClearPinnedWind:
                     return true;
                 default:
@@ -384,13 +384,14 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 case WorkflowAction.MovePaintingToCaseGrid: MovePainting(); break;
                 case WorkflowAction.ApplyFireAreasToCase:
                     {
-                        //The build reads the painted areas from their file, so applying strokes that are not saved would
-                        //apply the old ones: here the only choice is to save first, or not to apply.
+                        //The build reads the painted ignition area and the groups' masks from their files, so applying strokes
+                        //that are not saved would apply the old ones: here the only choice is to save first, or not to apply.
                         global::WUInity.Painter painter = PreactGUI.WUInity?.Painter;
-                        if (painter != null && painter.UnsavedFireStrokes)
+                        if (painter != null && (painter.UnsavedFireStrokes || painter.UnsavedGroupStrokes))
                         {
-                            ConfirmPrompt.AskToConfirm("The painted areas have strokes that are not saved, and the case is built from "
-                                + "the saved file. Save the scenario (and the painted areas) and apply them?", "Save and apply", () =>
+                            ConfirmPrompt.AskToConfirm("Some painted areas (the ignition area, or the evacuation groups) have strokes "
+                                + "that are not saved, and the case is built from the saved files. Save the scenario (and the painted "
+                                + "areas) and apply them?", "Save and apply", () =>
                                 {
                                     if (ScenarioSession.Save()) ScenarioDataSteps.ApplyPaintedAreasToCase();
                                 });
@@ -409,9 +410,13 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 case WorkflowAction.PaintGroups: Editors.EvacuationGroupPaintWindow.Open(input.Evacuation.EvacuationGroupInputs); break;
 
                 case WorkflowAction.OpenTriggerBoundary: SettingsPageWindow.Open(SettingsPage.TriggerBoundary); break;
-                case WorkflowAction.UseCaseWuiArea:
-                    ScenarioDataSteps.AdoptCaseWuiArea(input);
-                    ScenarioSession.NotifyEdited("WUI area file");
+                case WorkflowAction.ProtectEvacuationGroups:
+                    //The WUI area is the groups: the case's wui_area.tif is their union, so naming it only went stale.
+                    input.TriggerBufferModule.kPERILInput.WuiAreaSource = PREACT.Input.kPERILInput.WuiAreaSources.EvacuationGroupsCombined;
+                    input.TriggerBufferModule.kPERILInput.WuiAreaFile = string.Empty;
+                    PREACT.Engine.Message(null, PREACT.Engine.LogType.Log, "k-PERIL now protects the evacuation groups together "
+                        + "([kPERIL] WuiAreaSource=EvacuationGroupsCombined, no WuiAreaFile).");
+                    ScenarioSession.NotifyEdited("WUI area");
                     break;
                 case WorkflowAction.ClearPinnedWind:
                     input.TriggerBufferModule.kPERILInput.WindSpeedFile = string.Empty;

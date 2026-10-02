@@ -1067,9 +1067,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
             DateTime started = DateTime.Now;
             try
             {
-                //Contract C1: on success this points [Landscape] at the case's dem/slp/asp, [kPERIL] WuiAreaFile at
-                //the wui_area.tif it wrote, and [Weather] at the day and archive the fire was computed against - in
-                //place. It runs on the worker while editing is locked; Finish then marks the scenario changed.
+                //Contract C1: on success this points [Landscape] at the case's dem/slp/asp and [Weather] at the day and
+                //archive the fire was computed against - in place. It runs on the worker while editing is locked; Finish
+                //then marks the scenario changed.
                 ok = PREACT.Utility.ElmfireCoupling.BuildCaseOnly(ctx.Input, LogStep, out problem);
             }
             finally
@@ -1102,9 +1102,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 ctx.Then(() => Engine.Message(null, Engine.LogType.Warning, message));
             }
 
-            //The build has just placed the painting on the case grid as ignition_mask.tif and wui_area.tif, through the
-            //grid it was painted on; the painting file itself follows it there, or the next build (and the painter)
-            //would be left with a painting on a grid nothing names any more.
+            //The build has just placed the painting on the case grid as ignition_mask.tif, through the grid it was painted
+            //on; the painting file itself follows it there, or the next build (and the painter) would be left with a
+            //painting on a grid nothing names any more.
             if (painting != null)
             {
                 CarryPaintingOntoCaseGrid(ctx, painting);
@@ -1133,7 +1133,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             PREACT.Input.WildfireData data = input.WildfireModule.Data;
             int cells = strokeGrid.x * strokeGrid.y;
-            if (data.WuiArea == null || data.WuiArea.Length != cells) return;
+            if (data.RandomIgnition == null || data.RandomIgnition.Length != cells) return;
 
             try
             {
@@ -1151,13 +1151,11 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
                 var masks = new PREACT.Utility.PaintedMaskResampler.Masks
                 {
-                    Ncols = from.Ncols, Nrows = from.Nrows, WuiArea = data.WuiArea, RandomIgnition = data.RandomIgnition,
-                    InitialIgnition = data.InitialIgnition, ManualTriggerBuffer = data.ManualTriggerBuffer,
+                    Ncols = from.Ncols, Nrows = from.Nrows, RandomIgnition = data.RandomIgnition,
+                    ManualTriggerBuffer = data.ManualTriggerBuffer,
                 };
                 var moved = PREACT.Utility.PaintedMaskResampler.Resample(masks, from, to, out bool _);
-                data.WuiArea = moved.WuiArea;
                 data.RandomIgnition = moved.RandomIgnition;
-                data.InitialIgnition = moved.InitialIgnition;
                 data.ManualTriggerBuffer = moved.ManualTriggerBuffer;
                 data.PaintedCellCount = new Vector2int(to.Ncols, to.Nrows);
                 data.PaintedGrid = to.ToPaintedGrid();
@@ -1365,27 +1363,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
         }
 
-        /// <summary>
-        /// [kPERIL] WuiAreaFile becomes the case's wui_area.tif - only one written since
-        /// <paramref name="builtSinceUtc"/>, since an older one may be from masks painted since replaced. A case
-        /// build sets it itself; this is for a scenario whose case was built before it did.
-        /// </summary>
-        public static void AdoptCaseWuiArea(PREACTInput input, DateTime builtSinceUtc = default)
-        {
-            kPERILInput peril = input?.TriggerBufferModule?.kPERILInput;
-            if (peril == null || peril.WuiAreaSource != kPERILInput.WuiAreaSources.Raster) return;
-
-            string wui = ScenarioFiles.CaseInput(input, "wui_area.tif");
-            string wuiPath = Path.Combine(input.RootFolder, wui);
-            //default means "whatever the case has" (asked for by hand); DateTime.MinValue cannot be moved back 5 s.
-            bool recent = builtSinceUtc == default || File.GetLastWriteTimeUtc(wuiPath) >= builtSinceUtc.AddSeconds(-5);
-            if (File.Exists(wuiPath) && recent && peril.WuiAreaFile != wui)
-            {
-                LogStep($"[kPERIL] WuiAreaFile now names {wui}, the painted WUI area the case build put on its grid.");
-                peril.WuiAreaFile = wui;
-            }
-        }
-
         private static string Show(string path) => string.IsNullOrEmpty(path) ? "nothing" : path;
 
         // ------------------------------------------------------------------ what the workflow and windows call
@@ -1451,8 +1428,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
         }
 
         /// <summary>
-        /// Builds the case again, keeping its layers (unless its grid has to be re-cut), so newly painted masks
-        /// become its ignition_mask.tif and wui_area.tif ("Apply to case"). The namelist is written again too.
+        /// Builds the case again, keeping its layers (unless its grid has to be re-cut), so a newly painted ignition area
+        /// becomes its ignition_mask.tif and the evacuation groups its wui_area.tif ("Apply to case"). The namelist is
+        /// written again too.
         /// </summary>
         public static void ApplyPaintedAreasToCase()
         {

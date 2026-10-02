@@ -156,21 +156,19 @@ duration, cell size, padding, executables); Fire > Fire behaviour holds what ELM
 
 ### 6. Fire areas and ignition
 
-**Fire areas** opens the painting window, on the case grid:
-
-| Area | What it is for |
-|---|---|
-| WUI area | What the trigger boundary protects. The case build writes it as `wui_area.tif`. |
-| Ignition area | Where a campaign's fires may start (`ignition_mask.tif`). Unpainted means anywhere burnable. |
-| Initial ignition | Where the single run's fire starts: the middle of what is painted. |
+**Fire areas** opens the window for where fires start, on the case grid: the **ignition area**, painted, where a
+campaign's fires may start (`ignition_mask.tif`; unpainted means anywhere burnable), and the **ignition points**,
+where a single run's fire starts. **New ignition point** places one (Set on map, snapped to the centre of a fire
+cell by default) with its own start time.
 
 **Start painting**, then left-drag to paint, right-click to flood-fill, keypad + and − to change the brush;
 **Erase** paints the area out. **Save painted areas** writes the `.gfi` file and records it on the scenario.
-**Apply to case** builds the case again so the painted areas become its `ignition_mask.tif` and `wui_area.tif`;
-the step warns while the painting is newer than the case.
+**Apply to case** builds the case again so the ignition area becomes its `ignition_mask.tif` (and the evacuation
+groups its `wui_area.tif`); the step warns while the painting is newer than the case.
 
-For an exact start, **New ignition point** places a point (Set on map, snapped to the centre of a fire cell by
-default) with its own start time. A painting made on another grid — an older landscape raster, or a grid a
+What the trigger boundary protects — the **WUI area** — is not painted here: it is the evacuation groups'
+area (step 9). An older scenario's painted WUI area is ignored, and its painted initial ignition becomes an
+ignition point when the scenario is opened; the step says so. A painting made on another grid — an older landscape raster, or a grid a
 rebuild replaced — is moved onto the case grid with **Move painting onto the fire-case grid**, into a new file.
 
 ### 7. Destinations
@@ -195,11 +193,16 @@ window), to which destinations, by which response curves, with which demographic
 taken from a shapefile. A cell belongs to
 one group only, so painting covers every group at once; **Save group areas** writes one mask per group.
 
+The groups' area is also the **WUI area**, what the trigger boundary protects: the case build writes their union as
+`wui_area.tif` (which a campaign aims at and checks its fires against), so after painting the groups the step asks
+for **Apply to case** while the case's WUI area is older than them or made from other groups.
+
 ### 10. Trigger boundary (k-PERIL)
 
-**Trigger boundary**: which area k-PERIL protects (`WuiAreaSource`) — a WUI raster (`WuiAreaFile`; left empty,
-the painted WUI area), or the evacuation groups' areas — and, for a fire without a wind of its own, which wind
-rasters it reads. The step warns when the fire stops before it reaches
+**Trigger boundary**: k-PERIL protects the evacuation groups (`WuiAreaSource`): all of them together, one
+boundary (the default), or each its own boundary, for groups ordered at different times. A WUI mask of your own
+(`Raster` with a `WuiAreaFile`) is the advanced choice. For a fire without a wind of its own, it also names the
+wind rasters k-PERIL reads. The step warns when the fire stops before it reaches
 the area (no boundary is computed then). How the boundary is computed, and what to know before relying on its
 shape: [Modules](modules.md#trigger-boundary).
 
@@ -240,7 +243,7 @@ The menus hold the same actions as the workflow, grouped the same way:
 | **File** | New scenario (Ctrl+N), Open scenario (Ctrl+O), Open recent, Save (Ctrl+S), Save as (same folder), Copy scenario to, Reveal scenario folder, Close scenario, Quit. |
 | **Scenario** | Workflow panel, Place and time, Terrain, Weather, Check scenario, All settings (every setting in one tabbed window). |
 | **Data** | Roads: OpenStreetMap to SUMO network; Population: WorldPop to households; Fuels, canopy and buildings; Build fire case (ELMFIRE). Each runs what is missing and shows its workflow row. Advanced: LANDFIRE fuels and canopy (US), and — for a scenario without ELMFIRE — Download DEM only and Download Open-Meteo weather. |
-| **Fire** | Fire areas (WUI, ignition area), Ignition points, Fire model settings, Fire behaviour (namelist), Preview namelist, Trigger boundary (k-PERIL), Smoke (when smoke is on). |
+| **Fire** | Fire areas and ignition (the painted ignition area), Ignition points, Fire model settings, Fire behaviour (namelist), Preview namelist, Trigger boundary (k-PERIL), Smoke (when smoke is on). |
 | **Evacuation** | Modules (pedestrian, traffic), Destinations, Response curves, Demographics, Evacuation groups, Paint group areas. |
 | **Run** | Run simulation (F5), Pause / Resume, Stop, Trigger campaign (opens at any time, to set one up or to watch and cancel the one running). |
 | **Results** | Live output; Show on map (fire arrival, trigger boundary, trigger and burn probability, arrival p10/p50/p90, evacuation groups, the case's WUI area, Hide result); Results of the last run and campaign; Open output folder. |

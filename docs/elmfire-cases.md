@@ -130,10 +130,18 @@ grid). Canopy is zero unless you name it.
 
 ## Painted areas
 
-Fire > Fire areas paints three masks on the fire grid: the **WUI area** (what the trigger boundary protects), the
-**ignition area** (where fires may start) and an **initial ignition**. They are saved in the scenario's `.gfi`
-(`[WildfireModule] GraphicalFireInputFile`). An ELMFIRE scenario is painted on the case's `dem.tif`, so the case
-has to exist before painting.
+Fire > Fire areas paints one mask on the fire grid: the **ignition area**, where a campaign's fires may start. It
+is saved in the scenario's `.gfi` (`[WildfireModule] GraphicalFireInputFile`). An ELMFIRE scenario is painted on
+the case's `dem.tif`, so the case has to exist before painting.
+
+Two masks it used to paint are gone. The **WUI area** is the evacuation groups' area (`wui_area.tif`, built from
+the groups — [above](#building-a-case-step-by-step)), so a painted one only duplicated it and could disagree with
+it. A painted **initial ignition** was an ignition point drawn with a brush and reduced to its centroid; place an
+`[IgnitionPoint]` instead. An older `.gfi` that holds either still opens: its WUI area is ignored with a note,
+and its initial-ignition cells become one `[IgnitionPoint]` at their centroid when the scenario is read (the point
+the build used to ignite), with a note — unless the scenario has ignition points of its own, which won over a
+painted initial ignition before too. Save the scenario to keep the point; saving the painted areas again leaves
+both old masks out, and a build or a move of the painting never uses them.
 
 At build time the painting is placed on:
 
@@ -145,23 +153,21 @@ At build time the painting is placed on:
 If none fits, the build fails: `The painted areas in <file> are 566x541 cells, but the fire-case grid is
 706x681 and the landscape raster mati_dem.tif is 616x590, so there is no telling which ground they were painted
 on. Move the painting onto the fire-case grid (the GUI's workflow step 6 offers it when it knows the grid it was
-painted on) or repaint the ignition and WUI areas on it, then build again.` A painting of the right size whose
-record puts it elsewhere is refused the same way, with how the grids differ (`... starts 300 m west of ...`), by
-the build, the painter and a run. A painting placed on the wrong grid would shear into different ground, and
-skipping it silently would leave the case with no WUI area.
+painted on) or repaint the ignition area on it, then build again.` A painting of the right size whose record
+puts it elsewhere is refused the same way, with how the grids differ (`... starts 300 m west of ...`), by the
+build and the painter. A painting placed on the wrong grid would shear into different ground, and skipping it
+silently would leave the case without the ignition area a campaign draws from. A painting with no ignition area
+(only an older WUI area, say) is not placed at all.
 
 **Moving a painting onto the case grid.** When step 6 finds the painting on another grid it can locate (the
 `[Landscape]` raster, `inputs/_previous_grid/dem.tif`, the scenario's downloaded DEM), it offers **Move painting
 onto the fire-case grid**. Every target cell takes the value of the source cell its centre falls in, reprojected
-when the two grids' CRSs differ; every painted initial-ignition cell marks the target cell under it, so a small
-ignition cannot vanish. It writes `<stem>_<W>x<H>.gfi` beside the original (never over it) and points the
-scenario at the new file. On Mati (616 × 590 cells of 27.6 m onto 566 × 541 of 30 m) the WUI area went from 7383
-to 6260 cells, 5.626 to 5.634 km², and the ignition area from 161543 to 135734 cells. A GUI build that re-cuts
-the grid moves the saved painting along by itself, the same way.
+when the two grids' CRSs differ. It writes `<stem>_<W>x<H>.gfi` beside the original (never over it) and points the
+scenario at the new file; an older WUI area or initial ignition in it is left out and said. On Mati (616 × 590
+cells of 27.6 m onto 566 × 541 of 30 m) the ignition area went from 161543 to 135734 cells. A GUI build that
+re-cuts the grid moves the saved painting along by itself, the same way.
 
-What each mask becomes: the ignition area → `ignition_mask.tif` (then restricted to burnable fuel); the WUI area
-→ `wui_area.tif`; the initial ignition → one explicit ignition at its centroid, which turns ELMFIRE's random
-ignition off. Placed `[IgnitionPoint]`s win over a painted initial ignition. An empty mask counts as "not
+The ignition area becomes `ignition_mask.tif` (then restricted to burnable fuel). An empty mask counts as "not
 painted".
 
 ## The namelist

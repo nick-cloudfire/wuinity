@@ -181,8 +181,8 @@ namespace PREACT.Utility
             /// transform is <see cref="ApplyIgnitionPoints"/>'s job, and doing it anywhere else is what
             /// put zone-35 eastings into a zone-34 case by hand.
             ///
-            /// These win over a painted initial ignition, which is a brush stroke reduced to its
-            /// centroid, and they switch <c>RANDOM_IGNITIONS</c> off.
+            /// They switch <c>RANDOM_IGNITIONS</c> off. (A painted initial ignition, which was a brush stroke reduced to
+            /// its centroid, is one of these now: the scenario's load turns an old one into a point.)
             /// </summary>
             public List<IgnitionPoint> IgnitionPoints = new List<IgnitionPoint>();
 
@@ -285,9 +285,8 @@ namespace PREACT.Utility
             /// <summary>Anything the builder had to work around, surfaced so it is not silent.</summary>
             public List<string> Fallbacks = new List<string>();
 
-            /// <summary>Every explicit ignition, in the case's own coordinates - from the scenario's
-            /// ignition points, or failing that from a painted initial ignition. Empty means ELMFIRE
-            /// draws its own from the ignition mask.</summary>
+            /// <summary>Every explicit ignition, in the case's own coordinates - the scenario's ignition points. Empty
+            /// means ELMFIRE draws its own from the ignition mask.</summary>
             public List<PlacedIgnition> Ignitions = new List<PlacedIgnition>();
 
             public bool HasIgnitionPoint => Ignitions.Count > 0;
@@ -572,8 +571,6 @@ namespace PREACT.Utility
             WriteWuiArea(o, result, inputs, grid, Log);
 
             //---------------------------------------------------------------- 5d. Ignition points
-            //After the painted masks, because an explicitly placed point supersedes the centroid of a
-            //painted stroke.
             ApplyIgnitionPoints(o, result, grid, Log);
 
             //---------------------------------------------------------------- 6. Ignition mask
@@ -1996,10 +1993,10 @@ namespace PREACT.Utility
         }
 
         /// <summary>
-        /// Brings masks painted in Unity into the case: the random-ignition area becomes <c>ignition_mask.tif</c>, and a
-        /// painted initial ignition becomes an explicit <c>X_IGN</c>/<c>Y_IGN</c> point in the namelist. A painted WUI
-        /// area is not used any more - the case's WUI area is the evacuation groups' (<see cref="WriteWuiArea"/>) - and
-        /// is only noted.
+        /// Brings the area painted in Unity into the case: the random-ignition area becomes <c>ignition_mask.tif</c>. An
+        /// older painting's WUI area and initial ignition are not used any more - the case's WUI area is the evacuation
+        /// groups' (<see cref="WriteWuiArea"/>), and an initial ignition is an ignition point, which the scenario's load
+        /// makes of an old one - and are only noted.
         /// </summary>
         /// <remarks>
         /// <para>
@@ -2034,7 +2031,13 @@ namespace PREACT.Utility
                     + "evacuation groups' (workflow step 9) - and is left out.");
             }
 
-            if (!masks.Any(masks.RandomIgnition) && !masks.Any(masks.InitialIgnition))
+            if (masks.Any(masks.InitialIgnition))
+            {
+                log($"  painted: the painting's initial ignition ({masks.Count(masks.InitialIgnition)} cells) is not used - an "
+                    + "initial ignition is an [IgnitionPoint] now, which opening the scenario makes of it - and is left out.");
+            }
+
+            if (!masks.Any(masks.RandomIgnition))
             {
                 return;
             }
@@ -2070,13 +2073,6 @@ namespace PREACT.Utility
                     ElmfireStems.Tif(inputs, ElmfireStems.IgnitionMask));
                 if (!result.Written.Contains(ElmfireStems.IgnitionMask)) result.Written.Add(ElmfireStems.IgnitionMask);
                 log($"  painted: ignition area -> ignition_mask.tif ({masks.Count(masks.RandomIgnition)} painted cells).");
-            }
-
-            if (masks.Any(masks.InitialIgnition) &&
-                PaintedMaskExporter.TryGetIgnitionPoint(masks.InitialIgnition, masks, painted, grid, out double ix, out double iy))
-            {
-                result.Ignitions.Add(new PlacedIgnition { X = ix, Y = iy, TimeSeconds = 0.0 });
-                log($"  painted: initial ignition -> X_IGN/Y_IGN ({ix:F1}, {iy:F1}), random ignition disabled.");
             }
         }
 
@@ -2285,19 +2281,6 @@ namespace PREACT.Utility
                 placed.Add(new PlacedIgnition { X = x, Y = y, TimeSeconds = point.TimeSeconds });
                 log($"  ignition: {point.LatLon.x:F5},{point.LatLon.y:F5} -> {x:F1}, {y:F1} in {grid.Epsg}"
                     + (point.TimeSeconds > 0.0 ? $" at t = {point.TimeSeconds:F0} s." : "."));
-            }
-
-            if (placed.Count == 0)
-            {
-                return;
-            }
-
-            if (result.Ignitions.Count > 0)
-            {
-                //Both were given, which is not an error - a painted initial ignition is easy to leave
-                //behind - but only one of them can be the ignition, so which one is worth saying.
-                log($"  ignition: {placed.Count} placed ignition point(s) used instead of the painted initial ignition.");
-                result.Ignitions.Clear();
             }
 
             result.Ignitions.AddRange(placed);
