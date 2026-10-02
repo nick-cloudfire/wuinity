@@ -71,10 +71,19 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             _stopRequested = true;
             _status = "Stopping " + _progressTitle + "...";
-            LogStep("Stop requested: nothing further starts; ELMFIRE and WindNinja are stopped at once, a download under way "
-                + "finishes first, and a case build stops at its next safe point without writing any wind.");
+            LogStep("Stop requested: nothing further starts; ELMFIRE and WindNinja are stopped at once, an OSM or LANDFIRE "
+                + "download stops at once (nothing is kept), another download under way finishes first, and a case build "
+                + "stops at its next safe point without writing any wind.");
+            try { _stopSource?.Cancel(); } catch (ObjectDisposedException) { }
             PREACT.Utility.ElmfireRunner.CancelAll();
         }
+
+        //Cancelled by RequestStop: the downloads that wait (OSM between its retries, LANDFIRE while its job queues) stop
+        //at once rather than after minutes. Made anew for every chain, so a stop never reaches the next one.
+        private static System.Threading.CancellationTokenSource _stopSource;
+
+        /// <summary>Cancelled when a stop is asked for the running step.</summary>
+        public static System.Threading.CancellationToken StopToken { get => _stopSource?.Token ?? System.Threading.CancellationToken.None; }
 
         /// <summary>The workflow step the running (or last) chain belongs to.</summary>
         public static WorkflowStepId Owner { get; private set; }
@@ -353,6 +362,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             _utility = false;
             _lastFailed = false;
             _stopRequested = false;
+            _stopSource = new System.Threading.CancellationTokenSource();
             Owner = owner;
             _status = title + "...";
             _progressWindowOpen = true;
@@ -742,9 +752,16 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 folder, ScenarioFiles.WorldPopBaseName(ctx.Name), ReportBytes);
         }
 
+        /// <summary>
+        /// The roads, from Overpass. Throws when no server delivered them, so the RouterDb and the SUMO network - the
+        /// links after it - do not run, and writes the file only on success, so a failed attempt never leaves one that
+        /// the next chain would take for done.
+        /// </summary>
         private static Task DoDownloadOsm(StepContext ctx)
         {
-            return PREACT.Tools.OSMDownloader.Download(ctx.LowerLeft, ctx.UpperRight, ctx.InRootForWriting(ScenarioFiles.Osm(ctx.Name)));
+            var options = new PREACT.Tools.OSMDownloader.Options { Log = LogStep, Cancellation = StopToken };
+            return PREACT.Tools.OSMDownloader.DownloadAsync(ctx.LowerLeft, ctx.UpperRight,
+                ctx.InRootForWriting(ScenarioFiles.Osm(ctx.Name)), options);
         }
 
         private static Task DoBuildSumoNetwork(StepContext ctx, string sumoBin)
