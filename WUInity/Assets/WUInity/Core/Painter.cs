@@ -1374,24 +1374,28 @@ namespace WUInity
             }
             colorArray[x + y * activeTexture.width] = c;
 
-            if (paintMode == PaintMode.EvacGroup)
-            {
-                UnsavedGroupStrokes = true;
-            }
-            else
-            {
-                UnsavedFireStrokes = true;
-            }
-
+            //A stroke over cells that already hold what it paints changes nothing, and does not count as unsaved: a
+            //click on the map after saving made the saved areas "unsaved" again, so the next Save wrote the same
+            //masks a second time ("wrote evac_group_Auburn.asc with 74741 cells", twice).
+            int cell = x + y * activeCellCount.x;
             if (paintMode == PaintMode.RandomIgnitionArea)
             {
-                _manager.PREACTInput.WildfireModule.Data.RandomIgnition[x + y * activeCellCount.x] = addingArea;
+                bool[] area = _manager.PREACTInput.WildfireModule.Data.RandomIgnition;
+                if (area[cell] != addingArea)
+                {
+                    area[cell] = addingArea;
+                    UnsavedFireStrokes = true;
+                }
             }
             else if (paintMode == PaintMode.EvacGroup && _evacGroupCells != null)
             {
                 //Ownership is exclusive: painting a cell for one group takes it from whichever group
                 //held it, so no cell can end up in two groups.
-                _evacGroupCells[x + y * activeCellCount.x] = evacGroupIndex;
+                if (_evacGroupCells[cell] != evacGroupIndex)
+                {
+                    _evacGroupCells[cell] = evacGroupIndex;
+                    UnsavedGroupStrokes = true;
+                }
             }
         }
 

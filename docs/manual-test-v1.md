@@ -202,7 +202,10 @@ Mati needs its SUMO network (row 2) and a fire; if row 11 lists blockers, fix th
    row 6 unblocks.
 7. **Evacuation > Paint group areas...**: paint the group's area and **Save group areas**. Row 6: paint an
    ignition area, **Save painted areas**, **Apply to case**. Row 6 is Done, `ignition_mask.tif` is in the case,
-   and `wui_area.tif` is the group's area (row 9 names its cells).
+   and `wui_area.tif` is the group's area (row 9 names its cells). The log has one "Evacuation group ...: wrote
+   evac_group_<name>.asc" line per save, and **Save group areas** is disabled again until something is painted;
+   **Apply to case** does not log "Painting stopped". Before step 6, a click with the Fire areas brush says "Build
+   the fire case first" once, not once per click.
 8. Row 5 **Rebuild weather only** after changing **Fire > Fire model settings > fire duration** (e.g. 24 -> 12 h).
    The log lists only `ws/wd/m1/m10/m100` as written, and `elmfire.data` differs only in its time and weather band
    keys; no other file in `elmfire\inputs` changes date. Set the duration back.

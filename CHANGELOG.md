@@ -34,6 +34,11 @@
   area), step 9 shows the WUI area the build made from the groups (and offers to apply them when the case's
   `wui_area.tif` is stale), step 10's k-PERIL setup protects the groups, and step 13 waits for a `wui_area.tif`
   that is the groups' union. The Fire menu's item is **Fire areas and ignition...**.
+- Painting is quieter: "Build the fire case first" (and any other reason there is no grid to paint on) is said once,
+  not three or four times per click; **Apply to case** puts the brush down without logging "Painting stopped";
+  **Save group areas** is enabled only when something was painted since the last save, and a stroke over cells
+  that already hold what it paints no longer counts as unsaved, so a save no longer writes (and logs) every group
+  mask twice.
 
 ## v1.0
 

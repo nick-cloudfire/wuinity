@@ -1434,6 +1434,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
         /// </summary>
         public static void ApplyPaintedAreasToCase()
         {
+            //The brush goes down for the build, as for any step - here without "Painting stopped: ... is running", which
+            //was logged on every apply only to say what pressing Apply to case does.
+            if (PreactGUI.WUInity != null && PreactGUI.WUInity.IsPainterActive()) PreactGUI.WUInity.StopPainter();
             ApplySessionOpenTopographyKey();
             PaintingFacts painting = PaintingFacts.Capture(Input);
             RunStep("Applying the painted areas to the fire case", WorkflowStepId.FireAreas, c => DoBuildElmfireCase(c, false, painting));
