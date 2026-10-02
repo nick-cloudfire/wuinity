@@ -100,6 +100,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
             Fields.Hint("Which standard the raster holds, and so whether it becomes fbfm40.tif or fbfm13.tif.",
                         "Scott & Burgan 40 is what LANDFIRE and the global products ship.");
 
+            DrawRoadsInFuel(input);
+
             ImGui.SeparatorText("Canopy");
 
             //Offered before the individual layers because it is the answer for most European cases: point it
@@ -208,6 +210,85 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
         }
 
+        /// <summary>
+        /// The optional road burn: the SUMO network's lanes burned into the fire case's fuel as a spreadable fuel model.
+        /// Placed under the fuel because it changes the fuel, and works on what the case build made of it.
+        /// </summary>
+        private static void DrawRoadsInFuel(PREACTInput input)
+        {
+            if (!ImGui.TreeNode("Burn roads into the fuel (optional)###RoadsInFuel"))
+            {
+                return;
+            }
+
+            int model = ScenarioDataSteps.EffectiveRoadFuelModel(input);
+            Fields.Hint("A fuel map marks roads, and the town around them, non-burnable, which can cut burnable ground into",
+                        "islands an ignition never grows out of. This burns the SUMO network's lanes into the fire case's",
+                        $"fuel as fuel model {model}, only where the fuel is non-burnable (91-99) and no building model owns",
+                        "the cell. It reports the islets before and after: if they match, the roads were not the problem.");
+
+            ImGui.SetNextItemWidth(120f);
+            int chosen = ScenarioDataSteps.RoadFuelModel;
+            if (ImGui.InputInt("Road fuel model (0: GR1 = 101, or 1 for Anderson 13)###RoadFuelModel", ref chosen))
+            {
+                ScenarioDataSteps.RoadFuelModel = Math.Max(0, chosen);
+            }
+
+            ImGui.SetNextItemWidth(120f);
+            double width = ScenarioDataSteps.RoadWidthMetres;
+            if (ImGui.InputDouble("Road width, m (0: one cell)###RoadWidth", ref width))
+            {
+                ScenarioDataSteps.RoadWidthMetres = Math.Max(0.0, width);
+            }
+
+            ImGui.Checkbox("Leave building cells to the building spread model###RoadsProtectBuildings", ref ScenarioDataSteps.ProtectBuildingCells);
+
+            ImGui.BeginDisabled(ScenarioSession.IsBusy);
+            if (ImGui.Button("Burn roads into the fuel###BurnRoads"))
+            {
+                ScenarioDataSteps.BurnRoadsIntoFuel();
+            }
+            ImGui.EndDisabled();
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            {
+                ImGui.SetTooltip("Needs the fire case (step 5) and the SUMO network (step 2). Writes "
+                    + ScenarioFiles.DownloadsFolder + "/<name>_fbfm40_roads" + model + ".tif, names it as FuelModelFile and puts it "
+                    + "in the case; the original layer is kept, and the new raster records which it was.");
+            }
+            Fields.Caution($"Fuel model {model} spreads fire (slowly): this changes the physics, it is not a bookkeeping fix.");
+            ImGui.TreePop();
+        }
+
+        /// <summary>The LANDFIRE releases offered, "closest" first; labels and the values they write.</summary>
+        private static readonly string[] LandfireReleaseValues = BuildReleaseValues();
+        private static string[] BuildReleaseValues()
+        {
+            var values = new System.Collections.Generic.List<string> { PREACT.Tools.LandfireVersions.Closest };
+            values.AddRange(PREACT.Tools.LandfireVersions.Names());
+            return values.ToArray();
+        }
+
+        private static string ReleaseLabel(string value, int scenarioYear, PREACT.Tools.LandfireVersions.Region region)
+        {
+            if (value == PREACT.Tools.LandfireVersions.Closest)
+            {
+                try
+                {
+                    var r = PREACT.Tools.LandfireVersions.Resolve(value, scenarioYear, region, out string _);
+                    return $"Closest to the scenario's year ({scenarioYear}: {r.Name})";
+                }
+                catch (ArgumentException)
+                {
+                    return "Closest to the scenario's year";
+                }
+            }
+            foreach (var r in PREACT.Tools.LandfireVersions.All)
+            {
+                if (r.Name == value) return r.Description;
+            }
+            return value;
+        }
+
         /// <summary>Where the layers can come from without bringing them: LANDFIRE for the US.</summary>
         private static void DrawDownloads(PREACTInput input)
         {
@@ -216,8 +297,58 @@ namespace Assets.WUInity.GUI.DearIMGUI
             PREACT.Math.Vector2d ll = input.Simulation.LowerLeftLatLon;
             PREACT.Math.Vector2d ur = ScenarioDataSteps.UpperRightLatLon(input);
             bool us = ScenarioFiles.IsInLandfireCoverage(ll, ur);
+            ElmfireInput elmfire = input.WildfireModule.ElmfireInput;
 
-            ImGui.BeginDisabled(!us || ScenarioSession.IsBusy);
+            if (us)
+            {
+                //The release: a scenario setting, since a historic fire wants the fuels of its time.
+                PREACT.Tools.LandfireVersions.Region region = PREACT.Tools.LandfireVersions.RegionOf(ll, ur);
+                int year = input.Simulation.StartDateTime.Year;
+                string current = PREACT.Tools.LandfireVersions.Normalise(elmfire.LandfireVersion) ?? PREACT.Tools.LandfireVersions.Closest;
+                int index = Math.Max(0, Array.IndexOf(LandfireReleaseValues, current));
+                string[] labels = new string[LandfireReleaseValues.Length];
+                for (int i = 0; i < labels.Length; ++i) labels[i] = ReleaseLabel(LandfireReleaseValues[i], year, region);
+                ImGui.SetNextItemWidth(-200f);
+                if (ImGui.Combo("LANDFIRE release###LandfireVersion", ref index, labels, labels.Length))
+                {
+                    elmfire.LandfireVersion = LandfireReleaseValues[index];
+                }
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("[ELMFIRE] LandfireVersion. A release includes the disturbances of its year, so for a historic "
+                        + "fire choose the release before it: a later one already has its burn scar.");
+                }
+
+                //The e-mail: the user's own, kept per user and never written into the scenario.
+                string email = ScenarioDataSteps.LandfireEmail;
+                ImGui.SetNextItemWidth(-200f);
+                if (ImGui.InputText("Contact e-mail###LandfireEmail", ref email, 128))
+                {
+                    ScenarioDataSteps.LandfireEmail = email;
+                }
+                if (ImGui.IsItemDeactivatedAfterEdit())
+                {
+                    ScenarioDataSteps.SaveLandfireEmail();
+                }
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("LANDFIRE's product service asks every request for a contact e-mail. Yours is kept for your "
+                        + "user in " + PREACT.Tools.LandfireContact.SettingsPath + ", not in the scenario. LANDFIRE_EMAIL "
+                        + "is used when this is empty.");
+                }
+                string trimmed = email.Trim();
+                if (trimmed.Length > 0 && !PREACT.Tools.LandfireContact.IsPlausible(trimmed))
+                {
+                    Fields.Warn("That is not an e-mail address.");
+                }
+                else if (trimmed.Length == 0 && !ScenarioDataSteps.HasLandfireEmail)
+                {
+                    Fields.Caution("Needed: LANDFIRE files every request under a contact e-mail.");
+                }
+            }
+
+            bool emailOk = ScenarioDataSteps.HasLandfireEmail;
+            ImGui.BeginDisabled(!us || !emailOk || ScenarioSession.IsBusy);
             if (ImGui.Button("Download LANDFIRE fuel model and canopy (US)"))
             {
                 ScenarioDataSteps.DownloadLandfireFuels();
@@ -227,13 +358,14 @@ namespace Assets.WUInity.GUI.DearIMGUI
             {
                 ImGui.SetTooltip(!us
                     ? "LANDFIRE covers the United States only; this domain is outside it."
+                    : !emailOk ? "Enter a contact e-mail first: LANDFIRE asks every request for one."
                     : ScenarioSession.IsBusy ? ScenarioSession.BusyTooltip
-                    : "Asks LANDFIRE's product service for the domain's fuel model and CC, CH, CBH and CBD, splits them into "
-                      + "single rasters under " + ScenarioFiles.LandfireFolder + " and names them below. The job queues on "
+                    : "Asks LANDFIRE's product service for the " + elmfire.FuelModelStandard + " fuel model and CC, CH, CBH and "
+                      + "CBD over the case's padded domain, splits them into single rasters under "
+                      + PREACT.Tools.LandfireFuels.Folder + " and names them below, with the canopy scaling flags their units "
+                      + "call for. The fuel and canopy the case already has are replaced at its next build. The job queues on "
                       + "their server and can take several minutes.");
             }
-            ImGui.SameLine();
-            ImGui.Checkbox("Anderson 13 (else Scott & Burgan 40)###LandfireAnderson", ref ScenarioDataSteps.UseAnderson13);
 
             if (!us)
             {

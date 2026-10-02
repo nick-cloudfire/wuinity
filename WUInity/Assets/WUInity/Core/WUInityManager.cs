@@ -310,13 +310,13 @@ namespace WUInity
                     {
                         Vector3 pos = ray.GetPoint(enter);
                         var clickLatLon = _webMercatorMap.WorldToGeoPosition(pos);
-                        _clickLatLons[_clicks] = new PREACT.Math.Vector2d(clickLatLon.x, clickLatLon.y);
-                        ++_clicks;
-                        //Reported because a bounding box that never completes is otherwise silent:
-                        //nothing distinguishes "the click was not registered" from "the second
-                        //corner was never placed".
-                        NewLogMessage($"Area of interest corner {_clicks} of 2: {clickLatLon.x:F5}, {clickLatLon.y:F5}");
-                        if (_clicks > 1)
+                        //A second corner that makes no area - the same spot clicked twice, a double click - is not taken
+                        //(it was, on Auburn2, and the pick ended with an area of nothing); the pick says why and waits.
+                        //Reported either way, because a bounding box that never completes is otherwise silent.
+                        PREACT.Utility.AreaOfInterestPick.Outcome outcome = _areaPick.Click(
+                            new PREACT.Math.Vector2d(clickLatLon.x, clickLatLon.y), UnityEngine.Time.realtimeSinceStartupAsDouble);
+                        NewLogMessage(_areaPick.Message);
+                        if (outcome == PREACT.Utility.AreaOfInterestPick.Outcome.Done)
                         {
                             FinishPickBoundingBoxOnMap();
                         }
@@ -324,7 +324,7 @@ namespace WUInity
                 }                
 
                 //update bounding box
-                if (_clicks == 1)
+                if (_areaPick.Corners == 1)
                 {
                     Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
                     float enter;
@@ -336,7 +336,7 @@ namespace WUInity
                         //zoomed between the two clicks, which moves world space under the geography.
                         //Freezing the map after the first click is what this used to do instead.
                         Vector3 corner = _webMercatorMap.GeoToWorldPosition(
-                            new Vector2d(_clickLatLons[0].x, _clickLatLons[0].y), false);
+                            new Vector2d(_areaPick.First.x, _areaPick.First.y), false);
                         _boundingBoxRenderer.SetPosition(0, new Vector3(corner.x, 10f, corner.z));
                         _boundingBoxRenderer.SetPosition(1, new Vector3(pos.x, 10f, corner.z));
                         _boundingBoxRenderer.SetPosition(2, new Vector3(pos.x, 10f, pos.z));
@@ -954,6 +954,7 @@ namespace WUInity
             //which would draw the previous scenario's roads at this one's origin.
             _roadNetwork = null;
             _roadNetworkBuilt = false;
+            _roadNetworkWarning = null;
             _roadNetworkVisualizer.SetVisibility(false);
             _godCamera.SetInput(_input);
             //this needs map and evac goals
@@ -1096,19 +1097,47 @@ namespace WUInity
                 _input.RootFolder, _input.TrafficModule.SumoInput.ConfigurationFile,
                 false, out bool corrected, out string explanation);
 
+            //Said once, not on every click that asks: a destination click asks to snap, and each one repeated "This scenario
+            //names no SUMO configuration ..." (Auburn2). Said again when the answer changes, or for another scenario.
             if (path == null)
             {
-                Engine.Message(null, Engine.LogType.Warning, explanation);
+                WarnRoadNetworkOnce(explanation);
                 return null;
             }
 
             if (corrected)
             {
-                Engine.Message(null, Engine.LogType.Warning, explanation);
+                WarnRoadNetworkOnce(explanation);
             }
 
             _roadNetwork = PREACT.Utility.SumoNetworkGeometry.Load(path, _input.Simulation.Data.UTMOrigin);
             return _roadNetwork;
+        }
+
+        private string _roadNetworkWarning;
+
+        private void WarnRoadNetworkOnce(string explanation)
+        {
+            if (explanation == _roadNetworkWarning) return;
+            _roadNetworkWarning = explanation;
+            Engine.Message(null, Engine.LogType.Warning, explanation);
+        }
+
+        /// <summary>
+        /// Forgets the road network read so far, so the next use reads the one on disk - after the roads step has built
+        /// it again. Redrawn at once when it is on show.
+        /// </summary>
+        public void ForgetRoadNetwork()
+        {
+            bool shown = IsRoadNetworkVisible;
+            _roadNetwork = null;
+            _roadNetworkBuilt = false;
+            _roadNetworkWarning = null;
+            if (shown)
+            {
+                _roadNetworkVisualizer.SetVisibility(false);
+                ShowRoadNetwork(true);
+            }
         }
 
         /// <summary>
@@ -1316,8 +1345,7 @@ namespace WUInity
         //of the map rather than a click on it.
         private Vector3 _mouseDownPos;
         private const float _clickSlop = 6f;
-        private int _clicks = 0;
-        private PREACT.Math.Vector2d[] _clickLatLons = new PREACT.Math.Vector2d[2];
+        private readonly PREACT.Utility.AreaOfInterestPick _areaPick = new PREACT.Utility.AreaOfInterestPick();
         private System.Action<PREACT.Math.Vector2d[]> _onClicks;
         private System.Action<PREACT.Math.Vector2d> _onClick;
         private System.Action _onPickCancelled;
@@ -1327,7 +1355,7 @@ namespace WUInity
         {
             _onClicks = clicks;
             _onPickCancelled = cancelled;
-            _clicks = 0;
+            _areaPick.Reset();
             SetWebMercatorMapInteraction(true);
             _pickingBoundingBox = true;
             NewLogMessage("Pick the area of interest: click two opposite corners on the map.");
@@ -1344,8 +1372,10 @@ namespace WUInity
             _boundingBoxRenderer.gameObject.SetActive(false);
             _pickingBoundingBox = false;
             _onPickCancelled = null;
-            _onClicks(_clickLatLons);
+            //South-west first, north-east second, whichever way round they were clicked.
+            System.Action<PREACT.Math.Vector2d[]> done = _onClicks;
             _onClicks = null;
+            done?.Invoke(new[] { _areaPick.LowerLeft, _areaPick.UpperRight });
         }
 
         /// <summary>

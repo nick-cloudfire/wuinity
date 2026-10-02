@@ -283,6 +283,8 @@ namespace PREACT.Tests
                 if (f.FieldType == typeof(string))
                 {
                     text = f.Name.EndsWith("File") ? "sources/" + f.Name + ".tif" : "custom_" + f.Name;
+                    //One of a fixed set, normalised when read: a release LFPS serves.
+                    if (f.Name == nameof(ElmfireInput.LandfireVersion)) text = "LF2022";
                     if (f.Name.EndsWith("File"))
                     {
                         Directory.CreateDirectory(Path.Combine(folder, "sources"));

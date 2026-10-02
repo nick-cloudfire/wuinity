@@ -381,6 +381,7 @@ namespace WUInity.Workflow
                 case WorkflowAction.PreparePopulation:
                 case WorkflowAction.RedoPopulation:
                 case WorkflowAction.DownloadLandfire:
+                case WorkflowAction.BurnRoadsIntoFuel:
                 case WorkflowAction.BuildFireCase:
                 case WorkflowAction.RebuildFireCase:
                 case WorkflowAction.DownloadDemOnly:
@@ -723,8 +724,12 @@ namespace WUInity.Workflow
             Vector2d ll = _in.Simulation.LowerLeftLatLon;
             Vector2d deg = PREACT.Population.LocalGPWData.SizeToDegrees(ll, _in.Simulation.DomainSize);
             Vector2d ur = new Vector2d(ll.x + deg.y, ll.y + deg.x);
+            string release = PREACT.Tools.LandfireVersions.Normalise(e.LandfireVersion) ?? PREACT.Tools.LandfireVersions.Closest;
             var landfire = new StepAction(WorkflowAction.DownloadLandfire, "Get LANDFIRE fuels and canopy (US)",
-                "Downloads LANDFIRE's fuel model and canopy for the domain and names them as the source layers.");
+                "Downloads LANDFIRE's fuel model and canopy for the case's padded domain and names them as the source layers, "
+                + "with the canopy scaling flags their units call for. Release: "
+                + (release == PREACT.Tools.LandfireVersions.Closest ? "the one closest to the scenario's year" : release)
+                + " ([ELMFIRE] LandfireVersion, chosen under Source layers, where your contact e-mail for LANDFIRE goes too).");
             if (!PlaceIsUsable) landfire.Disable("Blocked by step 1 (Place and time): needs the area of interest.");
             else if (!ScenarioFiles.IsInLandfireCoverage(ll, ur)) landfire.Disable("LANDFIRE covers the United States only; this domain is outside it.");
             if (!done && landfire.Enabled)
@@ -736,6 +741,15 @@ namespace WUInity.Workflow
             {
                 s.Secondary.Add(landfire);
             }
+
+            //Optional: the roads burned into the case's fuel (Nick's road-fuel conversion), once both exist.
+            var roads = new StepAction(WorkflowAction.BurnRoadsIntoFuel, "Burn roads into the fuel",
+                "Optional. Burns the SUMO network's lanes into the case's fuel as a spreadable fuel model (GR1), where the fuel is "
+                + "non-burnable, so roads stop cutting burnable ground into islands. Settings under Source layers.");
+            if (caseFuel == null) roads.Disable("Build the fire case first (step 5): the roads are burned into its fuel.");
+            else if (!_files.Exists(Abs(ScenarioFiles.SumoConfig)) && !_files.Exists(Abs(ScenarioFiles.SumoNetwork)))
+                roads.Disable("Blocked by step 2 (Roads): needs the SUMO network.");
+            s.Secondary.Add(roads);
 
             if (_files.Exists(Abs(_case + "/" + PREACT.Utility.ElmfireCaseBuilder.SourceManifestName)))
             {

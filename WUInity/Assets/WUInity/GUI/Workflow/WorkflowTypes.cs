@@ -47,6 +47,7 @@ namespace WUInity.Workflow
 
         OpenSourceLayers,
         DownloadLandfire,
+        BurnRoadsIntoFuel,
         ReadSourcesFromCase,
         OpenImportedFire,
 

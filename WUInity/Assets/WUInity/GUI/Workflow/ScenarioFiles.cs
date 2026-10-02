@@ -49,7 +49,6 @@ namespace WUInity.Workflow
         public static string Population(string name) => name + "_population.csv";
         public static string Weather(string name) => name + "_weather.csv";
 
-        public static string LandfireLayer(string name, string stem) => LandfireFolder + "/" + name + "_lf_" + stem + ".tif";
 
         /// <summary>The case folder, relative, normalised; "elmfire" when the scenario names none.</summary>
         public static string CaseDirectory(PREACT.Input.PREACTInput input)
@@ -93,31 +92,6 @@ namespace WUInity.Workflow
             bool alaska = lat >= 51.0 && lat <= 71.5 && (lon >= -180.0 && lon <= -129.0);
             bool hawaii = lat >= 18.5 && lat <= 22.5 && lon >= -160.5 && lon <= -154.5;
             return conus || alaska || hawaii;
-        }
-
-        /// <summary>
-        /// Which 1-based band of an LFPS download holds <paramref name="key"/> (FBFM, CC, CH, CBH, CBD), by its
-        /// description when the service labelled the bands and by request order otherwise.
-        /// </summary>
-        public static int FindLandfireBand(string[] upperCaseDescriptions, string key, int fallback)
-        {
-            for (int b = 1; b < upperCaseDescriptions.Length; ++b)
-            {
-                string d = upperCaseDescriptions[b] ?? string.Empty;
-                if (d.Length == 0) continue;
-
-                //Labels look like "US_230FBFM40", "LF2023_CC", "US_220CBH". CH is a suffix of CBH, so it is
-                //matched as a whole token.
-                string token = d.Contains("_") ? d.Substring(d.LastIndexOf('_') + 1) : d;
-                token = token.TrimStart('0', '1', '2', '3', '4', '5', '6', '7', '8', '9');
-                if (key == "FBFM" ? token.StartsWith("FBFM") : token == key)
-                {
-                    return b;
-                }
-            }
-
-            //Unlabelled: the order the job was submitted in, if there are enough bands for it.
-            return fallback < upperCaseDescriptions.Length ? fallback : -1;
         }
 
         /// <summary>A path the scenario recorded, made absolute against its folder, separators normalised.</summary>

@@ -92,7 +92,7 @@ them.
 
 | Stem | Source | Notes |
 |---|---|---|
-| `dem` | OpenTopography (`COP30`, `COP90`, `SRTMGL1`, `SRTMGL3`), or a local DEM | Needs an OpenTopography key: environment `OPENTOPOGRAPHY_API_KEY`, then `WUInity/Assets/Resources/OpenTopography/OpenTopographyConfiguration.txt`, or (GUI) one typed in for the session. Never stored in the scenario. |
+| `dem` | OpenTopography (`COP30`, `COP90`, `SRTMGL1`, `SRTMGL3`), or a local DEM | Downloaded with a margin, so the UTM grid is covered to its corners. Needs an OpenTopography key: environment `OPENTOPOGRAPHY_API_KEY`, then `WUInity/Assets/Resources/OpenTopography/OpenTopographyConfiguration.txt`, or (GUI) one typed in for the session. Never stored in the scenario. |
 | `slp`, `asp` | derived from `dem` | |
 | `adj`, `phi` | constant 1.0 | |
 | `fbfm40` / `fbfm13` | `[ELMFIRE] FuelModelFile` + `FuelModelStandard` | Required: ELMFIRE will not start without a fuel raster. LANDFIRE in the US; your own raster elsewhere. |
@@ -104,13 +104,45 @@ them.
 | `sdi`, `erc`, `pyromes`, `land_value`, `population_density`, `real_estate_value` | the matching `[ELMFIRE]` key | Nothing produces these; each switch that needs one is written on only when the case has it. |
 | `ws`, `wd`, `m1`, `m10`, `m100` | the weather chain | |
 
-**LANDFIRE (United States).** Workflow step 4's **Get LANDFIRE fuels and canopy (US)** (also Data > Advanced)
-asks the LANDFIRE Product Service for the scenario's box and start year, waits for the job, and splits the result
-into `downloads/landfire/<Name>_lf_fbfm40.tif` (or `_fbfm13` with the Anderson 13 option), `_cc`, `_ch`, `_cbh`
-and `_cbd`. It points the scenario's fuel and canopy keys at them and switches `CH_TIMES_10`, `CBH_TIMES_10` and
-`CBD_TIMES_100` on, because LANDFIRE stores heights in decimetres and bulk density ×100. Build the case after it.
-It refuses a domain outside the US; a failed LFPS job is reported with the service's message, and network errors
-are retried up to five times.
+**LANDFIRE (United States).** Workflow step 4's **Get LANDFIRE fuels and canopy (US)** (also Data > Advanced, and
+Fuels, canopy and buildings > Get them) asks the LANDFIRE Product Service (LFPS) for the case's **padded** domain
+(the domain plus `[ELMFIRE] PaddingMetres`, grown so the UTM grid cut from it is covered to its corners), in the
+scenario's UTM zone, for the release `[ELMFIRE] LandfireVersion` picks:
+
+| `LandfireVersion` | Release |
+|---|---|
+| `closest` (default) | The release nearest the scenario's start year; of two equally near, the earlier. |
+| `LF2016` | LF 2016 Remap (LANDFIRE 2.0.0). |
+| `LF2022`, `LF2023`, `LF2024` | The yearly updates. |
+| `LF2025` | The 2025 update (conterminous US only). |
+
+These are what LFPS serves (its product list, October 2026); there is no LF2019–LF2021 fuel. A release includes
+the disturbances of its year, so for a historic fire choose the release before it: a later one already has the
+burn scar. LFPS asks every request for a contact e-mail: yours, typed under Fuels, canopy and buildings > Get them
+and kept for your user in `user-settings.txt` (`%APPDATA%\WUInity\` on Windows, `~/.config/WUInity/` on Linux),
+or `LANDFIRE_EMAIL`. It is never written into the scenario.
+
+The result is one multi-band GeoTIFF. Its bands are found by the descriptions LFPS gives them
+(`LF2024_FBFM40_CONUS`, ...) and their units by its `.aux.xml` (`Meters * 10`, `Kilograms per cubic meter * 100`,
+`Percent`), and split into `downloads/landfire/<Name>_<release>_fbfm40.tif` (`_fbfm13` when `FuelModelStandard`
+is `FBFM13`), `_cc`, `_ch`, `_cbh` and `_cbd`, with `<Name>_<release>_landfire.txt` recording the request, the
+job and the flags. The fuel model is written as **Int16**: ELMFIRE reads it into an INTEGER*2 array and a Float32
+or Int32 fuel raster gives a fire that never spreads, while its log still ends "successfully". Canopy keeps
+LANDFIRE's scaled values (Float32), so the step sets `CC_IN_PERCENT`, `CH_TIMES_10`, `CBH_TIMES_10` and
+`CBD_TIMES_100` to what the units say (all on for LANDFIRE). It points the scenario's fuel and canopy keys at the
+layers, and removes the fuel and canopy the case already holds, so the next build (not a rebuild) warps the new
+ones; the release is in the file names, and so in `case_sources.txt`. It refuses a domain outside the US; a failed
+job is reported with LFPS's message, and network errors are retried.
+
+**Roads in the fuel (optional).** A fuel map marks roads, and the town around them, non-burnable, which can cut
+burnable ground into islands an ignition never grows out of. **Burn roads into the fuel** (step 4, or Fuels,
+canopy and buildings) burns the SUMO network's lanes into the case's `fbfm40` (or `fbfm13`) as fuel model 101
+(GR1; 1 for Anderson 13), only where the fuel is non-burnable (91–99), has data, and no building model owns the
+cell. It keeps the result as `downloads/<Name>_fbfm40_roads101.tif`, names it as `FuelModelFile` and puts it in the
+case, and reports the burnable patches and single-cell islets before and after: if they do not change, the roads
+were not the problem. GR1 does spread fire, slowly, so this changes the physics. To undo it, name the original
+layer again (the roads raster records it as `ROADS_BURNED_FROM`) and rebuild; after a domain or padding change, do
+that first and burn the roads again.
 
 **FIRE-RES (Europe).** Point `[ELMFIRE] CanopyDatasetFolder` at a folder holding `panEu_canopyCover.tif`,
 `panEu_canopyHeight.tif`, `panEu_cbh.tif` and `panEu_cbd.tif`; each case is clipped out of them. These are in

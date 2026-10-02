@@ -31,12 +31,50 @@ namespace Assets.WUInity.GUI.DearIMGUI
         /// <summary>The scenario the step buttons describe: always the open one.</summary>
         public static PREACTInput Input { get => ScenarioSession.Input; }
 
-        //Household sizes for the population step, and which fuel model set LANDFIRE is asked for.
-        //Shared rather than duplicated per window so the value shown is the value used. Scott & Burgan 40 by
-        //default: it is what ELMFIRE and the LANDFIRE products are normally run with.
+        //Household sizes for the population step. Shared rather than duplicated per window so the value shown is the
+        //value used. Which fuel model set LANDFIRE is asked for is the scenario's own [ELMFIRE] FuelModelStandard.
         public static int MinHouseholdSize = 1;
         public static int MaxHouseholdSize = 5;
-        public static bool UseAnderson13 = false;
+
+        //The contact e-mail LFPS asks every request for: the user's, kept per user (PREACT.Tools.LandfireContact), never in
+        //the scenario. Read once from that file; written back when the field is edited.
+        private static string _landfireEmail;
+
+        /// <summary>The e-mail the LANDFIRE step sends, as typed (or as kept from an earlier session).</summary>
+        public static string LandfireEmail
+        {
+            get
+            {
+                if (_landfireEmail == null) _landfireEmail = PREACT.Tools.LandfireContact.Saved();
+                return _landfireEmail;
+            }
+            set { _landfireEmail = value ?? string.Empty; }
+        }
+
+        /// <summary>
+        /// Whether the LANDFIRE step has an e-mail to send: the one typed (or kept), or LANDFIRE_EMAIL. Cheap enough to ask
+        /// every frame - the per-user file was read once, into the field.
+        /// </summary>
+        public static bool HasLandfireEmail
+        {
+            get
+            {
+                return PREACT.Tools.LandfireContact.IsPlausible(LandfireEmail)
+                       || PREACT.Tools.LandfireContact.IsPlausible(System.Environment.GetEnvironmentVariable(PREACT.Tools.LandfireContact.Variable));
+            }
+        }
+
+        /// <summary>Keeps the typed e-mail for the next session; says so when it cannot.</summary>
+        public static void SaveLandfireEmail()
+        {
+            string email = LandfireEmail.Trim();
+            if (email.Length > 0 && !PREACT.Tools.LandfireContact.IsPlausible(email)) return;
+            if (!PREACT.Tools.LandfireContact.Save(email, out string problem))
+            {
+                Engine.Message(null, Engine.LogType.Warning, "Could not keep the LANDFIRE e-mail in "
+                    + PREACT.Tools.LandfireContact.SettingsPath + " (" + problem + "); it is used for this session only.");
+            }
+        }
 
         //Feedback. Without it even a working download looks like a dead button: these steps take tens
         //of seconds to minutes and would otherwise sit silent throughout, which is indistinguishable
@@ -71,10 +109,19 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             _stopRequested = true;
             _status = "Stopping " + _progressTitle + "...";
-            LogStep("Stop requested: nothing further starts; ELMFIRE and WindNinja are stopped at once, a download under way "
-                + "finishes first, and a case build stops at its next safe point without writing any wind.");
+            LogStep("Stop requested: nothing further starts; ELMFIRE and WindNinja are stopped at once, an OSM or LANDFIRE "
+                + "download stops at once (nothing is kept), another download under way finishes first, and a case build "
+                + "stops at its next safe point without writing any wind.");
+            try { _stopSource?.Cancel(); } catch (ObjectDisposedException) { }
             PREACT.Utility.ElmfireRunner.CancelAll();
         }
+
+        //Cancelled by RequestStop: the downloads that wait (OSM between its retries, LANDFIRE while its job queues) stop
+        //at once rather than after minutes. Made anew for every chain, so a stop never reaches the next one.
+        private static System.Threading.CancellationTokenSource _stopSource;
+
+        /// <summary>Cancelled when a stop is asked for the running step.</summary>
+        public static System.Threading.CancellationToken StopToken { get => _stopSource?.Token ?? System.Threading.CancellationToken.None; }
 
         /// <summary>The workflow step the running (or last) chain belongs to.</summary>
         public static WorkflowStepId Owner { get; private set; }
@@ -231,7 +278,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             public string OpenTopographyKey;
             public string OpenTopographyKeySource;
             public string DemType;
-            public bool UseAnderson13;
+            public PREACT.Tools.LandfireFuels.Options Landfire;
             public int MinHouseholdSize, MaxHouseholdSize;
 
             internal readonly List<Action<PREACTInput>> Writes = new List<Action<PREACTInput>>();
@@ -309,10 +356,27 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 OpenTopographyKey = EffectiveOpenTopographyApiKey,
                 OpenTopographyKeySource = OpenTopographyApiKeySource,
                 DemType = DemType,
-                UseAnderson13 = UseAnderson13,
+                Landfire = CaptureLandfire(input),
                 MinHouseholdSize = MinHouseholdSize,
                 MaxHouseholdSize = MaxHouseholdSize,
             };
+        }
+
+        /// <summary>The scenario's LANDFIRE settings, read on the main thread; null without an ELMFIRE input to read them from.</summary>
+        private static PREACT.Tools.LandfireFuels.Options CaptureLandfire(PREACTInput input)
+        {
+            if (input.WildfireModule?.ElmfireInput == null) return null;
+            try
+            {
+                PREACT.Tools.LandfireFuels.Options options = PREACT.Tools.LandfireFuels.Options.FromScenario(input);
+                options.Email = LandfireEmail;
+                return options;
+            }
+            catch (Exception)
+            {
+                //Every step captures this; only the LANDFIRE step needs it, and it says so when it is missing.
+                return null;
+            }
         }
 
         // ------------------------------------------------------------------ running
@@ -353,6 +417,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             _utility = false;
             _lastFailed = false;
             _stopRequested = false;
+            _stopSource = new System.Threading.CancellationTokenSource();
             Owner = owner;
             _status = title + "...";
             _progressWindowOpen = true;
@@ -742,9 +807,16 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 folder, ScenarioFiles.WorldPopBaseName(ctx.Name), ReportBytes);
         }
 
+        /// <summary>
+        /// The roads, from Overpass. Throws when no server delivered them, so the RouterDb and the SUMO network - the
+        /// links after it - do not run, and writes the file only on success, so a failed attempt never leaves one that
+        /// the next chain would take for done.
+        /// </summary>
         private static Task DoDownloadOsm(StepContext ctx)
         {
-            return PREACT.Tools.OSMDownloader.Download(ctx.LowerLeft, ctx.UpperRight, ctx.InRootForWriting(ScenarioFiles.Osm(ctx.Name)));
+            var options = new PREACT.Tools.OSMDownloader.Options { Log = LogStep, Cancellation = StopToken };
+            return PREACT.Tools.OSMDownloader.DownloadAsync(ctx.LowerLeft, ctx.UpperRight,
+                ctx.InRootForWriting(ScenarioFiles.Osm(ctx.Name)), options);
         }
 
         private static Task DoBuildSumoNetwork(StepContext ctx, string sumoBin)
@@ -771,6 +843,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
             //portable. Setting it is the point of automating the step: the configuration is the thing the
             //scenario actually refers to.
             ctx.Set(i => i.TrafficModule.SumoInput.ConfigurationFile = ScenarioFiles.SumoConfig);
+            //The map and the destination snapping read the network once and keep it; this one replaces whatever they had.
+            ctx.Then(() => PreactGUI.WUInity?.ForgetRoadNetwork());
             LogStep("The scenario will point at " + ScenarioFiles.SumoConfig + ".");
             return Task.CompletedTask;
         }
@@ -843,15 +917,13 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
             LogStep("Using the OpenTopography key from " + ctx.OpenTopographyKeySource + ".");
 
-            //Asked for with a margin. A latitude/longitude box is not a rectangle in UTM, so the bounding box
-            //the warp clips to reaches beyond the corners of what was downloaded - and GDAL fills what the
-            //source does not cover with zero, which beside a hillside reads as a cliff.
-            const double marginDegrees = 0.005;
-            Vector2d paddedLowerLeft = new Vector2d(ctx.LowerLeft.x - marginDegrees, ctx.LowerLeft.y - marginDegrees);
-            Vector2d paddedUpperRight = new Vector2d(ctx.UpperRight.x + marginDegrees, ctx.UpperRight.y + marginDegrees);
-
+            //The downloader asks for a margin of its own: a latitude/longitude box is not a rectangle in UTM, so the
+            //bounding box the warp clips to reaches beyond the corners of what was downloaded - and GDAL fills what the
+            //source does not cover with zero, which beside a hillside reads as a cliff. The fixed 0.005 degrees this used
+            //to add fell short of the grid's corners by about 15 m on Auburn2, two degrees from its zone's meridian.
             string downloaded = ctx.InRootForWriting(ScenarioFiles.DemDownload(ctx.Name));
-            await PREACT.Tools.OpenTopographyDownloader.Download(paddedLowerLeft, paddedUpperRight, ctx.OpenTopographyKey, downloaded, ctx.DemType);
+            await PREACT.Tools.OpenTopographyDownloader.Download(ctx.LowerLeft, ctx.UpperRight, ctx.OpenTopographyKey, downloaded,
+                ctx.DemType, ctx.UtmEpsg);
 
             LogStep("Warping the DEM into the simulation's UTM zone...");
 
@@ -916,22 +988,23 @@ namespace Assets.WUInity.GUI.DearIMGUI
         }
 
         /// <summary>
-        /// LANDFIRE's fuel model and four canopy layers for the area, split into the single-band rasters the
-        /// ELMFIRE case builder warps, and named as the scenario's ELMFIRE source layers.
+        /// LANDFIRE's fuel model and four canopy layers for the case's padded domain, from the release the scenario's
+        /// [ELMFIRE] LandfireVersion picks, split into single-band rasters and named as the scenario's ELMFIRE source
+        /// layers, with the canopy scaling flags their units call for (PREACT.Tools.LandfireFuels).
         /// </summary>
         /// <remarks>
-        /// The download used to set nothing at all: it left a zip and a multi-band GeoTIFF in the scenario
-        /// folder, the scenario did not refer to them, and ELMFIRE - which takes fuel and canopy only from the
-        /// [ELMFIRE] source layers - never saw them. The LFPS job returns one GeoTIFF with a band per requested
-        /// product, in request order (elevation, slope, aspect, fuel model, CC, CH, CBH, CBD, FCCS); the bands
-        /// are matched by their descriptions where LFPS supplies them and by that order otherwise.
-        ///
-        /// LANDFIRE stores canopy height and base height in metres x 10 and bulk density in kg/m3 x 100, so the
-        /// namelist's CH_TIMES_10 / CBH_TIMES_10 / CBD_TIMES_100 are switched on to match.
+        /// The step used to look for "a .tif written since it started" in the download folder, and the zip's entries carry
+        /// LFPS's own timestamps (US time, read as local time): in Athens the raster just unpacked was eight hours old, so
+        /// a job that succeeded ended "LANDFIRE returned nothing usable" with the result on disk. The download now says
+        /// where its raster is. The fuel and canopy the case already holds are removed once the new ones are in, so the
+        /// next build warps these rather than keeping the old ones.
         /// </remarks>
         private static async Task DoDownloadLandfire(StepContext ctx)
         {
-            Vector2d centre = new Vector2d(0.5 * (ctx.LowerLeft.x + ctx.UpperRight.x), 0.5 * (ctx.LowerLeft.y + ctx.UpperRight.y));
+            if (ctx.Landfire == null)
+            {
+                throw new Exception("This scenario has no ELMFIRE settings to name the layers in.");
+            }
             if (!ScenarioFiles.IsInLandfireCoverage(ctx.LowerLeft, ctx.UpperRight))
             {
                 throw new Exception("LANDFIRE covers the United States only, and this domain is outside it. Name a fuel "
@@ -940,6 +1013,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             try
             {
+                Vector2d centre = new Vector2d(0.5 * (ctx.LowerLeft.x + ctx.UpperRight.x), 0.5 * (ctx.LowerLeft.y + ctx.UpperRight.y));
                 string iso3 = await PREACT.Tools.WorldPopDownloader.LatLonToISO3(centre.x, centre.y);
                 if (!string.IsNullOrEmpty(iso3) && iso3 != "USA")
                 {
@@ -952,104 +1026,184 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 LogStep("Could not confirm the country (" + e.Message + "); asking LANDFIRE anyway.");
             }
 
-            string folder = ctx.InRoot(ScenarioFiles.LandfireFolder);
-            Directory.CreateDirectory(folder);
-            DateTime started = DateTime.UtcNow.AddSeconds(-5);
+            PREACT.Tools.LandfireFuels.Options options = ctx.Landfire;
+            options.Log = LogStep;
+            options.Cancellation = StopToken;
+            PREACT.Tools.LandfireFuels.Result result = await PREACT.Tools.LandfireFuels.DownloadAsync(options);
 
-            await PREACT.Tools.LandfireLandscapeDownloader.Download(ctx.Start.Year, ctx.UseAnderson13, ctx.LowerLeft, ctx.UpperRight, folder);
+            ctx.Set(i => PREACT.Tools.LandfireFuels.Apply(result, i.WildfireModule.ElmfireInput));
+            LogStep($"The scenario's ELMFIRE source layers will name these {result.Release} layers, with CC_IN_PERCENT, CH_TIMES_10, "
+                + "CBH_TIMES_10 and CBD_TIMES_100 set to match their units. Build the fire case (step 5) to warp them onto its "
+                + "grid; " + result.ProvenanceFile + " records what was asked for.");
+        }
 
-            //The downloader reports a failed status check by returning, so what arrived is the only evidence.
-            string multiband = null;
-            DateTime newest = DateTime.MinValue;
-            foreach (string tif in Directory.GetFiles(folder, "*.tif"))
+        // ------------------------------------------------------------------ roads burned into the fuel
+
+        /// <summary>The fuel model roads become; 0 means by the case's standard: 101 (GR1) for FBFM40, 1 for FBFM13.</summary>
+        public static int RoadFuelModel = 0;
+
+        /// <summary>How wide to paint the roads, in metres; 0 is one cell, already wider than most roads at 30 m.</summary>
+        public static double RoadWidthMetres = 0.0;
+
+        /// <summary>
+        /// Leave the cells the building spread model owns alone. Roads run through the built-up area, and those cells are
+        /// non-burnable in the fuel map because ELMFIRE burns them as buildings; grass there would give the same ground
+        /// two ways to burn.
+        /// </summary>
+        public static bool ProtectBuildingCells = true;
+
+        /// <summary>The road fuel model in force for this scenario.</summary>
+        public static int EffectiveRoadFuelModel(PREACTInput input)
+        {
+            if (RoadFuelModel > 0) return RoadFuelModel;
+            return input?.WildfireModule?.ElmfireInput?.FuelModelStandard == ElmfireInput.FuelModelStandards.FBFM13 ? 1 : 101;
+        }
+
+        /// <summary>The case's fuel stem (fbfm40 or fbfm13) when the case has it, else null.</summary>
+        private static string CaseFuelStem(PREACTInput input, out string namedStem)
+        {
+            namedStem = null;
+            string caseDir = PREACT.Utility.ElmfireCoupling.CaseDirectoryPath(input.RootFolder, input.WildfireModule.ElmfireInput);
+            if (string.IsNullOrEmpty(caseDir)) return null;
+            string inputs = Path.Combine(caseDir, "inputs");
+            string namelist = Path.Combine(caseDir, "elmfire.data");
+            string[] lines = File.Exists(namelist) ? File.ReadAllLines(namelist) : null;
+            namedStem = PREACT.Utility.ElmfireStems.FuelStem(lines, inputs);
+            return namedStem == "fbfm40" || namedStem == "fbfm13" ? namedStem : null;
+        }
+
+        /// <summary>Why the roads cannot be burned into the fuel now, or null when they can.</summary>
+        public static string WhyNotBurnRoads(PREACTInput input)
+        {
+            if (input?.WildfireModule?.ElmfireInput == null) return "No ELMFIRE scenario is open.";
+            string stem = CaseFuelStem(input, out string named);
+            if (stem == null)
             {
-                DateTime written = File.GetLastWriteTimeUtc(tif);
-                if (written >= started && written > newest && !Path.GetFileName(tif).StartsWith(ctx.Name + "_lf_"))
-                {
-                    newest = written;
-                    multiband = tif;
-                }
+                return named != null
+                    ? $"The case's namelist runs FBFM_FILENAME = '{named}', a raster of its own; burn the roads into that one yourself, "
+                      + "or clear the namelist template."
+                    : "Build the fire case first (step 5): the roads are burned into its fuel, on its grid.";
+            }
+            string sumo = PREACT.Utility.SumoConfigurationLocator.Resolve(input.RootFolder,
+                input.TrafficModule?.SumoInput?.ConfigurationFile, false, out bool _, out string _);
+            if (sumo == null) return "Build the SUMO network first (step 2, Roads): its lanes are what is burned in.";
+            return null;
+        }
+
+        /// <summary>
+        /// Burns the SUMO network's lanes into the fire case's fuel as a spreadable fuel model, where the fuel is
+        /// non-burnable (urban, barren - what roads are in a fuel map) and no building model owns the cell
+        /// (PREACT.Utility.RoadFuelRasterizer; Nick's Aug 2026 work).
+        /// </summary>
+        /// <remarks>
+        /// On the case's grid, because that is where the lanes' simulation coordinates and the fuel meet. The result is
+        /// kept as a source layer (<c>downloads/&lt;name&gt;_fbfm40_roads101.tif</c>), [ELMFIRE] FuelModelFile names it,
+        /// and the case's own fbfm40.tif is replaced by it, so the change is in the case now and survives a rebuild.
+        /// Undone by naming the original layer again (the roads raster records it) and rebuilding.
+        /// </remarks>
+        public static void BurnRoadsIntoFuel()
+        {
+            PREACTInput input = Input;
+            string why = WhyNotBurnRoads(input);
+            if (why != null)
+            {
+                Owner = WorkflowStepId.Fuels;
+                _lastFailed = true;
+                _status = why;
+                LogStep(why);
+                return;
             }
 
-            if (multiband == null)
+            ElmfireInput e = input.WildfireModule.ElmfireInput;
+            var burn = new RoadBurn
             {
-                throw new Exception("LANDFIRE returned nothing usable - the job failed, timed out or the download was cut "
-                    + "short. See the messages above; the LFPS service is sometimes simply busy, and trying again later works.");
-            }
-
-            LogStep("Splitting " + Path.GetFileName(multiband) + " into the layers ELMFIRE takes...");
-            string fuelStem = ctx.UseAnderson13 ? "fbfm13" : "fbfm40";
-            var wanted = new List<(string stem, string key, int fallbackBand)>
-            {
-                (fuelStem, "FBFM", 4), ("cc", "CC", 5), ("ch", "CH", 6), ("cbh", "CBH", 7), ("cbd", "CBD", 8),
+                Stem = CaseFuelStem(input, out string _),
+                CaseDirectory = PREACT.Utility.ElmfireCoupling.CaseDirectoryPath(input.RootFolder, e),
+                Sumo = PREACT.Utility.SumoConfigurationLocator.Resolve(input.RootFolder,
+                    input.TrafficModule?.SumoInput?.ConfigurationFile, false, out bool _, out string _),
+                UtmOrigin = input.Simulation.Data.UTMOrigin,
+                UtmEpsg = input.Simulation.Data.UtmEpsgCode,
+                FuelModelFile = e.FuelModelFile,
+                RoadFuelModel = EffectiveRoadFuelModel(input),
+                WidthMetres = RoadWidthMetres,
+                ProtectBuildings = ProtectBuildingCells,
             };
+            RunStep("Burning the roads into the fuel", WorkflowStepId.Fuels, c => DoBurnRoads(c, burn));
+        }
 
-            var layers = new Dictionary<string, string>();
-            OSGeo.GDAL.Gdal.AllRegister();
-            using (OSGeo.GDAL.Dataset source = OSGeo.GDAL.Gdal.Open(multiband, OSGeo.GDAL.Access.GA_ReadOnly))
+        private sealed class RoadBurn
+        {
+            public string Stem, CaseDirectory, Sumo, FuelModelFile;
+            public Vector2d UtmOrigin;
+            public int UtmEpsg, RoadFuelModel;
+            public double WidthMetres;
+            public bool ProtectBuildings;
+        }
+
+        private static Task DoBurnRoads(StepContext ctx, RoadBurn b)
+        {
+            PREACT.Utility.SumoNetworkGeometry network = PREACT.Utility.SumoNetworkGeometry.Load(b.Sumo, b.UtmOrigin);
+            if (network == null || network.LaneCount == 0)
             {
-                if (source == null)
-                {
-                    throw new Exception("Could not open " + multiband + ".");
-                }
-
-                int bands = source.RasterCount;
-                var descriptions = new string[bands + 1];
-                for (int b = 1; b <= bands; ++b)
-                {
-                    using (OSGeo.GDAL.Band band = source.GetRasterBand(b))
-                    {
-                        descriptions[b] = (band.GetDescription() ?? string.Empty).ToUpperInvariant();
-                    }
-                }
-
-                foreach ((string stem, string key, int fallbackBand) in wanted)
-                {
-                    int bandIndex = ScenarioFiles.FindLandfireBand(descriptions, key, fallbackBand);
-                    if (bandIndex < 1 || bandIndex > bands)
-                    {
-                        LogStep($"No {key} band in the download ({bands} band(s)); {stem} is left unset.");
-                        continue;
-                    }
-
-                    string relative = ScenarioFiles.LandfireLayer(ctx.Name, stem);
-                    string destination = ctx.InRootForWriting(relative);
-                    var options = new OSGeo.GDAL.GDALTranslateOptions(new[] { "-b", bandIndex.ToString(), "-of", "GTiff", "-co", "COMPRESS=DEFLATE" });
-                    using (OSGeo.GDAL.Dataset band = OSGeo.GDAL.Gdal.wrapper_GDALTranslate(destination, source, options, null, null))
-                    {
-                        if (band == null)
-                        {
-                            throw new Exception($"Could not write band {bandIndex} ({key}) to {destination}.");
-                        }
-                        band.FlushCache();
-                    }
-                    layers[stem] = relative;
-                    LogStep($"  band {bandIndex} ({(string.IsNullOrEmpty(descriptions[bandIndex]) ? key : descriptions[bandIndex])}) -> {relative}");
-                }
+                throw new Exception("No lanes could be read from " + b.Sumo + "; build the SUMO network again (step 2, Roads).");
             }
 
-            if (!layers.ContainsKey(fuelStem))
+            string inputs = Path.Combine(b.CaseDirectory, "inputs");
+            string caseFuel = PREACT.Utility.ElmfireStems.Tif(inputs, b.Stem);
+
+            //What the roads are burned from, for undoing it: the original layer, also when this is done a second time.
+            string source = string.IsNullOrEmpty(b.FuelModelFile) ? null : GuiFiles.Resolve(ctx.Root, b.FuelModelFile);
+            string original = source != null && File.Exists(source)
+                ? PREACT.Utility.RoadFuelRasterizer.BurnedFrom(source) ?? b.FuelModelFile
+                : "the case's own " + b.Stem + ".tif";
+
+            string relative = ScenarioFiles.DownloadsFolder + "/" + ctx.Name + "_" + b.Stem + "_roads" + b.RoadFuelModel + ".tif";
+            string output = ctx.InRootForWriting(relative);
+
+            string buildings = null;
+            if (b.ProtectBuildings)
             {
-                throw new Exception("The download holds no fuel model band, so it cannot supply the case's fuel.");
+                foreach (string stem in new[] { "bldg_area_avg", "baa" })
+                {
+                    string candidate = PREACT.Utility.ElmfireStems.Tif(inputs, stem);
+                    if (File.Exists(candidate)) { buildings = candidate; break; }
+                }
+                if (buildings == null) LogStep("The case has no building area layer, so there are no building cells to leave alone.");
             }
 
-            bool anderson = ctx.UseAnderson13;
-            ctx.Set(i =>
+            LogStep($"{network.LaneCount} lanes against the case's {b.Stem}.tif"
+                + (buildings != null ? ", leaving building cells to the building spread model" : "") + "...");
+            PREACT.Utility.RoadFuelRasterizer.Result result = PREACT.Utility.RoadFuelRasterizer.Run(new PREACT.Utility.RoadFuelRasterizer.Options
             {
-                ElmfireInput e = i.WildfireModule.ElmfireInput;
-                e.FuelModelFile = layers[fuelStem];
-                e.FuelModelStandard = anderson ? ElmfireInput.FuelModelStandards.FBFM13 : ElmfireInput.FuelModelStandards.FBFM40;
-                if (layers.TryGetValue("cc", out string cc)) e.CanopyCoverFile = cc;
-                if (layers.TryGetValue("ch", out string ch)) e.CanopyHeightFile = ch;
-                if (layers.TryGetValue("cbh", out string cbh)) e.CanopyBaseHeightFile = cbh;
-                if (layers.TryGetValue("cbd", out string cbd)) e.CanopyBulkDensityFile = cbd;
-                //LANDFIRE's scaled integers.
-                e.Namelist.CC_IN_PERCENT = true;
-                e.Namelist.CH_TIMES_10 = true;
-                e.Namelist.CBH_TIMES_10 = true;
-                e.Namelist.CBD_TIMES_100 = true;
+                FuelRasterPath = caseFuel,
+                OutputRasterPath = output,
+                Lanes = network.Lanes,
+                UtmOrigin = b.UtmOrigin,
+                UtmEpsg = b.UtmEpsg,
+                RoadFuelModel = b.RoadFuelModel,
+                RoadWidthMetres = b.WidthMetres,
+                BuildingAreaRasterPath = buildings,
+                OriginalSource = original,
+                Log = LogStep,
             });
-            LogStep("The scenario's ELMFIRE source layers will name these. Build (or rebuild) the fire case to warp them onto its grid.");
+            if (!result.Ok)
+            {
+                throw new Exception(result.Message);
+            }
+
+            //Into the case now: the next build would warp the same raster onto the same grid, so this is what it holds then too.
+            File.Copy(output, caseFuel, overwrite: true);
+            ctx.Set(i => i.WildfireModule.ElmfireInput.FuelModelFile = relative);
+
+            LogStep($"[ELMFIRE] FuelModelFile now names {relative}, and the case's {b.Stem}.tif is that raster. To undo it, name "
+                + $"{original} again and rebuild the fire case. If the domain or the padding changes, do that first and burn the "
+                + "roads again: the roads raster covers this grid only.");
+            if (result.IsletsBefore == result.IsletsAfter && result.PatchesBefore == result.PatchesAfter)
+            {
+                //Said plainly: a step that ran and changed nothing otherwise reads as a fix that worked.
+                LogStep("No change in connectivity: the roads were not what was splitting this fuel map. Consider undoing it.");
+            }
+            return Task.CompletedTask;
         }
 
         /// <summary>
@@ -1420,6 +1574,15 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
         public static void DownloadLandfireFuels()
         {
+            //LFPS refuses a request without a contact e-mail; asked for here, where it can be typed, before anything starts.
+            if (PREACT.Tools.LandfireContact.Resolve(LandfireEmail, out string _) == null)
+            {
+                Owner = WorkflowStepId.Fuels;
+                _lastFailed = true;
+                _status = "LANDFIRE asks every download for a contact e-mail: enter yours under LANDFIRE in this window.";
+                SourceLayersPanel.Open();
+                return;
+            }
             RunStep("Downloading LANDFIRE fuels and canopy", WorkflowStepId.Fuels, DoDownloadLandfire);
         }
 

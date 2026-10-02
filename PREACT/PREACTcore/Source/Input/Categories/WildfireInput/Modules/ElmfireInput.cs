@@ -168,6 +168,17 @@ namespace PREACT.Input
         public FuelModelStandards FuelModelStandard = FuelModelStandards.FBFM40;
 
         /// <summary>
+        /// Which LANDFIRE release the fuels step downloads: <c>closest</c> (to the scenario's start year, the default) or
+        /// one of <c>LF2016</c>, <c>LF2022</c>, <c>LF2023</c>, <c>LF2024</c>, <c>LF2025</c>.
+        /// </summary>
+        /// <remarks>
+        /// A release includes the disturbances of its year, so a historic fire is run on the release before it - a later
+        /// one has its burn scar in it. Only the download reads this; the release a case was built from is in the
+        /// layers' file names and their <c>_landfire.txt</c>, and so in the case's <c>case_sources.txt</c>.
+        /// </remarks>
+        public string LandfireVersion = PREACT.Tools.LandfireVersions.Closest;
+
+        /// <summary>
         /// A folder holding the FIRE-RES pan-European canopy rasters, supplying whichever of the four canopy
         /// layers below are not named individually.
         /// </summary>
@@ -459,6 +470,20 @@ namespace PREACT.Input
                 string path = layer.Get(newInput);
                 ReadSourceRaster(inputToParse, layer.Key, ref path, rootFolder);
                 layer.Set(newInput, path);
+            }
+
+            if (inputToParse.TryGetValue(nameof(LandfireVersion), out userInput))
+            {
+                string release = PREACT.Tools.LandfireVersions.Normalise(userInput);
+                if (release != null)
+                {
+                    newInput.LandfireVersion = release;
+                }
+                else
+                {
+                    //Kept and said: closest, or one of LF2016, LF2022, LF2023, LF2024, LF2025.
+                    PREACTInput.CouldNotInterpretInputMessage(nameof(LandfireVersion), userInput, false, newInput.LandfireVersion);
+                }
             }
 
             if (inputToParse.TryGetValue(nameof(FuelModelStandard), out userInput))

@@ -56,6 +56,9 @@ namespace PREACT.Tests
             PipelineTests.Register(runner);
             GuiContractTests.Register(runner);
             WeatherTests.Register(runner);
+            DownloaderTests.Register(runner);
+            AreaPickTests.Register(runner);
+            RoadFuelTests.Register(runner);
 
             if (examples)
             {
