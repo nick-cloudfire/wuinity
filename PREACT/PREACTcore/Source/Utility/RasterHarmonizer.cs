@@ -203,14 +203,18 @@ namespace PREACT.Utility
         /// with the DEM. Use <c>"near"</c> for categorical rasters (e.g. fuel model) and
         /// <c>"bilinear"</c> (the default) for continuous ones (e.g. moisture, wind).
         /// </summary>
-        public static void WarpToGrid(string sourcePath, string destPath, MasterGrid grid, string resampleMethod = "bilinear")
+        /// <param name="int16">Writes the result as Int16, whatever the source's type - what ELMFIRE needs of a fuel model
+        /// (<see cref="ElmfireStems.Int16RasterKeys"/>). A source nodata that Int16 cannot hold (a float's -3.4e38, NaN,
+        /// Int32's minimum) becomes -9999, which it can; the source's codes are rounded to whole numbers.</param>
+        public static void WarpToGrid(string sourcePath, string destPath, MasterGrid grid, string resampleMethod = "bilinear",
+            bool int16 = false)
         {
             if (string.IsNullOrEmpty(grid.Epsg))
             {
                 throw new InvalidOperationException("Master grid has no resolvable EPSG; cannot warp onto it.");
             }
 
-            string[] args =
+            var args = new List<string>
             {
                 "-t_srs", grid.Epsg,
                 "-te", D(grid.XMin), D(grid.YMin), D(grid.XMax), D(grid.YMax),
@@ -219,7 +223,41 @@ namespace PREACT.Utility
                 "-overwrite"
             };
 
-            Warp(sourcePath, destPath, args);
+            if (int16)
+            {
+                args.Add("-ot");
+                args.Add("Int16");
+                if (!NoDataFitsInt16(sourcePath))
+                {
+                    args.Add("-dstnodata");
+                    args.Add(D(Int16NoData));
+                }
+            }
+
+            Warp(sourcePath, destPath, args.ToArray());
+        }
+
+        /// <summary>The nodata value an Int16 fuel raster gets when its source's cannot be held in 16 bits (LANDFIRE's own).</summary>
+        public const double Int16NoData = -9999.0;
+
+        /// <summary>
+        /// Whether the source's first band has no nodata value, or one an Int16 raster can hold exactly - so a warp to Int16
+        /// can keep it as it is.
+        /// </summary>
+        private static bool NoDataFitsInt16(string sourcePath)
+        {
+            Gdal.AllRegister();
+            using (Dataset src = Gdal.Open(sourcePath, Access.GA_ReadOnly))
+            {
+                if (src == null || src.RasterCount < 1) return true;
+                using (Band band = src.GetRasterBand(1))
+                {
+                    band.GetNoDataValue(out double nodata, out int hasNodata);
+                    if (hasNodata == 0) return true;
+                    return !double.IsNaN(nodata) && nodata >= short.MinValue && nodata <= short.MaxValue
+                           && System.Math.Abs(nodata - System.Math.Round(nodata)) < 1e-9;
+                }
+            }
         }
 
         private static string D(double v) => v.ToString(CultureInfo.InvariantCulture);

@@ -30,6 +30,119 @@ namespace PREACT.Tests
             runner.Add("cli: build-case prints the keys to put in the .wui; --update-wui writes exactly those and nothing else", BuildCaseUpdatesWui);
             runner.Add("builder: a namelist's raster whose re-cut fails is still in inputs, as it was", FailedRecutKeepsOriginal);
             runner.Add("builder: a raster both a namelist and the scenario name is re-cut into a copy, never in place", ScenarioRasterNotRecutInPlace);
+            runner.Add("builder: every fuel model is stored as Int16 (Float32/Int32 sources, a kept one, a namelist's variant); a run refuses one that is not", FuelStoredAsInt16);
+        }
+
+        /// <summary>
+        /// Verification D1: ELMFIRE reads the fuel model only as Int16, so an Int32 (LANDFIRE's LFPS) or Float32 fuel raster
+        /// built and validated cleanly and then burned nothing, while ELMFIRE's log said the simulation ended successfully.
+        /// The build writes every fuel stem as Int16 with the same codes, rewrites one the case kept, and the validator, a run
+        /// and a campaign refuse one that is not Int16 by name.
+        /// </summary>
+        private static void FuelStoredAsInt16()
+        {
+            using (var c = new SyntheticCase())
+            {
+                MasterGrid sourceGrid = MasterGrid.FromRasterFile(c.FuelPath);
+                float[,] codes = AscRaster.ReadGeoTiff(c.FuelPath, out AscRaster.Header _, out bool read);
+                Assert.True(read, "read the synthetic fuel");
+                var counts = new Dictionary<float, int>();
+                foreach (float v in codes) counts[v] = counts.TryGetValue(v, out int n) ? n + 1 : 1;
+
+                // ---- a Float32 and an Int32 source both come out as Int16, with the same codes
+                foreach (OSGeo.GDAL.DataType type in new[] { OSGeo.GDAL.DataType.GDT_Float32, OSGeo.GDAL.DataType.GDT_Int32 })
+                {
+                    string name = OSGeo.GDAL.Gdal.GetDataTypeName(type);
+                    string source = Path.Combine(c.Folder, "fuel_" + name + ".tif");
+                    GeoTiffRasterWriter.WriteBand(sourceGrid, codes, source, type);
+                    Assert.Equal(name, ElmfireCaseValidator.DataTypeOf(source), "the source is " + name);
+
+                    string caseDir = Path.Combine(c.Folder, "case_" + name);
+                    var log = new List<string>();
+                    ElmfireCaseBuilder.Options o = c.Options(caseDir, 150.0, log);
+                    o.UserRasters["fbfm40"] = source;
+                    ElmfireCaseBuilder.Result built = ElmfireCaseBuilder.Build(o).GetAwaiter().GetResult();
+                    string fuel = ElmfireStems.Tif(Path.Combine(caseDir, "inputs"), "fbfm40");
+                    Assert.Equal("Int16", ElmfireCaseValidator.DataTypeOf(fuel), $"a {name} source is warped into Int16 fuel");
+                    Assert.True(log.Any(l => l.Contains("fbfm40: warping onto the master grid (near, as Int16)")), "and the log says so");
+                    Assert.True(built.Validation.Ok, "the case is valid: " + ElmfireCaseValidator.Summarize(built.Validation));
+                    float[,] warped = AscRaster.ReadGeoTiff(fuel, out AscRaster.Header _, out bool ok);
+                    Assert.True(ok, "read the case's fuel");
+                    foreach (float v in warped) Assert.True(counts.ContainsKey(v), $"only the source's codes ({name}): {v}");
+                }
+
+                // ---- a case's kept fuel and a namelist's variant on the grid, both Float32: rewritten by the next build
+                string dir = Path.Combine(c.Folder, "case");
+                string inputs = Path.Combine(dir, "inputs");
+                ElmfireCaseBuilder.Build(c.Options(dir, 150.0, new List<string>())).GetAwaiter().GetResult();
+                MasterGrid grid = MasterGrid.FromRasterFile(ElmfireStems.Tif(inputs, ElmfireStems.Dem));
+                float[,] onGrid = AscRaster.ReadGeoTiff(ElmfireStems.Tif(inputs, "fbfm40"), out AscRaster.Header _, out bool _);
+                GeoTiffRasterWriter.WriteBand(grid, onGrid, ElmfireStems.Tif(inputs, "fbfm40"), OSGeo.GDAL.DataType.GDT_Float32);
+                GeoTiffRasterWriter.WriteBand(grid, onGrid, ElmfireStems.Tif(inputs, "fbfm40_variant"), OSGeo.GDAL.DataType.GDT_Float32);
+                string template = Path.Combine(dir, "hand.data");
+                File.WriteAllLines(template, ElmfireNamelist.SetKeyInGroup(File.ReadAllLines(Path.Combine(dir, "elmfire.data")),
+                    ElmfireNamelistKeys.InputsGroup, "FBFM_FILENAME", "fbfm40_variant", quoted: true));
+
+                var again = new List<string>();
+                ElmfireCaseBuilder.Options rebuild = c.Options(dir, 150.0, again);
+                rebuild.TemplateNamelistPath = template;
+                ElmfireCaseBuilder.Result second = ElmfireCaseBuilder.Build(rebuild).GetAwaiter().GetResult();
+                foreach (string stem in new[] { "fbfm40", "fbfm40_variant" })
+                {
+                    Assert.Equal("Int16", ElmfireCaseValidator.DataTypeOf(ElmfireStems.Tif(inputs, stem)), stem + " is Int16 after the build");
+                    Assert.True(again.Any(l => l.Contains(stem + ": stored as Float32; rewritten as Int16")), "the log says " + stem + " was rewritten");
+                    float[,] after = AscRaster.ReadGeoTiff(ElmfireStems.Tif(inputs, stem), out AscRaster.Header _, out bool _);
+                    for (int x = 0; x < grid.Header.Ncols; ++x)
+                        for (int y = 0; y < grid.Header.Nrows; ++y)
+                            Assert.True(after[x, y] == onGrid[x, y], $"{stem} keeps its codes ({x},{y}: {onGrid[x, y]} -> {after[x, y]})");
+                }
+                Assert.True(second.Validation.Ok, "the rebuilt case is valid: " + ElmfireCaseValidator.Summarize(second.Validation));
+
+                // ---- one that is not Int16 is refused by the validator, a run and a campaign, by key and type
+                GeoTiffRasterWriter.WriteBand(grid, onGrid, ElmfireStems.Tif(inputs, "fbfm40_int32"), OSGeo.GDAL.DataType.GDT_Int32);
+                File.WriteAllLines(template, ElmfireNamelist.SetKeyInGroup(File.ReadAllLines(Path.Combine(dir, "elmfire.data")),
+                    ElmfireNamelistKeys.InputsGroup, "FBFM_FILENAME", "fbfm40_int32", quoted: true));
+                ElmfireCaseValidator.Report report = ElmfireCaseValidator.ValidateNamelistRasters(File.ReadAllLines(template), dir, true);
+                string summary = ElmfireCaseValidator.Summarize(report);
+                Assert.True(!report.Ok && summary.Contains("FBFM_FILENAME = 'fbfm40_int32'") && summary.Contains("stored as Int32")
+                            && summary.Contains("only as Int16"), "an Int32 fuel is refused, saying why: " + summary);
+
+                string wui = c.WriteScenario("case", 150.0);
+                File.WriteAllLines(wui, File.ReadAllLines(wui)
+                    .Select(l => l == "BuildCase=true" ? "BuildCase=false\nNamelistTemplate=hand.data\nReuseExistingOutput=false" : l)
+                    .SelectMany(l => l.Split('\n')));
+                Input.PREACTInput input = Input.PREACTInput.LoadFromDisk(wui, out bool _);
+                ElmfireCoupling.Result run = ElmfireCoupling.Prepare(input, input.WildfireModule.ElmfireInput, null);
+                Assert.True(!run.Ok && run.Message.Contains("stored as Int32") && run.Message.Contains("fbfm40_int32"),
+                    "a run is refused before ELMFIRE starts: " + run.Message);
+
+                File.AppendAllLines(wui, new[] { "", "[TriggerBufferModule]", "Enabled=true", "Module=kPERIL", "", "[kPERIL]", "WuiAreaSource=Raster" });
+                TextWriter error = Console.Error;
+                var captured = new StringWriter();
+                PREACTcli.Campaigns.Campaign campaign;
+                try
+                {
+                    Console.SetError(captured);
+                    campaign = PREACTcli.Campaigns.CampaignSetup.Resolve(PREACTcli.Campaigns.CampaignOptions.Parse(
+                        new[] { "--wui", wui, "--inspect", "--elmfire-template", template }));
+                }
+                finally
+                {
+                    Console.SetError(error);
+                }
+                Assert.True(campaign == null && captured.ToString().Contains("stored as Int32"), "and so is a campaign: " + captured);
+
+                // ---- values that are not fuel codes are not rounded into some: left alone and reported
+                float[,] fractional = (float[,])onGrid.Clone();
+                fractional[3, 3] = 101.5f;
+                GeoTiffRasterWriter.WriteBand(grid, fractional, ElmfireStems.Tif(inputs, "fbfm40"), OSGeo.GDAL.DataType.GDT_Float32);
+                var third = new List<string>();
+                ElmfireCaseBuilder.Result kept = ElmfireCaseBuilder.Build(c.Options(dir, 150.0, third)).GetAwaiter().GetResult();
+                Assert.Equal("Float32", ElmfireCaseValidator.DataTypeOf(ElmfireStems.Tif(inputs, "fbfm40")), "a raster of fractions is not rewritten");
+                Assert.True(third.Any(l => l.Contains("could not be rewritten as Int16") && l.Contains("101.5")), "the build says why: " + string.Join(" | ", third));
+                Assert.True(!kept.Validation.Ok && ElmfireCaseValidator.Summarize(kept.Validation).Contains("stored as Float32"),
+                    "and the validator refuses the case: " + ElmfireCaseValidator.Summarize(kept.Validation));
+            }
         }
 
         /// <summary>
@@ -865,7 +978,8 @@ namespace PREACT.Tests
                 DemPath = Path.Combine(Folder, "source_dem.tif");
                 FuelPath = Path.Combine(Folder, "source_fbfm40.tif");
                 GeoTiffRasterWriter.WriteBand(grid, dem, DemPath);
-                GeoTiffRasterWriter.WriteBand(grid, fuel, FuelPath);
+                //Int16, as a fuel model is (LANDFIRE's) and as ELMFIRE reads one: a Float32 fuel burns nothing.
+                GeoTiffRasterWriter.WriteBand(grid, fuel, FuelPath, OSGeo.GDAL.DataType.GDT_Int16);
             }
 
             /// <summary>Builder options for the domain, padded by <paramref name="padding"/> m, offline.</summary>
@@ -1041,6 +1155,7 @@ namespace PREACT.Tests
                     $"the hand-made fuel is on the new grid ({gc.Header.Ncols}x{gc.Header.Nrows} at {gc.XMin:F0},{gc.YMax:F0})");
                 Assert.True(File.Exists(ElmfireStems.Tif(Path.Combine(inputs, ElmfireCaseBuilder.PreviousGridFolder), "fbfm40_custom")),
                     "the original is kept with the old grid");
+                Assert.Equal("Int16", ElmfireCaseValidator.DataTypeOf(custom), "the hand-made Float32 fuel is re-cut as Int16, which ELMFIRE reads");
 
                 //Nearest-neighbour: only the classes that were there (0 in the new padding outside the source).
                 float[,] carried = AscRaster.ReadGeoTiff(custom, out AscRaster.Header _, out bool carriedOk);
@@ -1081,7 +1196,7 @@ namespace PREACT.Tests
                 small.Header.YllCorner = MasterGrid.FromRasterFile(ElmfireStems.Tif(inputs, ElmfireStems.Dem)).YMin + 300.0;
                 var values = new float[10, 10];
                 for (int x = 0; x < 10; ++x) for (int y = 0; y < 10; ++y) values[x, y] = 102f;
-                GeoTiffRasterWriter.WriteBand(small, values, ElmfireStems.Tif(inputs, "fbfm40_small"));
+                GeoTiffRasterWriter.WriteBand(small, values, ElmfireStems.Tif(inputs, "fbfm40_small"), OSGeo.GDAL.DataType.GDT_Int16);
 
                 string template = Path.Combine(caseDir, "hand.data");
                 File.WriteAllLines(template, ElmfireNamelist.SetKeyInGroup(File.ReadAllLines(Path.Combine(caseDir, "elmfire.data")),

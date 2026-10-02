@@ -104,6 +104,14 @@
   run; a run that moves no car exits 0 (D5); k-PERIL subtracts an upslope wind from the slope (D6) and reads ELMFIRE's
   along-slope rate as a map rate (D7).
 
+### Fixes from the verification
+
+- **Fuel models are stored as Int16 (D1).** The case build writes `fbfm40`/`fbfm13`, `bldg_fuel_model`, `pyromes`
+  and every fuel raster a namelist names (a variant, roads burned in, one carried or re-cut onto a new grid) as
+  Int16, the only type ELMFIRE reads them from, and rewrites one the case kept in another type. The validation, a
+  run and a campaign refuse a fuel raster that is not Int16, naming it; it used to build, validate and run, and
+  burn nothing.
+
 ## v1.0
 
 The first versioned release of WUInity / PREACT. It is compared here with the code as it stood before the

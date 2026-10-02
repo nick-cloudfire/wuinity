@@ -27,6 +27,16 @@ namespace PREACT.Utility
         /// </summary>
         public static void WriteBand(MasterGrid grid, float[,] data, string outputPath)
         {
+            WriteBand(grid, data, outputPath, DataType.GDT_Float32);
+        }
+
+        /// <summary>
+        /// <see cref="WriteBand(MasterGrid, float[,], string)"/> in another sample type - <see cref="DataType.GDT_Int16"/>
+        /// for a fuel model, which ELMFIRE reads only as Int16 (<see cref="ElmfireStems.Int16RasterKeys"/>). GDAL rounds the
+        /// values to the type.
+        /// </summary>
+        public static void WriteBand(MasterGrid grid, float[,] data, string outputPath, DataType type)
+        {
             int ncols = data.GetLength(0);
             int nrows = data.GetLength(1);
 
@@ -46,7 +56,7 @@ namespace PREACT.Utility
                 }
             }
 
-            Dataset ds = CreateOnGrid(grid, ncols, nrows, 1, outputPath);
+            Dataset ds = CreateOnGrid(grid, ncols, nrows, 1, outputPath, type);
             Band band = ds.GetRasterBand(1);
             band.SetNoDataValue(grid.Header.NoDataValue);
             band.WriteRaster(0, 0, ncols, nrows, buffer, ncols, nrows, 0, 0);
@@ -143,13 +153,14 @@ namespace PREACT.Utility
             ds.Dispose();
         }
 
-        /// <summary>Creates a Float32 GeoTIFF carrying the master grid's geotransform and CRS.</summary>
-        private static Dataset CreateOnGrid(MasterGrid grid, int ncols, int nrows, int bandCount, string outputPath)
+        /// <summary>Creates a GeoTIFF (Float32 unless told otherwise) carrying the master grid's geotransform and CRS.</summary>
+        private static Dataset CreateOnGrid(MasterGrid grid, int ncols, int nrows, int bandCount, string outputPath,
+            DataType type = DataType.GDT_Float32)
         {
             Gdal.AllRegister();
 
             Driver drv = Gdal.GetDriverByName("GTiff");
-            Dataset ds = drv.Create(outputPath, ncols, nrows, bandCount, DataType.GDT_Float32, null);
+            Dataset ds = drv.Create(outputPath, ncols, nrows, bandCount, type, null);
             if (ds == null)
             {
                 throw new System.Exception("Could not create GeoTIFF: " + outputPath);

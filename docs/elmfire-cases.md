@@ -57,6 +57,12 @@ used to fail only in its validation, after the DEM, the ERA5 archive and minutes
    has) and bilinear for continuous ones. NaN and infinities are replaced with 0 on the way in and counted:
    ELMFIRE traps on floating-point errors, and one NaN aborts the run with a traceback pointing at unrelated
    code. A layer the case already has is kept unless `RebuildExistingLayers` is on.
+   **Fuel models are stored as Int16** — `fbfm40`/`fbfm13`, `bldg_fuel_model`, `pyromes`, and any fuel raster a
+   namelist names in `FBFM_FILENAME` (a hand-made variant, roads burned in), whether warped, carried or re-cut.
+   ELMFIRE reads these codes only from 16-bit integers: an Int32 (LANDFIRE's LFPS) or Float32 fuel raster gives a
+   fire that never spreads, while its log ends "End of simulation reached successfully". A fuel raster the case
+   already holds in another type is rewritten as Int16 with the same codes; one holding values that are not whole
+   codes is left alone, reported, and refused by the validation.
 5. **After a re-cut grid**, every layer the old grid had and this build had no source for is warped from
    `_previous_grid/` onto the new grid (the new padding is nodata: no fuel). So is every raster a namelist in force
    names — the case's `elmfire.data`, its `elmfire.data.kept-*` and the scenario's `NamelistTemplate` — when it
@@ -87,7 +93,9 @@ used to fail only in its validation, after the DEM, the ERA5 archive and minutes
 12. **The namelist** is written again ([below](#the-namelist)).
 13. **`case_sources.txt`** records the sources, and the namelist's SHA-256.
 14. **Validation.** Every raster is checked against `dem.tif`: size, cell size, origin (to a tenth of a cell),
-    rotation, CRS, finite values, and that the five weather rasters agree on their band count. ELMFIRE itself
+    rotation, CRS, finite values, that the five weather rasters agree on their band count, and that the fuel
+    models are Int16. A run and a campaign check the rasters their namelist names the same way before ELMFIRE
+    starts, and refuse naming the key, the file and what is wrong. ELMFIRE itself
     reads rasters cell by cell without comparing their georeferencing, so a misregistered layer makes a
     plausible fire of the wrong ground. A case that fails is left on disk to inspect, and not run.
 

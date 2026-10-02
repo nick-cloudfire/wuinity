@@ -24,6 +24,8 @@ namespace PREACT.Utility
     /// - <b>Misregistration</b>: CRS, size, origin or cell size disagreeing with the master grid. Silent.
     /// - <b>Non-finite data</b>: NaN and infinity, which propagate through the level-set solver and come back
     ///   as a fire that stops spreading for no stated reason.
+    /// - <b>The wrong type</b> for the fuel model (and the building fuel model and pyromes), which ELMFIRE reads only
+    ///   as Int16: from any other type it reads no fuel at all, and the fire never spreads (<see cref="ElmfireStems.Int16RasterKeys"/>).
     /// </remarks>
     public static class ElmfireCaseValidator
     {
@@ -122,14 +124,14 @@ namespace PREACT.Utility
                     Add(report, stem + ".tif", "required by ELMFIRE but not in the case.", fatal: true);
                     continue;
                 }
-                CheckRaster(report, path, stem, grid, bandCounts);
+                CheckRaster(report, path, stem, grid, bandCounts, int16: stem == fuelStem || IsInt16Stem(stem));
             }
 
             foreach (string stem in optional)
             {
                 string path = Path.Combine(inputsDirectory, stem + ".tif");
                 if (!File.Exists(path)) continue;
-                CheckRaster(report, path, stem, grid, bandCounts);
+                CheckRaster(report, path, stem, grid, bandCounts, int16: IsInt16Stem(stem));
             }
 
             CheckWeatherBandsAgree(report, bandCounts);
@@ -203,7 +205,7 @@ namespace PREACT.Utility
                 }
 
                 CheckRaster(report, r.Path, r.Weather ? WeatherStemFor(r.Key) : r.Stem, grid, bandCounts,
-                    Describe(r), checkFinite: false, gridName: $"the case grid ({Path.GetFileName(dem.Path)})");
+                    Describe(r), checkFinite: false, gridName: $"the case grid ({Path.GetFileName(dem.Path)})", int16: r.Int16);
             }
 
             if (includeWeather) CheckWeatherBandsAgree(report, bandCounts);
@@ -217,6 +219,43 @@ namespace PREACT.Utility
         }
 
         private static string Describe(ElmfireStems.NamelistRaster r) => $"{r.Key} = '{r.Stem}' ({r.Path})";
+
+        private static bool IsInt16Stem(string stem) =>
+            Array.Exists(ElmfireStems.Int16Stems, s => string.Equals(s, stem, StringComparison.OrdinalIgnoreCase));
+
+        /// <summary>
+        /// The GDAL type name of a raster's first band ("Int16", "Int32", "Float32", ...), or null when it cannot be
+        /// read.
+        /// </summary>
+        public static string DataTypeOf(string path)
+        {
+            try
+            {
+                Gdal.AllRegister();
+                using (Dataset ds = Gdal.Open(path, Access.GA_ReadOnly))
+                {
+                    if (ds == null || ds.RasterCount < 1) return null;
+                    using (Band band = ds.GetRasterBand(1)) return Gdal.GetDataTypeName(band.DataType);
+                }
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Why a raster ELMFIRE reads only as Int16 cannot run as it is stored, or null when it is Int16 - the
+        /// sentence the validator, a run and a campaign refuse it with.
+        /// </summary>
+        public static string DescribeNotInt16(string typeName)
+        {
+            if (string.Equals(typeName, "Int16", StringComparison.OrdinalIgnoreCase)) return null;
+            return $"is stored as {typeName ?? "an unknown type"}, and ELMFIRE reads fuel model codes only as Int16 (16-bit "
+                   + "signed integers): from any other type it reads none, so the fire never spreads while ELMFIRE's log "
+                   + "still ends \"End of simulation reached successfully\". Build the case again, which stores it as Int16, "
+                   + "or convert it with gdal_translate -ot Int16.";
+        }
 
         /// <summary>The weather stem a weather key stands for, so the band-count check compares like with like.</summary>
         private static string WeatherStemFor(string key)
@@ -268,7 +307,7 @@ namespace PREACT.Utility
 
         private static void CheckRaster(Report report, string path, string stem, MasterGrid grid,
             Dictionary<string, int> bandCounts, string displayName = null, bool checkFinite = true,
-            string gridName = "the master grid")
+            string gridName = "the master grid", bool int16 = false)
         {
             string name = displayName ?? stem + ".tif";
             Gdal.AllRegister();
@@ -306,6 +345,13 @@ namespace PREACT.Utility
 
                 CheckGeoTransform(report, ds, name, grid, gridName);
                 CheckProjection(report, ds, name, grid, gridName);
+                if (int16 && ds.RasterCount >= 1)
+                {
+                    string type;
+                    using (Band band = ds.GetRasterBand(1)) type = Gdal.GetDataTypeName(band.DataType);
+                    string wrongType = DescribeNotInt16(type);
+                    if (wrongType != null) Add(report, name, wrongType, fatal: true);
+                }
                 if (checkFinite) CheckFinite(report, ds, name);
             }
             finally

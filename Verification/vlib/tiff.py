@@ -118,3 +118,29 @@ def write_geotiff(path, rows, x_west, y_north, cell_size, epsg, dtype="float32",
         f.write(bytes(extra))
         for s in strips:
             f.write(s)
+
+
+def sample_type(path):
+    """The sample type of a (classic, little- or big-endian) TIFF's first image - "int16", "int32", "float32", ... -
+    read from its BitsPerSample and SampleFormat tags; None for a BigTIFF or a file that is not a TIFF."""
+    with open(path, "rb") as f:
+        head = f.read(8)
+        if head[:4] == b"II*\0":
+            e = "<"
+        elif head[:4] == b"MM\0*":
+            e = ">"
+        else:
+            return None
+        f.seek(struct.unpack(e + "I", head[4:8])[0])
+        count = struct.unpack(e + "H", f.read(2))[0]
+        bits, fmt = None, 1  # SampleFormat defaults to unsigned integer
+        for _ in range(count):
+            tag, typ, n, value = struct.unpack(e + "HHI4s", f.read(12))
+            v = struct.unpack(e + "H", value[:2])[0] if typ == 3 else struct.unpack(e + "I", value)[0]
+            if tag == 258:
+                bits = v
+            elif tag == 339:
+                fmt = v
+    if bits is None:
+        return None
+    return {1: "uint", 2: "int", 3: "float"}.get(fmt, "?") + str(bits)

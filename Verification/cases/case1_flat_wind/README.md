@@ -51,16 +51,15 @@ boundary uses RSET = the car's arrival.
 The downwind extent is not checked against a closed form: k-PERIL's 8-neighbour graph lets a backing fire step
 diagonally, so its effective backing rate is set by the ellipse at ψ = 225°, not by the backing rate at 180°.
 
-## 1b — the fuel raster's sample type (D1)
+## 1b — the fuel raster's sample type (D1, fixed)
 
 The same fire on a small domain (1 x 1 km, 1 h), once with the fuel raster typed **Int16** and once **Int32** —
-the type LANDFIRE's LFPS service delivers its bands in (`downloads/landfire/*.tif` of Auburn2). Expected: the same
-fire area (`fire_size_stats.csv`) both times, ± 0.1 %. Measured: 224.1 acres and **0 acres**. ELMFIRE reads the fuel
-model raster as 16-bit (`FBFM%I2`); an Int32 one is decoded into its float buffer instead, its fuel array stays
-empty, every cell is non-burnable, and the run reports "elmfire burned 0 acres (the ignition most likely landed on
-non-burnable fuel)". `RasterHarmonizer.WarpToGrid` keeps the source's type and the case validator does not check it.
-(Round 2's LANDFIRE step writes the fuel band it extracts as Int16, so the download itself avoids this; a fuel raster
-from anywhere else does not.) XFAIL until the builder writes `fbfm*`, `bldg_fuel_model` and `pyromes` as Int16.
+the type LANDFIRE's LFPS service delivers its bands in (`downloads/landfire/*.tif` of Auburn2). ELMFIRE reads the fuel
+model raster only as 16-bit integers (`FBFM%I2`); an Int32 one is decoded into its float buffer instead, its fuel
+array stays empty, every cell is non-burnable, and the run reports "elmfire burned 0 acres". Checked: the case built
+from the Int32 source stores its `fbfm13.tif` as Int16 (read from the TIFF's own tags), and the fire burns the same
+area (`fire_size_stats.csv`) both times, ± 0.1 %. Before the fix (v1.1 r2-fix) the builder kept the source's type and
+the second fire burned 0 acres against 224.1.
 
 ## 1c — a dynamic fuel model
 

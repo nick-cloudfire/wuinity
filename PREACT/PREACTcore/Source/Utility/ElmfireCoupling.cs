@@ -390,18 +390,20 @@ namespace PREACT.Utility
                 return result;
             }
 
-            //Every raster the namelist names, on the grid of the DEM it names, before ELMFIRE is asked: it compares
-            //nothing itself, and a fuel raster left on an old grid ends in a segfault or "raster dimensions
-            //mismatch" that names neither the file nor the grid.
+            //Every raster the namelist names, on the grid of the DEM it names and (the fuel model) stored as Int16,
+            //before ELMFIRE is asked: it compares nothing itself, a fuel raster left on an old grid ends in a segfault or
+            //"raster dimensions mismatch" that names neither the file nor the grid, and one of another type is a fire
+            //that never spreads and a log that says it ended successfully.
             ElmfireCaseValidator.Report rasters = ElmfireCaseValidator.ValidateNamelistRasters(runLines, caseDir,
                 includeWeather: true);
             if (!rasters.Ok)
             {
-                result.Message = $"The namelist {Path.GetFileName(namelist)} names rasters that are not on the case grid, "
-                                 + "so ELMFIRE cannot run it: " + ElmfireCaseValidator.Summarize(rasters).TrimEnd('.')
+                result.Message = $"The namelist {Path.GetFileName(namelist)} names rasters that are not on the case grid or "
+                                 + "not stored the way ELMFIRE reads them, so ELMFIRE cannot run it: "
+                                 + ElmfireCaseValidator.Summarize(rasters).TrimEnd('.')
                                  + ". Build the case again: it re-cuts onto the grid every raster named by the case's "
-                                 + "elmfire.data, its kept namelists (elmfire.data.kept-*) and the NamelistTemplate. Or "
-                                 + "point the namelist at rasters on the grid.";
+                                 + "elmfire.data, its kept namelists (elmfire.data.kept-*) and the NamelistTemplate, and "
+                                 + "stores their fuel models as Int16. Or point the namelist at rasters that are.";
                 return result;
             }
 

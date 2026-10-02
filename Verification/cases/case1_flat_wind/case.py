@@ -4,7 +4,7 @@ k-PERIL boundary of a WUI box downwind. See README.md beside this file for what 
 import math
 import os
 
-from vlib import firecase, kperil_ref, rasters, roads, rothermel, scenario, shape, wuibox
+from vlib import firecase, kperil_ref, rasters, roads, rothermel, scenario, shape, tiff, wuibox
 from vlib.context import elmfire_acres, elmfire_outputs, grep_float
 from vlib.report import Check, within
 
@@ -259,10 +259,13 @@ def fuel_type_checks(ctx, folder):
         acres[dtype] = elmfire_acres(os.path.join(sub, "case"))
     ok = acres["int16"] is not None and acres["int16"] > 0
     out = [Check(CASE, "1b fire on an Int16 fuel raster burns", acres["int16"], None, "> 0 ac", ok, "ac")]
+    stored = tiff.sample_type(os.path.join(folder, "fuel_int32", "case", "inputs", "fbfm13.tif"))
+    out.append(Check(CASE, "1b an Int32 fuel source is stored in the case as Int16", stored, "int16", "exact",
+                     stored == "int16", "", "ELMFIRE reads the fuel model only as 16-bit integers"))
     same = acres["int32"] is not None and acres["int16"] and abs(acres["int32"] - acres["int16"]) <= 0.001 * acres["int16"]
     out.append(Check(CASE, "1b the same fire on an Int32 fuel raster (LFPS's type): same area",
                      acres["int32"], acres["int16"], "0.1 %", bool(same), "ac",
-                     "ELMFIRE reads fbfm as 16-bit; the builder keeps the source's Int32", known="D1"))
+                     "" if same else "the case's fbfm40.tif is %s" % stored))
     return out
 
 

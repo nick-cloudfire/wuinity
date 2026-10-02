@@ -85,6 +85,28 @@ namespace PREACT.Utility
             ("BLDG_FUEL_MODEL_FILENAME", false, true),
         };
 
+        /// <summary>
+        /// The <c>&amp;INPUTS</c> keys whose raster ELMFIRE reads only as 16-bit signed integers: the fuel model, the
+        /// building fuel model and the pyromes.
+        /// </summary>
+        /// <remarks>
+        /// ELMFIRE keeps these codes in the raster's <c>%I2</c> array, which only an Int16 file fills
+        /// (<c>elmfire_io.f90</c> <c>CLASSIFY_ENVI_DATA_TYPE</c>, <c>READ_BSQ_RASTER_SLICE</c>). Any other type is
+        /// decoded into <c>%R4</c> instead and <c>%I2</c> stays at nodata: every cell is non-burnable, the fire never
+        /// spreads ("LESS THAN 2 NODES TAGGED"), and the log still ends "End of simulation reached successfully"
+        /// (verification case 1b: 224 acres from Int16 fuel, 0 from the same codes as Int32).
+        /// </remarks>
+        public static readonly string[] Int16RasterKeys = { "FBFM_FILENAME", "BLDG_FUEL_MODEL_FILENAME", "PYROMES_FILENAME" };
+
+        /// <summary>The stems the case builder writes for <see cref="Int16RasterKeys"/>, which it stores as Int16.</summary>
+        public static readonly string[] Int16Stems = { "fbfm40", "fbfm13", "bldg_fuel_model", "pyromes" };
+
+        /// <summary>Whether a namelist key names a raster ELMFIRE reads only as Int16.</summary>
+        public static bool IsInt16Key(string key)
+        {
+            return Array.Exists(Int16RasterKeys, k => string.Equals(k, key, StringComparison.OrdinalIgnoreCase));
+        }
+
         /// <summary>The <c>&amp;INPUTS</c> keys of rasters read from <c>WEATHER_DIRECTORY</c>, and whether they are required.</summary>
         public static readonly (string Key, bool Required)[] WeatherDirectoryRasterKeys =
         {
@@ -102,6 +124,9 @@ namespace PREACT.Utility
             public bool Required;
             public bool Categorical;
             public bool Weather;
+
+            /// <summary>Whether ELMFIRE reads this raster only as Int16 (<see cref="Int16RasterKeys"/>).</summary>
+            public bool Int16;
         }
 
         /// <summary>
@@ -138,6 +163,7 @@ namespace PREACT.Utility
                     Required = required,
                     Categorical = categorical,
                     Weather = isWeather,
+                    Int16 = !isWeather && IsInt16Key(key),
                 });
             }
 

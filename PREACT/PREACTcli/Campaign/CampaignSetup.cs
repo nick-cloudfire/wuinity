@@ -142,11 +142,12 @@ namespace PREACTcli.Campaigns
             if (!rasters.Ok)
             {
                 return Fail("the template " + Path.GetFileName(c.TemplatePath) + " names rasters that are not on the case "
-                            + "grid, so ELMFIRE could not run a single realization:\n         "
+                            + "grid or not stored the way ELMFIRE reads them, so ELMFIRE could not run a single realization:\n         "
                             + string.Join("\n         ", rasters.Fatal)
                             + "\n       Build the case again (Data > Build fire case (ELMFIRE) in the GUI, or PREACTcli build-case): it re-cuts onto the grid "
                             + "every raster named by the case's elmfire.data, its kept namelists (elmfire.data.kept-*) and "
-                            + "the scenario's [ELMFIRE] NamelistTemplate. Or point the template at rasters on the grid.");
+                            + "the scenario's [ELMFIRE] NamelistTemplate, and stores their fuel models as Int16. Or point the "
+                            + "template at rasters that are.");
             }
 
             string maskStem = ElmfireNamelist.GetKeyInGroup(c.TemplateLines, ElmfireNamelistKeys.InputsGroup,

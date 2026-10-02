@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using OSGeo.GDAL;
 using PREACT.Math;
 using PREACT.Population;
 using PREACT.Tools;
@@ -98,6 +99,17 @@ namespace PREACT.Utility
             /// not a class at all.</summary>
             public HashSet<string> CategoricalStems = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                 { "fbfm13", "fbfm40", "bldg_fuel_model", "bfm_h", "ignition_mask", "wui_area", "barriers", "pyromes" };
+
+            /// <summary>
+            /// Stems written as Int16 whatever their source's type: the fuel models, the building fuel model and the
+            /// pyromes, which ELMFIRE reads only as Int16 (<see cref="ElmfireStems.Int16RasterKeys"/>). A fuel variant a
+            /// namelist names (<c>FBFM_FILENAME = 'fbfm40_roads101'</c>) is added when the build meets it.
+            /// </summary>
+            /// <remarks>
+            /// LANDFIRE's LFPS serves its fuel as Int32, a hand-made raster is often Float32, and the warp used to keep
+            /// the source's type: such a case built and validated cleanly, and every fire on it burned nothing.
+            /// </remarks>
+            public HashSet<string> Int16Stems = new HashSet<string>(ElmfireStems.Int16Stems, StringComparer.OrdinalIgnoreCase);
 
             /// <summary>
             /// Baseline weather (ws/wd/m1/m10/m100) comes from the history-based chain in
@@ -538,6 +550,11 @@ namespace PREACT.Utility
             //variant, a building layer under its own name - is re-cut onto the grid when it is not on it, the same
             //way as a layer carried from the old grid.
             CarryNamelistRasters(o, result, grid, inputs, namelistRasters, Log);
+
+            //---------------------------------------------------------------- 5a''. Fuel stored as Int16
+            //What the build warps it writes as Int16 already; a fuel raster the case kept from before, or one a namelist
+            //names that was already on the grid, may not be - and ELMFIRE reads none of the fuel of any other type.
+            StoreFuelAsInt16(o, result, inputs, namelistRasters, Log);
 
             //---------------------------------------------------------------- 5b. Canopy defaults
             //ELMFIRE treats CC/CH/CBH/CBD as required inputs and refuses to start without them
@@ -1212,8 +1229,9 @@ namespace PREACT.Utility
             string destination, Action<string> log)
         {
             string method = o.CategoricalStems.Contains(stem) ? "near" : "bilinear";
-            log($"  {stem}: warping onto the master grid ({method}).");
-            RasterHarmonizer.WarpToGrid(source, destination, grid, method);
+            bool int16 = o.Int16Stems.Contains(stem);
+            log($"  {stem}: warping onto the master grid ({method}{(int16 ? ", as Int16" : "")}).");
+            RasterHarmonizer.WarpToGrid(source, destination, grid, method, int16);
 
             //Scrubbed here, on the way in, because ELMFIRE traps on floating-point invalid and one NaN aborts the
             //whole run with a message naming an unrelated line. External products are exactly where NaN comes
@@ -1520,8 +1538,8 @@ namespace PREACT.Utility
                 includeWeather: true);
             if (rasters.Ok)
             {
-                log($"  namelist: every raster {Path.GetFileName(aside)} names is on the case grid, so it runs as "
-                    + "[ELMFIRE] NamelistTemplate.");
+                log($"  namelist: every raster {Path.GetFileName(aside)} names is on the case grid and stored as ELMFIRE "
+                    + "reads it, so it runs as [ELMFIRE] NamelistTemplate.");
             }
             else
             {
@@ -1628,6 +1646,7 @@ namespace PREACT.Utility
                     if (!File.Exists(copy) || !IsOnGrid(copy, grid))
                     {
                         if (r.Categorical) o.CategoricalStems.Add(copyStem);
+                        if (r.Int16) o.Int16Stems.Add(copyStem);
                         RecutInto(o, result, grid, copyStem, path, copy, log);
                     }
                     string why = $"{r.Key} = '{r.Stem}' is not on the case grid, and the scenario itself reads {path}, so that "
@@ -1639,6 +1658,7 @@ namespace PREACT.Utility
                 }
 
                 if (r.Categorical) o.CategoricalStems.Add(r.Stem);
+                if (r.Int16) o.Int16Stems.Add(r.Stem);
 
                 //Re-cut into a file of its own first, and only then the original moved aside and the copy put in its
                 //place: moving it aside first meant a warp that failed (a GDAL error, a full disk) left inputs/ without
@@ -1662,6 +1682,133 @@ namespace PREACT.Utility
                 log($"  {r.Stem}: named by the namelist ({r.Key}) and not on the case grid; re-cut onto it, the original "
                     + $"kept as inputs/{PreviousGridFolder}/{Path.GetFileName(aside)}.");
                 if (!result.Carried.Contains(r.Stem)) result.Carried.Add(r.Stem);
+            }
+        }
+
+        /// <summary>
+        /// Rewrites as Int16, in place and with the same codes, every fuel-model raster in <paramref name="inputs"/> that is
+        /// stored as another type: the builder's own stems (<see cref="Options.Int16Stems"/>) and whatever a namelist in
+        /// force names under an Int16 key (<c>FBFM_FILENAME</c>, <c>BLDG_FUEL_MODEL_FILENAME</c>, <c>PYROMES_FILENAME</c>).
+        /// </summary>
+        /// <remarks>
+        /// A case built before the warp wrote Int16 (Auburn2's LANDFIRE fuel came as Int32), or a variant made by hand as
+        /// Float32, is otherwise kept as it is by every later build, and burns nothing. A raster holding values that are not
+        /// whole codes inside Int16's range is left alone and reported; the validator then refuses it by name.
+        /// </remarks>
+        private static void StoreFuelAsInt16(Options o, Result result, string inputs,
+            List<ElmfireStems.NamelistRaster> namelistRasters, Action<string> log)
+        {
+            var stems = new HashSet<string>(o.Int16Stems, StringComparer.OrdinalIgnoreCase);
+            string inputsFull = Path.GetFullPath(inputs).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            foreach (ElmfireStems.NamelistRaster r in namelistRasters ?? new List<ElmfireStems.NamelistRaster>())
+            {
+                if (!r.Int16) continue;
+                string folder = Path.GetDirectoryName(Path.GetFullPath(r.Path))
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                if (string.Equals(folder, inputsFull, StringComparison.OrdinalIgnoreCase)) stems.Add(r.Stem);
+            }
+
+            foreach (string stem in stems)
+            {
+                string path = ElmfireStems.Tif(inputs, stem);
+                if (!File.Exists(path)) continue;
+                string type = ElmfireCaseValidator.DataTypeOf(path);
+                if (type == null || ElmfireCaseValidator.DescribeNotInt16(type) == null) continue;
+
+                string problem = RewriteAsInt16(path);
+                if (problem == null)
+                {
+                    log($"  {stem}: stored as {type}; rewritten as Int16 with the same codes, the only type ELMFIRE reads a "
+                        + "fuel model from.");
+                    result.Fallbacks.Add($"{stem}: {type} rewritten as Int16");
+                }
+                else
+                {
+                    string why = $"{stem}.tif is stored as {type} and could not be rewritten as Int16 ({problem}); ELMFIRE "
+                                 + "would read no fuel from it";
+                    result.Fallbacks.Add(why);
+                    log("  WARNING " + why + ".");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Rewrites a single-band raster as Int16 in place, keeping its georeferencing, metadata and codes, or says why it
+        /// cannot: a value that is not a whole number in Int16's range. Nodata and non-finite cells become the Int16 nodata
+        /// (the source's own when Int16 can hold it, else <see cref="RasterHarmonizer.Int16NoData"/>).
+        /// </summary>
+        internal static string RewriteAsInt16(string path)
+        {
+            Gdal.AllRegister();
+            string temporary = path + ".int16.tif";
+            try
+            {
+                using (Dataset src = Gdal.Open(path, Access.GA_ReadOnly))
+                {
+                    if (src == null) return "it cannot be opened";
+                    if (src.RasterCount != 1) return $"it has {src.RasterCount} bands";
+                    int nx = src.RasterXSize, ny = src.RasterYSize;
+                    using (Band band = src.GetRasterBand(1))
+                    {
+                        band.GetNoDataValue(out double nodata, out int hasNodata);
+                        bool sourceNodataFits = hasNodata != 0 && !double.IsNaN(nodata) && nodata >= short.MinValue
+                                                && nodata <= short.MaxValue && nodata == System.Math.Round(nodata);
+                        short outNodata = sourceNodataFits ? (short)nodata : (short)RasterHarmonizer.Int16NoData;
+
+                        var values = new double[(long)nx * ny];
+                        band.ReadRaster(0, 0, nx, ny, values, nx, ny, 0, 0);
+                        var codes = new short[values.Length];
+                        bool anyNodata = false;
+                        for (long i = 0; i < values.Length; ++i)
+                        {
+                            double v = values[i];
+                            if (double.IsNaN(v) || double.IsInfinity(v) || (hasNodata != 0 && v == nodata))
+                            {
+                                codes[i] = outNodata;
+                                anyNodata = true;
+                                continue;
+                            }
+                            if (v != System.Math.Round(v) || v < short.MinValue || v > short.MaxValue)
+                            {
+                                return $"it holds {v.ToString(CultureInfo.InvariantCulture)} at column {i % nx}, row {i / nx}, "
+                                       + "which is not a fuel code";
+                            }
+                            codes[i] = (short)v;
+                        }
+
+                        using (Driver driver = Gdal.GetDriverByName("GTiff"))
+                        using (Dataset dst = driver.Create(temporary, nx, ny, 1, DataType.GDT_Int16, new[] { "COMPRESS=DEFLATE" }))
+                        {
+                            if (dst == null) return "a temporary file could not be created beside it";
+                            double[] gt = new double[6];
+                            src.GetGeoTransform(gt);
+                            dst.SetGeoTransform(gt);
+                            dst.SetProjection(src.GetProjection());
+                            string[] metadata = src.GetMetadata("");
+                            if (metadata != null && metadata.Length > 0) dst.SetMetadata(metadata, "");
+                            using (Band outBand = dst.GetRasterBand(1))
+                            {
+                                if (hasNodata != 0 || anyNodata) outBand.SetNoDataValue(outNodata);
+                                outBand.WriteRaster(0, 0, nx, ny, codes, nx, ny, 0, 0);
+                            }
+                            dst.FlushCache();
+                        }
+                    }
+                }
+
+                File.Delete(path);
+                string aux = path + ".aux.xml";
+                if (File.Exists(aux)) File.Delete(aux);
+                File.Move(temporary, path);
+                return null;
+            }
+            catch (Exception e)
+            {
+                return e.Message;
+            }
+            finally
+            {
+                try { if (File.Exists(temporary)) File.Delete(temporary); } catch { }
             }
         }
 
