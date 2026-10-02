@@ -723,8 +723,12 @@ namespace WUInity.Workflow
             Vector2d ll = _in.Simulation.LowerLeftLatLon;
             Vector2d deg = PREACT.Population.LocalGPWData.SizeToDegrees(ll, _in.Simulation.DomainSize);
             Vector2d ur = new Vector2d(ll.x + deg.y, ll.y + deg.x);
+            string release = PREACT.Tools.LandfireVersions.Normalise(e.LandfireVersion) ?? PREACT.Tools.LandfireVersions.Closest;
             var landfire = new StepAction(WorkflowAction.DownloadLandfire, "Get LANDFIRE fuels and canopy (US)",
-                "Downloads LANDFIRE's fuel model and canopy for the domain and names them as the source layers.");
+                "Downloads LANDFIRE's fuel model and canopy for the case's padded domain and names them as the source layers, "
+                + "with the canopy scaling flags their units call for. Release: "
+                + (release == PREACT.Tools.LandfireVersions.Closest ? "the one closest to the scenario's year" : release)
+                + " ([ELMFIRE] LandfireVersion, chosen under Source layers, where your contact e-mail for LANDFIRE goes too).");
             if (!PlaceIsUsable) landfire.Disable("Blocked by step 1 (Place and time): needs the area of interest.");
             else if (!ScenarioFiles.IsInLandfireCoverage(ll, ur)) landfire.Disable("LANDFIRE covers the United States only; this domain is outside it.");
             if (!done && landfire.Enabled)

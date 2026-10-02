@@ -208,6 +208,36 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
         }
 
+        /// <summary>The LANDFIRE releases offered, "closest" first; labels and the values they write.</summary>
+        private static readonly string[] LandfireReleaseValues = BuildReleaseValues();
+        private static string[] BuildReleaseValues()
+        {
+            var values = new System.Collections.Generic.List<string> { PREACT.Tools.LandfireVersions.Closest };
+            values.AddRange(PREACT.Tools.LandfireVersions.Names());
+            return values.ToArray();
+        }
+
+        private static string ReleaseLabel(string value, int scenarioYear, PREACT.Tools.LandfireVersions.Region region)
+        {
+            if (value == PREACT.Tools.LandfireVersions.Closest)
+            {
+                try
+                {
+                    var r = PREACT.Tools.LandfireVersions.Resolve(value, scenarioYear, region, out string _);
+                    return $"Closest to the scenario's year ({scenarioYear}: {r.Name})";
+                }
+                catch (ArgumentException)
+                {
+                    return "Closest to the scenario's year";
+                }
+            }
+            foreach (var r in PREACT.Tools.LandfireVersions.All)
+            {
+                if (r.Name == value) return r.Description;
+            }
+            return value;
+        }
+
         /// <summary>Where the layers can come from without bringing them: LANDFIRE for the US.</summary>
         private static void DrawDownloads(PREACTInput input)
         {
@@ -216,8 +246,58 @@ namespace Assets.WUInity.GUI.DearIMGUI
             PREACT.Math.Vector2d ll = input.Simulation.LowerLeftLatLon;
             PREACT.Math.Vector2d ur = ScenarioDataSteps.UpperRightLatLon(input);
             bool us = ScenarioFiles.IsInLandfireCoverage(ll, ur);
+            ElmfireInput elmfire = input.WildfireModule.ElmfireInput;
 
-            ImGui.BeginDisabled(!us || ScenarioSession.IsBusy);
+            if (us)
+            {
+                //The release: a scenario setting, since a historic fire wants the fuels of its time.
+                PREACT.Tools.LandfireVersions.Region region = PREACT.Tools.LandfireVersions.RegionOf(ll, ur);
+                int year = input.Simulation.StartDateTime.Year;
+                string current = PREACT.Tools.LandfireVersions.Normalise(elmfire.LandfireVersion) ?? PREACT.Tools.LandfireVersions.Closest;
+                int index = Math.Max(0, Array.IndexOf(LandfireReleaseValues, current));
+                string[] labels = new string[LandfireReleaseValues.Length];
+                for (int i = 0; i < labels.Length; ++i) labels[i] = ReleaseLabel(LandfireReleaseValues[i], year, region);
+                ImGui.SetNextItemWidth(-200f);
+                if (ImGui.Combo("LANDFIRE release###LandfireVersion", ref index, labels, labels.Length))
+                {
+                    elmfire.LandfireVersion = LandfireReleaseValues[index];
+                }
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("[ELMFIRE] LandfireVersion. A release includes the disturbances of its year, so for a historic "
+                        + "fire choose the release before it: a later one already has its burn scar.");
+                }
+
+                //The e-mail: the user's own, kept per user and never written into the scenario.
+                string email = ScenarioDataSteps.LandfireEmail;
+                ImGui.SetNextItemWidth(-200f);
+                if (ImGui.InputText("Contact e-mail###LandfireEmail", ref email, 128))
+                {
+                    ScenarioDataSteps.LandfireEmail = email;
+                }
+                if (ImGui.IsItemDeactivatedAfterEdit())
+                {
+                    ScenarioDataSteps.SaveLandfireEmail();
+                }
+                if (ImGui.IsItemHovered())
+                {
+                    ImGui.SetTooltip("LANDFIRE's product service asks every request for a contact e-mail. Yours is kept for your "
+                        + "user in " + PREACT.Tools.LandfireContact.SettingsPath + ", not in the scenario. LANDFIRE_EMAIL "
+                        + "is used when this is empty.");
+                }
+                string trimmed = email.Trim();
+                if (trimmed.Length > 0 && !PREACT.Tools.LandfireContact.IsPlausible(trimmed))
+                {
+                    Fields.Warn("That is not an e-mail address.");
+                }
+                else if (trimmed.Length == 0 && PREACT.Tools.LandfireContact.Resolve(null, out string _) == null)
+                {
+                    Fields.Caution("Needed: LANDFIRE files every request under a contact e-mail.");
+                }
+            }
+
+            bool emailOk = PREACT.Tools.LandfireContact.Resolve(ScenarioDataSteps.LandfireEmail, out string _) != null;
+            ImGui.BeginDisabled(!us || !emailOk || ScenarioSession.IsBusy);
             if (ImGui.Button("Download LANDFIRE fuel model and canopy (US)"))
             {
                 ScenarioDataSteps.DownloadLandfireFuels();
@@ -227,13 +307,14 @@ namespace Assets.WUInity.GUI.DearIMGUI
             {
                 ImGui.SetTooltip(!us
                     ? "LANDFIRE covers the United States only; this domain is outside it."
+                    : !emailOk ? "Enter a contact e-mail first: LANDFIRE asks every request for one."
                     : ScenarioSession.IsBusy ? ScenarioSession.BusyTooltip
-                    : "Asks LANDFIRE's product service for the domain's fuel model and CC, CH, CBH and CBD, splits them into "
-                      + "single rasters under " + ScenarioFiles.LandfireFolder + " and names them below. The job queues on "
+                    : "Asks LANDFIRE's product service for the " + elmfire.FuelModelStandard + " fuel model and CC, CH, CBH and "
+                      + "CBD over the case's padded domain, splits them into single rasters under "
+                      + PREACT.Tools.LandfireFuels.Folder + " and names them below, with the canopy scaling flags their units "
+                      + "call for. The fuel and canopy the case already has are replaced at its next build. The job queues on "
                       + "their server and can take several minutes.");
             }
-            ImGui.SameLine();
-            ImGui.Checkbox("Anderson 13 (else Scott & Burgan 40)###LandfireAnderson", ref ScenarioDataSteps.UseAnderson13);
 
             if (!us)
             {

@@ -31,12 +31,37 @@ namespace Assets.WUInity.GUI.DearIMGUI
         /// <summary>The scenario the step buttons describe: always the open one.</summary>
         public static PREACTInput Input { get => ScenarioSession.Input; }
 
-        //Household sizes for the population step, and which fuel model set LANDFIRE is asked for.
-        //Shared rather than duplicated per window so the value shown is the value used. Scott & Burgan 40 by
-        //default: it is what ELMFIRE and the LANDFIRE products are normally run with.
+        //Household sizes for the population step. Shared rather than duplicated per window so the value shown is the
+        //value used. Which fuel model set LANDFIRE is asked for is the scenario's own [ELMFIRE] FuelModelStandard.
         public static int MinHouseholdSize = 1;
         public static int MaxHouseholdSize = 5;
-        public static bool UseAnderson13 = false;
+
+        //The contact e-mail LFPS asks every request for: the user's, kept per user (PREACT.Tools.LandfireContact), never in
+        //the scenario. Read once from that file; written back when the field is edited.
+        private static string _landfireEmail;
+
+        /// <summary>The e-mail the LANDFIRE step sends, as typed (or as kept from an earlier session).</summary>
+        public static string LandfireEmail
+        {
+            get
+            {
+                if (_landfireEmail == null) _landfireEmail = PREACT.Tools.LandfireContact.Saved();
+                return _landfireEmail;
+            }
+            set { _landfireEmail = value ?? string.Empty; }
+        }
+
+        /// <summary>Keeps the typed e-mail for the next session; says so when it cannot.</summary>
+        public static void SaveLandfireEmail()
+        {
+            string email = LandfireEmail.Trim();
+            if (email.Length > 0 && !PREACT.Tools.LandfireContact.IsPlausible(email)) return;
+            if (!PREACT.Tools.LandfireContact.Save(email, out string problem))
+            {
+                Engine.Message(null, Engine.LogType.Warning, "Could not keep the LANDFIRE e-mail in "
+                    + PREACT.Tools.LandfireContact.SettingsPath + " (" + problem + "); it is used for this session only.");
+            }
+        }
 
         //Feedback. Without it even a working download looks like a dead button: these steps take tens
         //of seconds to minutes and would otherwise sit silent throughout, which is indistinguishable
@@ -240,7 +265,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             public string OpenTopographyKey;
             public string OpenTopographyKeySource;
             public string DemType;
-            public bool UseAnderson13;
+            public PREACT.Tools.LandfireFuels.Options Landfire;
             public int MinHouseholdSize, MaxHouseholdSize;
 
             internal readonly List<Action<PREACTInput>> Writes = new List<Action<PREACTInput>>();
@@ -318,10 +343,19 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 OpenTopographyKey = EffectiveOpenTopographyApiKey,
                 OpenTopographyKeySource = OpenTopographyApiKeySource,
                 DemType = DemType,
-                UseAnderson13 = UseAnderson13,
+                Landfire = CaptureLandfire(input),
                 MinHouseholdSize = MinHouseholdSize,
                 MaxHouseholdSize = MaxHouseholdSize,
             };
+        }
+
+        /// <summary>The scenario's LANDFIRE settings, read on the main thread; null without an ELMFIRE input to read them from.</summary>
+        private static PREACT.Tools.LandfireFuels.Options CaptureLandfire(PREACTInput input)
+        {
+            if (input.WildfireModule?.ElmfireInput == null) return null;
+            PREACT.Tools.LandfireFuels.Options options = PREACT.Tools.LandfireFuels.Options.FromScenario(input);
+            options.Email = LandfireEmail;
+            return options;
         }
 
         // ------------------------------------------------------------------ running
@@ -931,22 +965,23 @@ namespace Assets.WUInity.GUI.DearIMGUI
         }
 
         /// <summary>
-        /// LANDFIRE's fuel model and four canopy layers for the area, split into the single-band rasters the
-        /// ELMFIRE case builder warps, and named as the scenario's ELMFIRE source layers.
+        /// LANDFIRE's fuel model and four canopy layers for the case's padded domain, from the release the scenario's
+        /// [ELMFIRE] LandfireVersion picks, split into single-band rasters and named as the scenario's ELMFIRE source
+        /// layers, with the canopy scaling flags their units call for (PREACT.Tools.LandfireFuels).
         /// </summary>
         /// <remarks>
-        /// The download used to set nothing at all: it left a zip and a multi-band GeoTIFF in the scenario
-        /// folder, the scenario did not refer to them, and ELMFIRE - which takes fuel and canopy only from the
-        /// [ELMFIRE] source layers - never saw them. The LFPS job returns one GeoTIFF with a band per requested
-        /// product, in request order (elevation, slope, aspect, fuel model, CC, CH, CBH, CBD, FCCS); the bands
-        /// are matched by their descriptions where LFPS supplies them and by that order otherwise.
-        ///
-        /// LANDFIRE stores canopy height and base height in metres x 10 and bulk density in kg/m3 x 100, so the
-        /// namelist's CH_TIMES_10 / CBH_TIMES_10 / CBD_TIMES_100 are switched on to match.
+        /// The step used to look for "a .tif written since it started" in the download folder, and the zip's entries carry
+        /// LFPS's own timestamps (US time, read as local time): in Athens the raster just unpacked was eight hours old, so
+        /// a job that succeeded ended "LANDFIRE returned nothing usable" with the result on disk. The download now says
+        /// where its raster is. The fuel and canopy the case already holds are removed once the new ones are in, so the
+        /// next build warps these rather than keeping the old ones.
         /// </remarks>
         private static async Task DoDownloadLandfire(StepContext ctx)
         {
-            Vector2d centre = new Vector2d(0.5 * (ctx.LowerLeft.x + ctx.UpperRight.x), 0.5 * (ctx.LowerLeft.y + ctx.UpperRight.y));
+            if (ctx.Landfire == null)
+            {
+                throw new Exception("This scenario has no ELMFIRE settings to name the layers in.");
+            }
             if (!ScenarioFiles.IsInLandfireCoverage(ctx.LowerLeft, ctx.UpperRight))
             {
                 throw new Exception("LANDFIRE covers the United States only, and this domain is outside it. Name a fuel "
@@ -955,6 +990,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             try
             {
+                Vector2d centre = new Vector2d(0.5 * (ctx.LowerLeft.x + ctx.UpperRight.x), 0.5 * (ctx.LowerLeft.y + ctx.UpperRight.y));
                 string iso3 = await PREACT.Tools.WorldPopDownloader.LatLonToISO3(centre.x, centre.y);
                 if (!string.IsNullOrEmpty(iso3) && iso3 != "USA")
                 {
@@ -967,104 +1003,15 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 LogStep("Could not confirm the country (" + e.Message + "); asking LANDFIRE anyway.");
             }
 
-            string folder = ctx.InRoot(ScenarioFiles.LandfireFolder);
-            Directory.CreateDirectory(folder);
-            DateTime started = DateTime.UtcNow.AddSeconds(-5);
+            PREACT.Tools.LandfireFuels.Options options = ctx.Landfire;
+            options.Log = LogStep;
+            options.Cancellation = StopToken;
+            PREACT.Tools.LandfireFuels.Result result = await PREACT.Tools.LandfireFuels.DownloadAsync(options);
 
-            await PREACT.Tools.LandfireLandscapeDownloader.Download(ctx.Start.Year, ctx.UseAnderson13, ctx.LowerLeft, ctx.UpperRight, folder);
-
-            //The downloader reports a failed status check by returning, so what arrived is the only evidence.
-            string multiband = null;
-            DateTime newest = DateTime.MinValue;
-            foreach (string tif in Directory.GetFiles(folder, "*.tif"))
-            {
-                DateTime written = File.GetLastWriteTimeUtc(tif);
-                if (written >= started && written > newest && !Path.GetFileName(tif).StartsWith(ctx.Name + "_lf_"))
-                {
-                    newest = written;
-                    multiband = tif;
-                }
-            }
-
-            if (multiband == null)
-            {
-                throw new Exception("LANDFIRE returned nothing usable - the job failed, timed out or the download was cut "
-                    + "short. See the messages above; the LFPS service is sometimes simply busy, and trying again later works.");
-            }
-
-            LogStep("Splitting " + Path.GetFileName(multiband) + " into the layers ELMFIRE takes...");
-            string fuelStem = ctx.UseAnderson13 ? "fbfm13" : "fbfm40";
-            var wanted = new List<(string stem, string key, int fallbackBand)>
-            {
-                (fuelStem, "FBFM", 4), ("cc", "CC", 5), ("ch", "CH", 6), ("cbh", "CBH", 7), ("cbd", "CBD", 8),
-            };
-
-            var layers = new Dictionary<string, string>();
-            OSGeo.GDAL.Gdal.AllRegister();
-            using (OSGeo.GDAL.Dataset source = OSGeo.GDAL.Gdal.Open(multiband, OSGeo.GDAL.Access.GA_ReadOnly))
-            {
-                if (source == null)
-                {
-                    throw new Exception("Could not open " + multiband + ".");
-                }
-
-                int bands = source.RasterCount;
-                var descriptions = new string[bands + 1];
-                for (int b = 1; b <= bands; ++b)
-                {
-                    using (OSGeo.GDAL.Band band = source.GetRasterBand(b))
-                    {
-                        descriptions[b] = (band.GetDescription() ?? string.Empty).ToUpperInvariant();
-                    }
-                }
-
-                foreach ((string stem, string key, int fallbackBand) in wanted)
-                {
-                    int bandIndex = ScenarioFiles.FindLandfireBand(descriptions, key, fallbackBand);
-                    if (bandIndex < 1 || bandIndex > bands)
-                    {
-                        LogStep($"No {key} band in the download ({bands} band(s)); {stem} is left unset.");
-                        continue;
-                    }
-
-                    string relative = ScenarioFiles.LandfireLayer(ctx.Name, stem);
-                    string destination = ctx.InRootForWriting(relative);
-                    var options = new OSGeo.GDAL.GDALTranslateOptions(new[] { "-b", bandIndex.ToString(), "-of", "GTiff", "-co", "COMPRESS=DEFLATE" });
-                    using (OSGeo.GDAL.Dataset band = OSGeo.GDAL.Gdal.wrapper_GDALTranslate(destination, source, options, null, null))
-                    {
-                        if (band == null)
-                        {
-                            throw new Exception($"Could not write band {bandIndex} ({key}) to {destination}.");
-                        }
-                        band.FlushCache();
-                    }
-                    layers[stem] = relative;
-                    LogStep($"  band {bandIndex} ({(string.IsNullOrEmpty(descriptions[bandIndex]) ? key : descriptions[bandIndex])}) -> {relative}");
-                }
-            }
-
-            if (!layers.ContainsKey(fuelStem))
-            {
-                throw new Exception("The download holds no fuel model band, so it cannot supply the case's fuel.");
-            }
-
-            bool anderson = ctx.UseAnderson13;
-            ctx.Set(i =>
-            {
-                ElmfireInput e = i.WildfireModule.ElmfireInput;
-                e.FuelModelFile = layers[fuelStem];
-                e.FuelModelStandard = anderson ? ElmfireInput.FuelModelStandards.FBFM13 : ElmfireInput.FuelModelStandards.FBFM40;
-                if (layers.TryGetValue("cc", out string cc)) e.CanopyCoverFile = cc;
-                if (layers.TryGetValue("ch", out string ch)) e.CanopyHeightFile = ch;
-                if (layers.TryGetValue("cbh", out string cbh)) e.CanopyBaseHeightFile = cbh;
-                if (layers.TryGetValue("cbd", out string cbd)) e.CanopyBulkDensityFile = cbd;
-                //LANDFIRE's scaled integers.
-                e.Namelist.CC_IN_PERCENT = true;
-                e.Namelist.CH_TIMES_10 = true;
-                e.Namelist.CBH_TIMES_10 = true;
-                e.Namelist.CBD_TIMES_100 = true;
-            });
-            LogStep("The scenario's ELMFIRE source layers will name these. Build (or rebuild) the fire case to warp them onto its grid.");
+            ctx.Set(i => PREACT.Tools.LandfireFuels.Apply(result, i.WildfireModule.ElmfireInput));
+            LogStep($"The scenario's ELMFIRE source layers will name these {result.Release} layers, with CC_IN_PERCENT, CH_TIMES_10, "
+                + "CBH_TIMES_10 and CBD_TIMES_100 set to match their units. Build the fire case (step 5) to warp them onto its "
+                + "grid; " + result.ProvenanceFile + " records what was asked for.");
         }
 
         /// <summary>
@@ -1435,6 +1382,15 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
         public static void DownloadLandfireFuels()
         {
+            //LFPS refuses a request without a contact e-mail; asked for here, where it can be typed, before anything starts.
+            if (PREACT.Tools.LandfireContact.Resolve(LandfireEmail, out string _) == null)
+            {
+                Owner = WorkflowStepId.Fuels;
+                _lastFailed = true;
+                _status = "LANDFIRE asks every download for a contact e-mail: enter yours under LANDFIRE in this window.";
+                SourceLayersPanel.Open();
+                return;
+            }
             RunStep("Downloading LANDFIRE fuels and canopy", WorkflowStepId.Fuels, DoDownloadLandfire);
         }
 
