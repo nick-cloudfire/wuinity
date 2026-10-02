@@ -17,6 +17,7 @@ namespace PREACT.Tests
             runner.Add("tools: a path is accepted only when it holds the tool, at whichever level it was picked", Validation);
             runner.Add("tools: every resolver puts a usable setting after the scenario's value and before its own search", ResolverPriority);
             runner.Add("tools: an engine takes SUMO and PROJ from the settings, and a PROJ saved while it runs applies at once", EngineReadsSettings);
+            runner.Add("tools: a standalone build's ELMFIRE and fuel tables are found in elmfire/ beside it, before the vendored build", ShippedElmfire);
             runner.Add("gui: Help > External tools is told which path won for each tool, and why a scenario's or a saved one did not", GuiProbe);
         }
 
@@ -296,6 +297,42 @@ namespace PREACT.Tests
                     {
                         OSGeo.OSR.Osr.SetPROJSearchPaths(main.ProjSearchPaths);
                     }
+                }
+            });
+        }
+
+        /// <summary>
+        /// build-player.ps1 puts PREACT.exe and PREACTcli in dist/WUInity/PREACT/ and ELMFIRE with its tables in
+        /// dist/WUInity/elmfire/; the player's PREACTcore.dll is in dist/WUInity/WUInity_Data/Managed. The same shape is
+        /// made here around this test's own PREACTcore.dll (bin/Debug/net8.0): elmfire/ one folder above it.
+        /// </summary>
+        private static void ShippedElmfire()
+        {
+            WithSettingsFile((folder, file) =>
+            {
+                string assemblyDir = Path.GetDirectoryName(typeof(ElmfireCoupling).Assembly.Location);
+                string shippedDir = Path.Combine(Path.GetDirectoryName(assemblyDir), "elmfire");
+                Assert.True(!Directory.Exists(shippedDir), "nothing is in the way: " + shippedDir);
+                try
+                {
+                    string exe = Touch(shippedDir, Exe("elmfire"));
+                    string table = Touch(shippedDir, "fuel_models.csv");
+                    string building = Touch(shippedDir, "building_fuel_models.csv");
+
+                    Assert.Equal(exe, ElmfireCoupling.ResolveExecutable(null, null), "the shipped ELMFIRE, before the vendored build");
+                    Assert.Equal(table, ElmfireCaseBuilder.DefaultFuelModelTable(exe), "its fuel model table beside it");
+                    Assert.Equal(building, ElmfireCaseBuilder.DefaultBuildingFuelModelTable(exe), "and the building one");
+
+                    //A user's setting still comes first.
+                    string mine = Touch(folder, "mine", Exe("elmfire"));
+                    var s = new ToolPaths.Settings();
+                    s.Set(ToolPaths.Tool.Elmfire, mine);
+                    ToolPaths.Save(s);
+                    Assert.Equal(mine, ElmfireCoupling.ResolveExecutable(null, null), "the setting before the shipped one");
+                }
+                finally
+                {
+                    try { Directory.Delete(shippedDir, true); } catch { }
                 }
             });
         }

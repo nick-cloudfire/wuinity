@@ -435,8 +435,14 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
         private static void OpenDoc(string name)
         {
-            //The docs folder sits beside the Unity project in the repository; a player build has none.
+            //The docs folder sits beside the Unity project in the repository, and beside WUInity.exe in a standalone
+            //build (build-player.ps1 copies it there; Application.dataPath is then WUInity_Data).
             string path = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "..", "docs", name));
+            string beside = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "docs", name));
+            if (!Application.isEditor && File.Exists(beside))
+            {
+                path = beside;
+            }
             if (File.Exists(path))
             {
                 OpenInFileManager(path);

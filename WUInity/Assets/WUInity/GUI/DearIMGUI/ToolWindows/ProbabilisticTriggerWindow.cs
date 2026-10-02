@@ -206,12 +206,19 @@ namespace Assets.WUInity.GUI.DearIMGUI
         {
             if (!string.IsNullOrEmpty(_cliExe) && File.Exists(_cliExe)) return;
 
-            //Developer layout: the CLI's own build output next to the Unity project.
+            //A standalone build (build-player.ps1) has it in PREACT/ beside WUInity.exe; the developer layout has the
+            //CLI's own build output next to the Unity project.
             try
             {
-                string projectRoot = Directory.GetParent(Application.dataPath).FullName; // WUInity/
+                string projectRoot = Directory.GetParent(Application.dataPath).FullName; // WUInity/, or the player's folder
                 string name = Application.platform == RuntimePlatform.WindowsEditor
                               || Application.platform == RuntimePlatform.WindowsPlayer ? "PREACTcli.exe" : "PREACTcli";
+                string shipped = Path.Combine(projectRoot, "PREACT", name);
+                if (!Application.isEditor && File.Exists(shipped))
+                {
+                    _cliExe = shipped;
+                    return;
+                }
                 foreach (string config in new[] { "Release", "Debug" })
                 {
                     string guess = Path.GetFullPath(Path.Combine(projectRoot, "..", "PREACT", "PREACTcli", "bin", config, "net8.0", name));

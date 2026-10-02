@@ -16,7 +16,13 @@ namespace Assets.WUInity.GUI.DearIMGUI
     {
         [SerializeField]
         private bool darkTheme = false; 
-        string fontFilePath = $"{Application.dataPath}/WUInity/GUI/DearIMGUI/Fonts/AdobeClean-Regular.otf"; //MS_Sans_Serif.ttf
+
+        /// <summary>
+        /// The GUI font, under StreamingAssets: the one folder of the project that a player build copies as files
+        /// (to <c>WUInity_Data/StreamingAssets</c>). It used to be read from <c>Application.dataPath/WUInity/GUI/...</c>,
+        /// which is the project's Assets folder in the editor and does not exist beside a standalone build.
+        /// </summary>
+        private static readonly string[] FontRelativePath = { "Fonts", "AdobeClean-Regular.otf" };
 
         static WUInityManager _wuinityManager;
         static Engine _engine;
@@ -358,11 +364,23 @@ namespace Assets.WUInity.GUI.DearIMGUI
             Themes.ApplyAdobeSpectrum(dark);
         }
 
+        /// <summary>Called by UImGui (the prefab's font initializer) when it builds the font atlas.</summary>
         public void AddFont(ImGuiIOPtr io)
         {
-            // Clear default fonts if you want only your custom one            
             io.Fonts.Clear();
-            io.Fonts.AddFontFromFileTTF(fontFilePath, 14);
-        }        
+
+            //ImGui asserts on a font file that is not there, and then has no font at all; its own font is a working,
+            //if plainer, fallback.
+            string fontFilePath = Path.Combine(Application.streamingAssetsPath, Path.Combine(FontRelativePath));
+            if (File.Exists(fontFilePath))
+            {
+                io.Fonts.AddFontFromFileTTF(fontFilePath, 14);
+            }
+            else
+            {
+                Debug.LogWarning("The GUI font is not at " + fontFilePath + "; using Dear ImGui's own.");
+                io.Fonts.AddFontDefault();
+            }
+        }
     }
 }
