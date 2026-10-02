@@ -28,7 +28,7 @@ scratch, after moving the first campaign's folder aside.
 | ELMFIRE `SEED` in each realization's `outputs/run.data` | 12345 + i | docs/trigger-campaigns.md#seeds | exact |
 | Evacuation seed (`realizations.csv`, and `[Simulation] RandomSeed` of `preact_scenario.wui`) | 12345 + 2 000 000 + i | the same | exact |
 | Every realization's ignition | the mask's one cell | the ignition is drawn from the mask with probability proportional to its weight | 0.5 m |
-| Drawn weather | 13.42 mi/h (6 m/s) at 10 m, aimed from 270° (the bearing from the WUI centroid to the ignition), dead 1-h moisture 4.1586 % | the archive's wind; the wind is aimed from the ignition at the WUI centroid; Simard's (1968) equilibrium moisture in its NFDRS form, 2.22749 + 0.160107 RH − 0.01478 T(°F) for 10 ≤ RH < 50 | 0.01 mi/h, 0.5°, 0.01 % |
+| Drawn weather | 13.42 mi/h (6 m/s) at 10 m, aimed from 270° (the bearing from the WUI centroid to the ignition), dead 1-h moisture 4.1586 % | the archive's wind; the wind is aimed from the ignition at the WUI centroid; Simard's (1968) equilibrium moisture in its NFDRS form, 2.22749 + 0.160107 RH − 0.01478 T(°F) for 10 ≤ RH < 50 | 0.1 mi/h (the CSV rounds to 0.01, and with WindNinja installed the drawn wind is its domain mean, a few hundredths off on flat ground), 0.5°, 0.01 % |
 | Realization 1's head rate of spread (`vs`, 200–500 m downwind) | 25.52 m/min | Rothermel at the drawn weather: 1-h 4.16 %, midflame wind as in case 1 | 1 % |
 | Rerun from scratch: realization records | identical `status`, ignition, wind, moisture, evacuation seed and fire area | per-realization seeds make every realization reproducible on its own | every field |
 | Rerun from scratch: arrival rasters and boundaries | bit-identical | the same | md5 |

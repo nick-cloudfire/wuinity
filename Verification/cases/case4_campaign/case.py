@@ -218,6 +218,7 @@ def run(ctx, folder):
 
     # Seeds and draws, per realization.
     seed_ok, evac_ok, draw_ok, ign_ok = True, True, True, True
+    drawn = []
     emc = simard_emc(WEATHER["t"], WEATHER["rh"])
     wui_c = shape.centroid(grid, wui_cells)
     aim = shape.bearing(wui_c, IGNITION)
@@ -232,8 +233,11 @@ def run(ctx, folder):
         evac_ok = evac_ok and int(r["evacuation_seed"]) == SEED + 2000000 + i and m is not None \
             and int(m.group(1)) == SEED + 2000000 + i
         ign_ok = ign_ok and abs(float(r["ignition_x"]) - IGNITION[0]) < 0.5 and abs(float(r["ignition_y"]) - IGNITION[1]) < 0.5
+        # The CSV rounds wind to 0.01 mi/h, and where WindNinja is installed the drawn wind is its domain mean,
+        # which on flat ground differs from the archive value by a few hundredths (Windows: 13.41 vs 13.42).
+        drawn.append("%s mi/h from %s deg, 1-h %s %%" % (r["mean_wind_10m_mph"], r["wind_from_deg"], r["dead_1h_pct"]))
         draw_ok = draw_ok and abs(float(r["dead_1h_pct"]) - emc) < 0.01 \
-            and abs(float(r["mean_wind_10m_mph"]) - WEATHER["wind"] / 0.44704) < 0.01 \
+            and abs(float(r["mean_wind_10m_mph"]) - WEATHER["wind"] / 0.44704) < 0.1 \
             and abs(float(r["wind_from_deg"]) - aim) < 0.5
     checks.append(Check(CASE, "ELMFIRE SEED of realization i = seed + i (run.data)", seed_ok, True, "every realization",
                         seed_ok))
@@ -242,8 +246,9 @@ def run(ctx, folder):
     checks.append(Check(CASE, "every ignition is the one cell of the ignition mask", ign_ok, True, "0.5 m", ign_ok))
     checks.append(Check(CASE, "drawn weather: archive wind, aimed at WUI, Simard EMC 1-h", draw_ok, True,
                         "every realization", draw_ok, "",
-                        "%.1f mi/h from %.1f deg, 1-h %.4f %% (%.0f C, %.0f %% RH)" % (WEATHER["wind"] / 0.44704, aim,
-                                                                                    emc, WEATHER["t"], WEATHER["rh"])))
+                        "expected %.2f mi/h (0.1) from %.1f deg, 1-h %.4f %% (%.0f C, %.0f %% RH); drawn: %s"
+                        % (WEATHER["wind"] / 0.44704, aim, emc, WEATHER["t"], WEATHER["rh"],
+                           "; ".join(sorted(set(drawn))))))
     fm = rothermel.read_fuel_models(ctx.fuel_table)[FUEL]
     umf = 0.87 * WEATHER["wind"] / 0.44704 * rothermel.unsheltered_waf(fm.depth) * rothermel.MPH_TO_FTMIN
     rf = rothermel.surface_fire(fm, emc / 100, (emc + 1) / 100, (emc + 2) / 100, 0.6, 0.9, umf)["ros"] * 0.3048
