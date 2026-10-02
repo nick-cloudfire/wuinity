@@ -107,7 +107,7 @@ namespace PREACTcli
             if (result.RemovedCaseLayers.Count > 0)
             {
                 Console.WriteLine("Build the case again (build-case) to warp them in: its old "
-                    + string.Join(", ", result.RemovedCaseLayers) + " were removed.");
+                    + string.Join(", ", result.RemovedCaseLayers) + " were moved to inputs/" + PREACT.Utility.ElmfireCaseBuilder.ReplacedFolder + ".");
             }
             return 0;
         }

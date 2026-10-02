@@ -165,7 +165,7 @@ PREACTcli landfire --wui <file.wui> [--version closest|LF2016|LF2022|LF2023|LF20
 The GUI's fuels-step download (the same engine function): the release `[ELMFIRE] LandfireVersion` picks (or
 `--version`, which `--update-wui` also records), over the case's padded domain, split into
 `downloads/landfire/<Name>_<release>_<stem>.tif` with the canopy scaling flags their units call for, and the
-case's old fuel and canopy removed. LFPS asks for a contact e-mail: `--email`, else `LANDFIRE_EMAIL`, else the
+case's old fuel and canopy moved to `inputs/_replaced/`. LFPS asks for a contact e-mail: `--email`, else `LANDFIRE_EMAIL`, else the
 one the GUI keeps for this user in `tools.ini` (`[User] LandfireEmail`). Without `--update-wui` the source-layer keys and flags are printed; with it they
 are written into the `.wui` and nothing else changes. Then run `build-case`. Exit 0 on success, 1 when the download
 or the split failed (LFPS's message is printed), 2 for a bad argument.

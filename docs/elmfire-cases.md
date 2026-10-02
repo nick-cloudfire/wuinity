@@ -151,9 +151,10 @@ job and the flags. The fuel model is written as **Int16**: ELMFIRE reads it into
 or Int32 fuel raster gives a fire that never spreads, while its log still ends "successfully". Canopy keeps
 LANDFIRE's scaled values (Float32), so the step sets `CC_IN_PERCENT`, `CH_TIMES_10`, `CBH_TIMES_10` and
 `CBD_TIMES_100` to what the units say (all on for LANDFIRE). It points the scenario's fuel and canopy keys at the
-layers, and removes the fuel and canopy the case already holds, so the next build (not a rebuild) warps the new
-ones; the release is in the file names, and so in `case_sources.txt`. It refuses a domain outside the US; a failed
-job is reported with LFPS's message, and network errors are retried.
+layers, and moves the fuel and canopy the case already holds to `inputs/_replaced/<stem>.before-<release>.tif`, so
+the next build (not a rebuild) warps the new ones (save the scenario to keep it naming them); the release is in the
+file names, and so in `case_sources.txt`. It refuses a domain outside the US; a failed job is reported with LFPS's
+message, and network errors are retried.
 
 **Roads in the fuel (optional).** A fuel map marks roads, and the town around them, non-burnable, which can cut
 burnable ground into islands an ignition never grows out of. **Burn roads into the fuel** (step 4, or Fuels,

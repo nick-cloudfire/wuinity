@@ -197,7 +197,7 @@ namespace PREACT.Tools
 
             //The case keeps a layer it already has, so without this the next build would go on using the old fuel and
             //canopy whatever these are - a release switched for a historic fire would change nothing.
-            RemoveSupersededCaseLayers(o.CaseDirectory, result, log);
+            RemoveSupersededCaseLayers(o.CaseDirectory, result, string.IsNullOrEmpty(split.Release) ? release.Name : split.Release, log);
 
             foreach (string warning in result.Warnings) log("WARNING " + warning + ".");
             return result;
@@ -222,21 +222,40 @@ namespace PREACT.Tools
             e.Namelist.CBD_TIMES_100 = result.Scaling.CbdTimes100;
         }
 
-        private static void RemoveSupersededCaseLayers(string caseDirectory, Result result, Action<string> log)
+        /// <summary>
+        /// Moves the case's fuel and canopy layers out of the way of the new ones - into
+        /// <c>inputs/</c><see cref="PREACT.Utility.ElmfireCaseBuilder.ReplacedFolder"/><c>/&lt;stem&gt;.before-&lt;release&gt;.tif</c> - so the next
+        /// build warps the download instead of keeping them.
+        /// </summary>
+        /// <remarks>
+        /// Moved, not deleted (review R2 MI-4): this runs before the scenario names the new layers, and only saving the
+        /// scenario keeps those names; a scenario left unsaved, or a hand-made fbfm40.tif, would otherwise leave a case with
+        /// no fuel. The converted .bsq/.hdr/.xml beside a raster are ELMFIRE's caches of it and are deleted (a stale .bsq
+        /// would be read under USE_EXISTING_BSQS).
+        /// </remarks>
+        private static void RemoveSupersededCaseLayers(string caseDirectory, Result result, string release, Action<string> log)
         {
             if (string.IsNullOrEmpty(caseDirectory)) return;
             string inputs = Path.Combine(caseDirectory, "inputs");
             if (!Directory.Exists(inputs)) return;
 
+            string keptIn = null;
             foreach (string stem in Stems)
             {
                 string tif = Path.Combine(inputs, stem + ".tif");
                 if (!File.Exists(tif)) continue;
                 try
                 {
-                    File.Delete(tif);
-                    //What ELMFIRE and GDAL leave beside a raster; a stale .bsq would be read under USE_EXISTING_BSQS.
-                    foreach (string extension in new[] { ".tif.aux.xml", ".bsq", ".hdr", ".xml" })
+                    string aside = PREACT.Utility.ElmfireCaseBuilder.ReplacedPath(inputs, stem, "before-" + release);
+                    Directory.CreateDirectory(Path.GetDirectoryName(aside));
+                    File.Move(tif, aside);
+                    keptIn = Path.GetDirectoryName(aside);
+                    string aux = tif + ".aux.xml";
+                    if (File.Exists(aux))
+                    {
+                        try { File.Move(aux, aside + ".aux.xml"); } catch { }
+                    }
+                    foreach (string extension in new[] { ".bsq", ".hdr", ".xml" })
                     {
                         string companion = Path.Combine(inputs, stem + extension);
                         if (File.Exists(companion)) File.Delete(companion);
@@ -245,7 +264,7 @@ namespace PREACT.Tools
                 }
                 catch (Exception e)
                 {
-                    result.Warnings.Add($"could not remove the case's old {stem}.tif ({e.Message}), so the next build keeps it; "
+                    result.Warnings.Add($"could not move the case's old {stem}.tif aside ({e.Message}), so the next build keeps it; "
                         + "rebuild the fire case from scratch to use the new layer");
                 }
             }
@@ -253,7 +272,8 @@ namespace PREACT.Tools
             if (result.RemovedCaseLayers.Count > 0)
             {
                 log($"The fire case's {string.Join(", ", result.RemovedCaseLayers)} came from the previous fuel source and were "
-                    + "removed, so the next build of the fire case warps these instead; its terrain and weather are kept.");
+                    + $"moved to {keptIn}, so the next build of the fire case warps these instead; its terrain and weather are kept. "
+                    + "Save the scenario to keep it naming the new layers.");
             }
         }
 

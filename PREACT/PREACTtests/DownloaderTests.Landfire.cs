@@ -218,11 +218,16 @@ namespace PREACT.Tests
                         "decided from the stated units: " + string.Join(" | ", log.Where(l => l.Contains("_"))));
                     Assert.True(result.Warnings.Count == 0, "no warnings for a clean download: " + string.Join("; ", result.Warnings));
 
-                    //The case's old layers are gone (its terrain is not), so the next build warps these.
+                    //The case's old layers are out of the way (its terrain is not), so the next build warps these; they are
+                    //moved aside, not deleted (review R2 MI-4).
                     Assert.True(!File.Exists(Path.Combine(inputs, "fbfm40.tif")) && !File.Exists(Path.Combine(inputs, "cc.tif"))
                                 && !File.Exists(Path.Combine(inputs, "fbfm40.bsq")) && File.Exists(Path.Combine(inputs, "dem.tif")),
-                        "the superseded fuel and canopy are removed, the DEM kept");
-                    Assert.Equal(5, result.RemovedCaseLayers.Count, "five removed");
+                        "the superseded fuel and canopy are out of inputs/, the DEM kept");
+                    Assert.Equal(5, result.RemovedCaseLayers.Count, "five moved");
+                    Assert.True(File.Exists(Path.Combine(inputs, ElmfireCaseBuilder.ReplacedFolder, "fbfm40.before-LF2024.tif"))
+                                && File.Exists(Path.Combine(inputs, ElmfireCaseBuilder.ReplacedFolder, "cc.before-LF2024.tif")),
+                        "and kept in inputs/_replaced, named for the release that replaced them");
+                    Assert.True(log.Any(l => l.Contains("Save the scenario to keep it naming the new layers")), "the log says to save");
 
                     //The record.
                     string provenance = File.ReadAllText(Path.Combine(root, result.ProvenanceFile));

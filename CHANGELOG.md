@@ -20,7 +20,7 @@
   exist). Chosen in Fuels, canopy and buildings, or `PREACTcli landfire --version` (the same download from the
   command line; `--update-wui` writes the source-layer keys and flags into the scenario). Layers are named `<Name>_<release>_<stem>.tif`, so
   `case_sources.txt` records the release; `<Name>_<release>_landfire.txt` records the request. The case's old fuel
-  and canopy are removed so the next build uses the new ones. FCCS is no longer downloaded.
+  and canopy are moved to `inputs/_replaced/` so the next build uses the new ones. FCCS is no longer downloaded.
 - **LANDFIRE e-mail**: your own, entered under Fuels, canopy and buildings and kept per user in the tool settings
   file (`tools.ini`, `[User] LandfireEmail`), or `LANDFIRE_EMAIL`; no longer a developer's hard-coded address. An
   e-mail an early v1.1 build kept in `%APPDATA%\WUInity\user-settings.txt` is moved into `tools.ini` once.
