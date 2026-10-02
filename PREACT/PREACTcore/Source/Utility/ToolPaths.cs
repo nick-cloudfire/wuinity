@@ -204,13 +204,12 @@ namespace PREACT.Utility
         public static void Save(Settings settings)
         {
             if (settings == null) throw new ArgumentNullException(nameof(settings));
-
-            lock (_lock)
+            Update(onDisk =>
             {
                 Settings merged = settings.Clone();
-                merged.LandfireEmail = Current().LandfireEmail;
-                Write(merged);
-            }
+                merged.LandfireEmail = onDisk.LandfireEmail;
+                return merged;
+            });
         }
 
         /// <summary>
@@ -231,53 +230,159 @@ namespace PREACT.Utility
         /// <summary>Keeps <paramref name="email"/> in the settings file (empty removes it), and nothing else changes. Throws when it cannot be written.</summary>
         public static void SaveLandfireEmail(string email)
         {
+            Update(onDisk =>
+            {
+                Settings s = onDisk.Clone();
+                s.LandfireEmail = email ?? string.Empty;
+                return s;
+            });
+        }
+
+        /// <summary>How long a writer waits for another process's write of the settings file before giving up.</summary>
+        private static readonly TimeSpan LockTimeout = TimeSpan.FromSeconds(10);
+
+        /// <summary>
+        /// Reads the settings file as it is on disk now, applies <paramref name="change"/> and writes the result, with every
+        /// other writer of the file - in this process or another - kept out meanwhile, and makes the result the settings
+        /// in force. Throws when the file cannot be read (it is not written over) or written.
+        /// </summary>
+        /// <remarks>
+        /// Review R2 MI-1: the GUI's tools window, the fuels step's e-mail and the e-mail's migration in a CLI could write at
+        /// once. They shared one temporary file name, so one writer moved the other's half-written file or found it gone,
+        /// and each wrote back what it had read before the other's change. Now a lock file beside the settings
+        /// (<c>tools.ini.lock</c>, opened unshared) makes the read-modify-write one step across processes, each write goes
+        /// through a temporary file of its own, and a replace that meets a reader holding the file open is tried again.
+        /// </remarks>
+        private static void Update(Func<Settings, Settings> change)
+        {
             lock (_lock)
             {
-                Settings s = Current().Clone();
-                s.LandfireEmail = email ?? string.Empty;
-                Write(s);
+                string path = SettingsFile;
+                string folder = Path.GetDirectoryName(Path.GetFullPath(path));
+                if (!string.IsNullOrEmpty(folder))
+                {
+                    Directory.CreateDirectory(folder);
+                }
+
+                using (AcquireFileLock(path + ".lock"))
+                {
+                    Settings onDisk = new Settings();
+                    Stamp(path, out DateTime _, out long length);
+                    if (length >= 0)
+                    {
+                        onDisk = ReadWithRetries(path, out string error);
+                        if (onDisk == null)
+                        {
+                            throw new IOException($"{path} could not be read ({error}), so it was not written over.");
+                        }
+                    }
+
+                    Settings cleaned = change(onDisk).Cleaned();
+                    WriteFile(path, cleaned.Write());
+
+                    _cached = cleaned;
+                    _cachedPath = path;
+                    Stamp(path, out _cachedWriteTime, out _cachedLength);
+                    _readError = null;
+                    ++_version;
+                }
             }
         }
 
-        /// <summary>Writes <paramref name="settings"/> as they are and makes them the ones in force. Under the lock.</summary>
-        private static void Write(Settings settings)
+        /// <summary>The lock file, opened unshared; waits up to <see cref="LockTimeout"/> while another writer holds it.</summary>
+        private static FileStream AcquireFileLock(string lockPath)
         {
-            string path = SettingsFile;
-            string folder = Path.GetDirectoryName(Path.GetFullPath(path));
-            if (!string.IsNullOrEmpty(folder))
-            {
-                Directory.CreateDirectory(folder);
-            }
-
-            Settings cleaned = settings.Cleaned();
-            string temporary = path + ".tmp";
-            File.WriteAllText(temporary, cleaned.Write(), new UTF8Encoding(false));
-            if (File.Exists(path))
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (true)
             {
                 try
                 {
-                    File.Replace(temporary, path, null);
+                    return new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
                 }
-                catch (Exception e) when (e is PlatformNotSupportedException || e is IOException || e is UnauthorizedAccessException)
+                catch (IOException) when (clock.Elapsed < LockTimeout)
                 {
-                    //A file system without an atomic replace (some network shares, Mono off Windows).
-                    File.Copy(temporary, path, true);
-                    File.Delete(temporary);
+                    System.Threading.Thread.Sleep(20);
+                }
+                catch (UnauthorizedAccessException) when (clock.Elapsed < LockTimeout)
+                {
+                    System.Threading.Thread.Sleep(20);
                 }
             }
-            else
-            {
-                File.Move(temporary, path);
-            }
-
-            _cached = cleaned;
-            _cachedPath = path;
-            Stamp(path, out _cachedWriteTime, out _cachedLength);
-            _readError = null;
-            ++_version;
         }
 
-        /// <summary>The cached settings, re-read when the file named, its time or its size changed. Under the lock.</summary>
+        /// <summary>
+        /// Writes <paramref name="text"/> to a temporary file of this writer's own beside <paramref name="path"/> and moves it
+        /// over <paramref name="path"/>, so a reader sees the old file or the new one, never half of one. A replace that a
+        /// reader holding the file open makes fail (a sharing violation on Windows) is tried again.
+        /// </summary>
+        private static void WriteFile(string path, string text)
+        {
+            string temporary = path + "." + System.Diagnostics.Process.GetCurrentProcess().Id.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                               + "." + Guid.NewGuid().ToString("N").Substring(0, 8) + ".tmp";
+            File.WriteAllText(temporary, text, new UTF8Encoding(false));
+            try
+            {
+                for (int attempt = 1; ; ++attempt)
+                {
+                    try
+                    {
+                        if (File.Exists(path))
+                        {
+                            File.Replace(temporary, path, null);
+                        }
+                        else
+                        {
+                            File.Move(temporary, path);
+                        }
+                        return;
+                    }
+                    catch (PlatformNotSupportedException)
+                    {
+                        //A file system without an atomic replace (some network shares).
+                        File.Copy(temporary, path, true);
+                        return;
+                    }
+                    catch (Exception e) when ((e is IOException || e is UnauthorizedAccessException) && attempt < 20)
+                    {
+                        System.Threading.Thread.Sleep(25);
+                    }
+                }
+            }
+            finally
+            {
+                try { if (File.Exists(temporary)) File.Delete(temporary); } catch { }
+            }
+        }
+
+        /// <summary>The file's settings, read up to three times 50 ms apart (a writer may be replacing it); null and why when it cannot be read.</summary>
+        private static Settings ReadWithRetries(string path, out string error)
+        {
+            error = null;
+            for (int attempt = 1; ; ++attempt)
+            {
+                try
+                {
+                    return Settings.Parse(File.ReadAllLines(path, Encoding.UTF8));
+                }
+                catch (FileNotFoundException)
+                {
+                    //Between a writer's move and its replace there is always a file; gone means deleted: no settings.
+                    return new Settings();
+                }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+                {
+                    error = e.Message;
+                    if (attempt >= 3) return null;
+                    System.Threading.Thread.Sleep(50);
+                }
+            }
+        }
+
+        /// <summary>
+        /// The cached settings, re-read when the file named, its time or its size changed. Under the lock. A read that
+        /// fails is not cached: the settings read before stay in force (empty only when there were none), and the next
+        /// lookup reads again - a reader that met a writer's replace used to keep "no settings" for that file stamp.
+        /// </summary>
         private static Settings Current()
         {
             string path = SettingsFile;
@@ -288,17 +393,24 @@ namespace PREACT.Utility
             }
 
             Settings read = new Settings();
-            string error = null;
             if (length >= 0)
             {
-                try
+                read = ReadWithRetries(path, out string error);
+                if (read == null)
                 {
-                    read = Settings.Parse(File.ReadAllLines(path, Encoding.UTF8));
-                }
-                catch (Exception e)
-                {
-                    error = $"{path} could not be read ({e.Message}); every tool is searched for automatically.";
-                    read = new Settings();
+                    _readError = $"{path} could not be read ({error}); "
+                                 + (_cached != null && path == _cachedPath
+                                     ? "the settings read before are used until it can be."
+                                     : "every tool is searched for automatically until it can be.");
+                    if (_cached == null || path != _cachedPath)
+                    {
+                        _cached = new Settings();
+                        _cachedPath = path;
+                    }
+                    //No stamp: the next lookup reads the file again.
+                    _cachedWriteTime = DateTime.MinValue;
+                    _cachedLength = -2;
+                    return _cached;
                 }
             }
 
@@ -307,7 +419,7 @@ namespace PREACT.Utility
             _cachedPath = path;
             _cachedWriteTime = writeTime;
             _cachedLength = length;
-            _readError = error;
+            _readError = null;
             if (changed)
             {
                 ++_version;

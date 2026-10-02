@@ -24,6 +24,9 @@ namespace PREACT.Tests
 
         private static int Main(string[] args)
         {
+            //A writer of the settings file for a test of concurrent writers: no engine, no tests.
+            if (args.Length == 3 && args[0] == "--tools-ini-writer") return ToolPathsTests.WriterMain(args);
+
             bool examples = true;
             string outDir = null;
             string filter = null;

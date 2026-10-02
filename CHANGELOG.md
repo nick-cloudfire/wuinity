@@ -89,6 +89,9 @@
   It used to show the searched GDAL and WindNinja even when the scenario named others. After Save, ELMFIRE, GDAL,
   WindNinja and PROJ apply at once; SUMO applies after a restart, and the window says so. Look again also searches
   for GDAL again.
+- Saving `tools.ini` is safe with several programs at once: each save reads the file again under a lock file
+  (`tools.ini.lock`), writes through a temporary file of its own and retries a replace a reader holds up; a failed read
+  is not remembered as "no settings".
 - PROJ's data and SUMO can be set at all (they were read from `PROJ_DATA`/`PROJ_LIB` and `SUMO_HOME`/`PATH` only).
   A SUMO from the settings also sets `SUMO_HOME` for the process. `PREACTcli` puts SUMO's `bin` at the end of
   `PATH` on Windows, as the engine does, for the `gdal.dll` it holds.

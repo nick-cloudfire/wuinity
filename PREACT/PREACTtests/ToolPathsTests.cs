@@ -19,6 +19,83 @@ namespace PREACT.Tests
             runner.Add("tools: an engine takes SUMO and PROJ from the settings, and a PROJ saved while it runs applies at once", EngineReadsSettings);
             runner.Add("tools: a standalone build's ELMFIRE and fuel tables are found in elmfire/ beside it, before the vendored build", ShippedElmfire);
             runner.Add("gui: Help > External tools is told which path won for each tool, and why a scenario's or a saved one did not", GuiProbe);
+            runner.Add("tools: two processes writing the settings file at once lose no update and leave no temporary file", ConcurrentWriters);
+        }
+
+        /// <summary>
+        /// PREACTtests --tools-ini-writer email|tools &lt;count&gt;: what a second program does to the settings file
+        /// (PREACT_TOOLS_FILE) for <see cref="ConcurrentWriters"/> - <paramref name="args"/>[1] writes the LANDFIRE e-mail,
+        /// as the fuels step or the migration in a CLI does, or the tool paths, as the tools window does, count times.
+        /// </summary>
+        internal static int WriterMain(string[] args)
+        {
+            try
+            {
+                int count = int.Parse(args[2], System.Globalization.CultureInfo.InvariantCulture);
+                for (int i = 0; i < count; ++i)
+                {
+                    if (args[1] == "email")
+                    {
+                        ToolPaths.SaveLandfireEmail("writer" + i + "@example.org");
+                    }
+                    else
+                    {
+                        ToolPaths.Settings s = ToolPaths.Load();
+                        s.Set(ToolPaths.Tool.Elmfire, "/opt/elmfire" + i);
+                        ToolPaths.Save(s);
+                    }
+                }
+                return 0;
+            }
+            catch (Exception e)
+            {
+                Console.Error.WriteLine(e);
+                return 1;
+            }
+        }
+
+        /// <summary>
+        /// Review R2 MI-1: two processes saving the settings file (the GUI's tools window and the e-mail, or its migration in
+        /// a CLI) shared one temporary file name and each wrote back what it had read before the other's change: 1-16
+        /// exceptions per 400 writes and lost updates.
+        /// </summary>
+        private static void ConcurrentWriters()
+        {
+            WithSettingsFile((folder, file) =>
+            {
+                const int n = 150;
+                string me = typeof(ToolPathsTests).Assembly.Location;
+                var writers = new List<System.Diagnostics.Process>();
+                foreach (string what in new[] { "email", "tools" })
+                {
+                    var psi = new System.Diagnostics.ProcessStartInfo("dotnet")
+                    {
+                        UseShellExecute = false,
+                        RedirectStandardError = true,
+                        RedirectStandardOutput = true,
+                    };
+                    psi.ArgumentList.Add(me);
+                    psi.ArgumentList.Add("--tools-ini-writer");
+                    psi.ArgumentList.Add(what);
+                    psi.ArgumentList.Add(n.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    psi.Environment[ToolPaths.FileVariable] = file;
+                    writers.Add(System.Diagnostics.Process.Start(psi));
+                }
+
+                foreach (System.Diagnostics.Process w in writers)
+                {
+                    string errors = w.StandardError.ReadToEnd();
+                    Assert.True(w.WaitForExit(120000), "a writer finished");
+                    Assert.True(w.ExitCode == 0, "a writer wrote every time without an exception: " + errors);
+                    w.Dispose();
+                }
+
+                ToolPaths.Settings last = ToolPaths.Load();
+                Assert.Equal("writer" + (n - 1) + "@example.org", last.LandfireEmail, "the e-mail writer's last e-mail is in the file");
+                Assert.Equal("/opt/elmfire" + (n - 1), last.Get(ToolPaths.Tool.Elmfire), "and so is the tools writer's last path");
+                Assert.True(!Directory.GetFiles(Path.GetDirectoryName(file)).Any(f => f.EndsWith(".tmp", StringComparison.Ordinal)),
+                    "no temporary file is left");
+            });
         }
 
         private static bool Windows => OperatingSystem.IsWindows();

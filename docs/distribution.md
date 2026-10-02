@@ -135,7 +135,9 @@ is installed belongs to the machine:
 - or the file named by the environment variable `PREACT_TOOLS_FILE`, if set. Tests use this, and so can a second
   set of tools.
 
-You can also edit the file by hand. A program reads the change at its next lookup:
+You can also edit the file by hand. A program reads the change at its next lookup. A program that saves it takes
+`tools.ini.lock` beside it for the moment it reads and writes, so two programs saving at once (the GUI and a
+campaign's CLI) do not undo each other's change:
 
 ```ini
 [Tools]
