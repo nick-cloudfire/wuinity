@@ -197,16 +197,16 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
                 return;
             }
 
-            Tool("ELMFIRE", tools.ElmfireExe, elmfire.ElmfireExe,
-                "the vendored build under ThirdParty/elmfire",
+            Tool("ELMFIRE", "ElmfireExe", tools.Elmfire,
+                "an elmfire folder beside this program, then the build under ThirdParty/elmfire",
                 "No elmfire.exe found. The run cannot compute a fire.");
 
-            Tool("GDAL", tools.GdalBin, elmfire.PathToGdal,
+            Tool("GDAL", "PathToGdal", tools.Gdal,
                 "PATH, then a QGIS or OSGeo4W install",
                 "No GDAL tools found. ELMFIRE shells out to gdal_translate and gdalinfo, and fails its own "
                 + "DEM check without them - reporting a problem with the DEM rather than with GDAL.");
 
-            Tool("WindNinja", tools.WindNinjaExe, elmfire.WindNinjaExe,
+            Tool("WindNinja", "WindNinjaExe", tools.WindNinja,
                 "WINDNINJA_CLI, PATH, then the installer's locations",
                 "No WindNinja found. The case gets one wind value for the whole domain, so the trigger "
                 + "boundary comes out circular instead of wind-driven.");
@@ -219,23 +219,30 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
                         "Look again after installing one. Help > External tools and keys lists them all.");
         }
 
-        /// <summary>One resolved tool: what is in use, or what is missing and what that costs.</summary>
-        private static void Tool(string label, string resolved, string overridden, string where, string missing)
+        /// <summary>One resolved tool: what is in use and where it came from, or what is missing, what that costs and where to set it.</summary>
+        private static void Tool(string label, string key, global::WUInity.Workflow.ToolStatus status, string where, string missing)
         {
-            if (string.IsNullOrEmpty(resolved))
+            if (!status.Found)
             {
                 Fields.Warn($"{label}: not found.");
-                Fields.Hint("  " + missing);
+                Fields.Hint("  " + missing, "  Set its path under Help > External tools and keys.");
                 return;
             }
 
-            //Saying which of the two it is matters: an override that no longer exists silently falls back to
-            //the probe, and the two can be different builds.
-            bool isOverride = !string.IsNullOrWhiteSpace(overridden);
-            ImGui.TextDisabled($"{label}: {resolved}");
-            Fields.Hint(isOverride
-                ? $"  from [ELMFIRE] {label} override in the scenario"
-                : $"  found automatically ({where})");
+            //Saying which it is matters: the scenario's key, the user's saved path and the search can be different builds.
+            ImGui.TextDisabled($"{label}: {status.InUse}");
+            switch (status.Source)
+            {
+                case PREACT.Utility.ToolPaths.Source.Explicit:
+                    Fields.Hint($"  from [ELMFIRE] {key} in the scenario");
+                    break;
+                case PREACT.Utility.ToolPaths.Source.UserSetting:
+                    Fields.Hint("  from your setting (Help > External tools and keys)");
+                    break;
+                default:
+                    Fields.Hint($"  found automatically ({where})");
+                    break;
+            }
         }
 
         private static string _importStatus = string.Empty;

@@ -995,7 +995,8 @@ namespace PREACT.Utility
                 //neither is guessable from a message that only says the stage was skipped.
                 result.Fallbacks.Add("WindNinja: not found");
                 log($"  wind: no {WindNinjaRunner.ExecutableNames[0]} found (looked at {WindNinjaRunner.SearchDescription}); "
-                    + "writing a uniform field, so the trigger boundary will be circular.");
+                    + "writing a uniform field, so the trigger boundary will be circular. Install WindNinja and "
+                    + ToolPaths.WhereToSet(ToolPaths.Tool.WindNinja) + ", or set [ELMFIRE] WindNinjaExe.");
             }
 
             //Still the full band count, even though every band holds the same value: the five rasters are

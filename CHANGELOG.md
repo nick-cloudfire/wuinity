@@ -89,6 +89,10 @@
   `PATH` on Windows, as the engine does, for the `gdal.dll` it holds.
 - A GDAL library that cannot be loaded no longer stops WUInity from starting. The console and the tools window say
   what to set.
+- Every "not found" for a tool - ELMFIRE for a run or a campaign, the GDAL tools, WindNinja (a case build's wind, a
+  campaign), netconvert, SUMO in workflow step 3, the Fire input tab and the campaign window - now says to set its
+  path under Help > External tools and keys, names the key and the file, and says why a saved path is not used. The
+  Fire input tab tells a path from your setting from one found automatically.
 - **Standalone build**: `build-player.ps1` builds `dist\WUInity\WUInity.exe` with Unity in batch mode (editor script
   `Assets/WUInity/Editor/PlayerBuild.cs`, also under the menu WUInity > Build standalone player). Beside the player
   it puts `PREACT\` (PREACT.exe and PREACTcli), `elmfire\` (elmfire.exe, impi.dll and the fuel tables), `docs\` and a

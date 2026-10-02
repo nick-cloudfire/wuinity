@@ -443,6 +443,23 @@ namespace PREACT.Utility
             }
         }
 
+        /// <summary>The key a tool is saved under in the settings file: ElmfireExe, GdalBin, WindNinjaExe, Sumo, ProjData.</summary>
+        public static string KeyOf(Tool tool)
+        {
+            return Settings.KeyOf(tool);
+        }
+
+        /// <summary>
+        /// The end of a "not found" message: where a tool can be named once for WUInity, PREACT.exe and PREACTcli alike -
+        /// the GUI window and the file it saves into - and, when a saved path is not used, why.
+        /// </summary>
+        public static string WhereToSet(Tool tool)
+        {
+            string problem = UserSettingProblem(tool);
+            return $"save its path under Help > External tools and keys in WUInity ({KeyOf(tool)} in {SettingsFile})"
+                   + (problem != null ? $"; the path saved there is not used: {problem}" : string.Empty);
+        }
+
         /// <summary>What the field for <paramref name="tool"/> takes, for a label or a message.</summary>
         public static string Describe(Tool tool)
         {
@@ -660,6 +677,11 @@ namespace PREACT.Utility
             public string Get(Tool tool)
             {
                 return _values[(int)tool];
+            }
+
+            internal static string KeyOf(Tool tool)
+            {
+                return Keys[(int)tool];
             }
 
             public void Set(Tool tool, string value)

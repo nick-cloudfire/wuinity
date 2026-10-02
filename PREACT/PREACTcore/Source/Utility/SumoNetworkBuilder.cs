@@ -47,7 +47,8 @@ namespace PREACT.Utility
             string netconvert = FindNetconvert(sumoBinFolder);
             if (netconvert == null)
             {
-                Report(log, "netconvert could not be found. Install SUMO, or set SUMO_HOME to point at it.");
+                Report(log, "netconvert could not be found (in SUMO's bin, SUMO_HOME or PATH). Install SUMO, and "
+                            + ToolPaths.WhereToSet(ToolPaths.Tool.Sumo) + " (WUInity reads it when it starts), or set SUMO_HOME.");
                 return null;
             }
 

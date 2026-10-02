@@ -101,7 +101,7 @@ namespace PREACTcli.Campaigns
                 return Fail((!string.IsNullOrEmpty(o.ElmfireExe)
                                 ? "--elmfire names " + c.ElmfireExe + ", which is not there."
                                 : ElmfireCoupling.DescribeMissingExecutable(c.ScenarioDir, elmfire.ElmfireExe))
-                            + " Pass --elmfire <path> or set [ELMFIRE] ElmfireExe.");
+                            + " Or pass --elmfire <path>.");
             }
 
             c.GdalBin = o.PathToGdal
@@ -110,7 +110,9 @@ namespace PREACTcli.Campaigns
             if (running && (c.GdalBin == null || !Directory.Exists(c.GdalBin)))
             {
                 //Refused rather than warned about: without the tools ELMFIRE writes no rasters and still exits 0.
-                return Fail("GDAL's command-line tools were not found; pass --gdal <bin folder> or set [ELMFIRE] PathToGdal.");
+                return Fail("GDAL's command-line tools were not found (looked on PATH, in QGIS and OSGeo4W installs, and in "
+                            + "SUMO_HOME's bin); pass --gdal <bin folder>, set [ELMFIRE] PathToGdal, or "
+                            + ToolPaths.WhereToSet(ToolPaths.Tool.Gdal) + ".");
             }
 
             c.PreactExe = o.PreactExe != null ? Path.GetFullPath(o.PreactExe) : RealizationRunner.FindPreactExe();
@@ -203,10 +205,10 @@ namespace PREACTcli.Campaigns
             if (c.WindNinjaExe != null && !File.Exists(c.WindNinjaExe)) c.WindNinjaExe = null;
             if (running && c.WindNinjaExe == null && !o.AllowUniformWeather)
             {
-                return Fail("WindNinja was not found (WINDNINJA_CLI, PATH, C:\\WindNinja, Program Files). Without it every "
+                return Fail("WindNinja was not found (looked at " + WindNinjaRunner.SearchDescription + "). Without it every "
                             + "realization's wind is one value across the whole domain, and the terrain does nothing to the "
-                            + "fire or the boundary. Install it or pass --windninja <exe>, or pass --allow-uniform-weather "
-                            + "to accept uniform wind.");
+                            + "fire or the boundary. Install it and " + ToolPaths.WhereToSet(ToolPaths.Tool.WindNinja)
+                            + ", or pass --windninja <exe>, or pass --allow-uniform-weather to accept uniform wind.");
             }
 
             // ------------------------------------------------------------ paths ELMFIRE will see

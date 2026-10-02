@@ -529,7 +529,8 @@ namespace WUInity.Workflow
 
                 if (_ctx.Tools.Probed && !_ctx.Tools.HaveSumo)
                 {
-                    s.Warn("SUMO was not found (SUMO_HOME, or a folder on PATH); building the network needs its netconvert.",
+                    s.Warn("SUMO was not found (your setting under Help > External tools and keys, SUMO_HOME, or a folder on "
+                        + "PATH); building the network needs its netconvert. Set its folder there and start WUInity again.",
                         WorkflowAction.OpenExternalTools, "External tools");
                 }
             }

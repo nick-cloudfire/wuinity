@@ -356,16 +356,19 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             if (string.IsNullOrEmpty(_elmfireExe))
             {
-                Fields.Warn("No ELMFIRE executable found, so no realization can compute a fire.");
+                Fields.Warn("No ELMFIRE executable found, so no realization can compute a fire.",
+                            "Set its path under Help > External tools and keys; the campaign's PREACTcli reads it there too.");
             }
             if (string.IsNullOrEmpty(_gdalBin))
             {
-                Fields.Warn("No GDAL tools found. Without them ELMFIRE writes no rasters, so every realization fails.");
+                Fields.Warn("No GDAL tools found. Without them ELMFIRE writes no rasters, so every realization fails.",
+                            "Set their folder under Help > External tools and keys.");
             }
             if (ToolsService.Current.Probed && string.IsNullOrEmpty(ToolsService.Current.WindNinjaExe) && !_allowUniformWeather)
             {
                 Fields.Warn("No WindNinja found: the campaign stops before its first fire unless \"Allow uniform weather\" is",
-                            "ticked above - and then every fire runs under one wind for the whole domain.");
+                            "ticked above - and then every fire runs under one wind for the whole domain. Set WindNinja's",
+                            "path under Help > External tools and keys.");
             }
 
             ImGui.EndDisabled();

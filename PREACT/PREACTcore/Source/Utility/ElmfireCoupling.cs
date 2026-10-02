@@ -338,7 +338,8 @@ namespace PREACT.Utility
             {
                 Log("GDAL's command-line tools were not found. ELMFIRE shells out to gdal_translate, gdalinfo and "
                     + "gdalsrsinfo, and fails on its own DEM check without them - it reports \"DEM CRS does not "
-                    + "appear to use metre linear units\". Install QGIS or OSGeo4W, or set [ELMFIRE] PathToGdal.");
+                    + "appear to use metre linear units\". Install QGIS or OSGeo4W, "
+                    + ToolPaths.WhereToSet(ToolPaths.Tool.Gdal) + ", or set [ELMFIRE] PathToGdal.");
             }
 
             string[] runLines = PatchNamelist(namelist, caseDir, settings, gdalBin, exe, Log);
@@ -955,6 +956,9 @@ namespace PREACT.Utility
         /// Why <see cref="ResolveExecutable"/> found nothing, naming what it tried: the path the scenario's
         /// <c>[ELMFIRE] ElmfireExe</c> resolves to, or the vendored build it looked for.
         /// </summary>
+        private static string Capitalise(string sentence) =>
+            string.IsNullOrEmpty(sentence) ? sentence : char.ToUpperInvariant(sentence[0]) + sentence.Substring(1);
+
         public static string DescribeMissingExecutable(string rootFolder, string named)
         {
             bool windows = System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(
@@ -962,14 +966,16 @@ namespace PREACT.Utility
             if (!string.IsNullOrWhiteSpace(named))
             {
                 string path = string.IsNullOrEmpty(rootFolder) ? PREACTInput.NormalisePath(named) : PREACTInput.ResolvePath(rootFolder, named);
-                return $"[ELMFIRE] ElmfireExe names {path}, which is not there. Correct that key in the scenario file (Help > "
-                       + "External tools and keys shows which ELMFIRE is used), or remove it to use the build in "
-                       + "WUInity/Assets/ThirdParty/elmfire.";
+                return $"[ELMFIRE] ElmfireExe names {path}, which is not there. Correct that key in the scenario file, or "
+                       + "remove it to use the ELMFIRE saved under Help > External tools and keys (which shows the one in use) "
+                       + "or the build in WUInity/Assets/ThirdParty/elmfire.";
             }
 
             string relative = windows ? "ThirdParty/elmfire/build/windows/bin/elmfire.exe" : "ThirdParty/elmfire/build/linux/bin/elmfire";
-            return $"[ELMFIRE] ElmfireExe is not set and there is no {relative} above {AssemblyDirectory() ?? "this program"} "
-                   + $"or {Directory.GetCurrentDirectory()}. Set ElmfireExe to the executable, or build ELMFIRE there.";
+            return $"[ELMFIRE] ElmfireExe is not set, no ELMFIRE path is saved, there is no elmfire folder beside this program, "
+                   + $"and there is no {relative} above {AssemblyDirectory() ?? "this program"} or "
+                   + $"{Directory.GetCurrentDirectory()}. {Capitalise(ToolPaths.WhereToSet(ToolPaths.Tool.Elmfire))}, set "
+                   + "[ELMFIRE] ElmfireExe, or build ELMFIRE there.";
         }
 
         /// <summary>

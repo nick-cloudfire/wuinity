@@ -49,7 +49,7 @@ Details: [Building](building.md).
 
 | Message | Fix |
 |---|---|
-| `SUMO was not found (SUMO_HOME, or a folder on PATH); building the network needs its netconvert.` / `netconvert could not be found. …` | Install SUMO 1.22 and set `SUMO_HOME`, or put its `bin` on `PATH`, then Help > External tools and keys > Look again. Or set SUMO's folder in that window, save, and restart WUInity. |
+| `SUMO was not found (your setting under Help > External tools and keys, SUMO_HOME, or a folder on PATH); …` / `netconvert could not be found (in SUMO's bin, SUMO_HOME or PATH). …` | Install SUMO 1.22 and set `SUMO_HOME`, or put its `bin` on `PATH`, then Help > External tools and keys > Look again. Or set SUMO's folder in that window, save, and restart WUInity. |
 | `WorldPop has no <country> data for <year>; using <year> instead (the closest available). …` | Information only. |
 | `Outside the US there is no fuel download here: name a fuel model raster of your own, …` | LANDFIRE covers the US only. Name your own fuel raster under Fuels, canopy and buildings > Source layers. |
 | `The LANDFIRE (LFPS) job <id> failed: …` / `… did not finish within N minutes.` | LANDFIRE's service; try again later. |
@@ -75,7 +75,7 @@ A run that cannot compute its fire stops with `ELMFIRE did not produce a fire: <
 
 | Reason | Fix |
 |---|---|
-| `ELMFIRE cannot run: [ELMFIRE] ElmfireExe is not set and there is no ThirdParty/elmfire/build/windows/bin/elmfire.exe above …` | Build ELMFIRE with `make_windows.bat` ([Building ELMFIRE](building.md#building-elmfire)), or set its path under Help > External tools and keys. A standalone build without `elmfire\` needs the latter. |
+| `ELMFIRE cannot run: [ELMFIRE] ElmfireExe is not set, no ELMFIRE path is saved, there is no elmfire folder beside this program, and there is no ThirdParty/elmfire/build/windows/bin/elmfire.exe above …` | Build ELMFIRE with `make_windows.bat` ([Building ELMFIRE](building.md#building-elmfire)), or set its path under Help > External tools and keys. A standalone build without `elmfire\` needs the latter. |
 | `… this elmfire build predates DUMP_MIDFLAME_WINDSPEED; rebuild it from the ELMFIRE-WUINITY submodule (a7fb9d6 or later) …` | Rebuild ELMFIRE from the submodule. |
 | `There is no ELMFIRE case at <folder>. Turn BuildCase on, or build one …` | Build the case (step 5, or `PREACTcli build-case`). |
 | `The namelist … names rasters that are not on the case grid, so ELMFIRE cannot run it: …` | Build the case again: it re-cuts every raster the namelists name onto the grid. |
@@ -115,7 +115,7 @@ each needs, are in [Trigger campaigns](trigger-campaigns.md#before-you-start). T
 
 | Message | Fix |
 |---|---|
-| `WindNinja was not found (…). Without it every realization's wind is one value across the whole domain, …` | Install WindNinja or pass `--windninja <exe>`; or tick *Allow uniform weather* (`--allow-uniform-weather`) for a pipeline test. |
+| `WindNinja was not found (…). Without it every realization's wind is one value across the whole domain, …` | Install WindNinja and set its path under Help > External tools and keys (`WindNinjaExe` in `tools.ini`, which the campaign's `PREACTcli` reads), or pass `--windninja <exe>`; or tick *Allow uniform weather* (`--allow-uniform-weather`) for a pipeline test. |
 | `… is reached from a realization as '…', which contains a space. …` | Move or rename the scenario folder so the path has no spaces. ELMFIRE passes paths to GDAL unquoted. |
 | `every realization protects the WUI area, and …wui_area.tif is not there / has no marked cell.` | Paint the evacuation groups (step 9) and apply them to the case (it writes `wui_area.tif` from them). |
 | `the case's wui_area.tif (N cells) is not the WUI area of the scenario's evacuation groups …` | The groups changed since the case was built, or an older build wrote it from a painted WUI area: **Apply to case** (or `build-case`), then start the campaign. |
