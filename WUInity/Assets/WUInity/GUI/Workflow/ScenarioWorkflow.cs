@@ -1413,7 +1413,22 @@ namespace WUInity.Workflow
             }
             else if (files.Exists(f => _files.IsNewer(Abs(f), Abs(wui))))
             {
-                stale = "A group's area was saved after the case's wui_area.tif was made from it.";
+                //Saved after the case's copy - which saving the same cells again (paint and undo a stroke) does too. Compared
+                //cell by cell, as a campaign does, and only a real difference blocks (review R2 MI-7).
+                PREACT.Evacuation.EvacuationGroupArea.WuiAreaComparison cmp = CompareWuiArea(groups, files, wui);
+                if (cmp == null || cmp.Problem != PREACT.Evacuation.EvacuationGroupArea.WuiAreaComparison.Failure.None)
+                {
+                    if (TriggerOn)
+                    {
+                        s.Warn("A group's area was saved after the case's wui_area.tif was made, and the two could not be compared"
+                            + (cmp != null && cmp.ProblemDetail.Length > 0 ? " (" + cmp.ProblemDetail + ")" : "")
+                            + "; a campaign compares them when it starts, and refuses a stale one.");
+                    }
+                }
+                else if (cmp.Differ > 0)
+                {
+                    stale = $"A group's area was saved after the case's wui_area.tif was made from it, and {cmp.Differ} cells differ.";
+                }
             }
 
             if (stale != null && TriggerOn)
@@ -1423,6 +1438,44 @@ namespace WUInity.Workflow
             }
 
             return exists && stale == null && cells != null ? $", WUI area {cells} cells" : string.Empty;
+        }
+
+        //The last cell comparison of the case's wui_area.tif with the groups, and the files and stamps it was made from.
+        private static string _wuiCompareKey;
+        private static PREACT.Evacuation.EvacuationGroupArea.WuiAreaComparison _wuiCompare;
+
+        /// <summary>
+        /// <see cref="PREACT.Evacuation.EvacuationGroupArea.CompareWithCase"/> for the case's wui_area.tif, made again only
+        /// when a group, an area file, the WUI area or the case grid changed; null when it throws.
+        /// </summary>
+        private PREACT.Evacuation.EvacuationGroupArea.WuiAreaComparison CompareWuiArea(IEnumerable<EvacuationGroupInput> groups,
+            List<string> files, string wui)
+        {
+            string inputs = System.IO.Path.GetDirectoryName(Abs(wui));
+            var key = new System.Text.StringBuilder();
+            foreach (EvacuationGroupInput g in groups) key.Append(g.Name).Append('|').Append(g.MaskFile).Append('|').Append(g.ShapeFile).Append(';');
+            var stamped = new List<string>();
+            foreach (string f in files) stamped.Add(Abs(f));
+            stamped.Add(Abs(wui));
+            stamped.Add(System.IO.Path.Combine(inputs, "dem.tif"));
+            foreach (string f in stamped)
+            {
+                key.Append(f).Append('@').Append(_files.LastWriteUtc(f)?.Ticks ?? 0).Append('/').Append(_files.Length(f)).Append(';');
+            }
+
+            string k = key.ToString();
+            if (k == _wuiCompareKey) return _wuiCompare;
+            try
+            {
+                _wuiCompare = PREACT.Evacuation.EvacuationGroupArea.CompareWithCase(groups, _in.RootFolder, _in.Simulation.Data,
+                    inputs, Abs(wui), null);
+            }
+            catch (Exception)
+            {
+                _wuiCompare = null;
+            }
+            _wuiCompareKey = k;
+            return _wuiCompare;
         }
 
         // ------------------------------------------------------------------ 10. trigger boundary

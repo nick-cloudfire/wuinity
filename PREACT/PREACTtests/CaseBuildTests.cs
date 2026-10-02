@@ -375,6 +375,17 @@ namespace PREACT.Tests
                 Assert.True(ready != null && ready.WuiAreaFile == caseWui && ready.WuiCells > 0,
                     "a case built from the groups is accepted, protecting its wui_area.tif: " + said);
 
+                //Review R2 MI-7: the same cells saved again later (a stroke painted and undone) are not stale: the GUI's
+                //workflow compares cells, as the campaign does, not the files' times.
+                System.Threading.Thread.Sleep(1100);
+                WriteWestMask(Path.Combine(c.Folder, "evac_group_west.asc"));
+                Evacuation.EvacuationGroupArea.WuiAreaComparison same = Evacuation.EvacuationGroupArea.CompareWithCase(
+                    input.Evacuation.EvacuationGroupInputs.Values, c.Folder, input.Simulation.Data,
+                    Path.Combine(c.Folder, "case", "inputs"), caseWui, null);
+                Assert.True(same.Same && same.FileCells == same.GroupCells && same.FileCells > 0,
+                    $"the same cells saved again compare as the same ({same.Problem}, {same.Differ} differ)");
+                Assert.True(Inspect().Campaign != null, "and a campaign accepts them");
+
                 //The west group painted again, bigger, and the case not built again.
                 WriteWestMask(Path.Combine(c.Folder, "evac_group_west.asc"), 1, 8);
                 (PREACTcli.Campaigns.Campaign stale, string why) = Inspect();

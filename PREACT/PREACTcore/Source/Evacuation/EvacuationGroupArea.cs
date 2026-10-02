@@ -357,6 +357,74 @@ namespace PREACT.Evacuation
             }
         }
 
+        /// <summary>What comparing a case's <c>wui_area.tif</c> with the evacuation groups found.</summary>
+        public sealed class WuiAreaComparison
+        {
+            public enum Failure { None, NoGroupArea, NoCaseGrid, NotOnCaseGrid }
+
+            /// <summary>Why the two could not be compared, or <see cref="Failure.None"/>.</summary>
+            public Failure Problem;
+            public string ProblemDetail = string.Empty;
+
+            /// <summary>Cells marked in the file, in the groups' union, and that differ between the two.</summary>
+            public int FileCells, GroupCells, Differ;
+
+            /// <summary>The names of the groups that have an area, comma-separated.</summary>
+            public string Groups = string.Empty;
+
+            public bool Same => Problem == Failure.None && Differ == 0;
+        }
+
+        /// <summary>
+        /// Compares a case's WUI area, <paramref name="wuiAreaPath"/>, cell by cell with the union of the
+        /// <paramref name="groups"/>' areas on the case grid (<c>dem.tif</c> in <paramref name="inputsDirectory"/>) - the test
+        /// a campaign refuses a stale <c>wui_area.tif</c> with, and the GUI's workflow warns by. What could not be read of
+        /// a group is reported through <paramref name="log"/>.
+        /// </summary>
+        public static WuiAreaComparison CompareWithCase(IEnumerable<EvacuationGroupInput> groups, string rootFolder,
+            SimulationData simulation, string inputsDirectory, string wuiAreaPath, Action<string> log)
+        {
+            var result = new WuiAreaComparison();
+            List<EvacuationGroupArea> areas = LoadAll(groups, rootFolder, simulation, log);
+            result.Groups = Names(areas);
+            if (areas.Count == 0)
+            {
+                result.Problem = WuiAreaComparison.Failure.NoGroupArea;
+                return result;
+            }
+
+            Utility.MasterGrid grid;
+            try
+            {
+                grid = Utility.MasterGrid.FromRasterFile(Path.Combine(inputsDirectory, Utility.ElmfireStems.Dem + ".tif"));
+            }
+            catch (Exception e)
+            {
+                result.Problem = WuiAreaComparison.Failure.NoCaseGrid;
+                result.ProblemDetail = e.Message;
+                return result;
+            }
+
+            bool[] union = Rasterize(areas, grid, simulation, out result.GroupCells);
+            float[,] mask = Utility.AscRaster.ReadGeoTiff(wuiAreaPath, out Utility.AscRaster.Header header, out bool ok);
+            if (!ok || mask == null || header.Ncols != grid.Header.Ncols || header.Nrows != grid.Header.Nrows)
+            {
+                result.Problem = WuiAreaComparison.Failure.NotOnCaseGrid;
+                return result;
+            }
+
+            for (int y = 0; y < header.Nrows; ++y)
+            {
+                for (int x = 0; x < header.Ncols; ++x)
+                {
+                    bool marked = mask[x, y] > 0f && mask[x, y] != (float)header.NoDataValue;
+                    if (marked) ++result.FileCells;
+                    if (marked != union[x + y * header.Ncols]) ++result.Differ;
+                }
+            }
+            return result;
+        }
+
         /// <summary>The group names of <paramref name="areas"/>, comma-separated, in order.</summary>
         public static string Names(IEnumerable<EvacuationGroupArea> areas)
         {

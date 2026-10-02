@@ -360,40 +360,23 @@ namespace PREACTcli.Campaigns
         private static string DescribeStaleWuiArea(PREACTInput input, Campaign c, string caseWui)
         {
             var problems = new List<string>();
-            List<PREACT.Evacuation.EvacuationGroupArea> areas = PREACT.Evacuation.EvacuationGroupArea.LoadAll(
-                input.Evacuation?.EvacuationGroupInputs?.Values, c.ScenarioDir, input.Simulation.Data, problems.Add);
+            PREACT.Evacuation.EvacuationGroupArea.WuiAreaComparison cmp = PREACT.Evacuation.EvacuationGroupArea.CompareWithCase(
+                input.Evacuation?.EvacuationGroupInputs?.Values, c.ScenarioDir, input.Simulation.Data, c.InputsDir, caseWui, problems.Add);
             foreach (string p in problems) Console.Error.WriteLine("WARNING: " + p);
-            if (areas.Count == 0)
+            switch (cmp.Problem)
             {
-                return "the WUI area every realization protects is the evacuation groups' area, and no group of the scenario "
-                       + "has one: paint the groups (workflow step 9), then build the case again.";
+                case PREACT.Evacuation.EvacuationGroupArea.WuiAreaComparison.Failure.NoGroupArea:
+                    return "the WUI area every realization protects is the evacuation groups' area, and no group of the scenario "
+                           + "has one: paint the groups (workflow step 9), then build the case again.";
+                case PREACT.Evacuation.EvacuationGroupArea.WuiAreaComparison.Failure.NoCaseGrid:
+                    return "could not read the case grid to check its WUI area: " + cmp.ProblemDetail;
+                case PREACT.Evacuation.EvacuationGroupArea.WuiAreaComparison.Failure.NotOnCaseGrid:
+                    return caseWui + " is not on the case grid; build the case again.";
             }
 
-            MasterGrid grid;
-            try { grid = MasterGrid.FromRasterFile(ElmfireStems.Tif(c.InputsDir, ElmfireStems.Dem)); }
-            catch (Exception e) { return "could not read the case grid to check its WUI area: " + e.Message; }
-
-            bool[] union = PREACT.Evacuation.EvacuationGroupArea.Rasterize(areas, grid, input.Simulation.Data, out int groupCells);
-            float[,] mask = AscRaster.ReadGeoTiff(caseWui, out AscRaster.Header header, out bool ok);
-            if (!ok || mask == null || header.Ncols != grid.Header.Ncols || header.Nrows != grid.Header.Nrows)
-            {
-                return caseWui + " is not on the case grid; build the case again.";
-            }
-
-            int fileCells = 0, differ = 0;
-            for (int y = 0; y < header.Nrows; ++y)
-            {
-                for (int x = 0; x < header.Ncols; ++x)
-                {
-                    bool marked = mask[x, y] > 0f && mask[x, y] != (float)header.NoDataValue;
-                    if (marked) ++fileCells;
-                    if (marked != union[x + y * header.Ncols]) ++differ;
-                }
-            }
-
-            if (differ == 0) return null;
-            return $"the case's wui_area.tif ({fileCells} cells) is not the WUI area of the scenario's evacuation groups "
-                   + $"({PREACT.Evacuation.EvacuationGroupArea.Names(areas)}: {groupCells} cells; {differ} cells differ) - the "
+            if (cmp.Differ == 0) return null;
+            return $"the case's wui_area.tif ({cmp.FileCells} cells) is not the WUI area of the scenario's evacuation groups "
+                   + $"({cmp.Groups}: {cmp.GroupCells} cells; {cmp.Differ} cells differ) - the "
                    + "groups changed since the case was built, or an older build wrote it from a painted WUI area. Build the "
                    + "case again (Apply to case in the GUI, or PREACTcli build-case), then start the campaign.";
         }
