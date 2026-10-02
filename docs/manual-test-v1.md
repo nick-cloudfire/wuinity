@@ -188,8 +188,11 @@ Mati needs its SUMO network (row 2) and a fire; if row 11 lists blockers, fix th
    row 10 has no "fire stops after 8 h" warning (a new scenario's fire lasts its time window, at least 24 h).
 4. Only if no OpenTopography key file exists: **Help > External tools and keys**, type the key into **Key for this
    session only**. Row 5 no longer says there is no key.
-5. Row 4 **Get LANDFIRE fuels and canopy (US)**. After the job, `downloads\landfire\paradise_test_lf_*.tif` exist,
-   and **Data > Fuels, canopy and buildings** shows the fuel model and CC/CH/CBH/CBD with the scaling flags set.
+5. Row 4 **Get LANDFIRE fuels and canopy (US)** (the first time, it opens Fuels, canopy and buildings and asks for
+   your contact e-mail; enter it and press the button there). After the job,
+   `downloads\landfire\paradise_test_LF2025_*.tif` and `paradise_test_LF2025_landfire.txt` exist, and **Data > Fuels,
+   canopy and buildings** shows the fuel model and CC/CH/CBH/CBD with the scaling flags set. Choose **LF2016** under
+   LANDFIRE release and download again: `..._LF2016_*.tif` appear and the source layers name them.
 6. Row 5 **Build fire case**. It downloads the terrain (with the session key, if that is where it came from),
    warps the layers and writes the weather and namelist. Afterwards `[Landscape]` names the case's dem/slp/asp, and
    row 6 unblocks.

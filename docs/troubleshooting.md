@@ -50,6 +50,9 @@ Details: [Building](building.md).
 | `WorldPop has no <country> data for <year>; using <year> instead (the closest available). …` | Information only. |
 | `Outside the US there is no fuel download here: name a fuel model raster of your own, …` | LANDFIRE covers the US only. Name your own fuel raster under Fuels, canopy and buildings > Source layers. |
 | `The LANDFIRE (LFPS) job <id> failed: …` / `… did not finish within N minutes.` | LANDFIRE's service; try again later. |
+| `LANDFIRE asks every download for a contact e-mail, and none is set. …` | Enter yours under Fuels, canopy and buildings > Get them (kept for your user), or set `LANDFIRE_EMAIL`. |
+| `Downloading the OSM roads failed: no Overpass server delivered the data after N attempts. … What each said: …` | The public Overpass servers are busy (504, 429); the step tried each in turn, three times. Try again later, or name another server in `PREACT_OVERPASS_URLS` (`;`-separated interpreter URLs). Nothing was written, so the RouterDb and SUMO steps did not run on stale data. |
+| `Area of interest: That was a double click on corner 1 …` / `Corner 2 cannot be where corner 1 is …` | The pick needs two opposite corners, one click each; it is still waiting for the second. |
 | `No canopy: it is filled with zeros, so the fire is surface fire only - no crown fire.` | Add canopy rasters (LANDFIRE in the US), or accept a surface fire. |
 | `No WindNinja: the case gets one wind value for the whole domain, so a trigger boundary comes out circular.` | Install WindNinja, or set `WINDNINJA_CLI` to the executable (`WindNinja_cli.exe`, `WindNinja_cli` on Linux), or `[ELMFIRE] WindNinjaExe`. Then rebuild the case's weather. |
 | `No GDAL command-line tools were found. ELMFIRE shells out to them, and fails its own DEM check without them.` | Install QGIS or OSGeo4W (found by themselves), or set `[ELMFIRE] PathToGdal` to a folder holding `gdal_translate`. |

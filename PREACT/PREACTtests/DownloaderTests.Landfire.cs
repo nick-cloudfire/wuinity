@@ -66,7 +66,7 @@ namespace PREACT.Tests
         }
 
         /// <summary>A stub of LFPS: submit, a status that queues, runs and succeeds, and the result zip.</summary>
-        private sealed class StubLfps : IDisposable
+        internal sealed class StubLfps : IDisposable
         {
             public readonly StubHttpServer Server;
             public string SubmitQuery;

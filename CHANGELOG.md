@@ -1,6 +1,35 @@
 # Changelog
 
-## v1.0
+## v1.1 (unreleased)
+
+### Data downloads and data steps
+
+- **OSM roads**: a download that got nothing now fails the step, so the RouterDb and the SUMO network do not run
+  after it ("Building the RouterDb FAILED: Download the OSM data first" after "Downloading OSM roads: done").
+  Each Overpass server (overpass-api.de, then the overpass.kumi.systems mirror, or `PREACT_OVERPASS_URLS`) is tried
+  in turn, three rounds with a growing pause; a 504, 429, timeout, cut-off transfer or timed-out query is retried,
+  and the message says what each server answered. The file is written only when complete. Stop ends the waiting.
+- **LANDFIRE**: the step reads the result it downloaded. It used to look for a raster "written since it started",
+  and the unpacked file carries LFPS's US timestamp, so a job that succeeded ended "returned nothing usable".
+  Bands are found by their descriptions and units by the `.aux.xml`, which set `CC_IN_PERCENT`, `CH_TIMES_10`,
+  `CBH_TIMES_10`, `CBD_TIMES_100`. The fuel model is written as Int16 (ELMFIRE reads only that; Int32 or Float32
+  fuel gives a fire that does not spread). The request covers the case's padded domain, not the bare domain.
+- **LANDFIRE release**: new `[ELMFIRE] LandfireVersion` (`closest` to the start year by default, or `LF2016`,
+  `LF2022`, `LF2023`, `LF2024`, `LF2025` - what LFPS serves; the old list asked for LF2020 fuel, which does not
+  exist). Chosen in Fuels, canopy and buildings. Layers are named `<Name>_<release>_<stem>.tif`, so
+  `case_sources.txt` records the release; `<Name>_<release>_landfire.txt` records the request. The case's old fuel
+  and canopy are removed so the next build uses the new ones. FCCS is no longer downloaded.
+- **LANDFIRE e-mail**: your own, entered under Fuels, canopy and buildings and kept per user
+  (`user-settings.txt`), or `LANDFIRE_EMAIL`; no longer a developer's hard-coded address.
+- **Area of interest**: a double click, or a second corner on the first or on the same edge, is not taken as the
+  second corner; the pick says why and waits.
+- **DEM**: OpenTopography is asked for a margin that covers the UTM grid to its corners (Auburn2's padded domain
+  was 0.0002 deg short, and its grid corners about 500 m beyond the box asked for).
+- **Burn roads into the fuel** (optional, step 4): Nick's road-to-fuel conversion (RoadFuelRasterizer), burning the
+  SUMO lanes into the case's fuel as GR1 where it is non-burnable, with the islet counts before and after.
+- The "names no SUMO configuration" warning is given once, not on every destination click; the map rereads the
+  network after the roads step builds it.
+
 
 The first versioned release of WUInity / PREACT. It is compared here with the code as it stood before the
 v1 work (commit `8d90a440`). v1 fixes a number of errors that changed results, so **read the first two

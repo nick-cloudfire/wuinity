@@ -83,7 +83,7 @@ workflow panel.
 |---|---|
 | Folder, and *Make a folder for it, named after it* | Where the scenario goes. Every path in the scenario is relative to this folder. |
 | Name | Every prepared file is named after it, so it cannot contain spaces or `\ / : * ? " < > \|`. Rename early, if at all. |
-| Area of interest | **Pick on map**: the dialog hides while you click two opposite corners on the world map (Escape brings it back). Or type the corners under *Type the corners in*. The dialog shows the size, warns above 50 km across, and says whether LANDFIRE covers the area (the US only). |
+| Area of interest | **Pick on map**: the dialog hides while you click two opposite corners on the world map, one click each (a second corner on the first, or on the same edge, is not taken and the log says why; Escape brings the dialog back). Or type the corners under *Type the corners in*. The dialog shows the size, warns above 50 km across, and says whether LANDFIRE covers the area (the US only). |
 | Starts, Ends | The simulated window. The fire case's weather is fetched for it, so give it the whole event. |
 | What it simulates | Wildfire (ELMFIRE, or imported rasters), Trigger boundary (k-PERIL), Smoke, People on foot, Vehicles (SUMO). All but smoke are on by default. |
 | Start with a standard response curve and demographics | On by default: a curve named `standard` (10 % of households gone 60 min after the order, 60 % by 80 min, all by 100 min) and demographics `standard` (up to 2 cars, 30 % chance of the second). A starting point to replace with the town's own, not a finding. |
@@ -127,8 +127,14 @@ used and the log says so.
 The rasters the fire case is cut from: a fuel model raster, and canopy cover, height, base height and bulk
 density.
 
-- **In the US**: **Get LANDFIRE fuels and canopy (US)** downloads them for the domain (into `downloads/landfire/`)
-  and names them as the source layers.
+- **In the US**: **Get LANDFIRE fuels and canopy (US)** downloads them for the padded fire domain (into
+  `downloads/landfire/`) and names them as the source layers, with the canopy scaling flags set. Under **Source
+  layers > Get them** choose the release (`closest` to the scenario's year by default; an earlier one for a
+  historic fire) and enter your contact e-mail, which LANDFIRE asks every request for (kept for your user, not
+  in the scenario).
+- Optional: **Burn roads into the fuel** burns the SUMO network into the case's fuel as GR1 where the fuel is
+  non-burnable, for fuel maps whose roads cut burnable ground into islands. It needs the fire case and the SUMO
+  network; see [ELMFIRE cases](elmfire-cases.md#where-the-layers-come-from).
 - **Elsewhere**: **Source layers** takes a fuel model raster of your own, in any CRS — coded as Scott & Burgan 40,
   or Anderson 13 with `FuelModelStandard` set to match — and optional canopy rasters.
 

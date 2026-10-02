@@ -312,13 +312,14 @@ and keeps its default.
 | `RebuildExistingLayers` | bool | `false` | Replace every layer the case already has (re-warp sources, redraw the weather). Canopy with no source named is refilled with zeros. |
 | `PathToGdal` | folder | found | GDAL tools for ELMFIRE (`gdal_translate`, `gdalinfo`, `gdalsrsinfo`). Found on `PATH`, in QGIS, OSGeo4W or `SUMO_HOME`. |
 | `WindNinjaExe` | path | found | `WINDNINJA_CLI`, `PATH`, `C:\WindNinja`, Program Files (on Linux `WindNinja_cli` on `PATH`, `/opt/WindNinja`, `/usr/local/WindNinja`, `~/WindNinja`). |
+| `LandfireVersion` | text | `closest` | The LANDFIRE release the fuels step downloads: `closest` to the start year, or `LF2016`, `LF2022`, `LF2023`, `LF2024`, `LF2025`. Only the download reads it. An unknown value keeps `closest` and says so. |
 | `CanopyDatasetFolder` | folder | – | The FIRE-RES pan-European canopy rasters (`panEu_canopyCover.tif`, `panEu_canopyHeight.tif`, `panEu_cbh.tif`, `panEu_cbd.tif`), for any canopy layer not named below. Real units: the LANDFIRE scaling flags are forced off. |
 
 **Source layers.** Fuel, canopy and buildings have no global download, so they are named here. Any CRS and
 resolution: each is warped onto the case grid when the case is built, nearest-neighbour for class layers and
 bilinear for continuous ones. A layer the case already has is kept unless `RebuildExistingLayers` is on. A path
 that does not resolve is warned about at load and skipped at build. The GUI's LANDFIRE download (US) fills the
-fuel and canopy keys.
+fuel and canopy keys and the four canopy unit flags of `[ElmfireNamelist]`.
 
 | Key | Case stem | Notes |
 |---|---|---|
