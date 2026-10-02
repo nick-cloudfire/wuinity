@@ -148,8 +148,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
             if (ImGui.IsItemHovered())
             {
-                ImGui.SetTooltip("Hides this dialog while you click two opposite corners on the world map. "
-                    + "Escape brings it back as it was.");
+                ImGui.SetTooltip("Hides this dialog while you click two opposite corners on the world map, one click each "
+                    + "(a double click is one corner). Escape brings it back as it was.");
             }
             ImGui.SameLine();
             bool haveArea = !(_s.LowerLeftLatLon.x == 0.0 && _s.LowerLeftLatLon.y == 0.0)
@@ -254,7 +254,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             PreactGUI.WUInity.ShowWebMercatorMap();
             PreactGUI.WUInity.PickBoundingBoxOnMap(corners =>
             {
-                //Whichever corners were clicked first.
+                //South-west and north-east: the pick orders them, and takes no second corner that makes no area.
                 _s.LowerLeftLatLon = new Vector2d(Math.Min(corners[0].x, corners[1].x), Math.Min(corners[0].y, corners[1].y));
                 _s.UpperRightLatLon = new Vector2d(Math.Max(corners[0].x, corners[1].x), Math.Max(corners[0].y, corners[1].y));
                 _hiddenForPick = false;
