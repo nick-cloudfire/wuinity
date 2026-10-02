@@ -114,6 +114,9 @@
   a group with no area (D3) or no existing demographics (D4) crashed the run, a run that moved no car exited 0 (D5).
   Three are open, for a modelling decision, and stay marked as known: k-PERIL's L/B is not the fire's (D2), k-PERIL
   subtracts an upslope wind from the slope (D6) and reads ELMFIRE's along-slope rate as a map rate (D7).
+- The cases protect the WUI area `build-case` now makes from the evacuation group (`WuiAreaSource` left at
+  `EvacuationGroupsCombined`) and check it against the WUI box, instead of writing `wui_area.tif` themselves; the
+  group's mask covers exactly the box's cells, also where the box's edges fall on cell centres (case 2c).
 - **Fuel models are stored as Int16 (D1).** The case build writes `fbfm40`/`fbfm13`, `bldg_fuel_model`, `pyromes`
   and every fuel raster a namelist names (a variant, roads burned in, one carried or re-cut onto a new grid) as
   Int16, the only type ELMFIRE reads them from, and rewrites one the case kept in another type. The validation, a

@@ -4,7 +4,8 @@
 (Anderson model 1 everywhere, Int16) on a 10 m UTM lattice (EPSG:32610, 670000 E 4316000 N, near Auburn, CA), a
 two-edge road north out of a WUI box, one household, and `flat_wind.wui`. `run()` builds the case with
 `PREACTcli build-case --dem dem.tif --no-climatology --wind 6 --wind-dir 270 --m1 6 --m10 7 --m100 8` (uniform
-weather, no WindNinja), writes the WUI box onto the case grid as `case/inputs/wui_area.tif`, and runs
+weather, no WindNinja), checks that the `case/inputs/wui_area.tif` it writes from the evacuation group (whose mask is
+the WUI box) holds exactly the box's cells, and runs
 `PREACT flat_wind.wui`: ELMFIRE through the engine (2 h of fire, `ENABLE_SPOTTING=false`), the evacuation in SUMO and
 the k-PERIL boundary. Domain 3.6 x 2.0 km plus 200 m padding; ignition at the cell centre (670305, 4317005), so the
 wind axis is the row through it.

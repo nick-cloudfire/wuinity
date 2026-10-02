@@ -82,12 +82,6 @@ def case_grid(ctx, case_dir):
     return ctx.read(os.path.join(case_dir, "inputs", "dem.tif"), os.path.join(case_dir, "_asc"))
 
 
-def write_mask_on_grid(path, grid, cells, dtype="int16"):
-    """A 0/1 GeoTIFF on the case grid with 1 on `cells` (a set of (col, row))."""
-    rows = [[1 if (c, r) in cells else 0 for c in range(grid.ncols)] for r in range(grid.nrows)]
-    tiff.write_geotiff(path, rows, grid.xll, grid.yll + grid.nrows * grid.cell, grid.cell, EPSG, dtype, -9999)
-
-
 def box_cells(grid, x_min, x_max, y_min, y_max):
     """The cells whose centres lie in the box."""
     out = set()

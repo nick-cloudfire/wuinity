@@ -2,7 +2,8 @@
 
 **What it runs.** A 2.4 x 1.4 km case of Anderson model 1 (10 m cells, 200 m padding) built with `PREACTcli
 build-case`, whose ignition mask (`[ELMFIRE] IgnitionMaskFile`, warped by the builder) has **one** ignitable cell,
-(670405, 4316705); a WUI box 200 x 210 m, 0.8 km east of it, written onto the case grid as `case/inputs/wui_area.tif`;
+(670405, 4316705); a WUI box 200 x 210 m, 0.8 km east of it, the evacuation group's area, which `build-case` writes
+onto the case grid as `case/inputs/wui_area.tif` (checked against the box);
 two households in the box leaving at 600 s on a road north (SUMO). The campaign:
 
 ```

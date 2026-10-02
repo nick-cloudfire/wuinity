@@ -103,8 +103,8 @@ def run(ctx, folder):
     if code != 0:
         return [Check.error(CASE, "build-case", "exit %d, see %s" % (code, os.path.join(folder, "build-case.log")))]
     grid = firecase.case_grid(ctx, case)
-    wui_cells = firecase.box_cells(grid, *WUI_BOX)
-    firecase.write_mask_on_grid(os.path.join(case, "inputs", "wui_area.tif"), grid, wui_cells)
+    area_check, wui_cells = wuibox.check_wui_area(ctx, CASE, case, grid, WUI_BOX, os.path.join(folder, "_asc"))
+    checks.append(area_check)
 
     code, log, seconds = ctx.preact(wui, folder, os.path.join(folder, "preact.log"))
     if code != 0:

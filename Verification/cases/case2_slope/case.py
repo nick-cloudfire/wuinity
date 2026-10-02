@@ -62,10 +62,6 @@ def fire(ctx, sub, name, wind_ms=0.0, wind_from=0.0):
     if code != 0:
         raise RuntimeError("build-case failed, see " + os.path.join(sub, "build-case.log"))
     case = os.path.join(sub, "case")
-    if wind_ms > 0:
-        grid = firecase.case_grid(ctx, case)
-        firecase.write_mask_on_grid(os.path.join(case, "inputs", "wui_area.tif"), grid,
-                                    firecase.box_cells(grid, *WUI_BOX_W))
     code, _, _ = ctx.preact(wui, sub, os.path.join(sub, "preact.log"))
     o = elmfire_outputs(case)
     if not o["time_of_arrival"]:
@@ -138,6 +134,7 @@ def slope_wind(ctx, folder):
     checks = []
     grid, toa, vs, sd, case = fire(ctx, sub, "slope_wind", WIND_MS, 180.0)
     scratch = os.path.join(sub, "_asc")
+    checks.append(wuibox.check_wui_area(ctx, CASE, case, grid, WUI_BOX_W, scratch)[0])
     fm = rothermel.read_fuel_models(ctx.fuel_table)[FUEL]
     umf = 0.87 * WIND_MS / rothermel.MPH_TO_MS * rothermel.unsheltered_waf(fm.depth) * rothermel.MPH_TO_FTMIN
     r = rothermel.surface_fire(fm, M1 / 100, M10 / 100, M100 / 100, 0.6, 0.9, umf, SLOPE_DEG)

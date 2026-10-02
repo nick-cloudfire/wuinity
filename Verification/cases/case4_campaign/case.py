@@ -155,8 +155,8 @@ def run(ctx, folder):
         return [Check.error(CASE, "build-case", "see " + os.path.join(folder, "build-case.log"))]
     case = os.path.join(folder, "case")
     grid = firecase.case_grid(ctx, case)
-    wui_cells = firecase.box_cells(grid, *WUI_BOX)
-    firecase.write_mask_on_grid(os.path.join(case, "inputs", "wui_area.tif"), grid, wui_cells)
+    area_check, wui_cells = wuibox.check_wui_area(ctx, CASE, case, grid, WUI_BOX, os.path.join(folder, "_asc"))
+    checks.append(area_check)
 
     runs = []
     for k in (1, 2):
