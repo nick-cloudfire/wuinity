@@ -172,6 +172,10 @@ namespace PREACT.Tests
                     "# a comment",
                     "FutureKey = kept = as is",
                     "not a key line",
+                    "[User]",
+                    "FutureUserKey = mine",
+                    "[Later]",
+                    "Other = 1",
                 });
                 ToolPaths.Settings read = ToolPaths.Load();
                 Assert.Equal("/opt/elmfire/bin/elmfire", read.Get(ToolPaths.Tool.Elmfire), "keys case-insensitively, quotes stripped");
@@ -187,6 +191,11 @@ namespace PREACT.Tests
                 Assert.True(ToolPaths.Version > version, "a save is a new version");
                 string text = File.ReadAllText(file);
                 Assert.True(text.Contains("FutureKey = kept = as is"), "a key this version does not know survives a save");
+                int user = text.IndexOf("[User]", StringComparison.Ordinal), later = text.IndexOf("[Later]", StringComparison.Ordinal);
+                Assert.True(user > 0 && later > user && text.IndexOf("FutureUserKey = mine", StringComparison.Ordinal) > user
+                            && text.IndexOf("Other = 1", StringComparison.Ordinal) > later
+                            && text.IndexOf("FutureKey", StringComparison.Ordinal) < user,
+                    "each in the section it was read under: " + text);
                 Assert.True(text.Contains("WindNinjaExe = /opt/WindNinja/bin/WindNinja_cli"), "the new value is written cleaned: " + text);
                 Assert.True(!File.Exists(file + ".tmp"), "nothing left beside it");
                 Assert.True(ToolPaths.Load().SameAs(read), "what was saved is what is read back");

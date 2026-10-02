@@ -468,23 +468,21 @@ namespace Assets.WUInity.GUI.DearIMGUI
         }
 
         /// <summary>
-        /// Where the OpenTopography key comes from, and somewhere to put one only when nothing supplies it.
-        /// </summary>
-        /// <remarks>
-        /// The configuration file is the way this is meant to be set - the same mechanism as the Mapbox token,
-        /// it survives restarts, and it is gitignored - so when it is doing its job no field is drawn. A box
-        /// that is always there invites pasting a credential into somewhere it will be lost.
-        /// </remarks>
-        /// <summary>
         /// The LANDFIRE contact e-mail: kept in the same per-user file as the tool paths, and edited where it is used (the
         /// fuels step), so this only says what the LANDFIRE step will send.
         /// </summary>
         private static void DrawLandfireEmail()
         {
-            string kept = ScenarioDataSteps.LandfireEmail.Trim();
-            if (PREACT.Tools.LandfireContact.IsPlausible(kept))
+            string typed = ScenarioDataSteps.LandfireEmail.Trim();
+            string saved = ToolPaths.LandfireEmail;
+            if (PREACT.Tools.LandfireContact.IsPlausible(typed) && typed == saved)
             {
-                Fields.Ok("LANDFIRE e-mail: " + kept + ", kept for your user in " + ToolPaths.SettingsFile + ".");
+                Fields.Ok("LANDFIRE e-mail: " + typed + ", kept for your user in " + ToolPaths.SettingsFile + ".");
+            }
+            else if (PREACT.Tools.LandfireContact.IsPlausible(typed))
+            {
+                //Typed in the fuels step, but not (or not yet) in the file - a save that failed says so in the log.
+                Fields.Caution("LANDFIRE e-mail: " + typed + ", for this session; " + ToolPaths.SettingsFile + " does not hold it.");
             }
             else if (PREACT.Tools.LandfireContact.IsPlausible(System.Environment.GetEnvironmentVariable(PREACT.Tools.LandfireContact.Variable)))
             {
@@ -496,6 +494,14 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
         }
 
+        /// <summary>
+        /// Where the OpenTopography key comes from, and somewhere to put one only when nothing supplies it.
+        /// </summary>
+        /// <remarks>
+        /// The configuration file is the way this is meant to be set - the same mechanism as the Mapbox token,
+        /// it survives restarts, and it is gitignored - so when it is doing its job no field is drawn. A box
+        /// that is always there invites pasting a credential into somewhere it will be lost.
+        /// </remarks>
         public static void DrawOpenTopographyKey()
         {
             string source = ScenarioDataSteps.OpenTopographyApiKeySource;

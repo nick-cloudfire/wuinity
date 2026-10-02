@@ -190,7 +190,8 @@ On the build machine, and once on a machine that has never had the repository:
 
 1. Start `WUInity.exe`. The GUI font is the editor's, and the map loads if the token was built in.
 2. **Help > External tools and keys**. ELMFIRE is in use from `...\WUInity\elmfire\elmfire.exe`, found by the
-   automatic search. GDAL, WindNinja, SUMO and PROJ are found, or have a path set.
+   automatic search - unless `tools.ini` names another ELMFIRE (a development build, say), which then wins and the
+   window says "from your setting"; clear it to check the shipped one. GDAL, WindNinja, SUMO and PROJ are found, or have a path set.
 3. Open a scenario, such as Mati, and build its fire case (row 5). The log says the fuel table was copied from
    `...\elmfire\fuel_models.csv` when the case had none.
 4. Run it, and open the campaign window. **PREACTcli** is `...\WUInity\PREACT\PREACTcli.exe`. Start a campaign with

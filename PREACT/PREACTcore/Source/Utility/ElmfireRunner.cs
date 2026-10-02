@@ -367,11 +367,6 @@ namespace PREACT.Utility
                 : "produced no " + string.Join(", no ", missing);
         }
 
-        /// <summary>
-        /// Reads the burned area back out of ELMFIRE's own log line, e.g.
-        /// <c>[1] Meteorology band 1: Case # 1 complete.  Fire area:   3094.0 acres.</c> Returns false when there
-        /// is no such line - an unparsed log is not evidence of a zero-area fire.
-        /// </summary>
         /// <summary>m² per acre.</summary>
         private const double SquareMetresPerAcre = 4046.8564224;
 
@@ -413,6 +408,11 @@ namespace PREACT.Utility
                 out int count) && count > 0 ? count : 1;
         }
 
+        /// <summary>
+        /// Reads the burned area back out of ELMFIRE's own log line, e.g.
+        /// <c>[1] Meteorology band 1: Case # 1 complete.  Fire area:   3094.0 acres.</c> Returns false when there
+        /// is no such line - an unparsed log is not evidence of a zero-area fire.
+        /// </summary>
         public static bool TryReadFireArea(string runDir, out double acres)
         {
             acres = -1.0;

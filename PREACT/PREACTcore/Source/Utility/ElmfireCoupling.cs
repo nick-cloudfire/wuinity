@@ -952,13 +952,13 @@ namespace PREACT.Utility
             return null;
         }
 
+        private static string Capitalise(string sentence) =>
+            string.IsNullOrEmpty(sentence) ? sentence : char.ToUpperInvariant(sentence[0]) + sentence.Substring(1);
+
         /// <summary>
         /// Why <see cref="ResolveExecutable"/> found nothing, naming what it tried: the path the scenario's
         /// <c>[ELMFIRE] ElmfireExe</c> resolves to, or the vendored build it looked for.
         /// </summary>
-        private static string Capitalise(string sentence) =>
-            string.IsNullOrEmpty(sentence) ? sentence : char.ToUpperInvariant(sentence[0]) + sentence.Substring(1);
-
         public static string DescribeMissingExecutable(string rootFolder, string named)
         {
             bool windows = System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(

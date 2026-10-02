@@ -74,7 +74,14 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
 
             int index = Array.IndexOf(Sources, peril.WuiAreaSource);
             if (index < 0) index = 0;
-            if (ImGui.Combo("WUI area###WuiAreaSource", ref index, SourceLabels, SourceLabels.Length))
+            //Raster without a file is the groups together (Mati's scenario says so), which "a mask of my own" hid.
+            string[] labels = SourceLabels;
+            if (peril.WuiAreaSource == kPERILInput.WuiAreaSources.Raster && string.IsNullOrWhiteSpace(peril.WuiAreaFile))
+            {
+                labels = (string[])SourceLabels.Clone();
+                labels[2] = "A WUI mask of my own - none named, so the evacuation groups, together";
+            }
+            if (ImGui.Combo("WUI area###WuiAreaSource", ref index, labels, labels.Length))
             {
                 peril.WuiAreaSource = Sources[index];
             }

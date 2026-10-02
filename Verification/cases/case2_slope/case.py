@@ -6,6 +6,7 @@ import os
 
 from vlib import firecase, kperil_ref, rasters, rothermel, scenario, shape, wuibox
 from vlib.context import elmfire_outputs, grep_float
+from vlib.tools import read_text
 from vlib.report import Check, within
 
 CASE = "2"
@@ -146,8 +147,7 @@ def slope_wind(ctx, folder):
                         within(head, head_exp, rel=0.01), "m/min",
                         "phi_w %.3f + phi_s %.3f, the two vectors aligned" % (r["phi_w"], r["phi_s"])))
 
-    with open(os.path.join(sub, "preact.log")) as f:
-        log = f.read()
+    log = read_text(os.path.join(sub, "preact.log"))
     rset = grep_float(log, r"RSET = ([0-9.]+) minutes")
     path = os.path.join(sub, "_output", "0_trigger_boundary.asc")
     if rset is None or not os.path.isfile(path):

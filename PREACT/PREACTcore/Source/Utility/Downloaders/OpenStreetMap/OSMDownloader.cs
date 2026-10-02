@@ -135,7 +135,17 @@ namespace PREACT.Tools
                     string host = HostOf(endpoint);
                     log($"Downloading OSM roads from {host} (attempt {attempt} of {rounds * endpoints.Count})...");
 
-                    Attempt outcome = await TryOnce(endpoint, query, part, options).ConfigureAwait(false);
+                    Attempt outcome;
+                    try
+                    {
+                        outcome = await TryOnce(endpoint, query, part, options).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        //Stopped during the transfer: nothing half-downloaded is left behind (review R2 NI-2).
+                        TryDelete(part);
+                        throw;
+                    }
                     if (outcome.Ok)
                     {
                         Result result = Finish(part, saveFilePath, endpoint, attempt, outcome);

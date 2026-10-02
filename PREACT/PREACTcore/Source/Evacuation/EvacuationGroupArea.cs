@@ -123,6 +123,16 @@ namespace PREACT.Evacuation
                 return;
             }
 
+            //Group masks are in simulation coordinates (metres from the domain's south-west corner), as the painter writes
+            //them; a mask made in QGIS carries an absolute UTM corner and then covers no cell. Said, not refused (review R2 NI-8).
+            if (System.Math.Abs(header.XllCorner) > 1e5 || System.Math.Abs(header.YllCorner) > 1e5)
+            {
+                problem = $"Evacuation group {Name}: its area mask {path} starts at ({header.XllCorner:F0}, {header.YllCorner:F0}), "
+                          + "which looks like UTM coordinates. Group masks are in simulation coordinates - metres from the "
+                          + "domain's south-west corner, as the GUI's group painter writes them - so this one is read as lying "
+                          + "far outside the domain. Use a shapefile for an area made in a GIS.";
+            }
+
             _maskCols = header.Ncols;
             _maskRows = header.Nrows;
             _maskX = header.XllCorner;

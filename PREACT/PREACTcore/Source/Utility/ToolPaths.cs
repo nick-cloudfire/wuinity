@@ -784,7 +784,8 @@ namespace PREACT.Utility
             public string LandfireEmail { get; set; } = string.Empty;
 
             //Keys this version does not know, kept so a newer version's settings survive a save by this one.
-            private readonly List<KeyValuePair<string, string>> _other = new List<KeyValuePair<string, string>>();
+            //Each with the section it was read under ("Tools" for none), so a save writes it back there.
+            private readonly List<(string Section, string Key, string Value)> _other = new List<(string Section, string Key, string Value)>();
 
             public string Get(Tool tool)
             {
@@ -837,9 +838,15 @@ namespace PREACT.Utility
             internal static Settings Parse(IEnumerable<string> lines)
             {
                 var s = new Settings();
+                string section = "Tools";
                 foreach (string raw in lines)
                 {
                     string line = raw.Trim();
+                    if (line.Length > 1 && line[0] == '[' && line[line.Length - 1] == ']')
+                    {
+                        section = line.Substring(1, line.Length - 2).Trim();
+                        continue;
+                    }
                     if (line.Length == 0 || line[0] == ';' || line[0] == '#' || line[0] == '[')
                     {
                         continue;
@@ -864,7 +871,7 @@ namespace PREACT.Utility
                     }
                     else
                     {
-                        s._other.Add(new KeyValuePair<string, string>(key, value));
+                        s._other.Add((section, key, value));
                     }
                 }
                 return s;
@@ -885,14 +892,34 @@ namespace PREACT.Utility
                     b.AppendLine("; " + Comments[i]);
                     b.AppendLine(Keys[i] + " = " + Clean(_values[i]));
                 }
-                foreach (KeyValuePair<string, string> kv in _other)
+                foreach (var kv in _other)
                 {
-                    b.AppendLine(kv.Key + " = " + kv.Value);
+                    if (string.Equals(kv.Section, "Tools", StringComparison.OrdinalIgnoreCase)) b.AppendLine(kv.Key + " = " + kv.Value);
                 }
                 b.AppendLine("[User]");
                 b.AppendLine("; LANDFIRE: the contact e-mail every LANDFIRE download sends (LFPS asks for one; LANDFIRE_EMAIL and");
                 b.AppendLine("; PREACTcli landfire --email come first). Personal, so never in a scenario.");
                 b.AppendLine(LandfireEmailKey + " = " + Clean(LandfireEmail));
+                foreach (var kv in _other)
+                {
+                    if (string.Equals(kv.Section, "User", StringComparison.OrdinalIgnoreCase)) b.AppendLine(kv.Key + " = " + kv.Value);
+                }
+                //Sections this version does not know, as they were.
+                var others = new List<string>();
+                foreach (var kv in _other)
+                {
+                    if (string.Equals(kv.Section, "Tools", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(kv.Section, "User", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!others.Exists(o => string.Equals(o, kv.Section, StringComparison.OrdinalIgnoreCase))) others.Add(kv.Section);
+                }
+                foreach (string other in others)
+                {
+                    b.AppendLine("[" + other + "]");
+                    foreach (var kv in _other)
+                    {
+                        if (string.Equals(kv.Section, other, StringComparison.OrdinalIgnoreCase)) b.AppendLine(kv.Key + " = " + kv.Value);
+                    }
+                }
                 return b.ToString();
             }
         }
