@@ -109,7 +109,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
             {
                 ImGui.Indent();
 
-                Fields.Real("SimulationTstopHours", ref elmfire.SimulationTstopHours);
+                Fields.Real("SimulationTstopHours", ref elmfire.SimulationTstopHours, null, 2);
                 Fields.Hint($"{elmfire.SimulationTstopHours:F1} hours of fire for a run of this scenario ({elmfire.TstopSeconds():F0} s",
                             "to ELMFIRE, which wants seconds); 1 to 240 h. A case whose weather is shorter is given",
                             "more when the run starts (one WindNinja solve per extra hour), unless the scenario runs",
@@ -154,8 +154,8 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
                                 "from the Fire behaviour settings. One edited by hand is set aside first as",
                                 "elmfire.data.kept-<time>; to run one as it is, name it as NamelistTemplate above.");
 
-                    Fields.Real("CellSizeMetres", ref elmfire.CellSizeMetres);
-                    Fields.Real("PaddingMetres", ref elmfire.PaddingMetres);
+                    Fields.Real("CellSizeMetres", ref elmfire.CellSizeMetres, null, 2);
+                    Fields.Real("PaddingMetres", ref elmfire.PaddingMetres, null, 2);
                     Fields.Hint("Margin beyond the evacuation domain, so the fire is not clipped at its edge.",
                                 "Both only apply to layers actually being built.");
 

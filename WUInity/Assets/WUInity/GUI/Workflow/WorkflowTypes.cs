@@ -53,6 +53,7 @@ namespace WUInity.Workflow
 
         BuildFireCase,
         RebuildFireCase,
+        RebuildWeather,
         AdoptCaseTerrain,
         OpenFireModelSettings,
         OpenFireBehaviour,
@@ -72,7 +73,7 @@ namespace WUInity.Workflow
         PaintGroups,
 
         OpenTriggerBoundary,
-        UseCaseWuiArea,
+        ProtectEvacuationGroups,
         ClearPinnedWind,
 
         OpenRun,

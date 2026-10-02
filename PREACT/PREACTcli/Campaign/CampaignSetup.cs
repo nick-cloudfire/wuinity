@@ -155,24 +155,37 @@ namespace PREACTcli.Campaigns
             if (!CheckIgnitionMask(c)) return null;
 
             // ------------------------------------------------------------ the WUI area
-            string wuiArea = ElmfireStems.Tif(c.InputsDir, ElmfireStems.WuiArea);
-            if (MaskIgnitionSampler.TryGetMaskCentroid(wuiArea, out double wx, out double wy, out int cells))
+            //The case's wui_area.tif, which the case build writes as the union of the evacuation groups: every realization
+            //protects exactly those cells, aims its wind at their centre and is checked against them before its evacuation
+            //runs. A mask of the scenario's own ([kPERIL] WuiAreaSource=Raster with a WuiAreaFile) takes their place.
+            kPERILInput peril = input.TriggerBufferModule.kPERILInput;
+            string caseWui = ElmfireStems.Tif(c.InputsDir, ElmfireStems.WuiArea);
+            string named = peril.WuiAreaSource == kPERILInput.WuiAreaSources.Raster && !string.IsNullOrWhiteSpace(peril.WuiAreaFile)
+                ? Absolute(c.ScenarioDir, peril.WuiAreaFile)
+                : null;
+            bool ownMask = named != null && !string.Equals(named, Path.GetFullPath(caseWui), StringComparison.OrdinalIgnoreCase);
+            string wuiArea = ownMask ? named : caseWui;
+
+            if (!MaskIgnitionSampler.TryGetMaskCentroid(wuiArea, out double wx, out double wy, out int cells))
             {
-                c.WuiAreaFile = wuiArea;
-                c.WuiCentreX = wx;
-                c.WuiCentreY = wy;
-                c.WuiCells = cells;
+                return Fail("every realization protects the WUI area, and " + wuiArea
+                            + (File.Exists(wuiArea) ? " has no marked cell." : " is not there.")
+                            + (ownMask
+                                ? " It is the scenario's [kPERIL] WuiAreaFile; clear that to protect the evacuation groups."
+                                : " The case build writes it from the evacuation groups: paint the groups (workflow step 9) "
+                                  + "and build the case again (Apply to case, or PREACTcli build-case)."));
             }
 
-            bool rasterWui = input.TriggerBufferModule.kPERILInput.WuiAreaSource == kPERILInput.WuiAreaSources.Raster;
-            if (c.WuiAreaFile == null && (o.WindToWui || rasterWui))
+            if (!ownMask)
             {
-                return Fail((o.WindToWui ? "aiming the wind at the WUI area" : "the trigger boundary")
-                            + " needs the case's wui_area.tif, and " + wuiArea
-                            + (File.Exists(wuiArea) ? " has no marked cell." : " is not there.")
-                            + " Paint a WUI area in the scenario and build the case again"
-                            + (o.WindToWui ? ", or pass --no-wind-to-wui." : "."));
+                string stale = DescribeStaleWuiArea(input, c, caseWui);
+                if (stale != null) return Fail(stale);
             }
+
+            c.WuiAreaFile = wuiArea;
+            c.WuiCentreX = wx;
+            c.WuiCentreY = wy;
+            c.WuiCells = cells;
 
             // ------------------------------------------------------------ fuel tables
             if (!ResolveFuelTables(c)) return null;
@@ -296,6 +309,53 @@ namespace PREACTcli.Campaigns
         }
 
         // ------------------------------------------------------------------ checks
+
+        /// <summary>
+        /// Why the case's wui_area.tif is not the union of the scenario's evacuation groups on the case grid, or null when
+        /// it is: the groups were painted again since the case was built, or an older build wrote it from a painted WUI
+        /// area. Every realization protects that file, so a campaign on it would answer for other ground than the
+        /// scenario evacuates.
+        /// </summary>
+        private static string DescribeStaleWuiArea(PREACTInput input, Campaign c, string caseWui)
+        {
+            var problems = new List<string>();
+            List<PREACT.Evacuation.EvacuationGroupArea> areas = PREACT.Evacuation.EvacuationGroupArea.LoadAll(
+                input.Evacuation?.EvacuationGroupInputs?.Values, c.ScenarioDir, input.Simulation.Data, problems.Add);
+            foreach (string p in problems) Console.Error.WriteLine("WARNING: " + p);
+            if (areas.Count == 0)
+            {
+                return "the WUI area every realization protects is the evacuation groups' area, and no group of the scenario "
+                       + "has one: paint the groups (workflow step 9), then build the case again.";
+            }
+
+            MasterGrid grid;
+            try { grid = MasterGrid.FromRasterFile(ElmfireStems.Tif(c.InputsDir, ElmfireStems.Dem)); }
+            catch (Exception e) { return "could not read the case grid to check its WUI area: " + e.Message; }
+
+            bool[] union = PREACT.Evacuation.EvacuationGroupArea.Rasterize(areas, grid, input.Simulation.Data, out int groupCells);
+            float[,] mask = AscRaster.ReadGeoTiff(caseWui, out AscRaster.Header header, out bool ok);
+            if (!ok || mask == null || header.Ncols != grid.Header.Ncols || header.Nrows != grid.Header.Nrows)
+            {
+                return caseWui + " is not on the case grid; build the case again.";
+            }
+
+            int fileCells = 0, differ = 0;
+            for (int y = 0; y < header.Nrows; ++y)
+            {
+                for (int x = 0; x < header.Ncols; ++x)
+                {
+                    bool marked = mask[x, y] > 0f && mask[x, y] != (float)header.NoDataValue;
+                    if (marked) ++fileCells;
+                    if (marked != union[x + y * header.Ncols]) ++differ;
+                }
+            }
+
+            if (differ == 0) return null;
+            return $"the case's wui_area.tif ({fileCells} cells) is not the WUI area of the scenario's evacuation groups "
+                   + $"({PREACT.Evacuation.EvacuationGroupArea.Names(areas)}: {groupCells} cells; {differ} cells differ) - the "
+                   + "groups changed since the case was built, or an older build wrote it from a painted WUI area. Build the "
+                   + "case again (Apply to case in the GUI, or PREACTcli build-case), then start the campaign.";
+        }
 
         private static bool CheckIgnitionMask(Campaign c)
         {

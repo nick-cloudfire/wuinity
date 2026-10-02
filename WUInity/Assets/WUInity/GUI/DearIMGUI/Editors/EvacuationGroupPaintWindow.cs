@@ -248,16 +248,18 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
 
             //Offered whether or not the brush is down, like the fire areas: the areas survive the brush being
             //put away, and being able to save them only while it was up was a way to lose them.
+            //Only with something to save: pressing it again over saved areas wrote every mask (and logged it) once more.
             ImGui.SameLine();
-            ImGui.BeginDisabled(!painter.HasEvacGroupCells);
+            bool toSave = painter.HasEvacGroupCells && painter.UnsavedGroupStrokes;
+            ImGui.BeginDisabled(!toSave);
             if (ImGui.Button("Save group areas"))
             {
                 SaveMasks();
             }
             ImGui.EndDisabled();
-            if (!painter.HasEvacGroupCells && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            if (!toSave && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
             {
-                ImGui.SetTooltip("Nothing painted yet.");
+                ImGui.SetTooltip(painter.HasEvacGroupCells ? "Saved: nothing has been painted since." : "Nothing painted yet.");
             }
 
             ImGui.SameLine();

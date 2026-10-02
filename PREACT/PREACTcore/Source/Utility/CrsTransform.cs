@@ -85,5 +85,57 @@ namespace PREACT.Utility
                 wgs84?.Dispose();
             }
         }
+
+        /// <summary>
+        /// The other way: easting and northing in <paramref name="epsg"/> to WGS84 latitude and longitude. False when the
+        /// CRS could not be resolved or the point does not transform.
+        /// </summary>
+        public static bool TryToWgs84(string epsg, double x, double y, out double latitude, out double longitude)
+        {
+            latitude = longitude = 0.0;
+            if (string.IsNullOrEmpty(epsg) || !int.TryParse(epsg.Replace("EPSG:", string.Empty).Trim(), out int epsgCode))
+            {
+                return false;
+            }
+
+            SpatialReference wgs84 = null;
+            SpatialReference source = null;
+            CoordinateTransformation transform = null;
+            try
+            {
+                wgs84 = new SpatialReference(string.Empty);
+                wgs84.ImportFromEPSG(4326);
+                wgs84.SetAxisMappingStrategy(AxisMappingStrategy.OAMS_TRADITIONAL_GIS_ORDER);
+
+                source = new SpatialReference(string.Empty);
+                if (source.ImportFromEPSG(epsgCode) != 0)
+                {
+                    return false;
+                }
+                source.SetAxisMappingStrategy(AxisMappingStrategy.OAMS_TRADITIONAL_GIS_ORDER);
+
+                transform = new CoordinateTransformation(source, wgs84);
+                double[] p = { x, y, 0.0 };
+                transform.TransformPoint(p);
+                if (double.IsNaN(p[0]) || double.IsNaN(p[1]) || double.IsInfinity(p[0]) || double.IsInfinity(p[1]))
+                {
+                    return false;
+                }
+
+                longitude = p[0];
+                latitude = p[1];
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                transform?.Dispose();
+                source?.Dispose();
+                wgs84?.Dispose();
+            }
+        }
     }
 }

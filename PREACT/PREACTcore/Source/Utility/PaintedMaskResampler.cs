@@ -15,9 +15,11 @@ using OSGeo.OSR;
 namespace PREACT.Utility
 {
     /// <summary>
-    /// Moves a painting (a <c>.gfi</c>: WUI area, ignition area, initial ignition and manual trigger buffer)
-    /// from the georeferenced grid it was painted on onto another one - in practice from an old landscape raster
-    /// onto the fire case's <c>dem.tif</c>, which is the grid of record for an ELMFIRE scenario.
+    /// Moves a painting (a <c>.gfi</c>: the ignition area, and the manual trigger buffer nothing paints) from the
+    /// georeferenced grid it was painted on onto another one - in practice from an old landscape raster onto the fire
+    /// case's <c>dem.tif</c>, which is the grid of record for an ELMFIRE scenario. An older painting's WUI area and
+    /// initial ignition are counted and left out: the WUI area is the evacuation groups', and an initial ignition is an
+    /// ignition point, which the scenario's load makes of it (and which a moved file would only make again elsewhere).
     /// </summary>
     /// <remarks>
     /// <para>
@@ -28,10 +30,8 @@ namespace PREACT.Utility
     /// <para>
     /// Nearest cell by georeferenced cell centres: every cell of the new grid takes the painted value of the old
     /// cell its centre falls in (transformed into the old grid's CRS when the two differ). That keeps the
-    /// painted area to within one cell along its edge - Mati's 7383 WUI cells of 27.6 m are ~6250 cells of 30 m -
-    /// and invents no partial cells. The one exception is the initial ignition, which is usually a few cells and
-    /// is where ELMFIRE's single fire starts: every painted cell of it also marks the new cell its own centre
-    /// falls in, so a small ignition can never vanish between two grids of similar size.
+    /// painted area to within one cell along its edge - Mati's 7383 WUI cells of 27.6 m were ~6250 cells of 30 m -
+    /// and invents no partial cells.
     /// </para>
     /// <para>
     /// The painting is written to a new file beside the old one and the old file is never touched, so moving it
@@ -173,10 +173,11 @@ namespace PREACT.Utility
             public string OutputFile;
             public Grid Source;
             public Grid Target;
-            public MaskCount WuiArea;
             public MaskCount IgnitionArea;
-            public MaskCount InitialIgnition;
             public MaskCount TriggerBuffer;
+
+            /// <summary>An older painting's WUI area and initial ignition, in cells: left out of the moved file.</summary>
+            public int LeftOutWuiCells, LeftOutInitialIgnitionCells;
 
             /// <summary>True when the two grids are in different CRSs and every centre was reprojected.</summary>
             public bool Reprojected;
@@ -190,10 +191,17 @@ namespace PREACT.Utility
                     + $"({System.IO.Path.GetFileName(Source.Path)}) onto {Target.Describe()} ({System.IO.Path.GetFileName(Target.Path)})"
                     + (Reprojected ? ", reprojecting every cell centre" : string.Empty) + ".",
                 };
-                Line(lines, "WUI area", WuiArea);
                 Line(lines, "ignition area", IgnitionArea);
-                Line(lines, "initial ignition", InitialIgnition);
                 Line(lines, "trigger buffer", TriggerBuffer);
+                if (LeftOutWuiCells > 0)
+                {
+                    lines.Add($"  WUI area: {LeftOutWuiCells} cells, left out - the WUI area is the evacuation groups'.");
+                }
+                if (LeftOutInitialIgnitionCells > 0)
+                {
+                    lines.Add($"  initial ignition: {LeftOutInitialIgnitionCells} cells, left out - an initial ignition is an "
+                              + "ignition point, which opening the scenario made of it.");
+                }
                 lines.Add("Written as " + System.IO.Path.GetFileName(OutputFile) + "; " + System.IO.Path.GetFileName(SourceFile)
                     + " is kept as it was.");
                 return lines;
@@ -212,7 +220,10 @@ namespace PREACT.Utility
             }
         }
 
-        /// <summary>The four masks of a painting on one grid, indexed x + y * ncols with y running north.</summary>
+        /// <summary>
+        /// The four places of a painting on one grid, indexed x + y * ncols with y running north. Only the ignition area and
+        /// the trigger buffer are moved; the WUI area and initial ignition of an older painting are read to be counted.
+        /// </summary>
         public sealed class Masks
         {
             public int Ncols;
@@ -279,21 +290,10 @@ namespace PREACT.Utility
                 sourceIndex[k] = CellOf(source, sx[k], sy[k]);
             }
 
+            //The retired WUI area and initial ignition are not moved (null: written empty).
             var result = new Masks { Ncols = target.Ncols, Nrows = target.Nrows };
-            result.WuiArea = Sample(masks.WuiArea, sourceIndex, targetCells);
             result.RandomIgnition = Sample(masks.RandomIgnition, sourceIndex, targetCells);
-            result.InitialIgnition = Sample(masks.InitialIgnition, sourceIndex, targetCells);
             result.ManualTriggerBuffer = Sample(masks.ManualTriggerBuffer, sourceIndex, targetCells);
-
-            //The initial ignition also keeps the new cell under each painted cell, so it cannot disappear.
-            if (Masks.Count(masks.InitialIgnition) > 0)
-            {
-                foreach (int k in ForwardCells(masks.InitialIgnition, source, target, reprojected))
-                {
-                    if (k >= 0) result.InitialIgnition[k] = true;
-                }
-            }
-
             return result;
         }
 
@@ -352,9 +352,7 @@ namespace PREACT.Utility
 
             var data = new Input.WildfireData
             {
-                WuiArea = moved.WuiArea,
                 RandomIgnition = moved.RandomIgnition,
-                InitialIgnition = moved.InitialIgnition,
                 ManualTriggerBuffer = moved.ManualTriggerBuffer,
             };
 
@@ -380,10 +378,10 @@ namespace PREACT.Utility
                 Source = source,
                 Target = target,
                 Reprojected = reprojected,
-                WuiArea = CountOf(masks.WuiArea, moved.WuiArea, source, target, reprojected),
                 IgnitionArea = CountOf(masks.RandomIgnition, moved.RandomIgnition, source, target, reprojected),
-                InitialIgnition = CountOf(masks.InitialIgnition, moved.InitialIgnition, source, target, reprojected),
                 TriggerBuffer = CountOf(masks.ManualTriggerBuffer, moved.ManualTriggerBuffer, source, target, reprojected),
+                LeftOutWuiCells = Masks.Count(masks.WuiArea),
+                LeftOutInitialIgnitionCells = Masks.Count(masks.InitialIgnition),
             };
         }
 

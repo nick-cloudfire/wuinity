@@ -30,6 +30,11 @@ is refused while a trigger campaign of the same scenario is running, because eve
 
 ## Building a case, step by step
 
+Before anything is downloaded or computed, the build checks that the case will have a fuel model — a fuel raster
+the scenario names that exists, or one the case already holds — and refuses at once without one, naming the file
+`[ELMFIRE] FuelModelFile` points at when it is not there. Nothing can make a fuel model, and a case without one
+used to fail only in its validation, after the DEM, the ERA5 archive and minutes of WindNinja.
+
 1. **The padded domain.** The evacuation domain (`[Simulation] LowerLeftLatLon` and `DomainSize`) grown by
    `[ELMFIRE] PaddingMetres` (2000 m) on every side. A fire is free to burn beyond the evacuation domain, and a
    fire clipped at its edge understates exactly the spread a trigger boundary measures.
@@ -64,7 +69,11 @@ is refused while a trigger campaign of the same scenario is running, because eve
    removes the marker.
 6. **Canopy** layers nobody supplied are written as zeros: ELMFIRE refuses to start without them, and zero means
    surface fire only — no crown fire. The build says so.
-7. **Painted areas** become `ignition_mask.tif`, `wui_area.tif` and an explicit ignition ([below](#painted-areas)).
+7. **Painted areas**: the ignition area becomes `ignition_mask.tif` ([below](#painted-areas)).
+   **The WUI area**, `wui_area.tif`, is the union of the evacuation groups' areas — their painted masks or
+   shapefiles — on the case grid: 1 where a cell's centre is in a group. It is written by every build (it is
+   derived, like the terrain), with the groups and the cell count in `case_sources.txt` (`WuiAreaGroups`,
+   `WuiAreaCells`); a scenario without a group that has an area gets none, and an old `wui_area.tif` is removed.
 8. **Ignition points** (`[IgnitionPoint]`) are measured in the case's CRS. One outside the grid is dropped and
    reported with both coordinates — never moved to the edge, which would start a fire nobody asked for.
 9. **The ignition mask**: without a painted or named one, an all-ones mask (ignite anywhere). It is then
@@ -83,8 +92,7 @@ is refused while a trigger campaign of the same scenario is running, because eve
     plausible fire of the wrong ground. A case that fails is left on disk to inspect, and not run.
 
 A build from the GUI then writes onto the scenario (save it to keep them): `[Landscape] ElevationFile`,
-`SlopeFile` and `AspectFile` become the case's `dem/slp/asp.tif`, `[kPERIL] WuiAreaFile` becomes
-`elmfire/inputs/wui_area.tif` when the build wrote one, and `[Weather] WeatherFile` and `WeatherAnchorDateTime`
+`SlopeFile` and `AspectFile` become the case's `dem/slp/asp.tif`, and `[Weather] WeatherFile` and `WeatherAnchorDateTime`
 point at the archive and the day the weather was drawn from. `build-case` prints these keys instead of writing
 them.
 
@@ -99,7 +107,7 @@ them.
 | `cc`, `ch`, `cbh`, `cbd` | `Canopy*File`, else `CanopyDatasetFolder` (FIRE-RES), else zeros | |
 | `bldg_area_avg`, `bldg_separation_distance`, `bldg_nonburnable_frac`, `bldg_footprint_frac`, `bldg_fuel_model` | `Building*File` | The building spread model is switched on only with all five (the external pipeline's `baa`, `ssd`, `nbf_h`, `ff_h`, `bfm_h` are recognised too). |
 | `ignition_mask` | the painted ignition area, else `IgnitionMaskFile`, else all ones | Restricted to burnable fuel. |
-| `wui_area` | the painted WUI area | What k-PERIL protects. |
+| `wui_area` | the evacuation groups (union of their masks or shapefiles) | What k-PERIL protects and a campaign aims at. Never carried from an old grid: made again on the new one. |
 | `barriers` | `BarriersFile` | `USE_BARRIERS` is written on only when there is one. |
 | `sdi`, `erc`, `pyromes`, `land_value`, `population_density`, `real_estate_value` | the matching `[ELMFIRE]` key | Nothing produces these; each switch that needs one is written on only when the case has it. |
 | `ws`, `wd`, `m1`, `m10`, `m100` | the weather chain | |
@@ -154,10 +162,18 @@ grid). Canopy is zero unless you name it.
 
 ## Painted areas
 
-Fire > Fire areas paints three masks on the fire grid: the **WUI area** (what the trigger boundary protects), the
-**ignition area** (where fires may start) and an **initial ignition**. They are saved in the scenario's `.gfi`
-(`[WildfireModule] GraphicalFireInputFile`). An ELMFIRE scenario is painted on the case's `dem.tif`, so the case
-has to exist before painting.
+Fire > Fire areas paints one mask on the fire grid: the **ignition area**, where a campaign's fires may start. It
+is saved in the scenario's `.gfi` (`[WildfireModule] GraphicalFireInputFile`). An ELMFIRE scenario is painted on
+the case's `dem.tif`, so the case has to exist before painting.
+
+Two masks it used to paint are gone. The **WUI area** is the evacuation groups' area (`wui_area.tif`, built from
+the groups — [above](#building-a-case-step-by-step)), so a painted one only duplicated it and could disagree with
+it. A painted **initial ignition** was an ignition point drawn with a brush and reduced to its centroid; place an
+`[IgnitionPoint]` instead. An older `.gfi` that holds either still opens: its WUI area is ignored with a note,
+and its initial-ignition cells become one `[IgnitionPoint]` at their centroid when the scenario is read (the point
+the build used to ignite), with a note — unless the scenario has ignition points of its own, which won over a
+painted initial ignition before too. Save the scenario to keep the point; saving the painted areas again leaves
+both old masks out, and a build or a move of the painting never uses them.
 
 At build time the painting is placed on:
 
@@ -169,23 +185,21 @@ At build time the painting is placed on:
 If none fits, the build fails: `The painted areas in <file> are 566x541 cells, but the fire-case grid is
 706x681 and the landscape raster mati_dem.tif is 616x590, so there is no telling which ground they were painted
 on. Move the painting onto the fire-case grid (the GUI's workflow step 6 offers it when it knows the grid it was
-painted on) or repaint the ignition and WUI areas on it, then build again.` A painting of the right size whose
-record puts it elsewhere is refused the same way, with how the grids differ (`... starts 300 m west of ...`), by
-the build, the painter and a run. A painting placed on the wrong grid would shear into different ground, and
-skipping it silently would leave the case with no WUI area.
+painted on) or repaint the ignition area on it, then build again.` A painting of the right size whose record
+puts it elsewhere is refused the same way, with how the grids differ (`... starts 300 m west of ...`), by the
+build and the painter. A painting placed on the wrong grid would shear into different ground, and skipping it
+silently would leave the case without the ignition area a campaign draws from. A painting with no ignition area
+(only an older WUI area, say) is not placed at all.
 
 **Moving a painting onto the case grid.** When step 6 finds the painting on another grid it can locate (the
 `[Landscape]` raster, `inputs/_previous_grid/dem.tif`, the scenario's downloaded DEM), it offers **Move painting
 onto the fire-case grid**. Every target cell takes the value of the source cell its centre falls in, reprojected
-when the two grids' CRSs differ; every painted initial-ignition cell marks the target cell under it, so a small
-ignition cannot vanish. It writes `<stem>_<W>x<H>.gfi` beside the original (never over it) and points the
-scenario at the new file. On Mati (616 × 590 cells of 27.6 m onto 566 × 541 of 30 m) the WUI area went from 7383
-to 6260 cells, 5.626 to 5.634 km², and the ignition area from 161543 to 135734 cells. A GUI build that re-cuts
-the grid moves the saved painting along by itself, the same way.
+when the two grids' CRSs differ. It writes `<stem>_<W>x<H>.gfi` beside the original (never over it) and points the
+scenario at the new file; an older WUI area or initial ignition in it is left out and said. On Mati (616 × 590
+cells of 27.6 m onto 566 × 541 of 30 m) the ignition area went from 161543 to 135734 cells. A GUI build that
+re-cuts the grid moves the saved painting along by itself, the same way.
 
-What each mask becomes: the ignition area → `ignition_mask.tif` (then restricted to burnable fuel); the WUI area
-→ `wui_area.tif`; the initial ignition → one explicit ignition at its centroid, which turns ELMFIRE's random
-ignition off. Placed `[IgnitionPoint]`s win over a painted initial ignition. An empty mask counts as "not
+The ignition area becomes `ignition_mask.tif` (then restricted to burnable fuel). An empty mask counts as "not
 painted".
 
 ## The namelist
@@ -273,8 +287,21 @@ A case's weather is a **historical peak fire-weather day**:
 Each stage falls back to uniform values on its own (`--wind`, `--wind-dir`, `--m1/--m10/--m100`) and says so;
 `--no-climatology` writes uniform weather deliberately.
 
-The weather is **kept** by later builds when it covers the fire. A run whose fire is longer than the case's
-weather extends it by rebuilding the weather (one WindNinja solve per hour of fire); with a `NamelistTemplate`
+The weather is **kept** by later builds when it covers the fire and was made for its start hour:
+`case_sources.txt` records what it was made for (`WeatherStart`, `WeatherHours`, `WeatherSeed`, the day it came from
+as `WeatherDay`, and `WeatherDate` when a day was named), and a build for another start hour of day makes it again.
+A case built before that record existed is judged by its band count alone.
+
+**Rebuild weather only** (workflow step 5; `build-case --weather-only`) makes the five rasters again for the
+scenario's current start, fire duration and draw, and changes nothing else: no layer is warped or re-cut, no mask
+placed. The case's own `elmfire.data` keeps every key but its time base (`CURRENT_YEAR`, `BAND_ONE_HOUR_OF_YEAR`,
+`HOUR_OF_YEAR`, `FORECAST_START_HOUR`, `SIMULATION_TSTOP`) and its weather band keys, which are fitted to the new
+weather; when it is the namelist the last build wrote, the record of its hash follows it, so the next build does not
+take it for a hand edit. A `NamelistTemplate` is left alone (a run fits its band keys). It refuses a case whose grid
+no longer covers the scenario's padded domain — that needs a full build — and a stop leaves the old weather in place.
+
+A run whose fire is longer than the case's weather makes the weather again in the same way (one WindNinja solve per
+hour of fire), and nothing else; with a `NamelistTemplate`
 the run is refused before ELMFIRE starts instead, naming both numbers (`the weather covers 24 h (24 bands) and the
 fire runs 30 h`), since that case is the user's to rebuild. The check is made on the namelist as it will run - its
 stop time and its band keys - so a band key a namelist was not fitted to is named too. A one-band series is legal

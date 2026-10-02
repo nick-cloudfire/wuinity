@@ -7,10 +7,10 @@ namespace PREACT.Utility
     /// Turns the masks painted in Unity's <c>Painter</c> into the georeferenced rasters the ELMFIRE
     /// case pipeline consumes.
     ///
-    /// The brush itself already exists (<c>WUInity/Assets/WUInity/Core/Painter.cs</c>, modes
-    /// <c>WUIArea</c> / <c>RandomIgnitionArea</c> / <c>InitialIgnition</c>) and what it paints is
-    /// not merely a Unity texture — it is written through to <c>WildfireData</c>'s <c>bool[]</c>
-    /// arrays and persisted by <see cref="Input.GraphicalFireInput"/>. This reads that file back
+    /// The brush itself already exists (<c>WUInity/Assets/WUInity/Core/Painter.cs</c>, which paints the
+    /// random-ignition area) and what it paints is not merely a Unity texture — it is written through to
+    /// <c>WildfireData</c>'s <c>bool[]</c> arrays and persisted by <see cref="Input.GraphicalFireInput"/>. An older
+    /// file's WUI area and initial ignition are read here only to be noted: neither is placed any more. This reads that file back
     /// and reprojects the masks, so the whole path runs outside Unity: paint in the editor, save,
     /// then build the case from the command line.
     ///
@@ -22,7 +22,7 @@ namespace PREACT.Utility
     /// </summary>
     public static class PaintedMaskExporter
     {
-        /// <summary>The four masks <see cref="GraphicalFireInput.SaveGraphicalFireInput"/> writes, in file order.</summary>
+        /// <summary>The four places of a painting, in file order (the WUI area and initial ignition empty in a file written now).</summary>
         public class Masks
         {
             public int Ncols, Nrows;
@@ -127,58 +127,6 @@ namespace PREACT.Utility
             {
                 GeoTiffRasterWriter.WriteBand(sourceGrid, data, temp);
                 RasterHarmonizer.WarpToGrid(temp, outputPath, targetGrid, "near");
-            }
-            finally
-            {
-                try { if (File.Exists(temp)) File.Delete(temp); } catch { }
-            }
-        }
-
-        /// <summary>
-        /// The centre of the painted initial-ignition cells, in the target grid's own coordinates —
-        /// ready for the namelist's <c>X_IGN(1)</c>/<c>Y_IGN(1)</c>.
-        ///
-        /// Taken as the centroid of every painted cell rather than the first one found, so a brush
-        /// stroke a few cells wide ignites at its middle rather than at whichever corner happened
-        /// to be scanned first. Returns false when nothing was painted.
-        /// </summary>
-        public static bool TryGetIgnitionPoint(bool[] mask, Masks shape, MasterGrid sourceGrid, MasterGrid targetGrid,
-                                               out double x, out double y)
-        {
-            x = y = 0;
-            if (mask == null) return false;
-
-            //Resolved through the warped raster rather than by transforming the painted cell's
-            //coordinates directly: that reuses the one reprojection path the rest of the pipeline
-            //uses, so the point cannot land somewhere the exported mask does not agree with.
-            string temp = Path.Combine(Path.GetTempPath(), "preact_initial_ignition_" + Guid.NewGuid().ToString("N") + ".tif");
-            try
-            {
-                Export(mask, shape, sourceGrid, targetGrid, temp);
-
-                float[,] warped = AscRaster.ReadGeoTiff(temp, out AscRaster.Header _, out bool ok);
-                if (!ok || warped == null) return false;
-
-                double sumX = 0, sumY = 0;
-                int n = 0;
-                for (int cx = 0; cx < targetGrid.Header.Ncols; ++cx)
-                {
-                    for (int cy = 0; cy < targetGrid.Header.Nrows; ++cy)
-                    {
-                        if (warped[cx, cy] <= 0f) continue;
-                        sumX += cx;
-                        sumY += cy;
-                        ++n;
-                    }
-                }
-
-                if (n == 0) return false;
-
-                //cell centres, not corners
-                double cs = targetGrid.Header.CellSize;
-                x = targetGrid.XMin + (sumX / n + 0.5) * cs;
-                y = targetGrid.YMin + (sumY / n + 0.5) * cs;
-                return true;
             }
             finally
             {

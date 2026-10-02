@@ -9,19 +9,26 @@ using WUInity.Workflow;
 namespace Assets.WUInity.GUI.DearIMGUI.Editors
 {
     /// <summary>
-    /// Where the fire starts and what it threatens: the painted WUI area, ignition area and initial ignition,
-    /// and the ignition points. Workflow step 6.
+    /// Where fires start: the painted ignition area a campaign draws from, and the ignition points a single run starts
+    /// at. Workflow step 6.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// These were two places - a paint window reached from a button in the "Ignitions and areas" tab, and the
     /// ignition list in that tab - and neither said which grid it was on. For an ELMFIRE scenario that grid is
     /// now always the fire case's dem.tif, and until the case exists this window says so and offers to build
     /// it instead of painting on whatever raster happened to be found first.
+    /// </para>
+    /// <para>
+    /// It painted a WUI area and an initial ignition too. The WUI area duplicated the evacuation groups, which is what
+    /// the trigger boundary protects, and the initial ignition was an ignition point drawn with a brush and reduced to
+    /// its centroid; both are gone, and the window says where the WUI area comes from instead.
+    /// </para>
     /// </remarks>
     public static class FireAreasWindow
     {
         private static bool _isOpen;
-        private static global::WUInity.Painter.PaintMode _mode = global::WUInity.Painter.PaintMode.WUIArea;
+        private const global::WUInity.Painter.PaintMode Mode = global::WUInity.Painter.PaintMode.RandomIgnitionArea;
         private static bool _adding = true;
         private static bool _subscribed;
 
@@ -30,29 +37,6 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             get { return PreactGUI.WUInity != null && PreactGUI.WUInity.IsPaintingFireArea; }
         }
 
-        private static readonly global::WUInity.Painter.PaintMode[] Modes =
-        {
-            global::WUInity.Painter.PaintMode.WUIArea,
-            global::WUInity.Painter.PaintMode.RandomIgnitionArea,
-            global::WUInity.Painter.PaintMode.InitialIgnition,
-        };
-
-        private static readonly string[] Labels =
-        {
-            "WUI area (what the trigger boundary protects)",
-            "Ignition area (where a fire may start)",
-            "Initial ignition (where this one starts)",
-        };
-
-        private static readonly string[] Explanations =
-        {
-            "k-PERIL back-propagates from the fire to this area, and the case build writes it as wui_area.tif. "
-            + "Without it the trigger boundary has nothing to protect.",
-            "The case build writes this as ignition_mask.tif, which is where a campaign draws its ignitions from. "
-            + "Unpainted means anywhere burnable in the domain.",
-            "One fire, at the middle of what is painted here. For a single named point, an ignition point below "
-            + "is exact.",
-        };
 
         public static void Open()
         {
@@ -93,6 +77,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                     DrawPainting(input);
                     ImGui.SeparatorText("Ignition points");
                     DrawIgnitionPoints(input);
+                    DrawWuiArea(input);
                     ImGui.EndDisabled();
                 }
             }
@@ -182,23 +167,10 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                 }
             }
 
-            ImGui.SeparatorText("Area being painted");
-            for (int i = 0; i < Modes.Length; ++i)
-            {
-                if (ImGui.RadioButton(Labels[i] + "###mode" + i, _mode == Modes[i]))
-                {
-                    _mode = Modes[i];
-                    if (Painting)
-                    {
-                        PreactGUI.WUInity.StartPainter(_mode);
-                        ApplyBrushColour();
-                    }
-                }
-            }
-
-            int selected = System.Array.IndexOf(Modes, _mode);
+            ImGui.SeparatorText("Ignition area (where a fire may start)");
             ImGui.PushTextWrapPos(0f);
-            ImGui.TextDisabled(Explanations[selected < 0 ? 0 : selected]);
+            ImGui.TextDisabled("The case build writes this as ignition_mask.tif, which is where a campaign draws its ignitions "
+                + "from. Unpainted means anywhere burnable in the domain.");
             ImGui.PopTextWrapPos();
 
             ImGui.SeparatorText("Brush");
@@ -262,8 +234,9 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                 if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
                 {
                     ImGui.SetTooltip(apply == null ? "" : !apply.Enabled ? apply.Tooltip
-                        : "Builds the case again so these areas become its ignition_mask.tif and wui_area.tif. Its other layers "
-                          + "are kept unless its grid has to be re-cut, and the namelist is written again from the scenario.");
+                        : "Builds the case again so the ignition area becomes its ignition_mask.tif (and the evacuation groups "
+                          + "its wui_area.tif). Its other layers are kept unless its grid has to be re-cut, and the namelist is "
+                          + "written again from the scenario.");
                 }
             }
 
@@ -274,7 +247,8 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                 Fields.Warn("Unsaved strokes - Save painted areas, or File > Save.");
             }
 
-            //The workflow's verdict on what is painted, so the problems are said where they are fixed.
+            //The workflow's verdict on what is painted, so the problems are said where they are fixed - and what an older
+            //painting holds that is no longer used.
             WorkflowStep areas = WorkflowService.Step(WorkflowStepId.FireAreas);
             if (areas != null)
             {
@@ -282,6 +256,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                 {
                     //The painting on another grid is said, with its button, under Grid above.
                     if (issue.Level == IssueLevel.Error && issue.Fix != WorkflowAction.MovePaintingToCaseGrid) Fields.Caution(issue.Text);
+                    else if (issue.Level == IssueLevel.Info && issue.Text.Contains("no longer used")) Fields.Hint(issue.Text);
                 }
             }
         }
@@ -297,8 +272,8 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
 
             if (ignitions.Count == 0)
             {
-                Fields.Hint("None. ELMFIRE then starts from the painted initial ignition, or draws from the",
-                            "ignition area.");
+                Fields.Hint("None. A single run then starts no fire of its own unless the namelist draws one",
+                            "(RANDOM_IGNITIONS, from the ignition area); a campaign always draws its own.");
             }
 
             int remove = -1;
@@ -328,12 +303,38 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
             }
         }
 
+        /// <summary>
+        /// Where the WUI area comes from: the evacuation groups, not anything painted here. Said here because this is
+        /// where it used to be painted.
+        /// </summary>
+        private static void DrawWuiArea(PREACTInput input)
+        {
+            ImGui.SeparatorText("WUI area (what the trigger boundary protects)");
+            int groups = 0, withArea = 0;
+            foreach (PREACT.Evacuation.EvacuationGroupInput g in input.Evacuation.EvacuationGroupInputs.Values)
+            {
+                ++groups;
+                if (!string.IsNullOrEmpty(g.MaskFile) || !string.IsNullOrEmpty(g.ShapeFile)) ++withArea;
+            }
+
+            Fields.Hint("The WUI area is the evacuation groups' area: k-PERIL protects them (combined, or one",
+                        "boundary per group), and the case build writes their union as wui_area.tif.");
+            ImGui.TextDisabled(groups == 0 ? "The scenario has no evacuation group yet (step 9)."
+                : $"{withArea} of {groups} evacuation group(s) have an area.");
+            if (ImGui.Button("Evacuation groups (step 9)"))
+            {
+                WorkflowService.Perform(WorkflowModelHasGrid() ? WorkflowAction.PaintGroups : WorkflowAction.OpenGroups);
+            }
+        }
+
+        private static bool WorkflowModelHasGrid() => WorkflowService.Model?.PaintGrid != null;
+
         private static void StartPainting()
         {
             PreactGUI.WUInity.ShowUTMMap();
             //Through the manager, so the painter object is switched on, the right map plane is shown and a
             //left-drag paints instead of panning the map.
-            PreactGUI.WUInity.StartPainter(_mode);
+            PreactGUI.WUInity.StartPainter(Mode);
 
             //Setting a mode can fail for want of a grid, which the painter reports rather than throws.
             if (!PreactGUI.WUInity.Painter.CanPaint)
@@ -356,18 +357,7 @@ namespace Assets.WUInity.GUI.DearIMGUI.Editors
                 return;
             }
 
-            if (_mode == global::WUInity.Painter.PaintMode.WUIArea)
-            {
-                PreactGUI.WUInity.Painter.SetWUIAreaColor(_adding);
-            }
-            else if (_mode == global::WUInity.Painter.PaintMode.RandomIgnitionArea)
-            {
-                PreactGUI.WUInity.Painter.SetRandomIgnitionAreaColor(_adding);
-            }
-            else
-            {
-                PreactGUI.WUInity.Painter.SetInitialIgnitionAreaColor(_adding);
-            }
+            PreactGUI.WUInity.Painter.SetRandomIgnitionAreaColor(_adding);
         }
 
         private static void Save(PREACTInput input)

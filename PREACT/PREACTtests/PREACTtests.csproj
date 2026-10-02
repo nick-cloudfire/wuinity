@@ -44,6 +44,10 @@
     <Reference Include="osr_csharp">
       <HintPath>..\PREACTcore\Runtimes\Native\GDAL\osr_csharp.dll</HintPath>
     </Reference>
+    <!-- To write the shapefile an evacuation group is read from (CaseBuildTests). -->
+    <Reference Include="ogr_csharp">
+      <HintPath>..\PREACTcore\Runtimes\Native\GDAL\ogr_csharp.dll</HintPath>
+    </Reference>
   </ItemGroup>
 
 </Project>

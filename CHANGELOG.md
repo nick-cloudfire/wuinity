@@ -30,6 +30,48 @@
 - The "names no SUMO configuration" warning is given once, not on every destination click; the map rereads the
   network after the roads step builds it.
 
+### Case build and fire areas
+
+- A case build checks for a fuel model before it downloads or computes anything, and refuses at once without one
+  (it used to fail in its validation, after ERA5 and minutes of WindNinja). Workflow step 5 is blocked by step 4
+  when `[ELMFIRE] FuelModelFile` names a file that is not there.
+- **Rebuild weather only** (workflow step 5, `PREACTcli build-case --weather-only`, and a run whose fire outlasts the
+  case's weather): makes `ws/wd/m1/m10/m100` again for the scenario's start, duration and draw and changes nothing
+  else; `elmfire.data` keeps every key but its time base and weather band keys. "Rebuild the weather now" used to
+  rebuild the whole case.
+- `case_sources.txt` records what the weather was made for (`WeatherStart`, `WeatherHours`, `WeatherSeed`,
+  `WeatherDay`); a build for another start hour makes the weather again, and step 5 says so.
+- Step 5 no longer reports every case's weather one band short (it asked for ceil(hours) + 1 bands).
+- The ELMFIRE settings (Fire behaviour, and the fire duration, cell size and padding) show two decimals, and the exact
+  value in the tooltip when that rounds it; nothing is rounded in the scenario or the namelist.
+- **The WUI area is the evacuation groups.** The case build writes `wui_area.tif` as the union of the groups' areas
+  (painted masks or shapefiles) on every build; a painted WUI area in the `.gfi` is left out with a note. k-PERIL
+  protects the groups (`WuiAreaSource` now defaults to `EvacuationGroupsCombined`; `Raster` reads a `WuiAreaFile` of
+  your own, and without one is the groups combined) and no longer falls back to a painted mask. The build no longer
+  records `[kPERIL] WuiAreaFile`.
+- A campaign checks that the case's `wui_area.tif` is the groups' union as they are now, and refuses a stale one;
+  every realization protects that file and a fire that does not reach it counts as not threatened, whatever the
+  `WuiAreaSource` (it was checked for `Raster` only, so an unreached combined-groups realization counted as failed).
+- Evacuation groups from a shapefile keep their rings apart (holes and multipolygons were joined into one outline)
+  and are read in the layer's CRS.
+- **Fire areas paints only the ignition area.** The WUI-area and initial-ignition brushes are gone; the `.gfi` keeps
+  its four layers for older versions but no longer writes either of them. An old `.gfi`'s painted WUI area is
+  ignored with one note when the scenario loads. Its initial ignition becomes one `[IgnitionPoint]` at the painted
+  cells' centroid (with a note), unless the scenario already has ignition points; the case build places points
+  only. Workflow step 6 covers the ignition area and points alone (its Apply to case waits for a painted ignition
+  area), step 9 shows the WUI area the build made from the groups (and offers to apply them when the case's
+  `wui_area.tif` is stale), step 10's k-PERIL setup protects the groups, and step 13 waits for a `wui_area.tif`
+  that is the groups' union. The Fire menu's item is **Fire areas and ignition...**.
+- Painting is quieter: "Build the fire case first" (and any other reason there is no grid to paint on) is said once,
+  not three or four times per click; **Apply to case** puts the brush down without logging "Painting stopped";
+  **Save group areas** is enabled only when something was painted since the last save, and a stroke over cells
+  that already hold what it paints no longer counts as unsaved, so a save no longer writes (and logs) every group
+  mask twice.
+- Workflow step 9 no longer calls a group mask on another grid than the fire grid an error (which blocked a run): the
+  group's households and the WUI area read the mask where it lies. It is a warning that painting the group starts
+  from nothing on the fire grid.
+
+## v1.0
 
 The first versioned release of WUInity / PREACT. It is compared here with the code as it stood before the
 v1 work (commit `8d90a440`). v1 fixes a number of errors that changed results, so **read the first two

@@ -82,6 +82,13 @@ namespace PREACT.Utility
             /// Any CRS/resolution — each is warped onto the master grid.</summary>
             public Dictionary<string, string> UserRasters = new Dictionary<string, string>();
 
+            /// <summary>
+            /// Source rasters the scenario names that are not there, by stem, as they were named - left out of
+            /// <see cref="UserRasters"/>, and kept only so a build that cannot go on without one (the fuel model) can
+            /// say which file it looked for.
+            /// </summary>
+            public Dictionary<string, string> UnresolvedSourceRasters = new Dictionary<string, string>();
+
             /// <summary>Stems in <see cref="UserRasters"/> that are categorical and must be
             /// resampled nearest-neighbour rather than bilinear (fuel model codes, mostly).
             /// The ignition mask is in here because interpolating it would invent fractional
@@ -122,6 +129,21 @@ namespace PREACT.Utility
             public string PaintedMasksPath;
             public string PaintedMasksGridPath;
 
+            /// <summary>
+            /// The scenario's evacuation groups' areas, whose union the case keeps as <c>wui_area.tif</c>: the WUI area
+            /// k-PERIL protects and a trigger campaign aims its wind at and checks its fires against. An empty list means
+            /// the scenario has none, and a <c>wui_area.tif</c> an earlier build left is removed; null (a bare API call
+            /// that says nothing about groups) leaves the case's WUI area as it is.
+            /// </summary>
+            /// <remarks>
+            /// The groups were already what the trigger boundary tab offered k-PERIL; a second, separately painted WUI
+            /// area in Fire areas was what the case wrote, and the two could protect different ground.
+            /// </remarks>
+            public List<Evacuation.EvacuationGroupArea> EvacuationGroupAreas;
+
+            /// <summary>The frame <see cref="EvacuationGroupAreas"/> are in: the scenario's simulation coordinates.</summary>
+            public Input.SimulationData Simulation;
+
             /// <summary>Where the case is written. Must be empty or <see cref="Force"/> must be set.</summary>
             public string OutputDirectory;
 
@@ -159,8 +181,8 @@ namespace PREACT.Utility
             /// transform is <see cref="ApplyIgnitionPoints"/>'s job, and doing it anywhere else is what
             /// put zone-35 eastings into a zone-34 case by hand.
             ///
-            /// These win over a painted initial ignition, which is a brush stroke reduced to its
-            /// centroid, and they switch <c>RANDOM_IGNITIONS</c> off.
+            /// They switch <c>RANDOM_IGNITIONS</c> off. (A painted initial ignition, which was a brush stroke reduced to
+            /// its centroid, is one of these now: the scenario's load turns an old one into a point.)
             /// </summary>
             public List<IgnitionPoint> IgnitionPoints = new List<IgnitionPoint>();
 
@@ -263,9 +285,8 @@ namespace PREACT.Utility
             /// <summary>Anything the builder had to work around, surfaced so it is not silent.</summary>
             public List<string> Fallbacks = new List<string>();
 
-            /// <summary>Every explicit ignition, in the case's own coordinates - from the scenario's
-            /// ignition points, or failing that from a painted initial ignition. Empty means ELMFIRE
-            /// draws its own from the ignition mask.</summary>
+            /// <summary>Every explicit ignition, in the case's own coordinates - the scenario's ignition points. Empty
+            /// means ELMFIRE draws its own from the ignition mask.</summary>
             public List<PlacedIgnition> Ignitions = new List<PlacedIgnition>();
 
             public bool HasIgnitionPoint => Ignitions.Count > 0;
@@ -282,8 +303,12 @@ namespace PREACT.Utility
             /// <summary>Where a hand-edited namelist was set aside before regenerating, or null.</summary>
             public string KeptNamelistPath;
 
-            /// <summary>The exported painted WUI area, for k-PERIL's WuiAreaFile; null if none was painted.</summary>
+            /// <summary>The case's WUI area, the union of the evacuation groups; null when it has none.</summary>
             public string WuiAreaFile;
+
+            /// <summary>The groups the WUI area was made from (comma-separated), and how many cells of the grid it covers.</summary>
+            public string WuiAreaGroups;
+            public int WuiAreaCells;
 
             /// <summary>
             /// Where the scenario's painting was placed from when that was not the case grid - "the landscape raster
@@ -295,6 +320,13 @@ namespace PREACT.Utility
 
             /// <summary>What the history-based weather chain actually managed to use, and where it fell back.</summary>
             public WeatherRasterPipeline.Result Weather;
+
+            /// <summary>
+            /// What the case's weather was made for (recorded in case_sources.txt): this build's when it made the weather,
+            /// the record of the build that did when it kept it, null when nothing records it (a case built before the
+            /// record existed).
+            /// </summary>
+            public WeatherRecord WeatherRecord;
 
             /// <summary>
             /// Whether the case's rasters actually agree with each other, checked once the case is complete.
@@ -317,6 +349,12 @@ namespace PREACT.Utility
             //start-up, on the first run (e2e N2).
             string noBuildingTable = DescribeMissingBuildingTable(o, inputs);
             if (noBuildingTable != null) throw new InvalidDataException(char.ToUpperInvariant(noBuildingTable[0]) + noBuildingTable.Substring(1) + ".");
+
+            //The fuel model too, and for the same reason: the case is worthless without one, and the build used to find
+            //that out at its very end - in its validation, after the DEM download, the ERA5 archive and some minutes of
+            //WindNinja (Auburn2: "The case carries neither fbfm40.tif nor fbfm13.tif" at 22:57:59, three minutes in).
+            string noFuel = DescribeMissingFuel(o, inputs);
+            if (noFuel != null) throw new InvalidDataException(noFuel);
 
             //---------------------------------------------------------------- 1. DEM
             //Padded so the fire can grow past the evacuation domain's edge; ELMFIRE reads the
@@ -527,9 +565,12 @@ namespace PREACT.Utility
             //than being overwritten by the ignite-anywhere fallback.
             ApplyPaintedMasks(o, result, inputs, grid, previousGridDirectory, Log);
 
+            //---------------------------------------------------------------- 5c'. WUI area
+            //The evacuation groups, together, on this grid - written on every build, since it is derived (like the
+            //terrain) and the groups may have been painted again since the last one.
+            WriteWuiArea(o, result, inputs, grid, Log);
+
             //---------------------------------------------------------------- 5d. Ignition points
-            //After the painted masks, because an explicitly placed point supersedes the centroid of a
-            //painted stroke.
             ApplyIgnitionPoints(o, result, grid, Log);
 
             //---------------------------------------------------------------- 6. Ignition mask
@@ -564,14 +605,18 @@ namespace PREACT.Utility
             //of a case's own wind and freshly sampled moisture is not a description of any day. Kept only when
             //the series covers the fire: ELMFIRE refuses a multi-band series shorter than SIMULATION_TSTOP ("Not
             //enough weather bands"), and a case kept at 8 bands for a 72 h fire failed that way on every run.
-            double secondsPerBand = o.Namelist != null && o.Namelist.DT_METEOROLOGY > 0 ? o.Namelist.DT_METEOROLOGY : 3600.0;
-            string keptWeatherProblem = DescribeKeptWeather(inputs, o.SimulationTstopSeconds, secondsPerBand);
+            //Also made again when it was made for another fire - another start hour, or another draw - which the case's
+            //record says (case_sources.txt); a case built before the record existed is judged by its band count alone.
+            double secondsPerBand = SecondsPerBand(o);
+            string keptWeatherProblem = DescribeKeptWeather(inputs, o.SimulationTstopSeconds, secondsPerBand)
+                                        ?? DescribeWeatherMadeForAnotherFire(o);
 
             if (keptWeatherProblem == null && !o.OverwriteExistingLayers && previousGridDirectory == null)
             {
                 Log("  weather: the case already has ws/wd/m1/m10/m100 covering the fire; keeping them.");
                 result.Reused.AddRange(ElmfireStems.Weather);
                 result.Written.AddRange(ElmfireStems.Weather);
+                result.WeatherRecord = ReadWeatherRecord(o.OutputDirectory);
                 WarnIfKeptWindIsUniform(ElmfireStems.Tif(inputs, ElmfireStems.WindSpeed), Log);
             }
             else
@@ -581,44 +626,9 @@ namespace PREACT.Utility
                     Log("  weather: " + keptWeatherProblem + "; building it again.");
                 }
 
-                Log("Building baseline weather (climatology -> WindNinja -> Nelson)...");
-
-                WeatherRasterPipeline.Options w = o.Weather ?? new WeatherRasterPipeline.Options();
-                w.Grid = grid;
-                w.InputsDirectory = inputs;
-                if (w.Cancelled == null) w.Cancelled = o.Cancelled;
-
-                //The weather series has to span the fire and be read at the interval it was written at.
-                //DT_METEOROLOGY comes from the namelist settings so the two cannot disagree - a series
-                //written hourly and read at any other interval is silently stretched in time.
-                w.SimulationStartDateTime = o.StartDateTime;
-                if (w.StartTimeZone == null) w.StartTimeZone = LocalTime.ZoneAt(o.LowerLeftLatLon.x, o.LowerLeftLatLon.y);
-                w.SimulationTstopSeconds = o.SimulationTstopSeconds;
-                w.SecondsPerBand = secondsPerBand;
-
-                //A single case wants the whole series, one band per hour of fire: the cap exists for campaigns.
-                w.MaxBands = 0;
-
-                //WindNinja is not resolved here: the pipeline probes for it itself when none is named, so no
-                //caller can forget to and quietly get a uniform wind field.
-
-                w.LatLon = new Vector2d(0.5 * (southWest.x + northEast.x), 0.5 * (southWest.y + northEast.y));
-                w.Log = o.Log;
-                if (string.IsNullOrEmpty(w.ArchiveCsvPath))
-                {
-                    //Beside the case rather than inside inputs/: it is a cache shared by every
-                    //realization, not one of ELMFIRE's inputs.
-                    w.ArchiveCsvPath = ArchivePath(o.OutputDirectory, o.Name);
-                }
-
-                result.Weather = await WeatherRasterPipeline.Run(w);
-                if (result.Weather.Cancelled)
-                {
-                    throw new OperationCanceledException("The case build was stopped while its weather was being made: "
-                        + "no wind was written (and no uniform field in its place), elmfire.data was not written again, "
-                        + "and the next build makes the weather.");
-                }
-                result.Written.AddRange(ElmfireStems.Weather);
+                await MakeWeather(o, result, grid, inputs, southWest, northEast, secondsPerBand,
+                    "The case build was stopped while its weather was being made: no wind was written (and no uniform field "
+                    + "in its place), elmfire.data was not written again, and the next build makes the weather.");
             }
 
             //---------------------------------------------------------------- 8. Loose files
@@ -683,6 +693,312 @@ namespace PREACT.Utility
             }
 
             return result;
+        }
+
+        /// <summary>
+        /// Makes the case's weather again - <c>ws</c>, <c>wd</c>, <c>m1</c>, <c>m10</c>, <c>m100</c> - for the fire
+        /// <paramref name="o"/> describes (its start, its duration and the draw of <see cref="Options.Weather"/>), and
+        /// changes nothing else: no DEM, fuel, canopy, mask or WUI area is made, warped or re-cut, and the namelist keeps
+        /// every key but its time base and weather band keys, which are fitted to the new weather.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// "Rebuild the weather now" used to rebuild the whole case - every layer checked, the painted areas placed again,
+        /// the namelist written again - to change five rasters that depend only on the grid, the terrain and the clock.
+        /// </para>
+        /// <para>
+        /// The case has to be on the scenario's grid: weather for a grid the scenario no longer asks for would be the
+        /// wrong answer made carefully, so that is refused and left to a full build. The namelist is fitted only when it is
+        /// the case's own <c>elmfire.data</c>: a <c>NamelistTemplate</c> is the user's file, and a run fits its band keys
+        /// to the weather itself. When <c>elmfire.data</c> is the one the last build wrote, the record of its hash follows
+        /// it, so the next build still knows it from a hand edit; a hand-edited one is fitted and stays a hand edit.
+        /// </para>
+        /// <para>
+        /// A stop (<see cref="Options.Cancelled"/>) before the wind is written leaves the case as it was - the five
+        /// rasters are written together or not at all - and throws <see cref="OperationCanceledException"/>.
+        /// </para>
+        /// </remarks>
+        public static async Task<Result> RebuildWeather(Options o)
+        {
+            if (string.IsNullOrEmpty(o.OutputDirectory)) throw new ArgumentException("OutputDirectory is required.");
+            void Log(string m) => o.Log?.Invoke(m);
+
+            string inputs = Path.Combine(o.OutputDirectory, InputsFolder);
+            string demPath = ElmfireStems.Tif(inputs, ElmfireStems.Dem);
+            if (!File.Exists(demPath))
+            {
+                throw new FileNotFoundException($"There is no case in {o.OutputDirectory} to rebuild the weather of (no "
+                    + "inputs/dem.tif): build the fire case first.", demPath);
+            }
+            if (IsCarryPending(inputs))
+            {
+                throw new InvalidDataException($"An earlier build set the case's old grid aside (inputs/{PreviousGridFolder}) "
+                    + "and did not finish carrying its layers onto the new one; build the whole case to finish that first.");
+            }
+
+            (Vector2d southWest, Vector2d northEast) = PaddedBounds(o);
+            MasterGrid grid = MasterGrid.FromRasterFile(demPath);
+            string mismatch = DescribeGridMismatch(grid, o, southWest, northEast);
+            if (mismatch != null)
+            {
+                throw new InvalidDataException($"The case's dem.tif is not this scenario's grid any more ({mismatch}), so its "
+                    + "weather cannot be rebuilt on its own: build the whole case, which cuts the grid again and carries the "
+                    + "other layers onto it.");
+            }
+
+            var result = new Result { Grid = grid, InputsDirectory = inputs };
+            Log($"Rebuilding the weather only: {o.SimulationTstopSeconds / 3600.0:0.##} h of fire from "
+                + $"{o.StartDateTime:yyyy-MM-dd HH:mm}, on the case's {grid.Header.Ncols}x{grid.Header.Nrows} grid; every "
+                + "other layer is left as it is.");
+            StopIfCancelled(o, "before its weather was rebuilt; the case is as it was.");
+
+            await MakeWeather(o, result, grid, inputs, southWest, northEast, SecondsPerBand(o),
+                "The weather rebuild was stopped before the wind was written; the case's weather is as it was.");
+
+            FitNamelistToWeather(o, result, Log);
+
+            var record = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (KeyValuePair<string, string> kv in WeatherRecord.Keys(result.WeatherRecord)) record[kv.Key] = kv.Value;
+            if (result.NamelistSha256 != null) record[GeneratedNamelistKey] = result.NamelistSha256;
+            UpdateManifest(o.OutputDirectory, record, Log);
+
+            string[] template = ReadTemplate(o.TemplateNamelistPath) ?? ReadTemplate(Path.Combine(o.OutputDirectory, "elmfire.data"));
+            result.FuelStem = ElmfireStems.FuelStem(template, inputs);
+            result.Validation = ElmfireCaseValidator.Validate(inputs, grid, result.FuelStem, OptionalStems(), Log);
+            return result;
+        }
+
+        /// <summary>DT_METEOROLOGY from the scenario's namelist settings: the interval the weather is written at and read at.</summary>
+        private static double SecondsPerBand(Options o)
+        {
+            return o.Namelist != null && o.Namelist.DT_METEOROLOGY > 0 ? o.Namelist.DT_METEOROLOGY : 3600.0;
+        }
+
+        /// <summary>
+        /// The weather chain for the case's grid and the fire <paramref name="o"/> describes, writing all five rasters into
+        /// <paramref name="inputs"/>; throws <see cref="OperationCanceledException"/> with <paramref name="stoppedMessage"/>
+        /// when stopped first. Shared by a full build and <see cref="RebuildWeather"/>, so the two make the same weather.
+        /// </summary>
+        private static async Task MakeWeather(Options o, Result result, MasterGrid grid, string inputs,
+            Vector2d southWest, Vector2d northEast, double secondsPerBand, string stoppedMessage)
+        {
+            o.Log?.Invoke("Building baseline weather (climatology -> WindNinja -> Nelson)...");
+
+            WeatherRasterPipeline.Options w = o.Weather ?? new WeatherRasterPipeline.Options();
+            w.Grid = grid;
+            w.InputsDirectory = inputs;
+            if (w.Cancelled == null) w.Cancelled = o.Cancelled;
+
+            //The weather series has to span the fire and be read at the interval it was written at.
+            //DT_METEOROLOGY comes from the namelist settings so the two cannot disagree - a series
+            //written hourly and read at any other interval is silently stretched in time.
+            w.SimulationStartDateTime = o.StartDateTime;
+            if (w.StartTimeZone == null) w.StartTimeZone = LocalTime.ZoneAt(o.LowerLeftLatLon.x, o.LowerLeftLatLon.y);
+            w.SimulationTstopSeconds = o.SimulationTstopSeconds;
+            w.SecondsPerBand = secondsPerBand;
+
+            //A single case wants the whole series, one band per hour of fire: the cap exists for campaigns.
+            w.MaxBands = 0;
+
+            //WindNinja is not resolved here: the pipeline probes for it itself when none is named, so no
+            //caller can forget to and quietly get a uniform wind field.
+
+            w.LatLon = new Vector2d(0.5 * (southWest.x + northEast.x), 0.5 * (southWest.y + northEast.y));
+            w.Log = o.Log;
+            if (string.IsNullOrEmpty(w.ArchiveCsvPath))
+            {
+                //Beside the case rather than inside inputs/: it is a cache shared by every
+                //realization, not one of ELMFIRE's inputs.
+                w.ArchiveCsvPath = ArchivePath(o.OutputDirectory, o.Name);
+            }
+
+            result.Weather = await WeatherRasterPipeline.Run(w);
+            if (result.Weather.Cancelled)
+            {
+                throw new OperationCanceledException(stoppedMessage);
+            }
+            result.Written.AddRange(ElmfireStems.Weather);
+            result.WeatherRecord = new WeatherRecord
+            {
+                Start = o.StartDateTime,
+                Hours = o.SimulationTstopSeconds / 3600.0,
+                Seed = w.Seed,
+                ForcedDate = w.ForceDate,
+                Day = result.Weather.Day?.Date,
+            };
+        }
+
+        /// <summary>
+        /// What a case's weather was made for, as <c>case_sources.txt</c> records it: the fire's start (band 1 is its hour
+        /// of day), its duration, and the draw - the seed, and the historical day when one was asked for. The day the
+        /// bands came from is recorded too, for whoever reads the file.
+        /// </summary>
+        public sealed class WeatherRecord
+        {
+            public DateTime Start;
+            public double Hours;
+            public int Seed;
+            public DateTime? ForcedDate;
+            public DateTime? Day;
+
+            internal const string StartKey = "WeatherStart", HoursKey = "WeatherHours", SeedKey = "WeatherSeed",
+                ForcedDateKey = "WeatherDate", DayKey = "WeatherDay";
+
+            /// <summary>Its keys and values for the manifest; every key with a null value for a null record (removed).</summary>
+            internal static IEnumerable<KeyValuePair<string, string>> Keys(WeatherRecord r)
+            {
+                string Date(DateTime? d) => d.HasValue ? d.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) : null;
+                yield return new KeyValuePair<string, string>(StartKey,
+                    r?.Start.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture));
+                yield return new KeyValuePair<string, string>(HoursKey, r?.Hours.ToString("0.###", CultureInfo.InvariantCulture));
+                yield return new KeyValuePair<string, string>(SeedKey, r?.Seed.ToString(CultureInfo.InvariantCulture));
+                yield return new KeyValuePair<string, string>(ForcedDateKey, r == null ? null : Date(r.ForcedDate));
+                yield return new KeyValuePair<string, string>(DayKey, r == null ? null : Date(r.Day));
+            }
+        }
+
+        /// <summary>The record of what the case's weather was made for, or null when the case records none.</summary>
+        public static WeatherRecord ReadWeatherRecord(string caseDirectory)
+        {
+            string start = ReadManifestValue(caseDirectory, WeatherRecord.StartKey);
+            if (string.IsNullOrEmpty(start)
+                || !DateTime.TryParse(start, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime when))
+            {
+                return null;
+            }
+
+            DateTime? Date(string key) =>
+                DateTime.TryParse(ReadManifestValue(caseDirectory, key) ?? string.Empty, CultureInfo.InvariantCulture,
+                    DateTimeStyles.None, out DateTime d) ? d : (DateTime?)null;
+
+            return new WeatherRecord
+            {
+                Start = when,
+                Hours = double.TryParse(ReadManifestValue(caseDirectory, WeatherRecord.HoursKey), NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out double h) ? h : 0.0,
+                Seed = int.TryParse(ReadManifestValue(caseDirectory, WeatherRecord.SeedKey), NumberStyles.Integer,
+                    CultureInfo.InvariantCulture, out int s) ? s : 0,
+                ForcedDate = Date(WeatherRecord.ForcedDateKey),
+                Day = Date(WeatherRecord.DayKey),
+            };
+        }
+
+        /// <summary>
+        /// Why the case's weather, by its record, was made for another fire than <paramref name="o"/> describes, or null:
+        /// another start hour of day (band 1 is that hour, and the namelist this build writes says it is the new one), or
+        /// another historical day asked for by name. Null when the case records nothing. The seed is not compared: the
+        /// GUI never sets one, so a case drawn on the command line with <c>--weather-seed</c> would be redrawn by every
+        /// GUI build.
+        /// </summary>
+        public static string DescribeWeatherMadeForAnotherFire(Options o)
+        {
+            WeatherRecord made = ReadWeatherRecord(o.OutputDirectory);
+            if (made == null) return null;
+
+            if (System.Math.Abs((made.Start.TimeOfDay - o.StartDateTime.TimeOfDay).TotalMinutes) >= 1.0)
+            {
+                return $"the weather was made for a fire starting at {made.Start:HH:mm} and this one starts at "
+                       + $"{o.StartDateTime:HH:mm}";
+            }
+
+            DateTime? asked = o.Weather?.ForceDate;
+            if (asked.HasValue && (!made.ForcedDate.HasValue || made.ForcedDate.Value.Date != asked.Value.Date))
+            {
+                return $"the weather is " + (made.ForcedDate.HasValue ? $"from {made.ForcedDate.Value:yyyy-MM-dd}" : "a drawn day")
+                       + $" and this build asks for {asked.Value:yyyy-MM-dd}";
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Fits the case's own <c>elmfire.data</c> to weather made by <see cref="RebuildWeather"/>: its time base (the
+        /// fire's start and stop) and its weather band keys, through <see cref="ElmfireNamelistBuilder.FitTimeAndWeather"/>,
+        /// with what changed logged. A <c>NamelistTemplate</c> is not the case's to change, and is left alone.
+        /// </summary>
+        private static void FitNamelistToWeather(Options o, Result result, Action<string> log)
+        {
+            string path = Path.Combine(o.OutputDirectory, "elmfire.data");
+            result.NamelistPath = path;
+
+            if (!string.IsNullOrEmpty(o.TemplateNamelistPath))
+            {
+                log(IsSameFile(o.TemplateNamelistPath, path)
+                    ? "  namelist: the scenario names elmfire.data as its NamelistTemplate, so it is left as it is; a run fits "
+                      + "its weather band keys to the new weather."
+                    : $"  namelist: the scenario runs its own NamelistTemplate ({Path.GetFileName(o.TemplateNamelistPath)}), "
+                      + "which is left as it is; a run fits its weather band keys to the new weather.");
+                return;
+            }
+
+            if (!File.Exists(path))
+            {
+                log("  namelist: the case has no elmfire.data yet; building the case writes one for this weather.");
+                return;
+            }
+
+            string recorded = ReadManifestValue(o.OutputDirectory, GeneratedNamelistKey);
+            string before = ElmfireFingerprint.HashFile(path);
+            bool generated = recorded != null && string.Equals(recorded, before, StringComparison.OrdinalIgnoreCase);
+
+            string[] lines = File.ReadAllLines(path);
+            int bands = AscRaster.GetBandCount(ElmfireStems.Tif(result.InputsDirectory, ElmfireStems.WindSpeed));
+            string[] fitted = ElmfireNamelistBuilder.FitTimeAndWeather(lines, o.StartDateTime, o.SimulationTstopSeconds, bands);
+            List<string> changed = ElmfireNamelist.DescribeDifferences(lines, fitted);
+            if (changed.Count == 0)
+            {
+                log("  namelist: its time and weather band keys already fit the new weather; not rewritten.");
+            }
+            else
+            {
+                File.WriteAllLines(path, fitted);
+                log($"  namelist: {changed.Count} time and weather band key(s) fitted to the new weather:");
+                foreach (string d in changed) log("    " + d);
+            }
+
+            //The record follows only the namelist the last build wrote; a hand edit stays one, and the next build sets it
+            //aside as it would have.
+            if (generated) result.NamelistSha256 = ElmfireFingerprint.HashFile(path);
+        }
+
+        /// <summary>
+        /// Sets <paramref name="values"/> in the case's <see cref="SourceManifestName"/>, each replacing the line of its key
+        /// or added at the end (a null value removes the key), and leaves every other line as it was.
+        /// </summary>
+        private static void UpdateManifest(string caseDirectory, IDictionary<string, string> values, Action<string> log)
+        {
+            string path = Path.Combine(caseDirectory, SourceManifestName);
+            try
+            {
+                var lines = File.Exists(path) ? File.ReadAllLines(path).ToList() : new List<string>();
+                foreach (KeyValuePair<string, string> kv in values)
+                {
+                    int at = lines.FindIndex(l =>
+                    {
+                        string t = l.Trim();
+                        int eq = t.IndexOf('=');
+                        return !t.StartsWith("#") && eq > 0 && string.Equals(t.Substring(0, eq).Trim(), kv.Key, StringComparison.OrdinalIgnoreCase);
+                    });
+                    if (kv.Value == null)
+                    {
+                        if (at >= 0) lines.RemoveAt(at);
+                    }
+                    else if (at >= 0)
+                    {
+                        lines[at] = kv.Key + "=" + kv.Value;
+                    }
+                    else
+                    {
+                        lines.Add(kv.Key + "=" + kv.Value);
+                    }
+                }
+                File.WriteAllLines(path, lines);
+            }
+            catch (Exception e)
+            {
+                //As for the full manifest: never fatal, and only what the next build can tell from it is lost.
+                log($"  sources: could not update {SourceManifestName} ({e.Message}).");
+            }
         }
 
         /// <summary>
@@ -931,6 +1247,8 @@ namespace PREACT.Utility
                 ElmfireStems.Dem, ElmfireStems.Slope, ElmfireStems.Aspect, ElmfireStems.Adj, ElmfireStems.Phi,
             };
             foreach (string stem in ElmfireStems.Weather) derived.Add(stem);
+            //Made from the evacuation groups on the new grid, not carried from the old one.
+            if (o.EvacuationGroupAreas != null) derived.Add(ElmfireStems.WuiArea);
 
             foreach (string path in Directory.GetFiles(previous, "*.tif"))
             {
@@ -1080,6 +1398,51 @@ namespace PREACT.Utility
                    + "ELMFIRE's default (build/source/building_fuel_models.csv beside the executable) was not found. Put the "
                    + $"table into {inputs} (PREACTcli build-case --copy <file>), set [ELMFIRE] ElmfireExe to an ELMFIRE "
                    + "build that has its source tree, or switch the building spread model off";
+        }
+
+        /// <summary>
+        /// Why the case would end up without a fuel model ELMFIRE can spread through, or null when it will have one: a
+        /// fuel raster named for this build that exists, one the case already holds (the namelist template's or the
+        /// case's own <c>FBFM_FILENAME</c>, else <c>fbfm40.tif</c>/<c>fbfm13.tif</c>), or one on a grid an earlier
+        /// build set aside and has still to carry onto the new one.
+        /// </summary>
+        /// <remarks>
+        /// Asked before anything is downloaded or computed. Nothing in the build can make a fuel model - it is the one
+        /// layer with no default - so a build without one can only end in the validator's "neither fbfm40.tif nor
+        /// fbfm13.tif", and everything done before that is wasted.
+        /// </remarks>
+        private static string DescribeMissingFuel(Options o, string inputs)
+        {
+            foreach (string stem in ElmfireStems.Fuel)
+            {
+                if (o.UserRasters.TryGetValue(stem, out string source) && !string.IsNullOrEmpty(source) && File.Exists(source))
+                {
+                    return null;
+                }
+            }
+
+            if (ElmfireStems.FuelStem(ReadTemplate(o.TemplateNamelistPath), inputs) != null) return null;
+            if (ElmfireStems.FuelStem(ReadTemplate(Path.Combine(o.OutputDirectory, "elmfire.data")), inputs) != null) return null;
+            if (IsCarryPending(inputs) && ElmfireStems.FuelStem(null, Path.Combine(inputs, PreviousGridFolder)) != null) return null;
+
+            string named = null;
+            foreach (string stem in ElmfireStems.Fuel)
+            {
+                if (o.UnresolvedSourceRasters.TryGetValue(stem, out string missing) && !string.IsNullOrWhiteSpace(missing))
+                {
+                    named = missing;
+                    break;
+                }
+            }
+
+            return "The case has no fuel model, so ELMFIRE would have nothing to spread a fire through; the build stopped "
+                   + "before downloading or computing anything. "
+                   + (named != null
+                       ? $"[ELMFIRE] FuelModelFile names {named}, which is not there."
+                       : $"The scenario names no fuel model raster ([ELMFIRE] FuelModelFile), and {inputs} holds neither "
+                         + "fbfm40.tif nor fbfm13.tif.")
+                   + " Download the LANDFIRE fuels (workflow step 4), or point FuelModelFile at an FBFM40 or FBFM13 raster "
+                   + "(PREACTcli build-case --fbfm40 <tif>), then build again.";
         }
 
         private static bool IsSameFile(string a, string b)
@@ -1408,9 +1771,24 @@ namespace PREACT.Utility
                     GeneratedNamelistKey + "=" + (result.NamelistSha256 ?? string.Empty),
                 };
 
+                //What the weather was made for, so a later build (and the GUI) can tell weather made for another fire -
+                //another start hour - from weather that fits, and "Rebuild weather only" can say what it replaced.
+                foreach (KeyValuePair<string, string> kv in WeatherRecord.Keys(result.WeatherRecord))
+                {
+                    if (kv.Value != null) lines.Add(kv.Key + "=" + kv.Value);
+                }
+
                 if (!string.IsNullOrWhiteSpace(o.CanopyDatasetFolder))
                 {
                     lines.Add("CanopyDatasetFolder=" + o.CanopyDatasetFolder);
+                }
+
+                //Which groups the WUI area is, so the GUI can tell a wui_area.tif made from today's groups from one made
+                //from other groups, or by an older build from a painted WUI area.
+                if (result.WuiAreaFile != null)
+                {
+                    lines.Add(WuiAreaGroupsKey + "=" + result.WuiAreaGroups);
+                    lines.Add(WuiAreaCellsKey + "=" + result.WuiAreaCells.ToString(CultureInfo.InvariantCulture));
                 }
 
                 if (!string.IsNullOrWhiteSpace(o.LocalDemPath))
@@ -1615,16 +1993,10 @@ namespace PREACT.Utility
         }
 
         /// <summary>
-        /// Writes a template covering only what the builder can actually guarantee. It is a
-        /// starting point, not a tuned scenario: the doc's contract is that "the user will
-        /// fine-tune the ELMFIRE input template; this pipeline only has to produce grid-aligned
-        /// inputs and invoke the runner". Per-realization keys (weather stems, SEED, ignition)
-        /// are left for the campaign driver (PREACTcli converge-trigger) to patch in.
-        /// </summary>
-        /// <summary>
-        /// Brings masks painted in Unity into the case: the random-ignition area becomes <c>ignition_mask.tif</c>,
-        /// the WUI area becomes <c>wui_area.tif</c> (what k-PERIL's <c>WuiAreaFile</c> points at), and a painted
-        /// initial ignition becomes an explicit <c>X_IGN</c>/<c>Y_IGN</c> point in the namelist.
+        /// Brings the area painted in Unity into the case: the random-ignition area becomes <c>ignition_mask.tif</c>. An
+        /// older painting's WUI area and initial ignition are not used any more - the case's WUI area is the evacuation
+        /// groups' (<see cref="WriteWuiArea"/>), and an initial ignition is an ignition point, which the scenario's load
+        /// makes of an old one - and are only noted.
         /// </summary>
         /// <remarks>
         /// <para>
@@ -1632,8 +2004,9 @@ namespace PREACT.Utility
         /// recognised by its dimensions: the case grid first (the grid of record, which the GUI paints on once the
         /// case exists), then the grid this build replaced, then the landscape raster (legacy: paintings made
         /// before the case had a grid). A painting that matches none of them is refused and the build fails -
-        /// placing it on a grid of the wrong shape shears it into a different community, and silently skipping it
-        /// left the case with no WUI area and the campaign failing hundreds of realizations later.
+        /// placing it on a grid of the wrong shape shears it into a different area, and silently skipping it
+        /// left the case without the ignition area the campaign draws from. A painting with nothing the case uses
+        /// (only a WUI area) is not placed at all, so it cannot fail a build.
         /// </para>
         /// <para>
         /// A painted mask that is entirely empty is treated as "not painted" rather than as "ignite nowhere" - an
@@ -1652,6 +2025,23 @@ namespace PREACT.Utility
             }
 
             PaintedMaskExporter.Masks masks = PaintedMaskExporter.Load(o.PaintedMasksPath);
+            if (masks.Any(masks.WuiArea))
+            {
+                log($"  painted: the painting's WUI area ({masks.Count(masks.WuiArea)} cells) is not used - the WUI area is the "
+                    + "evacuation groups' (workflow step 9) - and is left out.");
+            }
+
+            if (masks.Any(masks.InitialIgnition))
+            {
+                log($"  painted: the painting's initial ignition ({masks.Count(masks.InitialIgnition)} cells) is not used - an "
+                    + "initial ignition is an [IgnitionPoint] now, which opening the scenario makes of it - and is left out.");
+            }
+
+            if (!masks.Any(masks.RandomIgnition))
+            {
+                return;
+            }
+
             var misplaced = new List<string>();
             MasterGrid painted = ResolvePaintedGrid(masks, grid, previousGridDirectory, o.PaintedMasksGridPath,
                                      out string paintedOn, misplaced);
@@ -1668,7 +2058,7 @@ namespace PREACT.Utility
                     + (misplaced.Count > 0 ? " (" + string.Join("; ", misplaced) + ")" : "")
                     + ", so there is no telling which ground they were painted on. Move the painting onto the fire-case "
                     + "grid (the GUI's workflow step 6 offers it when it knows the grid it was painted on) or repaint the "
-                    + "ignition and WUI areas on it, then build again.");
+                    + "ignition area on it, then build again.");
             }
 
             if (!ReferenceEquals(painted, grid)) result.PaintingOffCaseGrid = paintedOn;
@@ -1684,22 +2074,61 @@ namespace PREACT.Utility
                 if (!result.Written.Contains(ElmfireStems.IgnitionMask)) result.Written.Add(ElmfireStems.IgnitionMask);
                 log($"  painted: ignition area -> ignition_mask.tif ({masks.Count(masks.RandomIgnition)} painted cells).");
             }
+        }
 
-            if (masks.Any(masks.WuiArea))
+        /// <summary>The manifest keys the WUI area's groups and cell count are recorded under.</summary>
+        public const string WuiAreaGroupsKey = "WuiAreaGroups", WuiAreaCellsKey = "WuiAreaCells";
+
+        /// <summary>
+        /// Writes the case's WUI area, <c>wui_area.tif</c>: 1 where a cell's centre is in any evacuation group's area
+        /// (<see cref="Options.EvacuationGroupAreas"/>), 0 elsewhere. Without a group that has an area, the case has no
+        /// WUI area, and one an earlier build wrote is removed - it would be the WUI area of groups the scenario no
+        /// longer has, or the painted one this replaces.
+        /// </summary>
+        private static void WriteWuiArea(Options o, Result result, string inputs, MasterGrid grid, Action<string> log)
+        {
+            if (o.EvacuationGroupAreas == null) return;
+
+            string path = ElmfireStems.Tif(inputs, ElmfireStems.WuiArea);
+            int cells = 0;
+            bool[] union = null;
+            if (o.EvacuationGroupAreas.Count > 0 && o.Simulation != null)
             {
-                string wui = ElmfireStems.Tif(inputs, ElmfireStems.WuiArea);
-                PaintedMaskExporter.Export(masks.WuiArea, masks, painted, grid, wui);
-                if (!result.Written.Contains(ElmfireStems.WuiArea)) result.Written.Add(ElmfireStems.WuiArea);
-                result.WuiAreaFile = wui;
-                log($"  painted: WUI area -> wui_area.tif ({masks.Count(masks.WuiArea)} painted cells).");
+                union = Evacuation.EvacuationGroupArea.Rasterize(o.EvacuationGroupAreas, grid, o.Simulation, out cells);
             }
 
-            if (masks.Any(masks.InitialIgnition) &&
-                PaintedMaskExporter.TryGetIgnitionPoint(masks.InitialIgnition, masks, painted, grid, out double ix, out double iy))
+            if (cells == 0)
             {
-                result.Ignitions.Add(new PlacedIgnition { X = ix, Y = iy, TimeSeconds = 0.0 });
-                log($"  painted: initial ignition -> X_IGN/Y_IGN ({ix:F1}, {iy:F1}), random ignition disabled.");
+                string why = o.EvacuationGroupAreas.Count == 0
+                    ? "no evacuation group has an area (paint the groups, workflow step 9)"
+                    : $"the evacuation groups ({Evacuation.EvacuationGroupArea.Names(o.EvacuationGroupAreas)}) cover no cell of the case grid";
+                bool removed = false;
+                foreach (string f in new[] { path, path + ".aux.xml" })
+                {
+                    try { if (File.Exists(f)) { File.Delete(f); removed |= f == path; } } catch (IOException) { }
+                }
+                log("  WUI area: none - " + why + (removed ? "; the wui_area.tif an earlier build wrote was removed." : "."));
+                result.Fallbacks.Add("WUI area: none, " + why);
+                return;
             }
+
+            int ncols = grid.Header.Ncols, nrows = grid.Header.Nrows;
+            var data = new float[ncols, nrows];
+            for (int y = 0; y < nrows; ++y)
+            {
+                for (int x = 0; x < ncols; ++x)
+                {
+                    data[x, y] = union[x + y * ncols] ? 1f : 0f;
+                }
+            }
+            GeoTiffRasterWriter.WriteBand(grid, data, path);
+
+            if (!result.Written.Contains(ElmfireStems.WuiArea)) result.Written.Add(ElmfireStems.WuiArea);
+            result.WuiAreaFile = path;
+            result.WuiAreaGroups = Evacuation.EvacuationGroupArea.Names(o.EvacuationGroupAreas);
+            result.WuiAreaCells = cells;
+            double km2 = cells * grid.Header.CellSize * grid.Header.CellSize / 1e6;
+            log($"  WUI area: the evacuation group(s) {result.WuiAreaGroups} -> wui_area.tif ({cells} cells, {km2:0.00} km2).");
         }
 
         /// <summary>
@@ -1852,19 +2281,6 @@ namespace PREACT.Utility
                 placed.Add(new PlacedIgnition { X = x, Y = y, TimeSeconds = point.TimeSeconds });
                 log($"  ignition: {point.LatLon.x:F5},{point.LatLon.y:F5} -> {x:F1}, {y:F1} in {grid.Epsg}"
                     + (point.TimeSeconds > 0.0 ? $" at t = {point.TimeSeconds:F0} s." : "."));
-            }
-
-            if (placed.Count == 0)
-            {
-                return;
-            }
-
-            if (result.Ignitions.Count > 0)
-            {
-                //Both were given, which is not an error - a painted initial ignition is easy to leave
-                //behind - but only one of them can be the ignition, so which one is worth saying.
-                log($"  ignition: {placed.Count} placed ignition point(s) used instead of the painted initial ignition.");
-                result.Ignitions.Clear();
             }
 
             result.Ignitions.AddRange(placed);

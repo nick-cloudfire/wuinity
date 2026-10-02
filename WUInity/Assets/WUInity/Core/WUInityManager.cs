@@ -560,10 +560,7 @@ namespace WUInity
             {
                 if (!IsPainterActive()) return false;
 
-                Painter.PaintMode mode = _painter.GetPaintMode();
-                return mode == Painter.PaintMode.WUIArea
-                       || mode == Painter.PaintMode.RandomIgnitionArea
-                       || mode == Painter.PaintMode.InitialIgnition;
+                return _painter.GetPaintMode() == Painter.PaintMode.RandomIgnitionArea;
             }
         }
 
@@ -572,20 +569,10 @@ namespace WUInity
             Painter.gameObject.SetActive(true);
             Painter.SetPainterMode(paintMode);
             bool fireEdit = false;
-            if(paintMode == Painter.PaintMode.WUIArea)
-            {
-                fireEdit = true;
-                DisplayWUIAreaMap();                
-            }
-            else if (paintMode == Painter.PaintMode.RandomIgnitionArea)
+            if (paintMode == Painter.PaintMode.RandomIgnitionArea)
             {
                 fireEdit = true;
                 DisplayRandomIgnitionAreaMap();
-            }
-            else if (paintMode == Painter.PaintMode.InitialIgnition)
-            {
-                fireEdit = true;
-                DisplayInitialIgnitionMap();
             }
             //Groups are painted on the fire grid, the same grid the other three use, so this belongs
             //with them. It used to fall through to the warning below, which meant the painter was
@@ -789,26 +776,16 @@ namespace WUInity
             return map;
         }
 
-        private void DisplayWUIAreaMap()
-        {
-            ShowPaintedTexture(Painter.GetWUIAreaTexture(), "the WUI area");
-        }
-
         public void DisplayRandomIgnitionAreaMap()
         {
             ShowPaintedTexture(Painter.GetRandomIgnitionTexture(), "the random ignition area");
-        }
-
-        public void DisplayInitialIgnitionMap()
-        {
-            ShowPaintedTexture(Painter.GetInitialIgnitionTexture(), "the initial ignition");
         }
 
         /// <summary>
         /// Shows a painted texture on the wildfire domain plane, making that plane cover the grid the
         /// texture is on first.
         ///
-        /// All four paint modes work on the grid the painter resolved - the landscape's, or a DEM's, or the
+        /// Both paint modes work on the grid the painter resolved - the landscape's, or a DEM's, or the
         /// imported arrival times' - so all four are shown here, on the plane paint mode makes visible.
         /// The plane has to be built from that grid rather than from an LCP: a scenario whose terrain is
         /// only a DEM has no LCP, so there was no plane, and painting worked while showing nothing.
@@ -817,9 +794,13 @@ namespace WUInity
         {
             if (texture == null)
             {
-                Engine.Message(null, Engine.LogType.Warning,
-                    "Cannot show " + what + ": there is no grid to paint on. A landscape, a DEM or an imported "
-                    + "fire's arrival times gives one.");
+                //The painter has said why there is no grid (once); saying it again here for every plane was the noise.
+                if (!Painter.HasGridProblem)
+                {
+                    Engine.Message(null, Engine.LogType.Warning,
+                        "Cannot show " + what + ": there is no grid to paint on. A landscape, a DEM or an imported "
+                        + "fire's arrival times gives one.");
+                }
                 return;
             }
 

@@ -321,8 +321,8 @@ namespace PREACT.Tests
                 Assert.True(why != null && why.Contains("300 m east"), "the resampler's grid says it is elsewhere: " + why);
 
                 //A painting saved with the record, as the painter now saves it.
-                var data = new Input.WildfireData { WuiArea = new bool[g.Header.Ncols * g.Header.Nrows] };
-                for (int i = 500; i < 540; ++i) data.WuiArea[i] = true;
+                var data = new Input.WildfireData { RandomIgnition = new bool[g.Header.Ncols * g.Header.Nrows] };
+                for (int i = 500; i < 540; ++i) data.RandomIgnition[i] = true;
                 string gfi = Path.Combine(c.Folder, "painted.gfi");
                 GraphicalFireInput.SaveGraphicalFireInput(gfi, data, g.Header.Ncols, g.Header.Nrows, painted);
 
@@ -361,8 +361,8 @@ namespace PREACT.Tests
                     Epsg = g.Epsg,
                 };
                 WriteRectangular(rect, rectangular);
-                var small = new Input.WildfireData { WuiArea = new bool[400] };
-                small.WuiArea[210] = true;
+                var small = new Input.WildfireData { RandomIgnition = new bool[400] };
+                small.RandomIgnition[210] = true;
                 string legacy = Path.Combine(c.Folder, "legacy.gfi");
                 GraphicalFireInput.SaveGraphicalFireInput(legacy, small, 20, 20);
                 ElmfireCaseBuilder.Options o = c.Options(caseDir, 150.0, new List<string>());
@@ -409,15 +409,17 @@ namespace PREACT.Tests
             string folder = Directory.CreateTempSubdirectory("preact-gfi-").FullName;
             try
             {
-                var data = new Input.WildfireData { WuiArea = new bool[12], InitialIgnition = new bool[12] };
-                data.WuiArea[3] = true;
-                data.InitialIgnition[7] = true;
+                //Older paintings, with the WUI area and initial ignition builds no longer write.
+                var wuiCells = new bool[12];
+                var initialCells = new bool[12];
+                wuiCells[3] = true;
+                initialCells[7] = true;
                 var record = new GraphicalFireInput.PaintedGrid { XllCorner = 700000.0, YllCorner = 4200000.0, CellSize = 30.0, EpsgCode = 32634 };
 
                 string withRecord = Path.Combine(folder, "recorded.gfi");
                 string without = Path.Combine(folder, "legacy.gfi");
-                GraphicalFireInput.SaveGraphicalFireInput(withRecord, data, 4, 3, record);
-                GraphicalFireInput.SaveGraphicalFireInput(without, data, 4, 3);
+                LegacyPainting.Write(withRecord, 4, 3, wui: wuiCells, initial: initialCells, grid: record);
+                LegacyPainting.Write(without, 4, 3, wui: wuiCells, initial: initialCells);
                 foreach (string f in new[] { withRecord, without })
                 {
                     if (OperatingSystem.IsWindows()) File.SetAttributes(f, FileAttributes.ReadOnly);
@@ -444,6 +446,8 @@ namespace PREACT.Tests
                 input.LoadGraphicalFireInput(new Input.WildfireModuleInput(), withRecord, false, out bool loaded);
                 Assert.True(loaded && input.PaintedGrid != null && input.PaintedGrid.CellSize == 30.0,
                     "a scenario's loaded painting keeps the record, for the run's own check");
+                Assert.True(input.LegacyWuiCells == 1 && input.LegacyInitialIgnitionCells == 1,
+                    "and counts the WUI area and initial ignition it no longer uses");
             }
             finally
             {

@@ -58,26 +58,32 @@ Keep the **Console** visible throughout (docked along the bottom). After every s
        as elmfire.data.kept-<time>" with **Keep running it**;
      - "[Landscape] uses elmfire/inputs/mati_dem.tif (616 x 590) ... The painted areas are on that terrain's
        grid: move them onto the case grid first" with **Move painting onto the fire-case grid**.
-   - **6. Fire areas and ignition** - an error: "The areas were painted on a 616 x 590 grid
+   - **6. Fire areas and ignition** - an error: "The ignition area was painted on a 616 x 590 grid
      (elmfire/inputs/mati_dem.tif); the fire grid (elmfire/inputs/dem.tif) is 566 x 541. Move the painting onto
-     it ...", with **Move painting onto the fire-case grid**. Apply to case is disabled with "move them onto the
-     fire-case grid first".
+     it ...", with **Move painting onto the fire-case grid**, and a note that the saved painting holds a painted
+     WUI area (7383 cells) which is no longer used. Apply to case is disabled with "move them onto the fire-case
+     grid first". The Console has the same note once, as a warning, when the scenario is opened.
+   - **9. Evacuation groups** - a warning that the case's wui_area.tif was made by an older build from a painted
+     WUI area, not from the groups, with **Apply to case**.
    - **13. Trigger campaign** - Blocked by step 6.
    - **Scenario > Check scenario** lists, as notes that do not block anything, the four retired keys in the file -
      `[Evacuation] UseTriggerBufferEvacuation`, `[Weather] DesiredLatLon`, `[TrafficModule] VisibilityAffectsSpeed`
      and `[kPERIL] WindBand` - each "is no longer used: ... It is ignored, and saving the scenario does not write
      it." The Console has the same four lines once each.
-2. **Fire > Fire areas (WUI, ignition area)...** The window names the grid (`elmfire/inputs/dem.tif`, 566 x 541),
+2. **Fire > Fire areas and ignition...** The window names the grid (`elmfire/inputs/dem.tif`, 566 x 541),
    says the saved painting is on a 616 x 590 grid, and has a **Move painting onto the fire-case grid** button.
    **Start painting** is disabled, with a tooltip saying to move the painting first.
 3. Press **Move painting onto the fire-case grid**.
    - A "Data preparation" window runs "Moving the painting onto the fire-case grid" and logs, among others:
-     `WUI area: 7383 -> 6260 cells (5.626 -> 5.634 km2)` and `ignition area: 161543 -> 135734 cells`.
+     `ignition area: 161543 -> 135734 cells` and `WUI area: 7383 cells, left out - the WUI area is the evacuation
+     groups'.`
    - `painted_fire_areas_566x541.gfi` appears beside `painted_fire_areas.gfi`; the original is unchanged
      (same size and date).
-   - Row 6 reads "WUI 6260 cells, ignition area 135734 cells ... grid 566 x 541" and is no longer in error; the
+   - Row 6 reads "Ignition area 135734 cells, 1 ignition point; grid 566 x 541" and is no longer in error; the
      menu bar says "mati - unsaved changes".
-   - In the Fire areas window, **Start painting** now shows the painted WUI area on the map.
+   - In the Fire areas window, **Start painting** now shows the painted ignition area on the map. There is no WUI
+     or initial-ignition brush; the window says the WUI area is the evacuation groups' and names the case's
+     wui_area.tif.
 4. **File > Save** (Ctrl+S). The .wui now has `GraphicalFireInputFile=painted_fire_areas_566x541.gfi`.
 5. Row 5: decide about the hand-edited namelist. For this test press nothing - let the build set it aside.
    (Pressing **Keep running it** sets `[ELMFIRE] NamelistTemplate=elmfire.data`; the Console then logs - not as a
@@ -87,12 +93,13 @@ Keep the **Console** visible throughout (docked along the bottom). After every s
    - The log says the case's dem.tif does not cover the domain padded by 2000 m and re-cuts the grid (about
      704 x 680 cells), moving the old rasters to `elmfire\inputs\_previous_grid`.
    - It also says the painting (566 x 541) was on the grid it set aside and moves it onto the new case grid:
-     `painted_fire_areas_704x680.gfi`, WUI about 6260 cells.
+     `painted_fire_areas_704x680.gfi`, ignition area about 136000 cells.
    - The Console has a warning "A hand-edited namelist was set aside as elmfire.data.kept-<time>", and row 5 shows
      it with **Run elmfire.data.kept-<time>**.
    - Row 5's terrain warning is gone (the build pointed `[Landscape]` at the case's dem/slp/asp).
-   - Row 6 is Done on the new grid; row 10 protects `wui_area.tif`.
-7. **File > Save.** Paint a few extra WUI cells (Fire areas > Start painting), **Stop painting**, and *do not* save.
+   - The log says `WUI area: the evacuation group(s) west -> wui_area.tif (N cells, ...)`. Row 6 is Done on the new
+     grid, row 9's warning is gone, and row 10 reads "k-PERIL, protecting the evacuation groups together".
+7. **File > Save.** Paint a few extra ignition-area cells (Fire areas > Start painting), **Stop painting**, and *do not* save.
    Row 6 says "Painted strokes not saved yet". Press row 6's **Apply to case**: it asks **Save and apply** - there
    is no "Don't save", because the case is built from the saved file. Press **Cancel**.
 8. With the strokes still unsaved, press row 5's **Update the case** and answer **Don't save**.
@@ -196,14 +203,21 @@ Mati needs its SUMO network (row 2) and a fire; if row 11 lists blockers, fix th
 6. Row 5 **Build fire case**. It downloads the terrain (with the session key, if that is where it came from),
    warps the layers and writes the weather and namelist. Afterwards `[Landscape]` names the case's dem/slp/asp, and
    row 6 unblocks.
-7. Row 6: paint a WUI area and an ignition area, **Save painted areas**, **Apply to case**. Row 6 is Done and
-   `wui_area.tif`/`ignition_mask.tif` are in the case.
-8. Rows 2 and 3 **Prepare missing**: OSM, RouterDb, SUMO network; then WorldPop and households. During a step, press
+7. **Evacuation > Paint group areas...**: paint the group's area and **Save group areas**. Row 6: paint an
+   ignition area, **Save painted areas**, **Apply to case**. Row 6 is Done, `ignition_mask.tif` is in the case,
+   and `wui_area.tif` is the group's area (row 9 names its cells). The log has one "Evacuation group ...: wrote
+   evac_group_<name>.asc" line per save, and **Save group areas** is disabled again until something is painted;
+   **Apply to case** does not log "Painting stopped". Before step 6, a click with the Fire areas brush says "Build
+   the fire case first" once, not once per click.
+8. Row 5 **Rebuild weather only** after changing **Fire > Fire model settings > fire duration** (e.g. 24 -> 12 h).
+   The log lists only `ws/wd/m1/m10/m100` as written, and `elmfire.data` differs only in its time and weather band
+   keys; no other file in `elmfire\inputs` changes date. Set the duration back.
+9. Rows 2 and 3 **Prepare missing**: OSM, RouterDb, SUMO network; then WorldPop and households. During a step, press
    **Stop** in its progress window: the chain ends after the link it is in, and says so.
-9. Row 5 **Rebuild everything**, and press **Stop** while the log shows WindNinja solving the weather. Expected: the
-   step ends `... STOPPED: The case build was stopped while its weather was being made: no wind was written ...`, within
-   seconds; no WindNinja process is left; the case has no new `ws.tif` (not a uniform one either) and the scenario
-   is not marked changed. **Update the case** afterwards carries on and finishes.
+10. Row 5 **Rebuild everything**, and press **Stop** while the log shows WindNinja solving the weather. Expected: the
+    step ends `... STOPPED: The case build was stopped while its weather was being made: no wind was written ...`,
+    within seconds; no WindNinja process is left; the case has no new `ws.tif` (not a uniform one either) and the
+    scenario is not marked changed. **Update the case** afterwards carries on and finishes.
 
 ---
 

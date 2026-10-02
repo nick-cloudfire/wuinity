@@ -1075,9 +1075,13 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
             Fields.Check(key, ref value, tooltip);
         }
 
+        /// <summary>
+        /// Two decimals on screen, the value itself untouched: Nick's "all floats are flooded" (WSMFEFF_LOW_MULT read
+        /// 0.011364, DT_INTERPOLATE_MLH 900000000.000000). The namelist is written from the value, not from the field.
+        /// </summary>
         private static void Real(string key, ref double value, string tooltip)
         {
-            Fields.Real(key, ref value, tooltip);
+            Fields.Real(key, ref value, tooltip, 2);
         }
 
         private static void Whole(string key, ref int value, string tooltip)

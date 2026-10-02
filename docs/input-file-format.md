@@ -258,7 +258,7 @@ Every key is optional; an unreadable value keeps the default and says so.
 |---|---|---|---|---|
 | `Enabled` | bool | `false` | – | Missing or unreadable means off. A missing one is a notice the workflow panel shows as a warning ("Not set, so the fire module is off and the scenario runs without a fire ...", and the same for the other modules), since a section without it may well have meant the module to run; a save writes `Enabled=false`. The rest of the section, the `[IgnitionPoint]`s and the module's sections are read (and kept) either way. |
 | `Module` | `ELMFIRE` \| `AscImport` | – | yes, when enabled | `ELMFIRE` runs ELMFIRE on the scenario's case; `AscImport` reads a fire computed elsewhere. `None` with the module enabled is critical. `ElmClone`/`CellSpread` (the removed cell-based model) are reported as removed. |
-| `GraphicalFireInputFile` | `.gfi` path | – | – | The painted WUI area, ignition area and initial ignition ([below](#painted-areas-gfi)). Kept even when the file is missing, so a save does not lose the reference. |
+| `GraphicalFireInputFile` | `.gfi` path | – | – | The painted ignition area ([below](#painted-areas-gfi)). Kept even when the file is missing, so a save does not lose the reference. An older file's painted WUI area is ignored, and its painted initial ignition becomes an `[IgnitionPoint]` at its centroid when the scenario is read (unless it has points of its own). |
 
 ### `[IgnitionPoint]` — repeatable
 
@@ -408,8 +408,8 @@ minutes. No boundary is computed for an area the fire never reached. See [Module
 
 | Key | Type | Default | Critical | Notes |
 |---|---|---|---|---|
-| `WuiAreaSource` | `Raster` \| `EvacuationGroupsCombined` \| `EvacuationGroupsSeparate` | `Raster` | – | What k-PERIL protects: the WUI raster, the union of the evacuation groups' areas, or one boundary per group. A campaign refuses `EvacuationGroupsSeparate`. |
-| `WuiAreaFile` | raster | – | yes, when named and missing | The WUI area (1 = protected). Building the ELMFIRE case writes `elmfire/inputs/wui_area.tif` from the painted WUI area and points this at it. Without it, an ELMFIRE run uses its case's `wui_area.tif`, and failing that the painted WUI area if it is on the fire grid. |
+| `WuiAreaSource` | `EvacuationGroupsCombined` \| `EvacuationGroupsSeparate` \| `Raster` | `EvacuationGroupsCombined` (`Raster` when only a `WuiAreaFile` is named) | – | What k-PERIL protects — the WUI area, which is the evacuation groups: their union (one boundary), or one boundary per group. `Raster` reads `WuiAreaFile`, a mask of your own; with none named it is the groups combined. A campaign refuses `EvacuationGroupsSeparate`. |
+| `WuiAreaFile` | raster | – | yes, when named and missing | With `Raster`: a WUI mask of your own on the fire grid (1 = protected), used as it is and refused, not replaced, when it is not on the fire grid. The case build no longer sets it; an older build set it to `elmfire/inputs/wui_area.tif`, which is now the groups' union. |
 | `OutputName` | text | `trigger_boundary` | – | Names the output: `_output/<run index>_<OutputName>`, with `.asc` added when it has no extension, and the group's name before the extension when there is one boundary per group. |
 | `WindSpeedFile` | raster, **mi/h** | – | yes, when named and missing | Fallback only. With an ELMFIRE fire, or `[AscImport] MidflameWindSpeedFile`, the fire's own midflame wind is used and this is ignored. Otherwise it is used *as* midflame wind, with a warning. |
 | `WindDirectionFile` | raster, degrees (from) | – | yes, when named and missing | For an imported fire. An ELMFIRE fire's own weather direction is used instead and this is ignored with a warning. Multi-band: each cell takes the band covering the time the fire reached it. |
@@ -499,7 +499,9 @@ rates of spread m/min (with `SPREAD_RATE_IN_M`); FARSITE/FlamMap arrival times a
 
 Written by Fire > Fire areas. A binary file: the grid's column and row counts, then one byte per cell for each of
 four masks (WUI area, random-ignition area, initial ignition, and a trigger-buffer mask nothing uses), rows
-running north. It may end with a trailer recording the grid's south-west corner, cell size and EPSG code; without
+running north. Only the random-ignition area is painted; the WUI area and initial ignition are written empty in
+their places (so older builds still read the file) and are read from an older file only to note them and turn an
+initial ignition into an ignition point. It may end with a trailer recording the grid's south-west corner, cell size and EPSG code; without
 it a painting is matched to a grid by its size alone. An ELMFIRE scenario is painted on the case's `dem.tif`; a
 painting made on another grid is moved onto it with step 6's **Move painting onto the fire-case grid**, which
 writes `<name>_<W>x<H>.gfi` beside the original — see [ELMFIRE cases](elmfire-cases.md#painted-areas).

@@ -17,8 +17,20 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
         private static readonly string[] Modules =
             Enum.GetNames(typeof(TriggerBufferModuleInput.TriggerBufferModules));
 
-        private static readonly string[] WuiAreaSources =
-            Enum.GetNames(typeof(kPERILInput.WuiAreaSources));
+        //The groups first: they are what is protected. A mask of one's own is the exception, and says so.
+        private static readonly kPERILInput.WuiAreaSources[] Sources =
+        {
+            kPERILInput.WuiAreaSources.EvacuationGroupsCombined,
+            kPERILInput.WuiAreaSources.EvacuationGroupsSeparate,
+            kPERILInput.WuiAreaSources.Raster,
+        };
+
+        private static readonly string[] SourceLabels =
+        {
+            "The evacuation groups, together (one boundary)",
+            "The evacuation groups, one boundary each",
+            "A WUI mask of my own (WuiAreaFile)",
+        };
 
         public static void Draw(PREACTInput input)
         {
@@ -58,18 +70,23 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
 
         private static void DrawKPeril(kPERILInput peril)
         {
-            ImGui.SeparatorText("What is protected");
+            ImGui.SeparatorText("What is protected: the WUI area");
 
-            Fields.Choice("WuiAreaSource", ref peril.WuiAreaSource, WuiAreaSources);
-            Fields.Hint("Raster reads the mask below. The group options rasterise the evacuation groups' own",
-                        "polygons instead, which keeps the area protected and the area evacuated as one",
-                        "definition. Separate gives each group its own boundary, for groups that leave on",
-                        "different orders or to different destinations.");
+            int index = Array.IndexOf(Sources, peril.WuiAreaSource);
+            if (index < 0) index = 0;
+            if (ImGui.Combo("WUI area###WuiAreaSource", ref index, SourceLabels, SourceLabels.Length))
+            {
+                peril.WuiAreaSource = Sources[index];
+            }
+            Fields.Hint("The WUI area is the evacuation groups' area (step 9) - painted, or from shapefiles - so",
+                        "the area protected and the area evacuated are one definition. The case build writes",
+                        "their union as wui_area.tif, which a campaign protects. One boundary each is for",
+                        "groups that leave on different orders; a campaign needs one, and refuses it.");
 
             if (peril.WuiAreaSource == kPERILInput.WuiAreaSources.Raster)
             {
                 Fields.Path("WuiAreaFile", () => peril.WuiAreaFile, v => peril.WuiAreaFile = v);
-                Fields.Hint("Left empty, the painted WUI area is used instead (Fire > Fire areas, step 6).");
+                Fields.Hint("A mask on the fire grid, 1 = protected. Left empty, the evacuation groups together.");
             }
 
             ImGui.SeparatorText("Wind");

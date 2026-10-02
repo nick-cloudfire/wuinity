@@ -432,10 +432,11 @@ namespace PREACT.Tests
                 ElmfireCaseBuilder.Build(c.Options(caseDir, 150.0, new List<string>())).GetAwaiter().GetResult();
                 MasterGrid first = MasterGrid.FromRasterFile(ElmfireStems.Tif(inputs, ElmfireStems.Dem));
 
-                //A layer only the case has: made by hand, no source to warp it from again.
+                //A layer only the case has: made by hand, no source to warp it from again. (Barriers: the WUI area this
+                //used is made from the evacuation groups on every build now, and never carried.)
                 var wui = new float[first.Header.Ncols, first.Header.Nrows];
                 for (int x = 10; x < 20; ++x) for (int y = 10; y < 20; ++y) wui[x, y] = 1f;
-                GeoTiffRasterWriter.WriteBand(first, wui, ElmfireStems.Tif(inputs, ElmfireStems.WuiArea));
+                GeoTiffRasterWriter.WriteBand(first, wui, ElmfireStems.Tif(inputs, "barriers"));
 
                 //More padding re-cuts the grid; with no DEM and no key the build fails after setting the old grid aside.
                 ElmfireCaseBuilder.Options failing = c.Options(caseDir, 600.0, new List<string>());
@@ -447,16 +448,16 @@ namespace PREACT.Tests
                 catch (Exception) { failed = true; }
                 Assert.True(failed, "the build without a DEM fails");
                 Assert.True(!File.Exists(ElmfireStems.Tif(inputs, ElmfireStems.Dem)), "after setting the old grid aside (no dem.tif)");
-                Assert.True(File.Exists(ElmfireStems.Tif(previous, ElmfireStems.WuiArea))
-                            && File.Exists(Path.Combine(previous, ElmfireCaseBuilder.CarryPendingMarker)), "the WUI area waits there, marked");
+                Assert.True(File.Exists(ElmfireStems.Tif(previous, "barriers"))
+                            && File.Exists(Path.Combine(previous, ElmfireCaseBuilder.CarryPendingMarker)), "the barriers wait there, marked");
 
                 var log = new List<string>();
                 ElmfireCaseBuilder.Result r = ElmfireCaseBuilder.Build(c.Options(caseDir, 600.0, log)).GetAwaiter().GetResult();
                 MasterGrid second = MasterGrid.FromRasterFile(ElmfireStems.Tif(inputs, ElmfireStems.Dem));
                 Assert.True(second.Header.Ncols > first.Header.Ncols, "the next build re-cuts the grid");
                 Assert.True(log.Any(l => l.Contains("did not finish carrying")), "saying it resumes the carry");
-                Assert.True(r.Carried.Contains(ElmfireStems.WuiArea), "and carries the WUI area: " + string.Join(",", r.Carried));
-                float[,] carried = AscRaster.ReadGeoTiff(ElmfireStems.Tif(inputs, ElmfireStems.WuiArea), out AscRaster.Header h, out bool ok);
+                Assert.True(r.Carried.Contains("barriers"), "and carries the barriers: " + string.Join(",", r.Carried));
+                float[,] carried = AscRaster.ReadGeoTiff(ElmfireStems.Tif(inputs, "barriers"), out AscRaster.Header h, out bool ok);
                 int cells = 0;
                 for (int x = 0; x < h.Ncols; ++x) for (int y = 0; y < h.Nrows; ++y) if (carried[x, y] > 0.5f) ++cells;
                 Assert.True(ok && h.Ncols == second.Header.Ncols && cells == 100, $"onto the new grid, all 100 cells ({cells})");
@@ -638,8 +639,8 @@ namespace PREACT.Tests
 
                 var data = new Input.WildfireData();
                 int cells = g.Header.Ncols * g.Header.Nrows;
-                data.WuiArea = new bool[cells];
-                for (int i = cells / 3; i < cells / 3 + 40; ++i) data.WuiArea[i] = true;
+                data.RandomIgnition = new bool[cells];
+                for (int i = cells / 3; i < cells / 3 + 40; ++i) data.RandomIgnition[i] = true;
                 string gfi = Path.Combine(c.Folder, "painted.gfi");
 
                 (bool Ok, string Log, string Error) BuildWith(GraphicalFireInput.PaintedGrid recorded)
@@ -679,8 +680,8 @@ namespace PREACT.Tests
         /// <summary>The masks of a painting read the way every older reader does: the header, then four blocks.</summary>
         private static bool PaintedAreasReadable(string gfi, MasterGrid g)
         {
-            GraphicalFireInput.LoadGraphicalFireInput(gfi, out int ncols, out int nrows, out bool[] wui, out bool[] _, out bool[] _, out bool[] _, out bool ok);
-            return ok && ncols == g.Header.Ncols && nrows == g.Header.Nrows && wui.Count(b => b) == 40;
+            GraphicalFireInput.LoadGraphicalFireInput(gfi, out int ncols, out int nrows, out bool[] _, out bool[] area, out bool[] _, out bool[] _, out bool ok);
+            return ok && ncols == g.Header.Ncols && nrows == g.Header.Nrows && area.Count(b => b) == 40;
         }
 
         private static void GridCoversPaddedDomain()

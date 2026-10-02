@@ -39,9 +39,6 @@ namespace PREACT.Wildfire
         /// <summary>The band the fire started in (METEOROLOGY_BAND_START): arrival time 0 falls in this band.</summary>
         public int StartBand = 1;
 
-        /// <summary>The case's painted WUI area on the fire grid, when the case carries one.</summary>
-        public string WuiAreaFile;
-
         /// <summary>
         /// The terrain the fire burned on - elevation, slope and aspect rasters on the fire grid (an ELMFIRE case's
         /// dem/slp/asp) - for k-PERIL's slope term; null when the fire module does not know it, and the trigger

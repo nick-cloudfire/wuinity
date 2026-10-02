@@ -160,7 +160,7 @@ namespace PREACT
         ///
         /// Nothing is written into the scenario (contract C4). The rasters go into a runtime copy of the
         /// AscImport settings, and the weather the fire ran on - its midflame wind, its wind direction series
-        /// and band interval, the case's WUI area - into <see cref="FireWeatherRasters"/> for the trigger
+        /// and band interval, the fire's terrain - into <see cref="FireWeatherRasters"/> for the trigger
         /// boundary. These used to be written into <c>[AscImport]</c> and <c>[kPERIL]</c>, so saving after a run
         /// pinned one run's derived paths into the scenario.
         ///
@@ -219,7 +219,6 @@ namespace PREACT
                 WindDirectionFile = Absolute(input.RootFolder, fire.WindDirectionFile),
                 SecondsPerBand = fire.SecondsPerBand,
                 StartBand = fire.StartBand,
-                WuiAreaFile = Absolute(input.RootFolder, fire.WuiAreaFile),
                 ElevationFile = Absolute(input.RootFolder, fire.ElevationFile),
                 SlopeFile = Absolute(input.RootFolder, fire.SlopeFile),
                 AspectFile = Absolute(input.RootFolder, fire.AspectFile),

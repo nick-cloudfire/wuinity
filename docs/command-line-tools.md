@@ -89,6 +89,7 @@ PREACTcli build-case --wui <scenario.wui> [--out <case dir>] [options]
 | `--painted-grid <raster>` | the `[Landscape]` reference raster | The grid a legacy painting was made on. |
 | `--canopy-dataset <dir>` | `[ELMFIRE] CanopyDatasetFolder` | FIRE-RES pan-European canopy rasters, for any of cc/ch/cbh/cbd not named individually. |
 | `--rebuild` | off | Replace every layer the case already has (`[ELMFIRE] RebuildExistingLayers`). |
+| `--weather-only` | off | Make the case's weather (`ws`/`wd`/`m1`/`m10`/`m100`) again for the scenario's start, `--hours` and the weather options below, and nothing else: no layer is warped or re-cut, and `elmfire.data` keeps every key but its time base and weather band keys. Source-layer flags are ignored; with `--rebuild` it is refused. Only the `[Weather]` keys are printed or written. |
 | `--update-wui` | off | Point the scenario at the case, as the GUI's build does: write the keys listed below into the `.wui`. Only those keys change; every other line, comment and unknown key stays, and the file keeps its line endings. |
 | `--fbfm40`, `--fbfm13`, `--cc`, `--ch`, `--cbh`, `--cbd`, `--bldg_area_avg`, `--bldg_separation_distance`, `--bldg_nonburnable_frac`, `--bldg_footprint_frac`, `--bldg_fuel_model`, `--ignition_mask`, `--barriers` `<tif>` | the scenario's `[ELMFIRE]` source layers | A source raster for that stem, warped onto the grid. Overrides the scenario. |
 | **Weather** | | |
@@ -119,8 +120,7 @@ hours, not seconds). Pass --hours.`).
 When it finishes it prints the grid, the layers written, carried from an old grid, kept, missing or defaulted,
 the fuel stem, the ignitions, every fallback, the namelist (and any hand-edited one it set aside), and the
 weather day drawn. Then the keys that point the scenario at the case, which the GUI's build sets itself -
-`[Landscape] ElevationFile/SlopeFile/AspectFile` (the case's `dem/slp/asp.tif`), `[kPERIL] WuiAreaFile` (when a
-WUI area was painted) and `[Weather] WeatherAnchorDateTime` and `WeatherFile` (when the weather was drawn from a
+`[Landscape] ElevationFile/SlopeFile/AspectFile` (the case's `dem/slp/asp.tif`) and `[Weather] WeatherAnchorDateTime` and `WeatherFile` (when the weather was drawn from a
 historical day) - only those the `.wui` does not already say. **Without `--update-wui` the `.wui` is not touched**,
 and they are printed as they go into the file, one block per section:
 
@@ -133,9 +133,6 @@ run build-case again with --update-wui, which writes exactly these and changes n
 ElevationFile=elmfire/inputs/dem.tif
 SlopeFile=elmfire/inputs/slp.tif
 AspectFile=elmfire/inputs/asp.tif
-
-[kPERIL]
-WuiAreaFile=elmfire/inputs/wui_area.tif
 ```
 
 With `--update-wui` they are written and listed (`Recorded in mati.wui (--update-wui; nothing else in it
@@ -225,7 +222,8 @@ Before the first realization it checks, and stops with exit 1 and the reason, wh
 missing or has no k-PERIL boundary; `[kPERIL] WuiAreaSource=EvacuationGroupsSeparate` (one boundary per group
 cannot be aggregated per realization); the template, inputs folder, ELMFIRE, GDAL tools or PREACT cannot be
 found; the template names no fuel raster, or rasters that are not on the case grid; the ignition mask is missing
-or has no positive cell; `wui_area.tif` is missing or empty while it is needed; there is no fuel model table;
+or has no positive cell; `wui_area.tif` is missing, empty or not the union of the scenario's evacuation groups as
+they are now (build the case again); there is no fuel model table;
 WindNinja is missing without `--allow-uniform-weather`; the ERA5 archive cannot be fetched or has no day with a
 non-zero FWI; or a path ELMFIRE will see from a realization contains a space.
 

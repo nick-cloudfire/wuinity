@@ -113,8 +113,10 @@ namespace PREACTcli.Campaigns
 
             //A fire that never reaches the WUI area has no trigger boundary to give, and the evacuation it would
             //otherwise run - three to five minutes of SUMO - ends with "the fire never reached wui".
-            if (c.WuiAreaFile != null && c.WuiAreaSource == "Raster"
-                && !FireReachesWui(outcome.ToaPath, c.WuiAreaFile, out string reach))
+            //Whatever the WUI area's source: the case's wui_area.tif is the evacuation groups' union, which is what a
+            //combined-groups realization protects, so an unreached one counts as not threatened rather than as a run that
+            //failed for want of a boundary - the probability's denominator is the fires that reached the WUI area.
+            if (c.WuiAreaFile != null && !FireReachesWui(outcome.ToaPath, c.WuiAreaFile, out string reach))
             {
                 record.Stage = RealizationRecord.StageDone;
                 record.Status = CampaignLayout.StatusNotThreatened;

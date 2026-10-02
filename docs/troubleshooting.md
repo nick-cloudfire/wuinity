@@ -56,10 +56,12 @@ Details: [Building](building.md).
 | `No canopy: it is filled with zeros, so the fire is surface fire only - no crown fire.` | Add canopy rasters (LANDFIRE in the US), or accept a surface fire. |
 | `No WindNinja: the case gets one wind value for the whole domain, so a trigger boundary comes out circular.` | Install WindNinja, or set `WINDNINJA_CLI` to the executable (`WindNinja_cli.exe`, `WindNinja_cli` on Linux), or `[ELMFIRE] WindNinjaExe`. Then rebuild the case's weather. |
 | `No GDAL command-line tools were found. ELMFIRE shells out to them, and fails its own DEM check without them.` | Install QGIS or OSGeo4W (found by themselves), or set `[ELMFIRE] PathToGdal` to a folder holding `gdal_translate`. |
-| `The areas were painted on a W x H grid (…); the fire grid … is …` (step 6) | The painting belongs to another grid. Use **Move painting onto the fire-case grid** in step 6; it writes a new file. |
+| `The ignition area was painted on a W x H grid (…); the fire grid … is …` (step 6) | The painting belongs to another grid. Use **Move painting onto the fire-case grid** in step 6; it writes a new file. |
 | `The painted areas in <file> are W x H cells, but the fire-case grid is … so there is no telling which ground they were painted on. …` (a build) | As above: move the painting in step 6, or repaint on the case grid. The same refusal, with how the grids differ (`starts 300 m west of the grid the painting was made on`), is given for a painting of the right size whose record puts it elsewhere. |
 | `… STOPPED: The case build was stopped while its weather was being made: no wind was written …` | You pressed Stop (or quit) during the build. Nothing is half-written: no wind, not even a uniform field, and the scenario is unchanged. Build again; it carries on from what the stopped build kept. |
-| `The painted areas are newer than the case's ignition_mask.tif / wui_area.tif: apply them to the case.` | Step 6 > **Apply to case**. |
+| `The painted ignition area is newer than the case's ignition_mask.tif: apply it to the case.` | Step 6 > **Apply to case**. |
+| `… holds a painted WUI area (N cells), which is no longer used …` / `… holds a painted initial ignition (N cells) …` | An older painting. The WUI area is the evacuation groups (step 9); the initial ignition became an ignition point (save the scenario to keep it). Saving the painted areas again drops both. |
+| `Group <name>: its mask is W x H, not on the fire grid (…). It is used where it lies, …` (step 9) | The group was painted on an earlier grid (the case was re-cut since). Nothing is wrong with its households or the WUI area, which read the mask where it lies; only painting cannot continue from it. **Repaint** it on the fire grid if you want to edit it. |
 | `a trigger campaign is running (…) and every one of its realizations reads this case's rasters, …` | A case build is refused while a campaign of this scenario runs. Wait for it, or cancel it. |
 
 ## Running a fire (ELMFIRE)
@@ -109,7 +111,8 @@ each needs, are in [Trigger campaigns](trigger-campaigns.md#before-you-start). T
 |---|---|
 | `WindNinja was not found (…). Without it every realization's wind is one value across the whole domain, …` | Install WindNinja or pass `--windninja <exe>`; or tick *Allow uniform weather* (`--allow-uniform-weather`) for a pipeline test. |
 | `… is reached from a realization as '…', which contains a space. …` | Move or rename the scenario folder so the path has no spaces. ELMFIRE passes paths to GDAL unquoted. |
-| `… needs the case's wui_area.tif, and … has no marked cell.` | Paint a WUI area (step 6) and apply it to the case. |
+| `every realization protects the WUI area, and …wui_area.tif is not there / has no marked cell.` | Paint the evacuation groups (step 9) and apply them to the case (it writes `wui_area.tif` from them). |
+| `the case's wui_area.tif (N cells) is not the WUI area of the scenario's evacuation groups …` | The groups changed since the case was built, or an older build wrote it from a painted WUI area: **Apply to case** (or `build-case`), then start the campaign. |
 | `the archive holds no day with a non-zero fire weather index, …` | The ERA5 archive is empty or wrong for the place; delete the case's `climatology/` CSV so the campaign fetches it again. |
 | `another campaign process is running in <folder> (it holds campaign.lock). Stop it first, or wait for it to finish.` | One campaign per folder. A lock that nobody holds is no lock, so a stale `campaign.lock` file never blocks. |
 | `--resume` refused, `differs in: …` | The finished realizations are from other settings. Run without `--resume` for a new campaign, or restore the settings it lists. |
