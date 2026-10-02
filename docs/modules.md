@@ -8,7 +8,7 @@ once the run has finished.
 
 | Part | Module | Status in v1 |
 |---|---|---|
-| Fire | `ELMFIRE` | Default for new scenarios. Verified end to end head-less (case build, fire, evacuation, boundary, campaign) on the Linux bench; the Windows GUI path is covered by the [manual test](manual-test-v1.md). |
+| Fire | `ELMFIRE` | Default for new scenarios. Verified end to end head-less (case build, fire, evacuation, boundary, campaign) on the Linux bench; the Windows GUI path is covered by the [manual test](manual-test-v1.md). Rates of spread, fire shape, evacuation times, the k-PERIL boundary and campaign convergence are checked against independent expectations by the [verification cases](verification.md). |
 | Fire | `AscImport` | Stable. Both shipped examples use it. |
 | Pedestrians | `MacroHouseholdSim` | Stable. Fire reaction fixed and on by default in v1. |
 | Traffic | `SUMO` (1.22) | Stable on Windows. On Linux it needs regenerated bindings ([Building](building.md#regenerating-the-sumo-c-glue-on-linux)). |
@@ -116,7 +116,8 @@ Notes before relying on the boundary's shape:
 Removed in v1: the `[Events]` section (never implemented), the parallel execution modes (runs in one process are
 serial; parallelism is separate processes), the `probabilistic-trigger` CLI command and reading pre-generated
 ensembles, the QGIS plugin, and the examples and verification data for fire models that no longer exist
-(`Examples/Development`, `Examples/CFFDRS/Dogrib`, `Examples/ASDRF`, `Verification/`).
+(`Examples/Development`, `Examples/CFFDRS/Dogrib`, `Examples/ASDRF`, and the old `Verification/` of the cell models;
+`Verification/` now holds the [verification cases](verification.md) of the ELMFIRE product).
 
 Removed before v1, and reported by name if a scenario still asks for them: the cell-based fire model
 (`ElmClone`/`CellSpread`, with its BEHAVE, CFFDRS FBP and AFDRS spread models), `SimpleWildfireCA`,

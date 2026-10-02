@@ -118,6 +118,8 @@ powershell -ExecutionPolicy Bypass -File .\build-player.ps1
 - [Examples](docs/examples.md) — what ships in `Examples/`.
 - [Troubleshooting](docs/troubleshooting.md) — the messages you will meet and what to do.
 - [Manual test of the v1 GUI](docs/manual-test-v1.md) — a scripted check of the GUI on Windows.
+- [Verification](docs/verification.md) — the basic verification cases (`verify.ps1` / `verify.sh`), their results and
+  the discrepancies they found.
 - [Changelog](CHANGELOG.md) — what v1 changed, and which results differ from earlier runs.
 
 ## Development

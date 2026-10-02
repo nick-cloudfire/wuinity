@@ -1,0 +1,4 @@
+# Every verification run writes its generated inputs and outputs here.
+_runs/
+__pycache__/
+*.pyc
