@@ -16,6 +16,28 @@ namespace PREACT.Tests
             runner.Add("campaign: one made before per-realization evacuation seeds is told apart, one made now is not", EarlierCampaign);
             runner.Add("gui: messages and the generated namelist name the menus the GUI has, not the retired ones", CurrentMenuNames);
             runner.Add("results: a boundary's .prj is written for a UTM grid without PROJ's database, and its absence is said", CompanionPrj);
+            runner.Add("gui: a two-decimal field shows three significant figures below 1, and text typed back as shown keeps the exact value", TwoDecimalFields);
+        }
+
+        /// <summary>Review R2 MI-2: WSMFEFF_LOW_MULT (0.011364) showed as "0.01", and any edit stored the rounded number.</summary>
+        private static void TwoDecimalFields()
+        {
+            Assert.Equal("0.0114", WUInity.Workflow.NumberDisplay.Shown(60.0 / 5280.0, 2), "WSMFEFF_LOW_MULT shows three significant figures");
+            Assert.Equal("%.3g", WUInity.Workflow.NumberDisplay.Format(60.0 / 5280.0, 2), "with ImGui's format to match");
+            Assert.Equal("0.006", WUInity.Workflow.NumberDisplay.Shown(0.006, 2), "0.006 is not 0.01");
+            Assert.Equal("0.001", WUInity.Workflow.NumberDisplay.Shown(0.001, 2), "EMBER_GR's 0.001 is not 0.00");
+            Assert.Equal("0.5", WUInity.Workflow.NumberDisplay.Shown(0.5, 2), "a short value is shown as it is");
+            Assert.Equal("12.60", WUInity.Workflow.NumberDisplay.Shown(12.5980556, 2), "two decimals from 1 up");
+            Assert.Equal("900000000.00", WUInity.Workflow.NumberDisplay.Shown(900000000.0, 2), "large values in full");
+            Assert.Equal("0.00", WUInity.Workflow.NumberDisplay.Shown(0.0, 2), "zero");
+            Assert.True(WUInity.Workflow.NumberDisplay.IsRounded(60.0 / 5280.0, 2) && !WUInity.Workflow.NumberDisplay.IsRounded(0.5, 2),
+                "the tooltip gives the exact value only when the field rounds it");
+
+            Assert.Near(60.0 / 5280.0, WUInity.Workflow.NumberDisplay.Committed(60.0 / 5280.0, 0.0114, 2), 0.0,
+                "text typed back as shown keeps the exact value");
+            Assert.Near(12.5980556, WUInity.Workflow.NumberDisplay.Committed(12.5980556, 12.6, 2), 0.0, "also above 1");
+            Assert.Near(0.02, WUInity.Workflow.NumberDisplay.Committed(60.0 / 5280.0, 0.02, 2), 0.0, "a real change is stored");
+            Assert.Near(12.61, WUInity.Workflow.NumberDisplay.Committed(12.5980556, 12.61, 2), 0.0, "as typed");
         }
 
         /// <summary>

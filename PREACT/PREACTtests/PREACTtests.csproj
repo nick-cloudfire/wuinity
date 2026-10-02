@@ -39,6 +39,7 @@
        path wins for each tool, and what the window is told about the ones that do not. -->
   <ItemGroup>
     <Compile Include="..\..\WUInity\Assets\WUInity\GUI\Workflow\ExternalTools.cs" Link="Gui\ExternalTools.cs" />
+    <Compile Include="..\..\WUInity\Assets\WUInity\GUI\Workflow\NumberDisplay.cs" Link="Gui\NumberDisplay.cs" />
   </ItemGroup>
 
   <!-- The GDAL wrappers PREACTcore references by path (they do not flow through a project reference), for the

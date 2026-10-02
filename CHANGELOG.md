@@ -48,8 +48,10 @@
 - `case_sources.txt` records what the weather was made for (`WeatherStart`, `WeatherHours`, `WeatherSeed`,
   `WeatherDay`); a build for another start hour makes the weather again, and step 5 says so.
 - Step 5 no longer reports every case's weather one band short (it asked for ceil(hours) + 1 bands).
-- The ELMFIRE settings (Fire behaviour, and the fire duration, cell size and padding) show two decimals, and the exact
-  value in the tooltip when that rounds it; nothing is rounded in the scenario or the namelist.
+- The ELMFIRE settings (Fire behaviour, and the fire duration, cell size and padding) show two decimals, three
+  significant figures below 1 (`WSMFEFF_LOW_MULT` reads 0.0114, not 0.01), and the exact value in the tooltip when that
+  rounds it; nothing is rounded in the scenario or the namelist, and an edit that leaves the shown text as it was keeps
+  the exact value.
 - **The WUI area is the evacuation groups.** The case build writes `wui_area.tif` as the union of the groups' areas
   (painted masks or shapefiles) on every build; a painted WUI area in the `.gfi` is left out with a note. k-PERIL
   protects the groups (`WuiAreaSource` now defaults to `EvacuationGroupsCombined`; `Raster` reads a `WuiAreaFile` of
