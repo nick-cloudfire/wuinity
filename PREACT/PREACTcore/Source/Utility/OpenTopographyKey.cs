@@ -27,8 +27,17 @@ namespace PREACT.Utility
         };
 
         /// <summary>
-        /// The key, or null. Environment first, then the resource file - the same order the scenario data
-        /// steps use, so the command line and the editor cannot disagree about which key is in force.
+        /// A key the host application holds and the engine cannot read from disk: the visualizer's, from its Unity
+        /// resource. A standalone player has that resource built into its data files - there is no
+        /// <c>Assets/Resources</c> folder beside it to find - so without this a case built there had no key although
+        /// the GUI showed one. Set by the GUI; null elsewhere.
+        /// </summary>
+        public static string ApplicationKey { get; set; }
+
+        /// <summary>
+        /// The key, or null. Environment first, then the host application's key, then the resource file - the same
+        /// order the scenario data steps use, so the command line and the editor cannot disagree about which key is
+        /// in force.
         /// </summary>
         public static string Resolve()
         {
@@ -36,6 +45,12 @@ namespace PREACT.Utility
             if (!string.IsNullOrWhiteSpace(fromEnvironment))
             {
                 return fromEnvironment.Trim();
+            }
+
+            string fromApplication = ApplicationKey;
+            if (!string.IsNullOrWhiteSpace(fromApplication))
+            {
+                return fromApplication.Trim();
             }
 
             return ReadResourceFile();

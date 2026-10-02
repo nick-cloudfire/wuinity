@@ -7,7 +7,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
     /// <summary>
     /// The GUI's copy of what was found of ELMFIRE, GDAL, WindNinja, SUMO, PROJ and the two API keys.
     /// Probed off the main thread, when the application starts, when a scenario is opened (it may name its
-    /// own tool paths) and when asked to; read everywhere else from <see cref="Current"/>.
+    /// own tool paths), when the tool settings are saved and when asked to; read everywhere else from
+    /// <see cref="Current"/>.
     /// </summary>
     public static class ToolsService
     {
@@ -45,9 +46,36 @@ namespace Assets.WUInity.GUI.DearIMGUI
             string elmfireOverride = elmfire?.ElmfireExe;
             string gdalOverride = elmfire?.PathToGdal;
             string windNinjaOverride = elmfire?.WindNinjaExe;
-            string sumo = PreactGUI.Engine.SumoPath;
-            string projLib = PreactGUI.Engine.ProjLibPath;
-            string projData = PreactGUI.Engine.ProjDataPath;
+
+            //A PROJ folder saved since the last look - from the window, or by hand in the file - is handed to GDAL
+            //now, so what is reported below is what is in force.
+            PREACT.Engine engine = PreactGUI.Engine;
+            string projPending = engine.ApplyToolSettings();
+            var state = new EngineToolState
+            {
+                SumoBin = engine.SumoPath,
+                SumoSource = engine.SumoSource,
+                ProjPaths = engine.ProjSearchPaths,
+                ProjSource = engine.ProjSource,
+                ProjDetail = engine.ProjSourceDetail,
+                ProjPending = projPending,
+                ProjLib = engine.ProjLibPath,
+                ProjData = engine.ProjDataPath,
+                GdalLibraryProblem = engine.GdalLibraryProblem,
+            };
+
+            //The engine reads the OpenTopography key from the environment or from the resource file on disk, which a
+            //standalone player does not have: its copy of the key is built into its data. Handed over here, at start-up
+            //and on every look, so a fire case built in the player has the key the GUI shows.
+            try
+            {
+                PREACT.Utility.OpenTopographyKey.ApplicationKey = global::WUInity.OpenTopographyAccess.ApiKey;
+            }
+            catch
+            {
+                //no resource: the environment and the session key remain
+            }
+
             string keySource = ScenarioDataSteps.OpenTopographyApiKeySource;
             bool? mapbox = null;
             try
@@ -68,8 +96,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 ExternalToolsSnapshot snapshot;
                 try
                 {
-                    snapshot = ExternalTools.Probe(root, elmfireOverride, gdalOverride, windNinjaOverride,
-                        sumo, projLib, projData, keySource, mapbox);
+                    snapshot = ExternalTools.Probe(root, elmfireOverride, gdalOverride, windNinjaOverride, state, keySource, mapbox);
                 }
                 catch (Exception e)
                 {

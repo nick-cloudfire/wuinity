@@ -17,6 +17,7 @@ namespace PREACT.Tests
             runner.Add("tools: a path is accepted only when it holds the tool, at whichever level it was picked", Validation);
             runner.Add("tools: every resolver puts a usable setting after the scenario's value and before its own search", ResolverPriority);
             runner.Add("tools: an engine takes SUMO and PROJ from the settings, and a PROJ saved while it runs applies at once", EngineReadsSettings);
+            runner.Add("gui: Help > External tools is told which path won for each tool, and why a scenario's or a saved one did not", GuiProbe);
         }
 
         private static bool Windows => OperatingSystem.IsWindows();
@@ -296,6 +297,67 @@ namespace PREACT.Tests
                         OSGeo.OSR.Osr.SetPROJSearchPaths(main.ProjSearchPaths);
                     }
                 }
+            });
+        }
+
+        /// <summary>
+        /// The GUI's probe (WUInity/Assets/WUInity/GUI/Workflow/ExternalTools.cs, compiled into the tests): the source of
+        /// every tool in use, a scenario key that names nothing, a saved path that holds nothing, and a SUMO saved since
+        /// the engine started.
+        /// </summary>
+        private static void GuiProbe()
+        {
+            WithSettingsFile((folder, file) =>
+            {
+                string savedElmfire = Touch(folder, "tools", "elmfire", Exe("elmfire"));
+                string gdalBin = Path.GetDirectoryName(Touch(folder, "tools", "QGIS", "bin", Exe("gdal_translate")));
+                string newSumoBin = Path.GetDirectoryName(Touch(folder, "tools", "sumo-new", "bin", Exe("sumo")));
+                Directory.CreateDirectory(Path.Combine(folder, "tools", "no-windninja-here"));
+                string scenario = Path.Combine(folder, "scenario");
+                string scenarioElmfire = Touch(scenario, "bin", Exe("elmfire"));
+
+                var s = new ToolPaths.Settings();
+                s.Set(ToolPaths.Tool.Elmfire, savedElmfire);
+                s.Set(ToolPaths.Tool.Gdal, Path.Combine(folder, "tools", "QGIS"));
+                s.Set(ToolPaths.Tool.WindNinja, Path.Combine(folder, "tools", "no-windninja-here"));
+                s.Set(ToolPaths.Tool.Sumo, Path.Combine(folder, "tools", "sumo-new"));
+                ToolPaths.Save(s);
+
+                var engine = new WUInity.Workflow.EngineToolState
+                {
+                    SumoBin = "/opt/old-sumo/bin",
+                    SumoSource = ToolPaths.Source.Automatic,
+                    ProjPaths = new[] { "/usr/share/proj" },
+                    ProjSource = ToolPaths.Source.Automatic,
+                    ProjDetail = "PROJ_DATA",
+                };
+
+                //A scenario that names its own ELMFIRE (which is there) and a GDAL folder (which is not).
+                WUInity.Workflow.ExternalToolsSnapshot named = WUInity.Workflow.ExternalTools.Probe(scenario, "bin/" + Exe("elmfire"),
+                    "gdal-that-is-not-there", null, engine, "the OPENTOPOGRAPHY_API_KEY environment variable", null);
+                Assert.True(named.Probed && named.ProbeError == "", "the probe ran cleanly: " + named.ProbeError);
+                Assert.Equal(ToolPaths.SettingsFile, named.SettingsFile, "the window names the file it saves to");
+                Assert.True(named.Elmfire.Source == ToolPaths.Source.Explicit && named.ElmfireExe == scenarioElmfire,
+                    "ELMFIRE: the scenario's, over the saved one: " + named.Elmfire.InUse + " " + named.Elmfire.Source);
+                Assert.Equal(savedElmfire, named.Elmfire.Setting, "and the saved one is shown beside it");
+                Assert.True(!named.HaveGdal && named.Gdal.Source == ToolPaths.Source.Explicit
+                            && named.Gdal.ExplicitProblem.Contains("PathToGdal names"),
+                    "GDAL: a scenario key that names nothing is reported as the problem, not hidden by the setting: " + named.Gdal.ExplicitProblem);
+                Assert.True(named.WindNinja.SettingProblem.Contains("holds no " + Exe("WindNinja_cli")) && named.WindNinja.Source != ToolPaths.Source.UserSetting,
+                    "WindNinja: a saved folder without the solver is said not to be used: " + named.WindNinja.SettingProblem);
+                Assert.True(named.Sumo.InUse == "/opt/old-sumo/bin" && named.Sumo.Source == ToolPaths.Source.Automatic,
+                    "SUMO: what the engine started with");
+                Assert.True(named.Sumo.NeedsRestart && ToolPaths.SamePath(named.Sumo.AfterRestart, newSumoBin),
+                    "SUMO: the saved one waits for a restart: " + named.Sumo.AfterRestart);
+                Assert.True(named.Proj.InUse == "/usr/share/proj" && named.Proj.Detail == "PROJ_DATA" && !named.Proj.NeedsRestart,
+                    "PROJ: what GDAL has, from where");
+                Assert.True(named.HaveOpenTopographyKey && named.MapboxTokenValid == null, "the keys are passed through");
+
+                //The same machine with a scenario that names nothing: the saved paths win.
+                WUInity.Workflow.ExternalToolsSnapshot plain = WUInity.Workflow.ExternalTools.Probe(scenario, "", "", "", engine, "", null);
+                Assert.True(plain.Elmfire.Source == ToolPaths.Source.UserSetting && plain.ElmfireExe == savedElmfire, "ELMFIRE: the saved one");
+                Assert.True(plain.Gdal.Source == ToolPaths.Source.UserSetting && ToolPaths.SamePath(plain.GdalBin, gdalBin), "GDAL: the saved bin");
+                Assert.True(!plain.HaveOpenTopographyKey, "no key is no key");
             });
         }
 
