@@ -155,7 +155,9 @@ After each realization with a boundary (*n* of them so far):
 2. For each decile τ = 0.1, 0.2, …, 1.0, the **area** of cells with P ≥ τ.
 3. For each decile whose previous area is non-zero, the relative change |area − previous| / previous.
 4. If every such change is below `--tolerance` (2 %), the **streak** grows by one; if any is not, it goes back to
-   0. The first comparison moves it neither way.
+   0. The first boundary, which has nothing to compare with, moves it neither way; the first comparison (the
+   second boundary) already counts. So a campaign whose boundaries are all alike converges after `--streak` + 1 of
+   them (verification case 4).
 5. The campaign has **converged** when the streak reaches `--streak` (20). Realizations still running are killed;
    their records stay unfinished, so a resume with a longer streak computes them.
 

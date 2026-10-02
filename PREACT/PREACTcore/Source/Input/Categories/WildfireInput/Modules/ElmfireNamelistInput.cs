@@ -332,12 +332,18 @@ namespace PREACT.Input
         /// </summary>
         public int UNTAG_CELLS_TIMESTEP_INTERVAL = 10;
 
-        /// <summary>Upper bound on the low-wind branch of the spread solution, mi/h.</summary>
+        /// <summary>
+        /// The cap on the fire's length-to-width ratio - its ellipse, ELMFIRE's <c>C%LOW</c> ("L over W"), Anderson's
+        /// length-to-breadth - which ELMFIRE computes from the effective midflame wind (<c>elmfire_level_set.f90</c>).
+        /// Dimensionless; 8 by default. Not a wind speed and not a "low-wind branch".
+        /// </summary>
         public double MAX_LOW = 8.0;
 
         /// <summary>
-        /// Multiplier turning mid-flame wind into the low-wind branch's effective wind. ELMFIRE's default is
-        /// written <c>60.0/5280.0</c> — feet per mile — so it is that ratio, not a round number.
+        /// The factor that turns the effective midflame wind <c>WSMFEFF</c> (ft/min) into the unit of ELMFIRE's
+        /// length-to-width correlation: <c>60.0/5280.0</c> converts ft/min to mi/h (ELMFIRE's default, written that way).
+        /// ELMFIRE-WUINITY's coefficients in that correlation (0.1147, 0.0692) are Anderson's per m/s, applied to mi/h;
+        /// upstream ELMFIRE and k-PERIL use 0.2566 and 0.1548 per mi/h - an open question (docs/verification.md, D2).
         /// </summary>
         public double WSMFEFF_LOW_MULT = 60.0 / 5280.0;
 

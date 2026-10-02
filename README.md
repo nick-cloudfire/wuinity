@@ -121,6 +121,7 @@ powershell -ExecutionPolicy Bypass -File .\build-player.ps1
 - [Verification](docs/verification.md) — the basic verification cases (`verify.ps1` / `verify.sh`), their results and
   the discrepancies they found.
 - [Changelog](CHANGELOG.md) — what v1 changed, and which results differ from earlier runs.
+- [Backlog](docs/backlog.md) — what is left after v1.1, and the modelling decisions the verification left open.
 
 ## Development
 

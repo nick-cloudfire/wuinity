@@ -348,11 +348,12 @@ namespace Assets.WUInity.GUI.DearIMGUI.Input
                 Flag("MULTIPLE_HOSTS", ref n.MULTIPLE_HOSTS,
                     "Running across more than one host, which changes how weather is broadcast between ranks.");
 
-                ImGui.SeparatorText("Low-wind branch");
-                Real("MAX_LOW", ref n.MAX_LOW, "Upper bound on the low-wind branch of the spread solution, mi/h.");
+                ImGui.SeparatorText("Fire shape (length to width)");
+                Real("MAX_LOW", ref n.MAX_LOW, "The cap on the fire's length-to-width ratio (its ellipse), which ELMFIRE "
+                    + "computes from the effective midflame wind. Dimensionless; 8 by default.");
                 Real("WSMFEFF_LOW_MULT", ref n.WSMFEFF_LOW_MULT,
-                    "Multiplier turning mid-flame wind into the low-wind branch's effective wind. ELMFIRE's "
-                    + "default is 60/5280 - feet per mile - so it is that ratio rather than a round number.");
+                    "Turns the effective midflame wind (ft/min) into the unit of the length-to-width correlation: "
+                    + "ELMFIRE's default 60/5280 converts ft/min to mi/h, so it is that ratio rather than a round number.");
 
                 ImGui.SeparatorText("Wind fluctuations");
                 Flag("WIND_FLUCTUATIONS", ref n.WIND_FLUCTUATIONS,

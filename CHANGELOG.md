@@ -13,10 +13,12 @@
   and the unpacked file carries LFPS's US timestamp, so a job that succeeded ended "returned nothing usable".
   Bands are found by their descriptions and units by the `.aux.xml`, which set `CC_IN_PERCENT`, `CH_TIMES_10`,
   `CBH_TIMES_10`, `CBD_TIMES_100`. The fuel model is written as Int16 (ELMFIRE reads only that; Int32 or Float32
-  fuel gives a fire that does not spread). The request covers the case's padded domain, not the bare domain.
+  fuel gives a fire that does not spread; the case build now makes sure of it for every fuel raster, D1 below). The
+  request covers the case's padded domain, not the bare domain.
 - **LANDFIRE release**: new `[ELMFIRE] LandfireVersion` (`closest` to the start year by default, or `LF2016`,
   `LF2022`, `LF2023`, `LF2024`, `LF2025` - what LFPS serves; the old list asked for LF2020 fuel, which does not
-  exist). Chosen in Fuels, canopy and buildings. Layers are named `<Name>_<release>_<stem>.tif`, so
+  exist). Chosen in Fuels, canopy and buildings, or `PREACTcli landfire --version` (the same download from the
+  command line; `--update-wui` writes the source-layer keys and flags into the scenario). Layers are named `<Name>_<release>_<stem>.tif`, so
   `case_sources.txt` records the release; `<Name>_<release>_landfire.txt` records the request. The case's old fuel
   and canopy are removed so the next build uses the new ones. FCCS is no longer downloaded.
 - **LANDFIRE e-mail**: your own, entered under Fuels, canopy and buildings and kept per user in the tool settings
@@ -72,6 +74,7 @@
 - Workflow step 9 no longer calls a group mask on another grid than the fire grid an error (which blocked a run): the
   group's households and the WUI area read the mask where it lies. It is a warning that painting the group starts
   from nothing on the fire grid.
+
 ### Tools and the standalone program
 
 - **Help > External tools and keys takes a path for each tool**: ELMFIRE, the GDAL tools, WindNinja, SUMO (its
@@ -102,16 +105,15 @@
   have. Without the font the GUI uses Dear ImGui's own instead of failing.
 - A fire case built in a standalone player gets the OpenTopography key the GUI shows. The key is built into the
   player, and the engine used to look for it on disk.
+### Verification
+
 - **Verification cases** (`Verification/`, `verify.ps1`, `verify.sh`, [docs/verification.md](docs/verification.md)):
   synthetic cases run head-less through `build-case`, `PREACT` and `converge-trigger`, each checked against an
   expected value derived independently (Rothermel/BehavePlus, Anderson's L/B, road length over limit, the documented
-  convergence rule). They found seven discrepancies, reported there and marked as known: an Int32 fuel raster burns
-  nothing (D1); k-PERIL's L/B is not the fire's (D2); a group with no area (D3) or no demographics (D4) crashes the
-  run; a run that moves no car exits 0 (D5); k-PERIL subtracts an upslope wind from the slope (D6) and reads ELMFIRE's
-  along-slope rate as a map rate (D7).
-
-### Fixes from the verification
-
+  convergence rule). They found seven discrepancies. Four are fixed (below): an Int32 fuel raster burned nothing (D1),
+  a group with no area (D3) or no existing demographics (D4) crashed the run, a run that moved no car exited 0 (D5).
+  Three are open, for a modelling decision, and stay marked as known: k-PERIL's L/B is not the fire's (D2), k-PERIL
+  subtracts an upslope wind from the slope (D6) and reads ELMFIRE's along-slope rate as a map rate (D7).
 - **Fuel models are stored as Int16 (D1).** The case build writes `fbfm40`/`fbfm13`, `bldg_fuel_model`, `pyromes`
   and every fuel raster a namelist names (a variant, roads burned in, one carried or re-cut onto a new grid) as
   Int16, the only type ELMFIRE reads them from, and rewrites one the case kept in another type. The validation, a
@@ -121,6 +123,10 @@
   scenario without any `[Demographics]` the built-in values, as the checklist says. The run used to stop on a
   `NullReferenceException` while it was being set up. A lone group without `MaskFile` or `ShapeFile` (D3) runs with
   every household in it, as the checklist says (round 2's group areas fixed it; now tested).
+- The Fire behaviour page and `ElmfireNamelistInput` describe `MAX_LOW` (the cap on the fire's length-to-width ratio)
+  and `WSMFEFF_LOW_MULT` (ft/min to mi/h in that correlation) for what they are; they were called the bound and the
+  multiplier of a "low-wind branch". [Trigger campaigns](docs/trigger-campaigns.md#convergence) says that the first
+  boundary, not the first comparison, leaves the streak as it is.
 - **A run in which no car got into SUMO fails (D5)**: when its time loop ends with cars tried and none injected, the
   run reports "None of the N car(s) of this run could be put into SUMO …" and `PREACT.exe` exits 2. The 90 % rule
   only judges after 25 cars, so a small run used to end successfully with nobody evacuated.
