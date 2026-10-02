@@ -402,26 +402,38 @@ namespace PREACT.Tests
         }
 
         /// <summary>Whether GDAL can make the CRS on a fresh thread pool thread (PROJ contexts are per thread).</summary>
+        /// <summary>
+        /// Whether GDAL can look up <paramref name="epsg"/>, on a thread of its own.
+        /// </summary>
+        /// <remarks>
+        /// A new thread, not a pooled one: GDAL keeps the CRSs a thread has made from EPSG codes in a per-thread cache, so a
+        /// pool thread that another test had used for EPSG:2100 (Mati's grid) answered from that cache whatever proj.db
+        /// said, and the "broken proj.db" check failed now and then.
+        /// </remarks>
         private static bool LooksUp(int epsg)
         {
-            return Task.Run(() =>
+            bool found = false;
+            var thread = new Thread(() =>
             {
                 //The failure is expected half of the time; GDAL need not print it.
                 OSGeo.GDAL.Gdal.PushErrorHandler("CPLQuietErrorHandler");
                 try
                 {
                     using var srs = new OSGeo.OSR.SpatialReference("");
-                    return srs.ImportFromEPSG(epsg) == 0 && !string.IsNullOrEmpty(srs.GetName());
+                    found = srs.ImportFromEPSG(epsg) == 0 && !string.IsNullOrEmpty(srs.GetName());
                 }
                 catch
                 {
-                    return false;
+                    found = false;
                 }
                 finally
                 {
                     OSGeo.GDAL.Gdal.PopErrorHandler();
                 }
-            }).Result;
+            });
+            thread.Start();
+            thread.Join();
+            return found;
         }
     }
 }
