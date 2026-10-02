@@ -51,6 +51,19 @@ namespace Assets.WUInity.GUI.DearIMGUI
             set { _landfireEmail = value ?? string.Empty; }
         }
 
+        /// <summary>
+        /// Whether the LANDFIRE step has an e-mail to send: the one typed (or kept), or LANDFIRE_EMAIL. Cheap enough to ask
+        /// every frame - the per-user file was read once, into the field.
+        /// </summary>
+        public static bool HasLandfireEmail
+        {
+            get
+            {
+                return PREACT.Tools.LandfireContact.IsPlausible(LandfireEmail)
+                       || PREACT.Tools.LandfireContact.IsPlausible(System.Environment.GetEnvironmentVariable(PREACT.Tools.LandfireContact.Variable));
+            }
+        }
+
         /// <summary>Keeps the typed e-mail for the next session; says so when it cannot.</summary>
         public static void SaveLandfireEmail()
         {
@@ -353,9 +366,17 @@ namespace Assets.WUInity.GUI.DearIMGUI
         private static PREACT.Tools.LandfireFuels.Options CaptureLandfire(PREACTInput input)
         {
             if (input.WildfireModule?.ElmfireInput == null) return null;
-            PREACT.Tools.LandfireFuels.Options options = PREACT.Tools.LandfireFuels.Options.FromScenario(input);
-            options.Email = LandfireEmail;
-            return options;
+            try
+            {
+                PREACT.Tools.LandfireFuels.Options options = PREACT.Tools.LandfireFuels.Options.FromScenario(input);
+                options.Email = LandfireEmail;
+                return options;
+            }
+            catch (Exception)
+            {
+                //Every step captures this; only the LANDFIRE step needs it, and it says so when it is missing.
+                return null;
+            }
         }
 
         // ------------------------------------------------------------------ running

@@ -341,13 +341,13 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 {
                     Fields.Warn("That is not an e-mail address.");
                 }
-                else if (trimmed.Length == 0 && PREACT.Tools.LandfireContact.Resolve(null, out string _) == null)
+                else if (trimmed.Length == 0 && !ScenarioDataSteps.HasLandfireEmail)
                 {
                     Fields.Caution("Needed: LANDFIRE files every request under a contact e-mail.");
                 }
             }
 
-            bool emailOk = PREACT.Tools.LandfireContact.Resolve(ScenarioDataSteps.LandfireEmail, out string _) != null;
+            bool emailOk = ScenarioDataSteps.HasLandfireEmail;
             ImGui.BeginDisabled(!us || !emailOk || ScenarioSession.IsBusy);
             if (ImGui.Button("Download LANDFIRE fuel model and canopy (US)"))
             {
