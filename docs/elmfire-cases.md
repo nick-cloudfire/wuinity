@@ -30,6 +30,11 @@ is refused while a trigger campaign of the same scenario is running, because eve
 
 ## Building a case, step by step
 
+Before anything is downloaded or computed, the build checks that the case will have a fuel model — a fuel raster
+the scenario names that exists, or one the case already holds — and refuses at once without one, naming the file
+`[ELMFIRE] FuelModelFile` points at when it is not there. Nothing can make a fuel model, and a case without one
+used to fail only in its validation, after the DEM, the ERA5 archive and minutes of WindNinja.
+
 1. **The padded domain.** The evacuation domain (`[Simulation] LowerLeftLatLon` and `DomainSize`) grown by
    `[ELMFIRE] PaddingMetres` (2000 m) on every side. A fire is free to burn beyond the evacuation domain, and a
    fire clipped at its edge understates exactly the spread a trigger boundary measures.

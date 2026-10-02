@@ -678,6 +678,7 @@ namespace PREACT.Utility
             {
                 string path = PREACTInput.ResolvePath(input.RootFolder, layer.Value);
                 if (File.Exists(path)) options.UserRasters[layer.Key] = Path.GetFullPath(path);
+                else if (!string.IsNullOrWhiteSpace(layer.Value)) options.UnresolvedSourceRasters[layer.Key] = layer.Value;
             }
 
             //The same points the ignition editor placed, in WGS84. The builder measures them in the case's own CRS

@@ -82,6 +82,13 @@ namespace PREACT.Utility
             /// Any CRS/resolution — each is warped onto the master grid.</summary>
             public Dictionary<string, string> UserRasters = new Dictionary<string, string>();
 
+            /// <summary>
+            /// Source rasters the scenario names that are not there, by stem, as they were named - left out of
+            /// <see cref="UserRasters"/>, and kept only so a build that cannot go on without one (the fuel model) can
+            /// say which file it looked for.
+            /// </summary>
+            public Dictionary<string, string> UnresolvedSourceRasters = new Dictionary<string, string>();
+
             /// <summary>Stems in <see cref="UserRasters"/> that are categorical and must be
             /// resampled nearest-neighbour rather than bilinear (fuel model codes, mostly).
             /// The ignition mask is in here because interpolating it would invent fractional
@@ -317,6 +324,12 @@ namespace PREACT.Utility
             //start-up, on the first run (e2e N2).
             string noBuildingTable = DescribeMissingBuildingTable(o, inputs);
             if (noBuildingTable != null) throw new InvalidDataException(char.ToUpperInvariant(noBuildingTable[0]) + noBuildingTable.Substring(1) + ".");
+
+            //The fuel model too, and for the same reason: the case is worthless without one, and the build used to find
+            //that out at its very end - in its validation, after the DEM download, the ERA5 archive and some minutes of
+            //WindNinja (Auburn2: "The case carries neither fbfm40.tif nor fbfm13.tif" at 22:57:59, three minutes in).
+            string noFuel = DescribeMissingFuel(o, inputs);
+            if (noFuel != null) throw new InvalidDataException(noFuel);
 
             //---------------------------------------------------------------- 1. DEM
             //Padded so the fire can grow past the evacuation domain's edge; ELMFIRE reads the
@@ -1080,6 +1093,51 @@ namespace PREACT.Utility
                    + "ELMFIRE's default (build/source/building_fuel_models.csv beside the executable) was not found. Put the "
                    + $"table into {inputs} (PREACTcli build-case --copy <file>), set [ELMFIRE] ElmfireExe to an ELMFIRE "
                    + "build that has its source tree, or switch the building spread model off";
+        }
+
+        /// <summary>
+        /// Why the case would end up without a fuel model ELMFIRE can spread through, or null when it will have one: a
+        /// fuel raster named for this build that exists, one the case already holds (the namelist template's or the
+        /// case's own <c>FBFM_FILENAME</c>, else <c>fbfm40.tif</c>/<c>fbfm13.tif</c>), or one on a grid an earlier
+        /// build set aside and has still to carry onto the new one.
+        /// </summary>
+        /// <remarks>
+        /// Asked before anything is downloaded or computed. Nothing in the build can make a fuel model - it is the one
+        /// layer with no default - so a build without one can only end in the validator's "neither fbfm40.tif nor
+        /// fbfm13.tif", and everything done before that is wasted.
+        /// </remarks>
+        private static string DescribeMissingFuel(Options o, string inputs)
+        {
+            foreach (string stem in ElmfireStems.Fuel)
+            {
+                if (o.UserRasters.TryGetValue(stem, out string source) && !string.IsNullOrEmpty(source) && File.Exists(source))
+                {
+                    return null;
+                }
+            }
+
+            if (ElmfireStems.FuelStem(ReadTemplate(o.TemplateNamelistPath), inputs) != null) return null;
+            if (ElmfireStems.FuelStem(ReadTemplate(Path.Combine(o.OutputDirectory, "elmfire.data")), inputs) != null) return null;
+            if (IsCarryPending(inputs) && ElmfireStems.FuelStem(null, Path.Combine(inputs, PreviousGridFolder)) != null) return null;
+
+            string named = null;
+            foreach (string stem in ElmfireStems.Fuel)
+            {
+                if (o.UnresolvedSourceRasters.TryGetValue(stem, out string missing) && !string.IsNullOrWhiteSpace(missing))
+                {
+                    named = missing;
+                    break;
+                }
+            }
+
+            return "The case has no fuel model, so ELMFIRE would have nothing to spread a fire through; the build stopped "
+                   + "before downloading or computing anything. "
+                   + (named != null
+                       ? $"[ELMFIRE] FuelModelFile names {named}, which is not there."
+                       : $"The scenario names no fuel model raster ([ELMFIRE] FuelModelFile), and {inputs} holds neither "
+                         + "fbfm40.tif nor fbfm13.tif.")
+                   + " Download the LANDFIRE fuels (workflow step 4), or point FuelModelFile at an FBFM40 or FBFM13 raster "
+                   + "(PREACTcli build-case --fbfm40 <tif>), then build again.";
         }
 
         private static bool IsSameFile(string a, string b)

@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.1 (unreleased)
+
+### Case build and fire areas
+
+- A case build checks for a fuel model before it downloads or computes anything, and refuses at once without one
+  (it used to fail in its validation, after ERA5 and minutes of WindNinja). Workflow step 5 is blocked by step 4
+  when `[ELMFIRE] FuelModelFile` names a file that is not there.
+
 ## v1.0
 
 The first versioned release of WUInity / PREACT. It is compared here with the code as it stood before the

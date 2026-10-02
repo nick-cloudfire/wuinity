@@ -802,10 +802,13 @@ namespace WUInity.Workflow
                 else s.Info("The case is missing: " + string.Join(", ", missing) + ".");
             }
 
-            //What the build needs.
-            if (!haveFuel && string.IsNullOrEmpty(e.FuelModelFile))
+            //What the build needs. The build asks for the fuel model before it downloads anything, and refuses without
+            //one; said here too, with the file a scenario names when it is not there (Auburn2's failed LANDFIRE step).
+            if (!haveFuel && !Exists(e.FuelModelFile))
             {
-                BlockBy(s, WorkflowStepId.Fuels, "the case needs a fuel model raster to warp.");
+                BlockBy(s, WorkflowStepId.Fuels, string.IsNullOrEmpty(e.FuelModelFile)
+                    ? "the case needs a fuel model raster to warp."
+                    : $"[ELMFIRE] FuelModelFile names {e.FuelModelFile}, which does not exist, and the case has no fuel model of its own.");
             }
             if (_caseGrid == null && _ctx.Tools.Probed && !_ctx.Tools.HaveOpenTopographyKey)
             {
