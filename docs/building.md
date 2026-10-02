@@ -18,6 +18,7 @@ Linux set-up. For first use of the GUI, see [Getting started](getting-started.md
 | `WUInity/Assets/ThirdParty/elmfire/` | ELMFIRE, a git submodule (branch `ELMFIRE-WUINITY`). |
 | `WUInity/Assets/ThirdParty/Nelson-Dead-Fuel-Moisture/`, `WildfireAV/` | Submodules. The engine and CLI do not build against them; Unity compiles the Nelson sources it finds under `Assets/`. |
 | `Examples/` | Two scenarios that run as shipped — see [Examples](examples.md). |
+| `Verification/`, `verify.ps1`, `verify.sh` | The basic verification cases and their runner — see [Verification](verification.md). |
 | `docs/` | This documentation. |
 
 After cloning, fetch the submodules. The ELMFIRE gitlink is pinned at **a7fb9d6**:
@@ -240,3 +241,6 @@ you do not commit**:
    and delete the classes in that folder the Linux build did not generate (nine of them for 1.22).
 4. Set `SUMO_HOME` to the build; its `bin/` holds `libsumocs.so`.
 5. Rebuild `PREACTexecute` (or run `build.sh`).
+
+`Verification/tools/linux-sumo-glue.sh <scratch dir>` does steps 3 and 5 in a copy of `PREACT/` outside the
+repository and prints the PREACT to use; the [verification runner](verification.md#linux) takes it with `--preact`.

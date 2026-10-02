@@ -59,7 +59,8 @@ fire area (`fire_size_stats.csv`) both times, ± 0.1 %. Measured: 224.1 acres an
 model raster as 16-bit (`FBFM%I2`); an Int32 one is decoded into its float buffer instead, its fuel array stays
 empty, every cell is non-burnable, and the run reports "elmfire burned 0 acres (the ignition most likely landed on
 non-burnable fuel)". `RasterHarmonizer.WarpToGrid` keeps the source's type and the case validator does not check it.
-XFAIL until the builder writes `fbfm*`, `bldg_fuel_model` and `pyromes` as Int16.
+(Round 2's LANDFIRE step writes the fuel band it extracts as Int16, so the download itself avoids this; a fuel raster
+from anywhere else does not.) XFAIL until the builder writes `fbfm*`, `bldg_fuel_model` and `pyromes` as Int16.
 
 ## 1c — a dynamic fuel model
 

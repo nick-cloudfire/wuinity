@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.1 (unreleased)
+
+- **Verification cases** (`Verification/`, `verify.ps1`, `verify.sh`, [docs/verification.md](docs/verification.md)):
+  synthetic cases run head-less through `build-case`, `PREACT` and `converge-trigger`, each checked against an
+  expected value derived independently (Rothermel/BehavePlus, Anderson's L/B, road length over limit, the documented
+  convergence rule). They found seven discrepancies, reported there and marked as known: an Int32 fuel raster burns
+  nothing (D1); k-PERIL's L/B is not the fire's (D2); a group with no area (D3) or no demographics (D4) crashes the
+  run; a run that moves no car exits 0 (D5); k-PERIL subtracts an upslope wind from the slope (D6) and reads ELMFIRE's
+  along-slope rate as a map rate (D7).
+
 ## v1.0
 
 The first versioned release of WUInity / PREACT. It is compared here with the code as it stood before the
