@@ -30,6 +30,7 @@
   SUMO lanes into the case's fuel as GR1 where it is non-burnable, with the islet counts before and after.
 - The "names no SUMO configuration" warning is given once, not on every destination click; the map rereads the
   network after the roads step builds it.
+- `Spatial/Maps/OverpassClient.cs` is removed: nothing used it once the OSM download got its own Overpass client.
 
 ### Case build and fire areas
 
