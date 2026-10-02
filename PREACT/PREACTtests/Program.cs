@@ -60,6 +60,7 @@ namespace PREACT.Tests
             AreaPickTests.Register(runner);
             RoadFuelTests.Register(runner);
             CaseBuildTests.Register(runner);
+            ToolPathsTests.Register(runner);
 
             if (examples)
             {

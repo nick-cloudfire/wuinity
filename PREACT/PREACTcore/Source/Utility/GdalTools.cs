@@ -33,22 +33,49 @@ namespace PREACT.Utility
         private const string ProbeTool = "gdal_translate";
 
         /// <summary>
-        /// Where GDAL's tools are, or null. Cached: the answer cannot change during a session and the search
-        /// touches the file system.
+        /// The automatic search's answer. Cached, because the search touches the file system and its answer only
+        /// changes when something is installed - which is what <see cref="SearchAgain"/> is for.
         /// </summary>
         private static string _cached;
         private static bool _searched;
+        private static readonly object _lock = new object();
 
+        /// <summary>
+        /// Where GDAL's tools are, or null: the folder named in the user's tool settings (<see cref="ToolPaths"/>)
+        /// when it holds them, else the automatic search. A scenario's <c>[ELMFIRE] PathToGdal</c> and
+        /// <c>--gdal</c> are applied by the callers, before this.
+        /// </summary>
+        /// <remarks>
+        /// The setting is looked at on every call, not cached with the search, so saving it in the GUI takes effect
+        /// for the next case build, run or campaign without a restart.
+        /// </remarks>
         public static string FindBinDirectory()
         {
-            if (_searched)
+            string setting = ToolPaths.UserSetting(ToolPaths.Tool.Gdal);
+            if (setting != null)
             {
-                return _cached;
+                return setting;
             }
 
-            _searched = true;
-            _cached = Search();
-            return _cached;
+            lock (_lock)
+            {
+                if (!_searched)
+                {
+                    _cached = Search();
+                    _searched = true;
+                }
+                return _cached;
+            }
+        }
+
+        /// <summary>Forgets the automatic search's answer, so the next lookup searches again (after an install).</summary>
+        public static void SearchAgain()
+        {
+            lock (_lock)
+            {
+                _searched = false;
+                _cached = null;
+            }
         }
 
         private static string Search()

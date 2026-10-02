@@ -1335,7 +1335,11 @@ namespace PREACT.Utility
             return DefaultElmfireTable(elmfireExe, ElmfireStems.BuildingFuelModelTable);
         }
 
-        /// <summary><c>build/source/&lt;fileName&gt;</c> of the ELMFIRE tree an executable in <c>build/&lt;os&gt;/bin</c> belongs to, or null.</summary>
+        /// <summary>
+        /// <c>build/source/&lt;fileName&gt;</c> of the ELMFIRE tree an executable in <c>build/&lt;os&gt;/bin</c> belongs to,
+        /// else <paramref name="fileName"/> beside the executable (a standalone build's <c>elmfire/</c> folder, where
+        /// build-player.ps1 copies the tables), or null.
+        /// </summary>
         private static string DefaultElmfireTable(string elmfireExe, string fileName)
         {
             if (string.IsNullOrEmpty(elmfireExe)) return null;
@@ -1344,7 +1348,9 @@ namespace PREACT.Utility
             {
                 string bin = Path.GetDirectoryName(Path.GetFullPath(elmfireExe));
                 string candidate = Path.GetFullPath(Path.Combine(bin, "..", "..", "source", fileName));
-                return File.Exists(candidate) ? candidate : null;
+                if (File.Exists(candidate)) return candidate;
+                string beside = Path.Combine(bin, fileName);
+                return File.Exists(beside) ? beside : null;
             }
             catch
             {

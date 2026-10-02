@@ -41,9 +41,16 @@ once with `make_windows.bat` — see [Building ELMFIRE](building.md#building-elm
 | GDAL command-line tools | `PATH`, or a QGIS / OSGeo4W install, which is found by itself. |
 | WindNinja | The installer's location, `PATH`, or `WINDNINJA_CLI`. |
 
-**Help > External tools and keys** lists what was found — ELMFIRE, the GDAL tools, WindNinja, SUMO, `PROJ_LIB`,
-`PROJ_DATA`, the Mapbox token and the OpenTopography key — where each was looked for, and what does not work
-without it. **Look again** searches again after you install something.
+**Help > External tools and keys** lists the tools and keys: ELMFIRE, the GDAL tools, WindNinja, SUMO, PROJ's data,
+the Mapbox token and the OpenTopography key. For each tool it shows the path **in use**, where that came from (the
+open scenario, your setting, or the automatic search and where it looked), and what does not work without it.
+**Look again** searches again after you install something.
+
+Each tool also has a **path field**. Leave it empty to have the tool found automatically, or type, paste or
+**Browse...** for the program or its folder. **Save** keeps the paths in `%APPDATA%\PREACT\tools.ini`, which
+`PREACT.exe` and `PREACTcli` read too, so campaigns use the same tools. A scenario's own `[ELMFIRE]` key still comes
+first. ELMFIRE, GDAL, WindNinja and PROJ apply at once; SUMO applies after restarting WUInity. The details are in
+[Distribution](distribution.md#where-the-tools-are-found).
 
 ## 4. Open the visualizer
 

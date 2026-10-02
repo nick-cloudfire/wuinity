@@ -9,6 +9,13 @@ Two console programs host the engine without Unity. `build.ps1` / `build.sh` bui
 | `PREACT.exe` | `PREACT/PREACTexecute/bin/Release/net8.0/` | Running a scenario. |
 | `PREACTcli.exe` | `PREACT/PREACTcli/bin/Release/net8.0/` | `build-case`, `converge-trigger`, `global-gpw-to-pop`. |
 
+A standalone build has both in `dist\WUInity\PREACT\` ([Distribution](distribution.md)).
+
+Both read the tool paths saved under the GUI's Help > External tools and keys, from `%APPDATA%\PREACT\tools.ini`
+(Linux: `$XDG_CONFIG_HOME/PREACT/tools.ini` or `~/.config/PREACT/tools.ini`; or the file `PREACT_TOOLS_FILE`
+names). A path there comes after the option or scenario key that names the tool, and before the search listed in
+the defaults below. "Your setting" in the tables means that file.
+
 ---
 
 ## PREACT.exe — run a scenario
@@ -83,7 +90,7 @@ PREACTcli build-case --wui <scenario.wui> [--out <case dir>] [options]
 | `--dem <file>` | – | A local DEM (any CRS) to cut the grid from, instead of downloading one. It should cover the padded domain. |
 | `--dem-type <t>` | `COP30` | `COP30`, `COP90`, `SRTMGL1` or `SRTMGL3`, for an OpenTopography download. |
 | `--api-key <key>` | `OPENTOPOGRAPHY_API_KEY`, then `WUInity/Assets/Resources/OpenTopography/OpenTopographyConfiguration.txt` | OpenTopography key. |
-| `--gdal <bin>` | found: `[ELMFIRE] PathToGdal`, `PATH`, QGIS, OSGeo4W, `SUMO_HOME\bin` | GDAL tools folder, written into the namelist's `PATH_TO_GDAL`. |
+| `--gdal <bin>` | found: `[ELMFIRE] PathToGdal`, your setting, `PATH`, QGIS, OSGeo4W, `SUMO_HOME\bin` | GDAL tools folder, written into the namelist's `PATH_TO_GDAL`. |
 | `--copy <file>` | – | Copy a loose file (e.g. `building_fuel_models.csv`) into `inputs/`. Repeatable. |
 | `--painted <file>` | `[WildfireModule] GraphicalFireInputFile` | The painted areas (`.gfi`). |
 | `--painted-grid <raster>` | the `[Landscape]` reference raster | The grid a legacy painting was made on. |
@@ -100,7 +107,7 @@ PREACTcli build-case --wui <scenario.wui> [--out <case dir>] [options]
 | `--weather-seed <n>` | `0` | Seeds which annual peak day is drawn. |
 | `--conditioning-days <n>` | `20` | Days of antecedent weather Nelson is marched over, 1 to 365. |
 | `--burning-from`, `--burning-to <hour>` | `10`, `18` | Local hours (0 to 23) of the drawn day over which the logged dead-moisture minimum is taken. Only that log line depends on them. |
-| `--windninja <exe>` | `[ELMFIRE] WindNinjaExe`, then `WINDNINJA_CLI`, `PATH`, `C:\WindNinja`, Program Files (Linux: `/opt/WindNinja`, `/usr/local/WindNinja`, `~/WindNinja`) | WindNinja. |
+| `--windninja <exe>` | `[ELMFIRE] WindNinjaExe`, then your setting, `WINDNINJA_CLI`, `PATH`, `C:\WindNinja`, Program Files (Linux: `/opt/WindNinja`, `/usr/local/WindNinja`, `~/WindNinja`) | WindNinja. |
 | `--wn-mesh <m>` | `fine` | `coarse`, `medium` or `fine`. |
 | `--wn-vegetation <v>` | `grass` | `grass`, `brush` or `trees`. |
 | `--no-climatology` | off | No archive: write uniform weather from the fallbacks below. |
@@ -176,10 +183,10 @@ PREACTcli converge-trigger --wui <base.wui> [options] --inspect
 | `--inspect` | off | Say whether a campaign with these settings exists, what it would reuse, whether it is running and how the others differ; then exit 0. |
 | `--out <file>` | – | Also write the final probability raster here. |
 | `--preact <exe>` | found | PREACT: looked for in `PREACT/PREACTexecute/bin/Release/net8.0/`, then beside PREACTcli, then the Debug build, by the platform's name (`PREACT.exe` or `PREACT`). |
-| `--elmfire <exe>` | `[ELMFIRE] ElmfireExe`, else the build in `WUInity/Assets/ThirdParty/elmfire` | ELMFIRE. |
+| `--elmfire <exe>` | `[ELMFIRE] ElmfireExe`, else your setting, else `elmfire\` beside a standalone build, else the build in `WUInity/Assets/ThirdParty/elmfire` | ELMFIRE. |
 | `--elmfire-template <namelist>` | `[ELMFIRE] NamelistTemplate`, else the case's `elmfire.data` | The namelist each realization is patched from. |
 | `--elmfire-inputs <dir>` | the template's `FUELS_AND_TOPOGRAPHY_DIRECTORY`, else `<case>/inputs` | The case's inputs folder. |
-| `--gdal <bin>` | `[ELMFIRE] PathToGdal`, else found | GDAL tools folder. |
+| `--gdal <bin>` | `[ELMFIRE] PathToGdal`, else your setting, else found | GDAL tools folder. |
 | **Weather** | | |
 | `--historical-day-weather` | off | Replay whole historical peak days (one band per hour of fire, a WindNinja solve each, Nelson) instead of drawing each parameter from normals fitted to them. |
 | `--candidate-days-per-year <n>` | `10` | Highest-FWI days per year in the pool the normals are fitted to (1 to 366). |

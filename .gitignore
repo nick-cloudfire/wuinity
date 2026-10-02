@@ -31,6 +31,10 @@ WUInity/imgui.ini
 WUInity/imgui_log.txt
 WUInity/mono_crash.*
 
+# The standalone build: build-player.ps1 writes dist/WUInity/ (WUInity.exe, WUInity_Data, PREACT/, elmfire/, docs/)
+# and Unity's log of it, dist/WUInity-build.log.
+/dist/
+
 # Half-written files the engine renames into place (downloads, archive rewrites, moved paintings); left behind
 # only by a process that was killed while writing.
 *.tmp

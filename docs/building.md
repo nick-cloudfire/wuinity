@@ -8,6 +8,7 @@ Linux set-up. For first use of the GUI, see [Getting started](getting-started.md
 | Path | Contents |
 |---|---|
 | `build.ps1`, `build.sh` | The build scripts (Windows, Linux). |
+| `build-player.ps1` | Builds WUInity as a standalone program into `dist\WUInity\` (ignored by git); see [Distribution](distribution.md). |
 | `PREACT/PREACTcore/` | The engine, netstandard2.1. Its Release build goes into the Unity project. |
 | `PREACT/PREACTexecute/` | `PREACT.exe`, the head-less scenario runner (net8.0). |
 | `PREACT/PREACTcli/` | `PREACTcli.exe`: `build-case`, `converge-trigger`, `global-gpw-to-pop` (net8.0). |
@@ -109,7 +110,9 @@ idempotent. Exit code 0 when everything passes, 1 otherwise.
 ELMFIRE itself shells out to GDAL's **command-line tools** (`gdal_translate`, `gdalinfo`, `gdalsrsinfo`), which
 are a separate dependency from the library above. Nothing in the repository provides them. They are looked
 for on `PATH`, then in the newest `C:\Program Files\QGIS*\bin`, then `C:\OSGeo4W\bin` and `C:\OSGeo4W64\bin`,
-then `%SUMO_HOME%\bin`; `[ELMFIRE] PathToGdal` or `--gdal` overrides the search.
+then `%SUMO_HOME%\bin`. A folder saved under Help > External tools and keys (`%APPDATA%\PREACT\tools.ini`) comes
+before that search, and `[ELMFIRE] PathToGdal` or `--gdal` before both. The same holds for ELMFIRE, WindNinja,
+SUMO and PROJ's data; see [Where the tools are found](distribution.md#where-the-tools-are-found).
 
 ## Building ELMFIRE
 
@@ -120,8 +123,11 @@ commit **a7fb9d6** of the `ELMFIRE-WUINITY` branch on. An `elmfire.exe` built fr
 
 The platform finds ELMFIRE at `WUInity/Assets/ThirdParty/elmfire/build/windows/bin/elmfire.exe` (Windows) or
 `.../build/linux/bin/elmfire` (Linux), searching upwards from the running program and from the working folder.
-`[ELMFIRE] ElmfireExe` or `--elmfire` points elsewhere. It also takes ELMFIRE's default fuel model table from
-`build/source/fuel_models.csv` beside that executable when a case has none.
+Before that it looks in an `elmfire/` folder beside the program, which is where a standalone build ships it
+([Distribution](distribution.md)). The ELMFIRE saved under Help > External tools and keys comes before both, and
+`[ELMFIRE] ElmfireExe` or `--elmfire` before that. It also takes ELMFIRE's default fuel model table from
+`build/source/fuel_models.csv` of that executable's ELMFIRE tree when a case has none, or from beside the
+executable.
 
 ### ELMFIRE on Windows
 
@@ -172,7 +178,10 @@ folder, with the GDAL tools and a matching `PROJ_DATA` put first on its `PATH`.
 
 The host is `Assets/WUInity/Core/WUInityManager.cs`, which implements the engine's `IExternalManager`. The GUI
 is Dear ImGui (the UImGui package), under `Assets/WUInity/GUI/`. The window arrangement is kept in
-`WUInity/imgui.ini`.
+`WUInity/imgui.ini`. The GUI font is read from `Assets/StreamingAssets/Fonts/`, the one folder a player build
+copies as files. `Assets/WUInity/Editor/PlayerBuild.cs` is editor-only: it builds the standalone player, which
+[Distribution](distribution.md) describes, from the menu **WUInity > Build standalone player...** or from
+`build-player.ps1`.
 
 Keys are read from git-ignored files beside their templates:
 

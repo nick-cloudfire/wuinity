@@ -46,6 +46,11 @@ Keep the **Console** visible throughout (docked along the bottom). After every s
 4. **View > Theme > Dark**, then **Light**: the radio mark follows the theme.
 5. **Help > External tools and keys**: ELMFIRE, GDAL, WindNinja, SUMO, PROJ and the OpenTopography and Mapbox
    keys are listed with what was found. **Look again** re-probes without a hitch.
+   - (v1.1) Each tool's **In use** line says where its path came from. Type a folder without the program into the
+     GDAL field: it is marked, and Save is refused. Browse to your QGIS `bin` (or the QGIS folder): it is accepted,
+     and after **Save** the GDAL line says *from your setting*. `%APPDATA%\PREACT\tools.ini` holds it.
+   - Set SUMO to another folder holding `bin\sumo.exe` and Save: the line says `Saved: ... Applies after restarting
+     WUInity.` Clear both fields and Save again.
 
 ---
 

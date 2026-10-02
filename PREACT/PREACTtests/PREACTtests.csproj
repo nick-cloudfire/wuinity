@@ -35,6 +35,12 @@
     <ProjectReference Include="..\PREACTexecute\PREACTexecute.csproj" ReferenceOutputAssembly="false" Private="false" />
   </ItemGroup>
 
+  <!-- The GUI's tool probe (Help > External tools and keys) uses no Unity, so it is compiled into the tests too: which
+       path wins for each tool, and what the window is told about the ones that do not. -->
+  <ItemGroup>
+    <Compile Include="..\..\WUInity\Assets\WUInity\GUI\Workflow\ExternalTools.cs" Link="Gui\ExternalTools.cs" />
+  </ItemGroup>
+
   <!-- The GDAL wrappers PREACTcore references by path (they do not flow through a project reference), for the
        tests that open what the engine writes the way GDAL and QGIS will. -->
   <ItemGroup>
