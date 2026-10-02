@@ -84,7 +84,7 @@ These are not shipped. Help > External tools and keys shows which of them the pr
 | **QGIS or OSGeo4W** | GDAL's command-line tools (`gdal_translate`, `gdalinfo`, `gdalsrsinfo`), which ELMFIRE runs; also a PROJ database (`share\proj`). | The newest `C:\Program Files\QGIS*\bin` is found by itself. |
 | **WindNinja** | Terrain-resolved wind. Without it a case gets one wind value for the whole domain, and a campaign refuses to start unless told to accept that. | The installer's location is found by itself. |
 | **Microsoft Visual C++ 2015-2022 Redistributable (x64)** | The engine's GDAL wrappers import `MSVCP140.dll` and `VCRUNTIME140.dll`. | Usually already installed: SUMO, QGIS and most other programs install it. |
-| **Intel MPI runtime** | Only if `elmfire\` has no `impi.dll`. | `make_windows.bat` copies `impi.dll` beside `elmfire.exe`, and the script copies it from there. ELMFIRE's Fortran and C runtimes are linked statically. |
+| **Intel MPI runtime** | Only if `elmfire\` has no `impi.dll`. | `make_windows.bat` copies `impi.dll` beside `elmfire.exe`, and the script copies it from there. ELMFIRE's Fortran and C runtimes are linked statically. **Not yet tried on a machine without oneAPI:** Intel MPI 2021 and later usually also loads `libfabric.dll` (from `%I_MPI_ROOT%\opt\mpi\libfabric\bin`) when ELMFIRE starts, so before giving the folder to others, run a case on such a machine, and install the Intel MPI runtime there if ELMFIRE does not start. |
 
 ## Where the tools are found
 

@@ -2,6 +2,17 @@
 
 ## v1.1 (unreleased)
 
+### Behaviour that changes (read before comparing with v1.0)
+
+- **The WUI area is the evacuation groups**, for the case's `wui_area.tif`, k-PERIL and a campaign; a painted WUI area
+  is no longer used (see "Case build and fire areas").
+- **A fuel raster that is not Int16 is converted or refused** (D1); a fire on one used to burn nothing, exit 0.
+- **A fire that does not spread beyond its ignition cells fails a single run** (exit 2; a campaign counts it as not
+  threatened). Its fire area is now compared with the ignited cells' area, not with 0, so on a coarse grid (90-120 m
+  cells, one cell is 2-3.6 acres) a short or slow fire that stays inside its ignition cell counts as not spread.
+- **A run in which no car got into SUMO fails** (D5), however few cars were tried.
+- **LANDFIRE "closest"** picks from the releases LFPS serves: a 2026 scenario now gets LF2025, where v1 asked for LF2024.
+
 ### Data downloads and data steps
 
 - **OSM roads**: a download that got nothing now fails the step, so the RouterDb and the SUMO network do not run
