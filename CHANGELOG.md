@@ -130,6 +130,10 @@
   and `WSMFEFF_LOW_MULT` (ft/min to mi/h in that correlation) for what they are; they were called the bound and the
   multiplier of a "low-wind branch". [Trigger campaigns](docs/trigger-campaigns.md#convergence) says that the first
   boundary, not the first comparison, leaves the streak as it is.
+- **A fire that did not spread is said so on every grid.** The check was "0 acres", but ELMFIRE reports the cells it
+  ignited, and one 30 m cell is 0.2 acres: Auburn2's ignition in urban fuel 91 ran "successfully" with nothing spread.
+  A fire no larger than its ignition cells now fails a single run (a campaign counts it as not threatened), and the
+  case build warns about an ignition point on non-burnable fuel, with the distance to the nearest burnable cell.
 - **A run in which no car got into SUMO fails (D5)**: when its time loop ends with cars tried and none injected, the
   run reports "None of the N car(s) of this run could be put into SUMO …" and `PREACT.exe` exits 2. The 90 % rule
   only judges after 25 cars, so a small run used to end successfully with nobody evacuated.

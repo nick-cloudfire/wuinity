@@ -26,8 +26,10 @@ made; the check then shows XPASS, and its `known=` marker and its paragraph come
 
 ### Also noted in v1.1, not done
 
-- **Auburn2's ignition point** (38.9005, −121.0700) lies in urban fuel (LF2024 FBFM40 91), so a single run from it
-  does not spread. Move it onto burnable fuel (the round-2 checks ignited at 38.90650, −121.09022, TU5 timber).
+- **Auburn2's ignition point** (38.9005, −121.0700) lies in urban fuel (LF2024 FBFM40 91), 108 m from the nearest
+  burnable cell (fuel 183), so a single run from it does not spread; v1.1's case build warns about it and the run now
+  fails saying so. Move it onto burnable fuel (the round-2 checks ignited at 38.90650, −121.09022, fuel 165, TU5:
+  46.0 acres in 3 h at a uniform 8 m/s from 250°, 22.7 of them crown fire).
 - **On Windows, not yet run**: the Unity player build (`build-player.ps1`) and the player itself, `verify.ps1`, and
   the GUI changes of v1.1 (they are compile-checked, and everything head-less is tested on Linux).
 - **The GUI font** is Adobe Clean; check its licence before giving a standalone build to others

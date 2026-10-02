@@ -48,6 +48,9 @@ namespace PREACT.Utility
         public class PlacedIgnition
         {
             public double X, Y, TimeSeconds;
+
+            /// <summary>The point as the scenario gave it, (lat, lon), for messages.</summary>
+            public Vector2d LatLon;
         }
 
         public class Options
@@ -605,6 +608,8 @@ namespace PREACT.Utility
             //the case holds. Resolved once, so the mask restriction, the namelist and the validator agree.
             string[] template = ReadTemplate(o.TemplateNamelistPath);
             result.FuelStem = ElmfireStems.FuelStem(template, inputs) ?? ResolveStem(result, ElmfireStems.Fuel);
+
+            WarnIgnitionsOnNonBurnableFuel(o, result, inputs, grid, Log);
 
             if (o.RestrictIgnitionToBurnableFuel)
             {
@@ -2431,12 +2436,65 @@ namespace PREACT.Utility
                     continue;
                 }
 
-                placed.Add(new PlacedIgnition { X = x, Y = y, TimeSeconds = point.TimeSeconds });
+                placed.Add(new PlacedIgnition { X = x, Y = y, TimeSeconds = point.TimeSeconds, LatLon = point.LatLon });
                 log($"  ignition: {point.LatLon.x:F5},{point.LatLon.y:F5} -> {x:F1}, {y:F1} in {grid.Epsg}"
                     + (point.TimeSeconds > 0.0 ? $" at t = {point.TimeSeconds:F0} s." : "."));
             }
 
             result.Ignitions.AddRange(placed);
+        }
+
+        /// <summary>
+        /// Says which ignition point lies on fuel that does not burn, and how far the nearest burnable cell is.
+        /// </summary>
+        /// <remarks>
+        /// ELMFIRE ignites the cell anyway (<c>ALLOW_NONBURNABLE_PIXEL_IGNITION</c>), reports its area as the fire's -
+        /// 0.2 acres for one 30 m cell - and the run ends with nothing spread. Auburn2's own point (38.9005, -121.0700) is
+        /// in LANDFIRE's urban class 91, 108 m from the nearest burnable cell, and nothing said so.
+        /// </remarks>
+        private static void WarnIgnitionsOnNonBurnableFuel(Options o, Result result, string inputs, MasterGrid grid, Action<string> log)
+        {
+            if (result.Ignitions.Count == 0 || result.FuelStem == null) return;
+            string fuelPath = ElmfireStems.Tif(inputs, result.FuelStem);
+            if (!File.Exists(fuelPath)) return;
+            float[,] fuel = AscRaster.ReadGeoTiff(fuelPath, out AscRaster.Header _, out bool ok);
+            if (!ok || fuel == null) return;
+
+            int nx = fuel.GetLength(0), ny = fuel.GetLength(1);
+            double cell = grid.Header.CellSize;
+            foreach (PlacedIgnition p in result.Ignitions)
+            {
+                int col = (int)System.Math.Floor((p.X - grid.XMin) / cell);
+                int row = (int)System.Math.Floor((p.Y - grid.YMin) / cell); //y index 0 is the south edge
+                if (col < 0 || row < 0 || col >= nx || row >= ny) continue;
+                float code = fuel[col, row];
+                if (ElmfireStems.IsBurnable(code, o.NonBurnableFuelCodes)) continue;
+
+                //The nearest burnable cell, within 3 km, so the message says how far to move the point.
+                double best = double.MaxValue;
+                float bestCode = 0f;
+                int reach = (int)System.Math.Ceiling(3000.0 / cell);
+                for (int x = System.Math.Max(0, col - reach); x <= System.Math.Min(nx - 1, col + reach); ++x)
+                {
+                    for (int y = System.Math.Max(0, row - reach); y <= System.Math.Min(ny - 1, row + reach); ++y)
+                    {
+                        if (!ElmfireStems.IsBurnable(fuel[x, y], o.NonBurnableFuelCodes)) continue;
+                        double d = cell * System.Math.Sqrt((x - col) * (x - col) + (y - row) * (y - row));
+                        if (d < best) { best = d; bestCode = fuel[x, y]; }
+                    }
+                }
+
+                string where = $"{p.LatLon.x.ToString("F5", CultureInfo.InvariantCulture)},{p.LatLon.y.ToString("F5", CultureInfo.InvariantCulture)}";
+                string why = $"ignition point {where} lies on fuel {code.ToString("0", CultureInfo.InvariantCulture)} of {result.FuelStem}.tif, "
+                             + "which does not burn (0 and below, 91-99 urban/snow/agriculture/water/barren"
+                             + (o.NonBurnableFuelCodes.Count > 0 ? ", " + string.Join("/", o.NonBurnableFuelCodes) : "")
+                             + "), so a fire started there will not spread"
+                             + (best < double.MaxValue
+                                 ? $"; the nearest burnable cell (fuel {bestCode.ToString("0", CultureInfo.InvariantCulture)}) is {best.ToString("0", CultureInfo.InvariantCulture)} m away"
+                                 : "; there is no burnable cell within 3 km");
+                result.Fallbacks.Add(why);
+                log("  WARNING " + why + ". Move the point onto burnable fuel.");
+            }
         }
 
         /// <summary>

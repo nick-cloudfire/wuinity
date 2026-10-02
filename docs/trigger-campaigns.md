@@ -83,7 +83,7 @@ Realization *i* (7-digit id, `0000001` for the first) runs in `realizations/<id>
    `MAX_RUNTIME` = the wall-clock limit, and the five required outputs. The fuel tables are the campaign's own
    copies; a template that runs the building spread model without a building fuel table gets ELMFIRE's own
    `building_fuel_models.csv`, or the campaign is refused up front.
-6. **ELMFIRE** runs. 0 acres burned → *not-threatened*. Stopped by the wall-clock limit → *failed* (truncated).
+6. **ELMFIRE** runs. No spread (0 acres, or only the ignited cell) → *not-threatened*. Stopped by the wall-clock limit → *failed* (truncated).
    No midflame raster → *failed* (the ELMFIRE build is too old).
 7. **Does the fire reach the WUI area?** If no cell of `wui_area.tif` has an arrival time, the realization is
    *not-threatened* and no evacuation is run (three to five minutes of SUMO saved on Mati).

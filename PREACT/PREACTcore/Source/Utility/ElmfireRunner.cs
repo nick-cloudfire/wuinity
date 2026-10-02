@@ -195,11 +195,16 @@ namespace PREACT.Utility
             }
 
             // A fire that never spread is not a fire, and left unchecked it is invisible: ELMFIRE exits 0 and
-            // writes every raster, and only "Fire area: 0.0 acres" in its log says anything is wrong.
-            if (result.FireAreaAcres == 0.0)
+            // writes every raster, and only its log's fire area says anything is wrong. That area is the cells it
+            // ignited: "0.0 acres" for one 10 m cell, but "0.2 acres" for one 30 m cell (Auburn2's ignition in urban
+            // fuel), which a test for zero let through as a fire.
+            if (DidNotSpread(result.FireAreaAcres, CellSizeOf(result.Toa), IgnitionCount(namelistLines)))
             {
                 result.NoSpread = true;
-                result.Message = "elmfire burned 0 acres (the ignition most likely landed on non-burnable fuel)";
+                result.Message = result.FireAreaAcres == 0.0
+                    ? "elmfire burned 0 acres (the ignition most likely landed on non-burnable fuel)"
+                    : $"elmfire's fire did not spread beyond the cell(s) it was ignited in ({result.FireAreaAcres.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture)} acres): "
+                      + "the ignition most likely landed on non-burnable fuel";
                 return result;
             }
 
@@ -367,6 +372,47 @@ namespace PREACT.Utility
         /// <c>[1] Meteorology band 1: Case # 1 complete.  Fire area:   3094.0 acres.</c> Returns false when there
         /// is no such line - an unparsed log is not evidence of a zero-area fire.
         /// </summary>
+        /// <summary>m² per acre.</summary>
+        private const double SquareMetresPerAcre = 4046.8564224;
+
+        /// <summary>
+        /// Whether a fire area ELMFIRE reported (acres, to one decimal) is no more than the cells it was ignited in, so
+        /// the fire did not spread at all. A cell size that is not known (0) leaves only an area of 0 as "no spread".
+        /// </summary>
+        public static bool DidNotSpread(double acres, double cellSizeMetres, int ignitions)
+        {
+            if (acres < 0.0) return false;
+            if (acres == 0.0) return true;
+            if (cellSizeMetres <= 0.0) return false;
+            double ignited = System.Math.Max(1, ignitions) * cellSizeMetres * cellSizeMetres / SquareMetresPerAcre;
+            //ELMFIRE prints one decimal: 0.222 acres comes out as 0.2, and two 30 m cells (0.44) as 0.4.
+            return acres <= ignited + 0.05;
+        }
+
+        /// <summary>The cell size of a raster ELMFIRE wrote, or 0 when it cannot be read.</summary>
+        private static double CellSizeOf(string raster)
+        {
+            try
+            {
+                return string.IsNullOrEmpty(raster) || !File.Exists(raster) ? 0.0 : MasterGrid.FromRasterFile(raster).Header.CellSize;
+            }
+            catch
+            {
+                return 0.0;
+            }
+        }
+
+        /// <summary>The fixed ignitions a namelist places (<c>NUM_IGNITIONS</c>), or 1 for random ignitions or none named.</summary>
+        private static int IgnitionCount(string[] namelistLines)
+        {
+            if (namelistLines == null) return 1;
+            string random = ElmfireNamelist.GetKeyInGroup(namelistLines, ElmfireNamelistKeys.MonteCarloGroup, "RANDOM_IGNITIONS");
+            if (random != null && random.Trim().Trim('.').Equals("TRUE", StringComparison.OrdinalIgnoreCase)) return 1;
+            string n = ElmfireNamelist.GetKeyInGroup(namelistLines, ElmfireNamelistKeys.SimulatorGroup, "NUM_IGNITIONS");
+            return int.TryParse(n?.Trim(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture,
+                out int count) && count > 0 ? count : 1;
+        }
+
         public static bool TryReadFireArea(string runDir, out double acres)
         {
             acres = -1.0;

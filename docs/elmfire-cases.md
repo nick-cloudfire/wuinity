@@ -81,7 +81,10 @@ used to fail only in its validation, after the DEM, the ERA5 archive and minutes
    derived, like the terrain), with the groups and the cell count in `case_sources.txt` (`WuiAreaGroups`,
    `WuiAreaCells`); a scenario without a group that has an area gets none, and an old `wui_area.tif` is removed.
 8. **Ignition points** (`[IgnitionPoint]`) are measured in the case's CRS. One outside the grid is dropped and
-   reported with both coordinates — never moved to the edge, which would start a fire nobody asked for.
+   reported with both coordinates — never moved to the edge, which would start a fire nobody asked for. One on fuel
+   that does not burn is kept, with a warning naming its fuel code and how far the nearest burnable cell is: ELMFIRE
+   ignites it and the fire does not spread (Auburn2's own point is in urban fuel 91, 108 m from the nearest burnable
+   cell).
 9. **The ignition mask**: without a painted or named one, an all-ones mask (ignite anywhere). It is then
    restricted to burnable fuel — fuel codes 0 and below (NoData included), 91–99, and Anderson's 14 are not.
    On Mati 64 % of the padded domain is sea or urban; unrestricted, ELMFIRE ignited open water, exited 0 and
@@ -351,8 +354,11 @@ stop time, one fuel cell — runs ELMFIRE again. `ReuseExistingOutput=false` alw
 **Outputs.** ELMFIRE dumps `<stem>_<7-digit case>_<7-digit seconds>.tif` every `DTDUMP`; the run takes the
 latest time-of-arrival dump and the rate of spread, spread direction, fireline intensity and midflame wind with
 the same suffix. The run fails when ELMFIRE says so in its log (its own error lines come first in the message),
-exits non-zero, or writes no arrival raster. A fire of **0 acres** is reported as `elmfire burned 0 acres (the
-ignition most likely landed on non-burnable fuel)`. A fire stopped by `MAX_RUNTIME` is reported as truncated.
+exits non-zero, or writes no arrival raster. A fire that **did not spread** — 0 acres, or no more than the cells it
+was ignited in (ELMFIRE reports one 30 m cell as 0.2 acres) — is reported as `elmfire burned 0 acres (the ignition
+most likely landed on non-burnable fuel)` or `elmfire's fire did not spread beyond the cell(s) it was ignited in (0.2
+acres): …`; a single run fails on it, and a campaign counts the realization as not threatened. A fire stopped by
+`MAX_RUNTIME` is reported as truncated.
 
 **Stopping.** The GUI's Stop and every way of quitting kill the ELMFIRE and WindNinja process trees at once. A
 case build stops at its next safe point — before the grid is decided, after a new case's first DEM, before the

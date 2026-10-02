@@ -31,6 +31,47 @@ namespace PREACT.Tests
             runner.Add("builder: a namelist's raster whose re-cut fails is still in inputs, as it was", FailedRecutKeepsOriginal);
             runner.Add("builder: a raster both a namelist and the scenario name is re-cut into a copy, never in place", ScenarioRasterNotRecutInPlace);
             runner.Add("builder: every fuel model is stored as Int16 (Float32/Int32 sources, a kept one, a namelist's variant); a run refuses one that is not", FuelStoredAsInt16);
+            runner.Add("builder/runner: an ignition on non-burnable fuel is named with the nearest burnable cell; a fire that burned only its ignition cells did not spread", IgnitionOnNonBurnableFuel);
+        }
+
+        /// <summary>
+        /// Auburn2's own ignition point lies in LANDFIRE's urban class 91: ELMFIRE ignited the cell, reported 0.2 acres (one
+        /// 30 m cell) and spread nothing, and the run counted that as a fire because only "0 acres" was treated as none.
+        /// </summary>
+        private static void IgnitionOnNonBurnableFuel()
+        {
+            using (var c = new SyntheticCase())
+            {
+                //SyntheticCase's urban strip: source rows 45-49 from the south are fuel 91, grass west of column 67.
+                MasterGrid source = MasterGrid.FromRasterFile(c.FuelPath);
+                Math.Vector2d LatLonOf(int col, int row)
+                {
+                    Assert.True(CrsTransform.TryToWgs84(source.Epsg, source.XMin + (col + 0.5) * 30.0, source.YMin + (row + 0.5) * 30.0,
+                        out double lat, out double lon), "a cell centre in lat/lon");
+                    return new Math.Vector2d(lat, lon);
+                }
+
+                string caseDir = Path.Combine(c.Folder, "case");
+                var log = new List<string>();
+                ElmfireCaseBuilder.Options o = c.Options(caseDir, 150.0, log);
+                o.IgnitionPoints.Add(new ElmfireCaseBuilder.IgnitionPoint { LatLon = LatLonOf(40, 47) });
+                o.IgnitionPoints.Add(new ElmfireCaseBuilder.IgnitionPoint { LatLon = LatLonOf(40, 30) });
+                ElmfireCaseBuilder.Result built = ElmfireCaseBuilder.Build(o).GetAwaiter().GetResult();
+                string[] warnings = log.Where(l => l.Contains("lies on fuel")).ToArray();
+                Assert.True(warnings.Length == 1, "one of the two points is on non-burnable fuel: " + string.Join(" | ", warnings));
+                Assert.True(warnings[0].Contains("lies on fuel 91 of fbfm40.tif") && warnings[0].Contains("nearest burnable cell (fuel 102) is 90 m away"),
+                    "it is named, with its fuel and the nearest burnable cell: " + warnings[0]);
+                Assert.True(built.Fallbacks.Any(f => f.Contains("lies on fuel 91")), "and listed with the build's fallbacks");
+
+                //ELMFIRE's area, to one decimal: one 30 m cell is 0.222 acres ("0.2"), one 10 m cell 0.025 ("0.0").
+                Assert.True(ElmfireRunner.DidNotSpread(0.2, 30.0, 1), "0.2 acres from one 30 m ignition did not spread");
+                Assert.True(ElmfireRunner.DidNotSpread(0.0, 10.0, 1) && ElmfireRunner.DidNotSpread(0.0, 0.0, 1), "0 acres never did");
+                Assert.True(!ElmfireRunner.DidNotSpread(0.4, 30.0, 1), "a second cell is spread");
+                Assert.True(ElmfireRunner.DidNotSpread(0.4, 30.0, 2), "unless there were two ignitions");
+                Assert.True(!ElmfireRunner.DidNotSpread(46.0, 30.0, 1) && !ElmfireRunner.DidNotSpread(0.2, 0.0, 1),
+                    "a fire is a fire, and without the cell size only 0 counts");
+                Assert.True(!ElmfireRunner.DidNotSpread(-1.0, 30.0, 1), "no area read is not a verdict");
+            }
         }
 
         /// <summary>
