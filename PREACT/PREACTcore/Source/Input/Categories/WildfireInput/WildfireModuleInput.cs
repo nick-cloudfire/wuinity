@@ -243,11 +243,13 @@ namespace PREACT.Input
             {
                 //Not a defect: most scenarios have nothing painted. Recorded on the checklist all the
                 //same, without being critical, because "nothing is painted" is invisible otherwise - the
-                //case builder then falls back to an ignite-anywhere mask and k-PERIL to no WUI area at
-                //all, both of which look like deliberate choices in the output.
+                //case builder then falls back to the IgnitionMaskFile or an ignite-anywhere mask, which looks
+                //like a deliberate choice in the output. Since v1.1 only the ignition area is painted here: the
+                //WUI area is the evacuation groups, and a single run ignites at its [IgnitionPoint]s.
                 PREACTInput.OptionalInputMissing(nameOfInput,
-                    "Nothing has been painted for this scenario - no WUI area, no ignition area, no initial "
-                    + "ignition. Paint them with Fire > Fire areas (workflow step 6) and save.");
+                    "No ignition area has been painted for this scenario, so a trigger campaign draws its ignitions from "
+                    + "[ELMFIRE] IgnitionMaskFile, or from anywhere burnable. Paint one with Fire > Fire areas and ignition "
+                    + "(workflow step 6) and save.");
                 return;
             }
 
