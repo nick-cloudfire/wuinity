@@ -61,8 +61,9 @@ used to fail only in its validation, after the DEM, the ERA5 archive and minutes
    namelist names in `FBFM_FILENAME` (a hand-made variant, roads burned in), whether warped, carried or re-cut.
    ELMFIRE reads these codes only from 16-bit integers: an Int32 (LANDFIRE's LFPS) or Float32 fuel raster gives a
    fire that never spreads, while its log ends "End of simulation reached successfully". A fuel raster the case
-   already holds in another type is rewritten as Int16 with the same codes; one holding values that are not whole
-   codes is left alone, reported, and refused by the validation.
+   already holds in another type is rewritten as Int16 with the same codes, its band description, metadata and
+   `.aux.xml`, and the original is kept in `inputs/_replaced/<stem>.<type>.tif` (a folder no build empties); one
+   holding values that are not whole codes is left alone, reported, and refused by the validation.
 5. **After a re-cut grid**, every layer the old grid had and this build had no source for is warped from
    `_previous_grid/` onto the new grid (the new padding is nodata: no fuel). So is every raster a namelist in force
    names — the case's `elmfire.data`, its `elmfire.data.kept-*` and the scenario's `NamelistTemplate` — when it

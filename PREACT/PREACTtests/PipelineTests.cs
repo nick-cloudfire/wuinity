@@ -120,6 +120,15 @@ namespace PREACT.Tests
                 float[,] onGrid = AscRaster.ReadGeoTiff(ElmfireStems.Tif(inputs, "fbfm40"), out AscRaster.Header _, out bool _);
                 GeoTiffRasterWriter.WriteBand(grid, onGrid, ElmfireStems.Tif(inputs, "fbfm40"), OSGeo.GDAL.DataType.GDT_Float32);
                 GeoTiffRasterWriter.WriteBand(grid, onGrid, ElmfireStems.Tif(inputs, "fbfm40_variant"), OSGeo.GDAL.DataType.GDT_Float32);
+                //A band description and an .aux.xml of the user's own, which the rewrite has to keep (review R2 MA-1).
+                using (OSGeo.GDAL.Dataset ds = OSGeo.GDAL.Gdal.Open(ElmfireStems.Tif(inputs, "fbfm40_variant"), OSGeo.GDAL.Access.GA_Update))
+                using (OSGeo.GDAL.Band band = ds.GetRasterBand(1))
+                {
+                    band.SetDescription("hand-made, roads burned");
+                    band.SetMetadataItem("EDITED_BY", "nick", "");
+                }
+                string userAux = "<PAMDataset><Metadata><MDI key=\"NOTE\">mine</MDI></Metadata></PAMDataset>";
+                File.WriteAllText(ElmfireStems.Tif(inputs, "fbfm40_variant") + ".aux.xml", userAux);
                 string template = Path.Combine(dir, "hand.data");
                 File.WriteAllLines(template, ElmfireNamelist.SetKeyInGroup(File.ReadAllLines(Path.Combine(dir, "elmfire.data")),
                     ElmfireNamelistKeys.InputsGroup, "FBFM_FILENAME", "fbfm40_variant", quoted: true));
@@ -136,7 +145,28 @@ namespace PREACT.Tests
                     for (int x = 0; x < grid.Header.Ncols; ++x)
                         for (int y = 0; y < grid.Header.Nrows; ++y)
                             Assert.True(after[x, y] == onGrid[x, y], $"{stem} keeps its codes ({x},{y}: {onGrid[x, y]} -> {after[x, y]})");
+                    string original = Path.Combine(inputs, ElmfireCaseBuilder.ReplacedFolder, stem + ".Float32.tif");
+                    Assert.Equal("Float32", ElmfireCaseValidator.DataTypeOf(original), $"the original {stem} is kept, as it was, in inputs/_replaced");
                 }
+                using (OSGeo.GDAL.Dataset ds = OSGeo.GDAL.Gdal.Open(ElmfireStems.Tif(inputs, "fbfm40_variant"), OSGeo.GDAL.Access.GA_ReadOnly))
+                using (OSGeo.GDAL.Band band = ds.GetRasterBand(1))
+                {
+                    Assert.True(band.GetDescription() == "hand-made, roads burned" && band.GetMetadataItem("EDITED_BY", "") == "nick",
+                        "the band's description and metadata are kept: '" + band.GetDescription() + "'");
+                }
+                Assert.True(File.ReadAllText(ElmfireStems.Tif(inputs, "fbfm40_variant") + ".aux.xml").Contains("mine")
+                            && File.Exists(Path.Combine(inputs, ElmfireCaseBuilder.ReplacedFolder, "fbfm40_variant.Float32.tif.aux.xml")),
+                    "the .aux.xml stays beside the raster, and a copy goes with the original");
+
+                //A swap that cannot be made (here: the backup's folder cannot be created) leaves the raster as it was.
+                string blocked = ElmfireStems.Tif(inputs, "fbfm40_blocked");
+                GeoTiffRasterWriter.WriteBand(grid, onGrid, blocked, OSGeo.GDAL.DataType.GDT_Float32);
+                string notAFolder = Path.Combine(c.Folder, "not-a-folder");
+                File.WriteAllText(notAFolder, "");
+                string failed = ElmfireCaseBuilder.RewriteAsInt16(blocked, Path.Combine(notAFolder, "fbfm40_blocked.Float32.tif"), out string none);
+                Assert.True(failed != null && none == null, "the rewrite says it could not be made");
+                Assert.Equal("Float32", ElmfireCaseValidator.DataTypeOf(blocked), "and the raster is there, as it was");
+                Assert.True(!Directory.GetFiles(inputs).Any(f => f.Contains(".tmp.")), "with nothing half-written beside it");
                 Assert.True(second.Validation.Ok, "the rebuilt case is valid: " + ElmfireCaseValidator.Summarize(second.Validation));
 
                 // ---- one that is not Int16 is refused by the validator, a run and a campaign, by key and type

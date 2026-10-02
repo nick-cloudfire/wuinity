@@ -119,7 +119,8 @@
   group's mask covers exactly the box's cells, also where the box's edges fall on cell centres (case 2c).
 - **Fuel models are stored as Int16 (D1).** The case build writes `fbfm40`/`fbfm13`, `bldg_fuel_model`, `pyromes`
   and every fuel raster a namelist names (a variant, roads burned in, one carried or re-cut onto a new grid) as
-  Int16, the only type ELMFIRE reads them from, and rewrites one the case kept in another type. The validation, a
+  Int16, the only type ELMFIRE reads them from, and rewrites one the case kept in another type, keeping the original in
+  `inputs/_replaced/` (the rewrite swaps the files in one step, so a locked file leaves the raster as it was). The validation, a
   run and a campaign refuse a fuel raster that is not Int16, naming it; it used to build, validate and run, and
   burn nothing.
 - **Demographics (D4)**: a group whose `Demographics` names none that exists gets the scenario's default, and a

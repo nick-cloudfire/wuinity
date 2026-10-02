@@ -1720,17 +1720,17 @@ namespace PREACT.Utility
                 string type = ElmfireCaseValidator.DataTypeOf(path);
                 if (type == null || ElmfireCaseValidator.DescribeNotInt16(type) == null) continue;
 
-                string problem = RewriteAsInt16(path);
+                string problem = RewriteAsInt16(path, ReplacedPath(inputs, stem, type), out string keptAs);
                 if (problem == null)
                 {
                     log($"  {stem}: stored as {type}; rewritten as Int16 with the same codes, the only type ELMFIRE reads a "
-                        + "fuel model from.");
-                    result.Fallbacks.Add($"{stem}: {type} rewritten as Int16");
+                        + $"fuel model from. The original is kept as inputs/{ReplacedFolder}/{Path.GetFileName(keptAs)}.");
+                    result.Fallbacks.Add($"{stem}: {type} rewritten as Int16 (the original kept in inputs/{ReplacedFolder})");
                 }
                 else
                 {
-                    string why = $"{stem}.tif is stored as {type} and could not be rewritten as Int16 ({problem}); ELMFIRE "
-                                 + "would read no fuel from it";
+                    string why = $"{stem}.tif is stored as {type} and could not be rewritten as Int16 ({problem}); it is left as "
+                                 + "it was, and ELMFIRE would read no fuel from it";
                     result.Fallbacks.Add(why);
                     log("  WARNING " + why + ".");
                 }
@@ -1738,14 +1738,48 @@ namespace PREACT.Utility
         }
 
         /// <summary>
-        /// Rewrites a single-band raster as Int16 in place, keeping its georeferencing, metadata and codes, or says why it
-        /// cannot: a value that is not a whole number in Int16's range. Nodata and non-finite cells become the Int16 nodata
-        /// (the source's own when Int16 can hold it, else <see cref="RasterHarmonizer.Int16NoData"/>).
+        /// The folder under <c>inputs/</c> that keeps a case layer something replaced - a fuel raster rewritten as Int16, the
+        /// fuel and canopy a LANDFIRE download superseded. Never emptied by a build (unlike <see cref="PreviousGridFolder"/>,
+        /// which the next re-cut grid replaces), and not read by ELMFIRE or the builder.
         /// </summary>
-        internal static string RewriteAsInt16(string path)
+        public const string ReplacedFolder = "_replaced";
+
+        /// <summary>
+        /// A name in <see cref="ReplacedFolder"/> for <paramref name="stem"/> replaced for <paramref name="reason"/> (a type,
+        /// a release): <c>&lt;stem&gt;.&lt;reason&gt;.tif</c>, with a time stamp when that name is taken. The folder is made
+        /// by whoever moves a file there.
+        /// </summary>
+        public static string ReplacedPath(string inputs, string stem, string reason)
         {
+            string folder = Path.Combine(inputs, ReplacedFolder);
+            string path = Path.Combine(folder, stem + "." + reason + ".tif");
+            if (File.Exists(path))
+            {
+                path = Path.Combine(folder, stem + "." + reason + "." + DateTime.Now.ToString("yyyyMMdd_HHmmss_fff", CultureInfo.InvariantCulture) + ".tif");
+            }
+            return path;
+        }
+
+        /// <summary>
+        /// Rewrites a single-band raster as Int16 with the same codes, keeping the original as <paramref name="backup"/>, or
+        /// says why it cannot - a value that is not a whole number in Int16's range, a file that cannot be replaced - and then
+        /// leaves the raster exactly as it was. Nodata and non-finite cells become the Int16 nodata (the source's own when
+        /// Int16 can hold it, else <see cref="RasterHarmonizer.Int16NoData"/>).
+        /// </summary>
+        /// <remarks>
+        /// The new raster is written beside the original first, with the original's georeferencing, dataset and band
+        /// metadata, band description and category names, and then swapped in with one <c>File.Replace</c>, which moves the
+        /// original to <paramref name="backup"/>: at no moment is neither there. The first version deleted the original and
+        /// its <c>.aux.xml</c> before moving the new one in, so a locked <c>.aux.xml</c> (a sync client, an antivirus
+        /// scanner) lost both (review R2 MA-1). The <c>.aux.xml</c> stays beside the rewritten raster - its statistics and
+        /// attribute table describe the same codes - and a copy goes with the backup.
+        /// </remarks>
+        internal static string RewriteAsInt16(string path, string backup, out string keptAs)
+        {
+            keptAs = null;
             Gdal.AllRegister();
-            string temporary = path + ".int16.tif";
+            string temporary = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(path)),
+                Path.GetFileNameWithoutExtension(path) + ".int16-" + Guid.NewGuid().ToString("N").Substring(0, 8) + ".tmp.tif");
             try
             {
                 using (Dataset src = Gdal.Open(path, Access.GA_ReadOnly))
@@ -1794,6 +1828,14 @@ namespace PREACT.Utility
                             using (Band outBand = dst.GetRasterBand(1))
                             {
                                 if (hasNodata != 0 || anyNodata) outBand.SetNoDataValue(outNodata);
+                                string description = band.GetDescription();
+                                if (!string.IsNullOrEmpty(description)) outBand.SetDescription(description);
+                                string[] bandMetadata = band.GetMetadata("");
+                                if (bandMetadata != null && bandMetadata.Length > 0) outBand.SetMetadata(bandMetadata, "");
+                                string[] categories = band.GetRasterCategoryNames();
+                                if (categories != null && categories.Length > 0) outBand.SetRasterCategoryNames(categories);
+                                string unit = band.GetUnitType();
+                                if (!string.IsNullOrEmpty(unit)) outBand.SetUnitType(unit);
                                 outBand.WriteRaster(0, 0, nx, ny, codes, nx, ny, 0, 0);
                             }
                             dst.FlushCache();
@@ -1801,10 +1843,30 @@ namespace PREACT.Utility
                     }
                 }
 
-                File.Delete(path);
+                //The new raster is complete; now the one swap. File.Replace keeps the original as the backup and fails
+                //leaving both files as they were.
+                Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(backup)));
                 string aux = path + ".aux.xml";
-                if (File.Exists(aux)) File.Delete(aux);
-                File.Move(temporary, path);
+                if (File.Exists(aux))
+                {
+                    try { File.Copy(aux, backup + ".aux.xml", true); } catch { }
+                }
+                try
+                {
+                    File.Replace(temporary, path, backup, ignoreMetadataErrors: true);
+                }
+                catch (PlatformNotSupportedException)
+                {
+                    //No atomic replace here: the original is copied aside first, so a failure below loses nothing.
+                    File.Copy(path, backup, false);
+                    File.Copy(temporary, path, true);
+                }
+                //What GDAL could not put into the TIFF itself (category names) it wrote beside the temporary file.
+                if (File.Exists(temporary + ".aux.xml") && !File.Exists(aux))
+                {
+                    try { File.Move(temporary + ".aux.xml", aux); } catch { }
+                }
+                keptAs = backup;
                 return null;
             }
             catch (Exception e)
@@ -1814,6 +1876,7 @@ namespace PREACT.Utility
             finally
             {
                 try { if (File.Exists(temporary)) File.Delete(temporary); } catch { }
+                try { if (File.Exists(temporary + ".aux.xml")) File.Delete(temporary + ".aux.xml"); } catch { }
             }
         }
 
