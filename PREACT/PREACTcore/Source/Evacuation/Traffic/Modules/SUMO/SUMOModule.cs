@@ -398,20 +398,52 @@ namespace PREACT.Traffic
             int failed = attempted - injected;
             if (failed <= InjectionFailureLimit * attempted) return null;
 
-            string why = errors > 0
+            return $"{failed} of the first {attempted} cars could not be put into SUMO ({Why(errors, unrouted, firstError)}), "
+                   + "so the evacuation would run without them. Stopping the run." + Hint(errors, unrouted, firstError);
+        }
+
+        /// <summary>
+        /// Why a run that has ended counts as failed although its time loop finished: cars were handed to SUMO and not one
+        /// of them got in. Null when no car was tried, or at least one was injected.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="DescribeInjectionFailure"/> judges only after <see cref="InjectionCheckMinimumCars"/> cars, so a
+        /// small scenario (or one small group) whose every car failed ended "successfully" with nobody evacuated, and
+        /// without k-PERIL nothing made the exit code non-zero (verification D5: 4 of 4 cars without a route, exit 0).
+        /// </remarks>
+        public static string DescribeNoCarInjected(int attempted, int injected, int errors, int unrouted, string firstError)
+        {
+            if (attempted <= 0 || injected > 0) return null;
+            return $"None of the {attempted} car(s) of this run could be put into SUMO ({Why(errors, unrouted, firstError)}), "
+                   + "so nobody was evacuated by car and the run's results describe no evacuation." + Hint(errors, unrouted, firstError);
+        }
+
+        private static string Why(int errors, int unrouted, string firstError)
+        {
+            string refused = errors > 0
                 ? $"{errors} were refused by SUMO itself (first: {firstError})"
                 : "none was refused by SUMO";
-            string hint = firstError != null && firstError.IndexOf("entry point", StringComparison.OrdinalIgnoreCase) >= 0
+            return $"{refused}; {unrouted} had no route";
+        }
+
+        private static string Hint(int errors, int unrouted, string firstError)
+        {
+            return firstError != null && firstError.IndexOf("entry point", StringComparison.OrdinalIgnoreCase) >= 0
                 ? " The C# bindings (Runtimes/Managed/Eclipse.Sumo.Libsumo) do not match this SUMO's libsumocs: they have "
                   + "to be the files SWIG generated for the same SUMO build (the committed ones match the Windows SUMO "
                   + "1.22; for another build, copy its build/src/libsumo/cs/*.cs over them)."
                 : unrouted > errors
                     ? " Most had no route to their destination: check that the SUMO network covers the population and the "
-                      + "destinations, and is in the simulation's UTM zone."
+                      + "destinations, connects them in the direction of travel, and is in the simulation's UTM zone."
                     : string.Empty;
+        }
 
-            return $"{failed} of the first {attempted} cars could not be put into SUMO ({why}; {unrouted} had no route), "
-                   + "so the evacuation would run without them. Stopping the run." + hint;
+        public override string DescribeEndOfRunFailure()
+        {
+            //A run already stopped by the 90 % rule has said so.
+            if (_injectionAbandoned) return null;
+            return DescribeNoCarInjected(_injectionAttempts, totalVehiclesInjected, _injectionErrors, _injectionUnrouted,
+                _firstInjectionError);
         }
 
         public override void HandleNewCars()

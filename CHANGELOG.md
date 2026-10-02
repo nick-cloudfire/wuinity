@@ -111,6 +111,13 @@
   Int16, the only type ELMFIRE reads them from, and rewrites one the case kept in another type. The validation, a
   run and a campaign refuse a fuel raster that is not Int16, naming it; it used to build, validate and run, and
   burn nothing.
+- **Demographics (D4)**: a group whose `Demographics` names none that exists gets the scenario's default, and a
+  scenario without any `[Demographics]` the built-in values, as the checklist says. The run used to stop on a
+  `NullReferenceException` while it was being set up. A lone group without `MaskFile` or `ShapeFile` (D3) runs with
+  every household in it, as the checklist says (round 2's group areas fixed it; now tested).
+- **A run in which no car got into SUMO fails (D5)**: when its time loop ends with cars tried and none injected, the
+  run reports "None of the N car(s) of this run could be put into SUMO …" and `PREACT.exe` exits 2. The 90 % rule
+  only judges after 25 cars, so a small run used to end successfully with nobody evacuated.
 
 ## v1.0
 

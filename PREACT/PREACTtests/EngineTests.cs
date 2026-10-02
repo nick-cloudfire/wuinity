@@ -21,6 +21,7 @@ namespace PREACT.Tests
             runner.Add("engine: no weather file means no weather and no download", NoWeather);
             runner.Add("engine: a run on an incomplete scenario is refused and still finishes", RunGatedOnChecklist);
             runner.Add("engine: a run whose cars mostly fail to enter SUMO is stopped, a few unroutable cars are not", SumoInjectionFailure);
+            runner.Add("engine: a group naming no demographics that exist, in a scenario with or without any, gets the default; a lone group without an area takes everyone", GroupDefaults);
             runner.Add("engine: a stopped run's worker is seen to end while its task still waits for the caller's context (R1)", WorkerEndsWithoutContext);
         }
 
@@ -130,6 +131,42 @@ namespace PREACT.Tests
                 Assert.True(new TestVehicle(++id, south).TryToArrive(1.0, t), "unlimited exit accepts every car");
             }
             Assert.Near(3600.0, south.GetVehicleFlow(300), 1e-6, "300 cars in 300 s is 3600 veh/h");
+        }
+
+        /// <summary>
+        /// Verification D3 and D4. The checklist warns, and promises a default, for a group whose Demographics names nothing
+        /// that exists (D4: the group read the evacuation manager's default while the manager was still being constructed,
+        /// a NullReferenceException) and for a lone group without MaskFile or ShapeFile (D3: it opened the empty path with
+        /// OGR). Both now build, and the households go where the checklist says.
+        /// </summary>
+        private static void GroupDefaults()
+        {
+            using var s = new FormatTests.Scenario();
+            var here = new Math.Vector2d(38.013, 23.901);
+
+            //A name that does not exist: the scenario's default demographics.
+            PREACTInput input = Load(s, FormatTests.Replace("Demographics", "nonexistent", "EvacuationGroup"));
+            var simulation = new Simulation(TheEngine, input, 0);
+            EvacuationGroup group = simulation.Evacuation.GetEvacuationGroup(here, out bool _);
+            Assert.True(group.Demographics != null && group.Demographics.Name == "standard",
+                "the group gets the default demographics: " + group.Demographics?.Name);
+
+            //No [Demographics] at all, and none named: the built-in values.
+            List<string> lines = FormatTests.Replace("Demographics", null, "EvacuationGroup");
+            int start = lines.IndexOf("[Demographics]");
+            lines.RemoveRange(start, lines.FindIndex(start + 1, l => l.StartsWith("[")) - start);
+            input = Load(s, lines);
+            Assert.True(input.Population.Demographics.Count == 0, "the scenario has no demographics");
+            simulation = new Simulation(TheEngine, input, 0);
+            group = simulation.Evacuation.GetEvacuationGroup(here, out bool _);
+            Assert.True(group.Demographics != null && group.Demographics.MaxCars == 2 && group.Demographics.AllowMoreThanOneCar,
+                "the group gets the built-in demographics");
+
+            //One group without an area: every household is outside it and joins it as the default group.
+            input = Load(s, FormatTests.Replace("MaskFile", null, "EvacuationGroup"));
+            simulation = new Simulation(TheEngine, input, 0);
+            group = simulation.Evacuation.GetEvacuationGroup(here, out bool inside);
+            Assert.True(group != null && group.Name == "all" && !inside, "the household is in no area and joins the lone group");
         }
 
         private static void CdfFallback()
@@ -292,6 +329,15 @@ namespace PREACT.Tests
             Assert.True(Traffic.SUMOModule.DescribeInjectionFailure(100, 85, 3, 12, "x") == null,
                 "a few unroutable or refused cars are normal and do not");
             Assert.True(Traffic.SUMOModule.DescribeInjectionFailure(928, 928, 0, 0, null) == null, "all injected");
+
+            //Verification D5: at the end of a run, fewer than the minimum all failing is a failed run too.
+            string none = Traffic.SUMOModule.DescribeNoCarInjected(4, 0, 0, 4, null);
+            Assert.True(none != null && none.Contains("None of the 4 car(s)") && none.Contains("4 had no route") && none.Contains("direction of travel"),
+                "a run in which none of 4 cars got in fails at its end: " + none);
+            string glued = Traffic.SUMOModule.DescribeNoCarInjected(3, 0, 3, 0, glue);
+            Assert.True(glued != null && glued.Contains("Eclipse.Sumo.Libsumo"), "and names the bindings when SUMO refused them: " + glued);
+            Assert.True(Traffic.SUMOModule.DescribeNoCarInjected(4, 1, 0, 3, null) == null, "one car in is an evacuation");
+            Assert.True(Traffic.SUMOModule.DescribeNoCarInjected(0, 0, 0, 0, null) == null, "no car tried is not a failure");
         }
 }
 }

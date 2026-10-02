@@ -138,6 +138,14 @@ namespace PREACT
                     }
                 }
 
+                //A loop that ran to its end can still have simulated nothing it was asked to: every car handed to SUMO
+                //refused, say. That is an error of the run, reported before its results are saved as if they meant something.
+                if (!_stoppedDueToError)
+                {
+                    string failure = _evacuation.DescribeEndOfRunFailure();
+                    if (failure != null) Engine.Message(this, Engine.LogType.SimulationError, failure);
+                }
+
                 //Judged on the time loop: a failure in the post-processing (no arrivals for k-PERIL, say) is
                 //reported, and counted against the run, but the simulated results exist and stay viewable.
                 bool loopFailed = _stoppedDueToError;

@@ -52,6 +52,15 @@ namespace PREACT.Traffic
 
         public abstract void HandleNewCars();
 
+        /// <summary>
+        /// Why a run whose time loop finished still failed in this module - no car got into the traffic model at all, say -
+        /// or null. Asked once, when the loop ends; the run then counts as failed (<c>PREACT.exe</c> exits 2).
+        /// </summary>
+        public virtual string DescribeEndOfRunFailure()
+        {
+            return null;
+        }
+
         public abstract int GetTotalCarsSimulated();
         public abstract int GetNumberOfCarsInSystem();
         public abstract void UpdateDestinations();

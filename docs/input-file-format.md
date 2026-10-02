@@ -136,7 +136,8 @@ from the seeds above; nothing marches them over the weeks before the run.
 ## `[Demographics]` — repeatable, optional
 
 Referenced by name from `[EvacuationGroup] Demographics`. The first one is the default unless another says
-`Default=true`. Nothing here is critical: a group whose demographics are missing uses the default ones. A
+`Default=true`. Nothing here is critical: a group whose demographics are missing uses the default ones, and a
+scenario with no `[Demographics]` at all uses the built-in values in the Default column below (the log says so). A
 section without `Name` is ignored with a warning.
 
 | Key | Type | Default | Notes |

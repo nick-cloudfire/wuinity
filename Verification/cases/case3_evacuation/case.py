@@ -249,21 +249,21 @@ def run(ctx, folder):
             n = sum(1 for line in f if line.strip()[:1].isdigit())
     checks.append(Check(CASE, "3c a group without MaskFile/ShapeFile runs (checked as a warning)",
                         n, 3, "3 cars, exit 0", code == 0 and n == 3, "cars",
-                        "exit %d%s" % (code, "; NullReferenceException in EvacuationGroup.CreateShapeFilePolygon"
-                                       if "CreateShapeFilePolygon" in log else ""), known="D3"))
+                        "" if code == 0 else "exit %d%s" % (code, "; NullReferenceException" if "NullReferenceException" in log
+                                                             else "")))
 
     # (d)
     d = os.path.join(folder, "d_no_demographics")
     code, log, _ = ctx.preact(os.path.join(d, "reaction.wui"), d, os.path.join(d, "preact.log"))
     checks.append(Check(CASE, "3d a group naming no [Demographics] runs (default promised)", code, 0,
                         "exit 0", code == 0, "", "NullReferenceException in the EvacuationGroup constructor"
-                        if "NullReferenceException" in log else "", known="D4"))
+                        if "NullReferenceException" in log else ""))
 
     # (e)
     d = os.path.join(folder, "e_unroutable")
     code, log, _ = ctx.preact(os.path.join(d, "evac.wui"), d, os.path.join(d, "preact.log"))
     unrouted = log.count("no valid route")
-    checks.append(Check(CASE, "3e a run in which no car can reach SUMO fails (exit 2)", code, 2, "exit 2", code == 2, "",
-                        "%d of 4 cars had no route; SUMOModule only stops a run for this after 25 cars" % unrouted,
-                        known="D5"))
+    said = "None of the 4 car(s) of this run could be put into SUMO" in log
+    checks.append(Check(CASE, "3e a run in which no car can reach SUMO fails (exit 2)", code, 2, "exit 2", code == 2 and said,
+                        "", "%d of 4 cars had no route%s" % (unrouted, "" if said else "; the run did not say none got in")))
     return checks

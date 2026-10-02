@@ -43,10 +43,16 @@ namespace PREACT.Evacuation
             _input = _simulation.Input;
             _evacuationDestinationsDict = EvacuationDestination.CreateEvacacuationDestinationsFromInput(_simulation, _input.Evacuation.EvacuationDestinationInputs);
             SetDefaulDemographics(_input.Population.Demographics);
-            _evacuationGroups = EvacuationGroup.CreateGroupsFromInput(_input.Evacuation.EvacuationGroupInputs, _evacuationDestinationsDict, _input.Evacuation.ResponseCurves, _input.Population.Demographics, _simulation);
+            _evacuationGroups = EvacuationGroup.CreateGroupsFromInput(_input.Evacuation.EvacuationGroupInputs, _evacuationDestinationsDict, _input.Evacuation.ResponseCurves, _input.Population.Demographics, _defaultDemographics, _simulation);
             SetDefaulEvacuationtGroup(); //just sets default group fallback
             BuildEvacuationDestinationList(); //duplicate of destination but in an array, needed for random pull of destination
             BuildAvailableEvacuationDestinations();
+        }
+
+        /// <summary>Why the run failed although its time loop finished (<see cref="TrafficModule.DescribeEndOfRunFailure"/>), or null.</summary>
+        public string DescribeEndOfRunFailure()
+        {
+            return _trafficModule?.DescribeEndOfRunFailure();
         }
 
         public void PostStep()
@@ -1346,15 +1352,30 @@ namespace PREACT.Evacuation
             }
         }
 
+        /// <summary>
+        /// The demographics a group gets when it names none that exists: the one marked Default, else the first, else the
+        /// built-in values a <c>[Demographics]</c> section defaults to (<see cref="DemographicsInput"/>) - so a scenario
+        /// without any still runs, as docs/input-file-format.md says ("nothing here is critical").
+        /// </summary>
         private void SetDefaulDemographics(Dictionary<string, DemographicsInput> demographics)
         {
+            _defaultDemographics = null;
             foreach(DemographicsInput d in demographics.Values)
             {
+                if (_defaultDemographics == null) _defaultDemographics = d;
                 if(d.Default)
                 {
                     _defaultDemographics = d;
                     break;
                 }
+            }
+
+            if (_defaultDemographics == null)
+            {
+                _defaultDemographics = new DemographicsInput { Name = "built-in", Default = true };
+                Engine.Message(_simulation, Engine.LogType.Log, "The scenario has no [Demographics]; households use the "
+                    + $"built-in ones (AllowMoreThanOneCar={_defaultDemographics.AllowMoreThanOneCar}, MaxCars={_defaultDemographics.MaxCars}, "
+                    + $"MaxCarsProbability={_defaultDemographics.MaxCarsProbability.ToString(System.Globalization.CultureInfo.InvariantCulture)}).");
             }
         }
 

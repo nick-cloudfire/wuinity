@@ -48,29 +48,30 @@ would leave at 3600 s by their response curve. `ReactToFire=true`, `FireReaction
 Measured: 421, 1021, 1441 and 3600 s — 16, 16 and 36 s after the front came within reach, i.e. at the next refresh
 of the distance field.
 
-## 3c — one evacuation group with no area (D3)
+## 3c — one evacuation group with no area (D3, fixed)
 
 3a with the group's `MaskFile` removed. The scenario check reports "no MaskFile or ShapeFile: every household is outside
 the group and is assigned to it as the default group" as a warning, so the run should go ahead with every household in
-that group: expected exit 0 and 3 cars. Measured: exit 2, `NullReferenceException` in
-`EvacuationGroup.CreateShapeFilePolygon` (it opens the empty ShapeFile path with OGR and uses the null data source).
-XFAIL.
+that group: expected exit 0 and 3 cars. v1 (b9b18709) ended with exit 2, a `NullReferenceException` in
+`EvacuationGroup.CreateShapeFilePolygon` (it opened the empty ShapeFile path with OGR); round 2's
+`EvacuationGroupArea` reads a group's area only when it names one, and the run passes.
 
-## 3d — a group that names no `[Demographics]` (D4)
+## 3d — a group that names no `[Demographics]` (D4, fixed)
 
 3b without the `[Demographics]` section and without `Demographics=` in the group. The scenario check says "all
-Demographics was not found, default value the default demographics has been used": expected exit 0. Measured: exit 2,
-`NullReferenceException` in the `EvacuationGroup` constructor, which falls back to
-`simulation.Evacuation.DefaultDemographics` while `Simulation` is still constructing its `EvacuationManager` (so
-`simulation.Evacuation` is null) — and with no `[Demographics]` at all there is no default either. Any group whose
-`Demographics` names nothing that exists hits it. XFAIL.
+Demographics was not found, default value the default demographics has been used": expected exit 0. v1 ended with
+exit 2, a `NullReferenceException` in the `EvacuationGroup` constructor, which fell back to
+`simulation.Evacuation.DefaultDemographics` while `Simulation` was still constructing its `EvacuationManager` — and with
+no `[Demographics]` at all there was no default either. The manager now hands its default to the groups, and a
+scenario without any demographics gets the built-in values (`AllowMoreThanOneCar=true`, `MaxCars=2`,
+`MaxCarsProbability=0.3`).
 
-## 3e — a run in which no car can reach SUMO (D5)
+## 3e — a run in which no car can reach SUMO (D5, fixed)
 
 3a with every household on the corridor's second and third edges (two each) and the exit at its start: the corridor is
 one-way east, so no car has a route ("Car could not be injected as no valid route was found or cached", four times).
-Expected: the run fails (exit 2), as `SUMOModule` stops a run in which more than 90 % of the cars could not be put
-into SUMO. Measured: exit 0 with nobody evacuated — the rule only applies once 25 cars have been tried
-(`InjectionCheckMinimumCars`), so a small scenario (or a small group run on its own) passes with an empty evacuation.
-The same happens on Linux with the committed SUMO bindings (every injection fails with "Unable to find an entry point
-named '?'"): case 3a then reports 0 cars arrived although PREACT exits 0. XFAIL.
+Expected: the run fails (exit 2) and says that none of its 4 cars got into SUMO. `SUMOModule` stops a run in which
+more than 90 % of the cars could not be put into SUMO only once 25 cars have been tried
+(`InjectionCheckMinimumCars`), so in v1 a small scenario (or a small group run on its own) passed with an empty
+evacuation, exit 0 — as did case 3a on Linux with the committed SUMO bindings (every injection failing with "Unable to
+find an entry point named '?'"). A run whose loop ends with cars tried and none injected now fails.

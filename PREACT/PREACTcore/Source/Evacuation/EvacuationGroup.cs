@@ -36,7 +36,10 @@ namespace PREACT.Evacuation
         public DemographicsInput Demographics { get => _demographics; }
 
 
-        public EvacuationGroup(EvacuationGroupInput groupInput, Dictionary<string, EvacuationDestination> allDestinations, Dictionary<string, ResponseCurve> allResponseCurves, Dictionary<string, DemographicsInput> allDemographics, Simulation simulation)
+        /// <param name="defaultDemographics">What a group gets whose <c>Demographics</c> names none that exists - the
+        /// evacuation manager's default, handed in because the manager is still being constructed (verification D4: the
+        /// group read <c>simulation.Evacuation</c>, still null then, and the run ended in a NullReferenceException).</param>
+        public EvacuationGroup(EvacuationGroupInput groupInput, Dictionary<string, EvacuationDestination> allDestinations, Dictionary<string, ResponseCurve> allResponseCurves, Dictionary<string, DemographicsInput> allDemographics, DemographicsInput defaultDemographics, Simulation simulation)
         {
             _name = groupInput.Name;
             _evacuationOrderDateTime = groupInput.EvacuationOrderDateTime;
@@ -44,9 +47,10 @@ namespace PREACT.Evacuation
             _color = groupInput.Color;
             _default = groupInput.Default;
 
-            if(!allDemographics.TryGetValue(groupInput.Demographics, out _demographics))
+            //The checklist has said so already ("default value the default demographics has been used").
+            if (groupInput.Demographics == null || !allDemographics.TryGetValue(groupInput.Demographics, out _demographics))
             {
-                _demographics = simulation.Evacuation.DefaultDemographics;
+                _demographics = defaultDemographics;
             }
 
             //this is where we need to "re-build" the information from input. A name that refers to nothing is
@@ -94,13 +98,14 @@ namespace PREACT.Evacuation
         }
 
         public static EvacuationGroup[] CreateGroupsFromInput(Dictionary<string, EvacuationGroupInput> groupsInput, Dictionary<string, 
-            EvacuationDestination> allDestinations, Dictionary<string, ResponseCurve> allResponseCurves, Dictionary<string, DemographicsInput> allDemographics, Simulation simulation)
+            EvacuationDestination> allDestinations, Dictionary<string, ResponseCurve> allResponseCurves, Dictionary<string, DemographicsInput> allDemographics,
+            DemographicsInput defaultDemographics, Simulation simulation)
         {
             EvacuationGroup[] groups = new EvacuationGroup[groupsInput.Count];
             int index = 0;
             foreach(EvacuationGroupInput eGI in groupsInput.Values)
             {
-                groups[index] = new EvacuationGroup(eGI, allDestinations, allResponseCurves, allDemographics, simulation);
+                groups[index] = new EvacuationGroup(eGI, allDestinations, allResponseCurves, allDemographics, defaultDemographics, simulation);
                 ++index;
             }
 
