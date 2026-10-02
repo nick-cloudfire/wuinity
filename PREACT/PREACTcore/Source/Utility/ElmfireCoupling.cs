@@ -854,8 +854,10 @@ namespace PREACT.Utility
         }
 
         /// <summary>
-        /// The executable the scenario names, or the vendored build. Returns null when neither is there, which is
-        /// only fatal if ELMFIRE actually has to run. Public because the trigger campaign needs the same answer.
+        /// The executable the scenario names; else the one in the user's tool settings (<see cref="ToolPaths"/>);
+        /// else a copy shipped beside the program (a standalone build's <c>elmfire/</c> folder); else the vendored
+        /// build. Returns null when none is there, which is only fatal if ELMFIRE actually has to run. Public
+        /// because the trigger campaign needs the same answer.
         /// </summary>
         public static string ResolveExecutable(string rootFolder, string named)
         {
@@ -865,9 +867,30 @@ namespace PREACT.Utility
                 return File.Exists(path) ? path : null;
             }
 
+            string setting = ToolPaths.UserSetting(ToolPaths.Tool.Elmfire);
+            if (setting != null)
+            {
+                return setting;
+            }
+
             //The executable for this platform first: a checkout carries both builds.
             bool windows = System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(
                 System.Runtime.InteropServices.OSPlatform.Windows);
+
+            //A standalone build (build-player.ps1) ships ELMFIRE in elmfire/ beside WUInity.exe and beside the PREACT/
+            //folder holding PREACT.exe and PREACTcli; PREACTcore.dll is in WUInity_Data/Managed or in PREACT/. Looked
+            //for only this close to the program, and before the vendored build, so a build that has been copied away
+            //from the checkout and one still inside it run the same ELMFIRE - the one shipped with them.
+            string shipped = Path.Combine("elmfire", windows ? "elmfire.exe" : "elmfire");
+            string here = AssemblyDirectory();
+            for (int up = 0; up < 3 && !string.IsNullOrEmpty(here); ++up, here = Path.GetDirectoryName(here))
+            {
+                string candidate = Path.Combine(here, shipped);
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
 
             //Upwards from the running assembly, then from the working directory: the same build is reached by
             //different relative paths from the editor, a player build and the CLI.

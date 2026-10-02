@@ -17,6 +17,7 @@ using PREACT.Math;
 using PREACT.Output;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using ToolPaths = PREACT.Utility.ToolPaths;
 
 
 namespace PREACT
@@ -84,10 +85,30 @@ namespace PREACT
         }
 
         string _projLibPath, _projDataPath, _sumoPath;
+        string[] _projSearchPaths = new string[0];
+        ToolPaths.Source _sumoSource, _projSource;
+        string _projDetail = string.Empty;
+        string _gdalLibraryProblem;
         public string ProjLibPath { get => _projLibPath; }
         public string ProjDataPath { get => _projDataPath; }
-        /// <summary>SUMO's bin folder, or null when SUMO was not found. Read from SUMO_HOME first, then PATH.</summary>
+        /// <summary>
+        /// SUMO's bin folder, or null when SUMO was not found: the user's tool settings, then SUMO_HOME, then PATH.
+        /// Decided when the engine starts (see <see cref="FindSumoBinFolder(out ToolPaths.Source)"/>).
+        /// </summary>
         public string SumoPath { get => _sumoPath; }
+        /// <summary>Where <see cref="SumoPath"/> came from.</summary>
+        public ToolPaths.Source SumoSource { get => _sumoSource; }
+        /// <summary>The PROJ search paths this process's GDAL was given; empty when GDAL keeps its own.</summary>
+        public string[] ProjSearchPaths { get => (string[])_projSearchPaths.Clone(); }
+        /// <summary>Where <see cref="ProjSearchPaths"/> came from.</summary>
+        public ToolPaths.Source ProjSource { get => _projSource; }
+        /// <summary>Which settings or variables gave <see cref="ProjSearchPaths"/>, for a message.</summary>
+        public string ProjSourceDetail { get => _projDetail; }
+        /// <summary>
+        /// Why GDAL's native library could not be loaded when the engine started, or null when it was. Everything that
+        /// reads or writes a raster fails until it can be; on Windows it comes from SUMO's bin folder.
+        /// </summary>
+        public string GdalLibraryProblem { get => _gdalLibraryProblem; }
 
         /// <summary>
         /// Makes the native runtimes under Runtimes/Native findable, locates SUMO and PROJ, and registers GDAL.
@@ -103,6 +124,15 @@ namespace PREACT
         /// Mono keeps its own probing). The variable is still extended so child processes see the same set.
         /// Reading the Machine-scope variable is Windows-only - it is null everywhere else, and the old
         /// <c>.Split</c> on it is what stopped PREACT.exe from starting on Linux at all.
+        ///
+        /// SUMO is decided here, once: its bin goes on the library search path before GDAL is first touched,
+        /// because on Windows the engine's GDAL wrappers load <c>gdal.dll</c> from it, and SUMO's own library is
+        /// loaded from it by the first traffic run. A SUMO saved in the tool settings later therefore applies when
+        /// the program is started again. PROJ can change while running: <see cref="ApplyToolSettings"/>.
+        ///
+        /// A GDAL library that cannot be loaded no longer stops the engine from being made: the visualizer then
+        /// still opens, says why (<see cref="GdalLibraryProblem"/>), and Help &gt; External tools and keys is
+        /// where SUMO can be set before starting again.
         /// </remarks>
         private void SetupNativeLibraries()
         {
@@ -115,7 +145,11 @@ namespace PREACT
             bool isOsx = RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
             string libraryVariable = isWindows ? "PATH" : isOsx ? "DYLD_LIBRARY_PATH" : "LD_LIBRARY_PATH";
 
-            _sumoPath = FindSumoBinFolder();
+            _sumoPath = FindSumoBinFolder(out _sumoSource);
+            if (_sumoSource == ToolPaths.Source.UserSetting)
+            {
+                PointSumoHomeAt(_sumoPath);
+            }
 
             //Runtimes first, so the committed wrappers win over any other copy; SUMO last (Windows), so that
             //adding it can never change which gdal.dll the wraps pick up - that is decided by the order the user's
@@ -143,39 +177,143 @@ namespace PREACT
 
             //now some GDAL/PROJ stuff. The process environment, which on Windows already holds the Machine and
             //User values it was started with; the Machine-only lookup this used to do returned null elsewhere and
-            //then handed those nulls to PROJ.
+            //then handed those nulls to PROJ. The user's tool settings come first (ToolPaths.ProjSearchPaths).
             _projLibPath = Environment.GetEnvironmentVariable("PROJ_LIB");
             _projDataPath = Environment.GetEnvironmentVariable("PROJ_DATA");
-            var projPaths = new List<string>();
-            foreach (string candidate in new[] { _projDataPath, _projLibPath })
+            try
             {
-                if (!string.IsNullOrEmpty(candidate) && Directory.Exists(candidate) && !projPaths.Contains(candidate))
-                {
-                    projPaths.Add(candidate);
-                }
+                ApplyProjSearchPaths();
+                OSGeo.GDAL.Gdal.AllRegister();
+                OSGeo.OGR.Ogr.RegisterAll();
             }
-            if (projPaths.Count == 0 && !isWindows && Directory.Exists("/usr/share/proj"))
+            catch (Exception e) when (e is TypeInitializationException || e is DllNotFoundException || e is BadImageFormatException
+                                      || e is EntryPointNotFoundException)
             {
-                projPaths.Add("/usr/share/proj");
+                Exception inner = e;
+                while (inner.InnerException != null) inner = inner.InnerException;
+                _gdalLibraryProblem = "GDAL's library could not be loaded (" + inner.Message + "). "
+                    + (isWindows
+                        ? "The engine loads gdal.dll from SUMO's bin folder: install SUMO 1.22, or set its folder under Help > External tools and keys (or in "
+                          + ToolPaths.SettingsFile + "), and start again."
+                        : "Put GDAL 3.10's lib folder (libgdal.so.36) on LD_LIBRARY_PATH and start again.");
+                Message(null, LogType.Warning, _gdalLibraryProblem);
             }
-            //Only when something was found: an empty list would replace PROJ's own compiled-in search path.
-            if (projPaths.Count > 0)
-            {
-                OSGeo.OSR.Osr.SetPROJSearchPaths(projPaths.ToArray());
-            }
-
-            OSGeo.GDAL.Gdal.AllRegister();
-            OSGeo.OGR.Ogr.RegisterAll();
         }
 
         /// <summary>
-        /// SUMO's bin folder: SUMO_HOME/bin when that exists, else the first PATH entry holding the sumo
-        /// executable, else the first PATH entry that looks like a SUMO bin folder. Null when there is none.
+        /// Applies tool settings saved while this process runs, as far as that can be done without starting again:
+        /// PROJ's search paths for this process's GDAL. ELMFIRE, the GDAL tools and WindNinja need nothing - they are
+        /// looked up at each use. SUMO is not changed (see <see cref="SetupNativeLibraries"/>).
+        /// </summary>
+        /// <returns>Null, or why the PROJ change needs a restart.</returns>
+        public string ApplyToolSettings()
+        {
+            if (_gdalLibraryProblem != null)
+            {
+                return "GDAL's library is not loaded; start again.";
+            }
+
+            try
+            {
+                return ApplyProjSearchPaths();
+            }
+            catch (Exception e)
+            {
+                return "PROJ's search paths could not be set: " + e.Message;
+            }
+        }
+
+        /// <summary>
+        /// Hands GDAL the PROJ folders <see cref="ToolPaths.ProjSearchPaths"/> gives, when they differ from what it has.
+        /// Returns null, or why it could not be done now.
+        /// </summary>
+        /// <remarks>
+        /// GDAL (3.x) counts the calls and passes new paths to every thread's PROJ context at its next lookup, so this
+        /// takes effect at once (checked with GDAL 3.10 in PREACTtests: a lookup that failed on a broken proj.db
+        /// succeeds after the call, on another thread). Paths are only ever replaced, never cleared: an empty list would also take away
+        /// PROJ's own compiled-in search, so going back to "nothing set" waits for a restart.
+        /// </remarks>
+        private string ApplyProjSearchPaths()
+        {
+            string[] paths = ToolPaths.ProjSearchPaths(out ToolPaths.Source source, out string detail);
+            if (paths.Length == 0)
+            {
+                if (_projSearchPaths.Length == 0)
+                {
+                    _projSource = ToolPaths.Source.None;
+                    _projDetail = string.Empty;
+                    return null;
+                }
+                return "PROJ keeps " + string.Join(", ", _projSearchPaths) + " until WUInity is started again "
+                       + "(GDAL cannot be handed back its own search while it runs).";
+            }
+
+            bool same = paths.Length == _projSearchPaths.Length;
+            for (int i = 0; same && i < paths.Length; ++i)
+            {
+                same = ToolPaths.SamePath(paths[i], _projSearchPaths[i]);
+            }
+            if (!same)
+            {
+                OSGeo.OSR.Osr.SetPROJSearchPaths(paths);
+                _projSearchPaths = paths;
+            }
+            _projSource = source;
+            _projDetail = detail;
+            return null;
+        }
+
+        /// <summary>
+        /// SUMO_HOME for this process and its children, when SUMO comes from the tool settings and the variable does not
+        /// already name that install: SUMO reads its data (the XML schemas it validates against) from there, and a
+        /// SUMO_HOME left on another install would hand this SUMO that one's files.
+        /// </summary>
+        private static void PointSumoHomeAt(string sumoBin)
+        {
+            try
+            {
+                string home = Path.GetDirectoryName(Path.GetFullPath(sumoBin).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                if (string.IsNullOrEmpty(home) || !Directory.Exists(Path.Combine(home, "data")))
+                {
+                    return; //a bin without SUMO's data beside it (a build tree): nothing better to point at
+                }
+
+                string current = Environment.GetEnvironmentVariable("SUMO_HOME");
+                if (!ToolPaths.SamePath(current, home))
+                {
+                    Environment.SetEnvironmentVariable("SUMO_HOME", home);
+                }
+            }
+            catch
+            {
+                //SUMO then finds its data the way it would have without the setting
+            }
+        }
+
+        /// <summary>
+        /// SUMO's bin folder: the one named in the user's tool settings (<see cref="ToolPaths"/>) when it holds sumo,
+        /// else SUMO_HOME/bin when that exists, else the first PATH entry holding the sumo executable, else the first
+        /// PATH entry that looks like a SUMO bin folder. Null when there is none.
         /// </summary>
         /// <remarks>
         /// This used to accept only a Machine-PATH entry containing both "Sumo" and "bin", case-sensitively - so a
-        /// user-PATH install, "sumo" in lower case, or any Linux install was never found.
+        /// user-PATH install, "sumo" in lower case, or any Linux install was never found. Public so the GUI can show
+        /// what a restart would pick up after the setting changes.
         /// </remarks>
+        public static string FindSumoBinFolder(out ToolPaths.Source source)
+        {
+            string setting = ToolPaths.UserSetting(ToolPaths.Tool.Sumo);
+            if (setting != null)
+            {
+                source = ToolPaths.Source.UserSetting;
+                return setting;
+            }
+
+            string found = FindSumoBinFolder();
+            source = found != null ? ToolPaths.Source.Automatic : ToolPaths.Source.None;
+            return found;
+        }
+
         private static string FindSumoBinFolder()
         {
             bool isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
@@ -223,7 +361,7 @@ namespace PREACT
         /// <paramref name="current"/> with <paramref name="prepend"/> in front and <paramref name="append"/> at the
         /// end, skipping folders already present so repeated engines do not grow it.
         /// </summary>
-        private static string ExtendSearchPath(string current, List<string> prepend, List<string> append)
+        internal static string ExtendSearchPath(string current, List<string> prepend, List<string> append)
         {
             char separator = Path.PathSeparator;
             var existing = new List<string>();

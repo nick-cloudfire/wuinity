@@ -132,23 +132,27 @@ namespace PREACT.Runtime
             Register(folders, typeof(NativeLibraries).Assembly, typeof(OSGeo.GDAL.Gdal).Assembly,
                 typeof(OSGeo.OGR.Ogr).Assembly, typeof(OSGeo.OSR.Osr).Assembly);
 
-            //The process environment, which on Windows already holds the Machine and User values it was started
-            //with. Only when something was found: an empty list would replace PROJ's own compiled-in search path.
-            var projPaths = new List<string>();
-            foreach (string candidate in new[] { Environment.GetEnvironmentVariable("PROJ_DATA"), Environment.GetEnvironmentVariable("PROJ_LIB") })
+            //SUMO's bin at the end of PATH on Windows, as the engine does: the GDAL wrappers load gdal.dll, which comes
+            //from there when nothing earlier on PATH has one, and the user's tool settings may name a SUMO that PATH
+            //does not. Last, so it cannot change which gdal.dll a PATH that already works picks.
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                if (!string.IsNullOrEmpty(candidate) && Directory.Exists(candidate) && !projPaths.Contains(candidate))
+                string sumo = Engine.FindSumoBinFolder(out _);
+                if (!string.IsNullOrEmpty(sumo))
                 {
-                    projPaths.Add(candidate);
+                    Environment.SetEnvironmentVariable("PATH", Engine.ExtendSearchPath(Environment.GetEnvironmentVariable("PATH"),
+                        new List<string>(), new List<string> { sumo }));
                 }
             }
-            if (projPaths.Count == 0 && !RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && Directory.Exists("/usr/share/proj"))
+
+            //PROJ: the user's tool settings, then PROJ_DATA/PROJ_LIB from the process environment (which on Windows
+            //already holds the Machine and User values it was started with), then /usr/share/proj off Windows - the
+            //engine's rule (Utility.ToolPaths.ProjSearchPaths). Only when something was found: an empty list would
+            //replace PROJ's own compiled-in search path.
+            string[] projPaths = Utility.ToolPaths.ProjSearchPaths(out _, out _);
+            if (projPaths.Length > 0)
             {
-                projPaths.Add("/usr/share/proj");
-            }
-            if (projPaths.Count > 0)
-            {
-                OSGeo.OSR.Osr.SetPROJSearchPaths(projPaths.ToArray());
+                OSGeo.OSR.Osr.SetPROJSearchPaths(projPaths);
             }
 
             OSGeo.GDAL.Gdal.AllRegister();

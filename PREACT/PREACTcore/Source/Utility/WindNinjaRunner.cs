@@ -32,12 +32,20 @@ namespace PREACT.Utility
         /// on a machine with WindNinja installed, and wrote a uniform wind field instead. Terrain
         /// wind then silently differed depending on which front end prepared the case.
         ///
-        /// Probed in order of how specifically each names an install: an explicit environment
+        /// Probed in order of how specifically each names an install: the user's tool settings
+        /// (<see cref="ToolPaths"/>, Help &gt; External tools and keys), an explicit environment
         /// variable, then <c>PATH</c>, then the standard install roots. It used to look for
         /// <c>WindNinja_cli.exe</c> alone, so on Linux only <c>WINDNINJA_CLI</c> or an explicit path found it.
+        /// A scenario's <c>[ELMFIRE] WindNinjaExe</c> and <c>--windninja</c> are applied by the callers, before this.
         /// </summary>
         public static string FindExecutable()
         {
+            string setting = ToolPaths.UserSetting(ToolPaths.Tool.WindNinja);
+            if (setting != null)
+            {
+                return setting;
+            }
+
             return FindExecutable(Environment.GetEnvironmentVariable("WINDNINJA_CLI"),
                 Environment.GetEnvironmentVariable("PATH"), InstallRoots(), ExecutableNames);
         }
