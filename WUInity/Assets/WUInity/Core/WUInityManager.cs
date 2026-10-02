@@ -954,6 +954,7 @@ namespace WUInity
             //which would draw the previous scenario's roads at this one's origin.
             _roadNetwork = null;
             _roadNetworkBuilt = false;
+            _roadNetworkWarning = null;
             _roadNetworkVisualizer.SetVisibility(false);
             _godCamera.SetInput(_input);
             //this needs map and evac goals
@@ -1096,19 +1097,47 @@ namespace WUInity
                 _input.RootFolder, _input.TrafficModule.SumoInput.ConfigurationFile,
                 false, out bool corrected, out string explanation);
 
+            //Said once, not on every click that asks: a destination click asks to snap, and each one repeated "This scenario
+            //names no SUMO configuration ..." (Auburn2). Said again when the answer changes, or for another scenario.
             if (path == null)
             {
-                Engine.Message(null, Engine.LogType.Warning, explanation);
+                WarnRoadNetworkOnce(explanation);
                 return null;
             }
 
             if (corrected)
             {
-                Engine.Message(null, Engine.LogType.Warning, explanation);
+                WarnRoadNetworkOnce(explanation);
             }
 
             _roadNetwork = PREACT.Utility.SumoNetworkGeometry.Load(path, _input.Simulation.Data.UTMOrigin);
             return _roadNetwork;
+        }
+
+        private string _roadNetworkWarning;
+
+        private void WarnRoadNetworkOnce(string explanation)
+        {
+            if (explanation == _roadNetworkWarning) return;
+            _roadNetworkWarning = explanation;
+            Engine.Message(null, Engine.LogType.Warning, explanation);
+        }
+
+        /// <summary>
+        /// Forgets the road network read so far, so the next use reads the one on disk - after the roads step has built
+        /// it again. Redrawn at once when it is on show.
+        /// </summary>
+        public void ForgetRoadNetwork()
+        {
+            bool shown = IsRoadNetworkVisible;
+            _roadNetwork = null;
+            _roadNetworkBuilt = false;
+            _roadNetworkWarning = null;
+            if (shown)
+            {
+                _roadNetworkVisualizer.SetVisibility(false);
+                ShowRoadNetwork(true);
+            }
         }
 
         /// <summary>

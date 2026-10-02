@@ -822,6 +822,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
             //portable. Setting it is the point of automating the step: the configuration is the thing the
             //scenario actually refers to.
             ctx.Set(i => i.TrafficModule.SumoInput.ConfigurationFile = ScenarioFiles.SumoConfig);
+            //The map and the destination snapping read the network once and keep it; this one replaces whatever they had.
+            ctx.Then(() => PreactGUI.WUInity?.ForgetRoadNetwork());
             LogStep("The scenario will point at " + ScenarioFiles.SumoConfig + ".");
             return Task.CompletedTask;
         }
