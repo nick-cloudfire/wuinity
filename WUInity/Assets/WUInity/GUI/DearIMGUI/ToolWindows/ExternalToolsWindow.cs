@@ -293,8 +293,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
             if (status.NeedsRestart)
             {
-                Fields.Caution("  Saved: " + (string.IsNullOrEmpty(status.AfterRestart) ? "nothing that would be found" : status.AfterRestart)
-                               + ". Applies after restarting WUInity.");
+                string next = !string.IsNullOrEmpty(status.AfterRestart) ? status.AfterRestart
+                    : tool == ToolPaths.Tool.Proj ? "GDAL's own search for PROJ" : "nothing, as nothing would be found";
+                Fields.Caution("  Saved: " + next + ". Applies after restarting WUInity.");
             }
             ImGui.PopTextWrapPos();
 

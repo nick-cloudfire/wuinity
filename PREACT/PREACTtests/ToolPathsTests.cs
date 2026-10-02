@@ -102,6 +102,9 @@ namespace PREACT.Tests
                 Assert.Equal("", read.Get(ToolPaths.Tool.WindNinja), "an absent key is empty");
 
                 int version = ToolPaths.Version;
+                //Kept as typed - a field being typed into must keep its trailing space ("C:\Program ") - and cleaned on save.
+                read.Set(ToolPaths.Tool.WindNinja, "/opt/Wind Ninja ");
+                Assert.Equal("/opt/Wind Ninja ", read.Get(ToolPaths.Tool.WindNinja), "a value is kept as it is typed");
                 read.Set(ToolPaths.Tool.WindNinja, " '/opt/WindNinja/bin/WindNinja_cli' ");
                 ToolPaths.Save(read);
                 Assert.True(ToolPaths.Version > version, "a save is a new version");

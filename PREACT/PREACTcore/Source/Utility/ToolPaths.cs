@@ -206,8 +206,9 @@ namespace PREACT.Utility
                     Directory.CreateDirectory(folder);
                 }
 
+                Settings cleaned = settings.Cleaned();
                 string temporary = path + ".tmp";
-                File.WriteAllText(temporary, settings.Write(), new UTF8Encoding(false));
+                File.WriteAllText(temporary, cleaned.Write(), new UTF8Encoding(false));
                 if (File.Exists(path))
                 {
                     try
@@ -226,7 +227,7 @@ namespace PREACT.Utility
                     File.Move(temporary, path);
                 }
 
-                _cached = settings.Clone();
+                _cached = cleaned;
                 _cachedPath = path;
                 Stamp(path, out _cachedWriteTime, out _cachedLength);
                 _readError = null;
@@ -585,7 +586,10 @@ namespace PREACT.Utility
 
         // ------------------------------------------------------------------ the settings
 
-        /// <summary>The values of the settings file, as written (not validated).</summary>
+        /// <summary>
+        /// The values of the settings file (not validated). A value is kept as it was set - a field being typed into
+        /// keeps its trailing space - and cleaned of white space and quotes when written and when compared.
+        /// </summary>
         public sealed class Settings
         {
             //The keys, in the order they are written. Read case-insensitively.
@@ -612,7 +616,18 @@ namespace PREACT.Utility
 
             public void Set(Tool tool, string value)
             {
-                _values[(int)tool] = Clean(value);
+                _values[(int)tool] = value ?? string.Empty;
+            }
+
+            /// <summary>A copy with every value cleaned (<see cref="ToolPaths.Clean"/>), as it is written.</summary>
+            public Settings Cleaned()
+            {
+                Settings copy = Clone();
+                for (int i = 0; i < copy._values.Length; ++i)
+                {
+                    copy._values[i] = Clean(copy._values[i]);
+                }
+                return copy;
             }
 
             public Settings Clone()
@@ -623,13 +638,13 @@ namespace PREACT.Utility
                 return copy;
             }
 
-            /// <summary>The same tool values (unknown keys aside).</summary>
+            /// <summary>The same tool values once cleaned (unknown keys aside).</summary>
             public bool SameAs(Settings other)
             {
                 if (other == null) return false;
                 for (int i = 0; i < _values.Length; ++i)
                 {
-                    if (!string.Equals(_values[i], other._values[i], StringComparison.Ordinal)) return false;
+                    if (!string.Equals(Clean(_values[i]), Clean(other._values[i]), StringComparison.Ordinal)) return false;
                 }
                 return true;
             }
@@ -679,7 +694,7 @@ namespace PREACT.Utility
                 for (int i = 0; i < Keys.Length; ++i)
                 {
                     b.AppendLine("; " + Comments[i]);
-                    b.AppendLine(Keys[i] + " = " + _values[i]);
+                    b.AppendLine(Keys[i] + " = " + Clean(_values[i]));
                 }
                 foreach (KeyValuePair<string, string> kv in _other)
                 {
