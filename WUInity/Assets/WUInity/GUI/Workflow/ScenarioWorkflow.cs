@@ -381,6 +381,7 @@ namespace WUInity.Workflow
                 case WorkflowAction.PreparePopulation:
                 case WorkflowAction.RedoPopulation:
                 case WorkflowAction.DownloadLandfire:
+                case WorkflowAction.BurnRoadsIntoFuel:
                 case WorkflowAction.BuildFireCase:
                 case WorkflowAction.RebuildFireCase:
                 case WorkflowAction.DownloadDemOnly:
@@ -740,6 +741,15 @@ namespace WUInity.Workflow
             {
                 s.Secondary.Add(landfire);
             }
+
+            //Optional: the roads burned into the case's fuel (Nick's road-fuel conversion), once both exist.
+            var roads = new StepAction(WorkflowAction.BurnRoadsIntoFuel, "Burn roads into the fuel",
+                "Optional. Burns the SUMO network's lanes into the case's fuel as a spreadable fuel model (GR1), where the fuel is "
+                + "non-burnable, so roads stop cutting burnable ground into islands. Settings under Source layers.");
+            if (caseFuel == null) roads.Disable("Build the fire case first (step 5): the roads are burned into its fuel.");
+            else if (!_files.Exists(Abs(ScenarioFiles.SumoConfig)) && !_files.Exists(Abs(ScenarioFiles.SumoNetwork)))
+                roads.Disable("Blocked by step 2 (Roads): needs the SUMO network.");
+            s.Secondary.Add(roads);
 
             if (_files.Exists(Abs(_case + "/" + PREACT.Utility.ElmfireCaseBuilder.SourceManifestName)))
             {

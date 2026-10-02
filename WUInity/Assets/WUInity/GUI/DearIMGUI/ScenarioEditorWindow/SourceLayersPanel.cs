@@ -100,6 +100,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
             Fields.Hint("Which standard the raster holds, and so whether it becomes fbfm40.tif or fbfm13.tif.",
                         "Scott & Burgan 40 is what LANDFIRE and the global products ship.");
 
+            DrawRoadsInFuel(input);
+
             ImGui.SeparatorText("Canopy");
 
             //Offered before the individual layers because it is the answer for most European cases: point it
@@ -206,6 +208,55 @@ namespace Assets.WUInity.GUI.DearIMGUI
             {
                 ImGui.TextWrapped(_readStatus);
             }
+        }
+
+        /// <summary>
+        /// The optional road burn: the SUMO network's lanes burned into the fire case's fuel as a spreadable fuel model.
+        /// Placed under the fuel because it changes the fuel, and works on what the case build made of it.
+        /// </summary>
+        private static void DrawRoadsInFuel(PREACTInput input)
+        {
+            if (!ImGui.TreeNode("Burn roads into the fuel (optional)###RoadsInFuel"))
+            {
+                return;
+            }
+
+            int model = ScenarioDataSteps.EffectiveRoadFuelModel(input);
+            Fields.Hint("A fuel map marks roads, and the town around them, non-burnable, which can cut burnable ground into",
+                        "islands an ignition never grows out of. This burns the SUMO network's lanes into the fire case's",
+                        $"fuel as fuel model {model}, only where the fuel is non-burnable (91-99) and no building model owns",
+                        "the cell. It reports the islets before and after: if they match, the roads were not the problem.");
+
+            ImGui.SetNextItemWidth(120f);
+            int chosen = ScenarioDataSteps.RoadFuelModel;
+            if (ImGui.InputInt("Road fuel model (0: GR1 = 101, or 1 for Anderson 13)###RoadFuelModel", ref chosen))
+            {
+                ScenarioDataSteps.RoadFuelModel = Math.Max(0, chosen);
+            }
+
+            ImGui.SetNextItemWidth(120f);
+            double width = ScenarioDataSteps.RoadWidthMetres;
+            if (ImGui.InputDouble("Road width, m (0: one cell)###RoadWidth", ref width))
+            {
+                ScenarioDataSteps.RoadWidthMetres = Math.Max(0.0, width);
+            }
+
+            ImGui.Checkbox("Leave building cells to the building spread model###RoadsProtectBuildings", ref ScenarioDataSteps.ProtectBuildingCells);
+
+            ImGui.BeginDisabled(ScenarioSession.IsBusy);
+            if (ImGui.Button("Burn roads into the fuel###BurnRoads"))
+            {
+                ScenarioDataSteps.BurnRoadsIntoFuel();
+            }
+            ImGui.EndDisabled();
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            {
+                ImGui.SetTooltip("Needs the fire case (step 5) and the SUMO network (step 2). Writes "
+                    + ScenarioFiles.DownloadsFolder + "/<name>_fbfm40_roads" + model + ".tif, names it as FuelModelFile and puts it "
+                    + "in the case; the original layer is kept, and the new raster records which it was.");
+            }
+            Fields.Caution($"Fuel model {model} spreads fire (slowly): this changes the physics, it is not a bookkeeping fix.");
+            ImGui.TreePop();
         }
 
         /// <summary>The LANDFIRE releases offered, "closest" first; labels and the values they write.</summary>

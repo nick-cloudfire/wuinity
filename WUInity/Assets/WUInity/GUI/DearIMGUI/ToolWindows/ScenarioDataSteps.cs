@@ -1014,6 +1014,175 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 + "grid; " + result.ProvenanceFile + " records what was asked for.");
         }
 
+        // ------------------------------------------------------------------ roads burned into the fuel
+
+        /// <summary>The fuel model roads become; 0 means by the case's standard: 101 (GR1) for FBFM40, 1 for FBFM13.</summary>
+        public static int RoadFuelModel = 0;
+
+        /// <summary>How wide to paint the roads, in metres; 0 is one cell, already wider than most roads at 30 m.</summary>
+        public static double RoadWidthMetres = 0.0;
+
+        /// <summary>
+        /// Leave the cells the building spread model owns alone. Roads run through the built-up area, and those cells are
+        /// non-burnable in the fuel map because ELMFIRE burns them as buildings; grass there would give the same ground
+        /// two ways to burn.
+        /// </summary>
+        public static bool ProtectBuildingCells = true;
+
+        /// <summary>The road fuel model in force for this scenario.</summary>
+        public static int EffectiveRoadFuelModel(PREACTInput input)
+        {
+            if (RoadFuelModel > 0) return RoadFuelModel;
+            return input?.WildfireModule?.ElmfireInput?.FuelModelStandard == ElmfireInput.FuelModelStandards.FBFM13 ? 1 : 101;
+        }
+
+        /// <summary>The case's fuel stem (fbfm40 or fbfm13) when the case has it, else null.</summary>
+        private static string CaseFuelStem(PREACTInput input, out string namedStem)
+        {
+            namedStem = null;
+            string caseDir = PREACT.Utility.ElmfireCoupling.CaseDirectoryPath(input.RootFolder, input.WildfireModule.ElmfireInput);
+            if (string.IsNullOrEmpty(caseDir)) return null;
+            string inputs = Path.Combine(caseDir, "inputs");
+            string namelist = Path.Combine(caseDir, "elmfire.data");
+            string[] lines = File.Exists(namelist) ? File.ReadAllLines(namelist) : null;
+            namedStem = PREACT.Utility.ElmfireStems.FuelStem(lines, inputs);
+            return namedStem == "fbfm40" || namedStem == "fbfm13" ? namedStem : null;
+        }
+
+        /// <summary>Why the roads cannot be burned into the fuel now, or null when they can.</summary>
+        public static string WhyNotBurnRoads(PREACTInput input)
+        {
+            if (input?.WildfireModule?.ElmfireInput == null) return "No ELMFIRE scenario is open.";
+            string stem = CaseFuelStem(input, out string named);
+            if (stem == null)
+            {
+                return named != null
+                    ? $"The case's namelist runs FBFM_FILENAME = '{named}', a raster of its own; burn the roads into that one yourself, "
+                      + "or clear the namelist template."
+                    : "Build the fire case first (step 5): the roads are burned into its fuel, on its grid.";
+            }
+            string sumo = PREACT.Utility.SumoConfigurationLocator.Resolve(input.RootFolder,
+                input.TrafficModule?.SumoInput?.ConfigurationFile, false, out bool _, out string _);
+            if (sumo == null) return "Build the SUMO network first (step 2, Roads): its lanes are what is burned in.";
+            return null;
+        }
+
+        /// <summary>
+        /// Burns the SUMO network's lanes into the fire case's fuel as a spreadable fuel model, where the fuel is
+        /// non-burnable (urban, barren - what roads are in a fuel map) and no building model owns the cell
+        /// (PREACT.Utility.RoadFuelRasterizer; Nick's Aug 2026 work).
+        /// </summary>
+        /// <remarks>
+        /// On the case's grid, because that is where the lanes' simulation coordinates and the fuel meet. The result is
+        /// kept as a source layer (<c>downloads/&lt;name&gt;_fbfm40_roads101.tif</c>), [ELMFIRE] FuelModelFile names it,
+        /// and the case's own fbfm40.tif is replaced by it, so the change is in the case now and survives a rebuild.
+        /// Undone by naming the original layer again (the roads raster records it) and rebuilding.
+        /// </remarks>
+        public static void BurnRoadsIntoFuel()
+        {
+            PREACTInput input = Input;
+            string why = WhyNotBurnRoads(input);
+            if (why != null)
+            {
+                Owner = WorkflowStepId.Fuels;
+                _lastFailed = true;
+                _status = why;
+                LogStep(why);
+                return;
+            }
+
+            ElmfireInput e = input.WildfireModule.ElmfireInput;
+            var burn = new RoadBurn
+            {
+                Stem = CaseFuelStem(input, out string _),
+                CaseDirectory = PREACT.Utility.ElmfireCoupling.CaseDirectoryPath(input.RootFolder, e),
+                Sumo = PREACT.Utility.SumoConfigurationLocator.Resolve(input.RootFolder,
+                    input.TrafficModule?.SumoInput?.ConfigurationFile, false, out bool _, out string _),
+                UtmOrigin = input.Simulation.Data.UTMOrigin,
+                UtmEpsg = input.Simulation.Data.UtmEpsgCode,
+                FuelModelFile = e.FuelModelFile,
+                RoadFuelModel = EffectiveRoadFuelModel(input),
+                WidthMetres = RoadWidthMetres,
+                ProtectBuildings = ProtectBuildingCells,
+            };
+            RunStep("Burning the roads into the fuel", WorkflowStepId.Fuels, c => DoBurnRoads(c, burn));
+        }
+
+        private sealed class RoadBurn
+        {
+            public string Stem, CaseDirectory, Sumo, FuelModelFile;
+            public Vector2d UtmOrigin;
+            public int UtmEpsg, RoadFuelModel;
+            public double WidthMetres;
+            public bool ProtectBuildings;
+        }
+
+        private static Task DoBurnRoads(StepContext ctx, RoadBurn b)
+        {
+            PREACT.Utility.SumoNetworkGeometry network = PREACT.Utility.SumoNetworkGeometry.Load(b.Sumo, b.UtmOrigin);
+            if (network == null || network.LaneCount == 0)
+            {
+                throw new Exception("No lanes could be read from " + b.Sumo + "; build the SUMO network again (step 2, Roads).");
+            }
+
+            string inputs = Path.Combine(b.CaseDirectory, "inputs");
+            string caseFuel = PREACT.Utility.ElmfireStems.Tif(inputs, b.Stem);
+
+            //What the roads are burned from, for undoing it: the original layer, also when this is done a second time.
+            string source = string.IsNullOrEmpty(b.FuelModelFile) ? null : GuiFiles.Resolve(ctx.Root, b.FuelModelFile);
+            string original = source != null && File.Exists(source)
+                ? PREACT.Utility.RoadFuelRasterizer.BurnedFrom(source) ?? b.FuelModelFile
+                : "the case's own " + b.Stem + ".tif";
+
+            string relative = ScenarioFiles.DownloadsFolder + "/" + ctx.Name + "_" + b.Stem + "_roads" + b.RoadFuelModel + ".tif";
+            string output = ctx.InRootForWriting(relative);
+
+            string buildings = null;
+            if (b.ProtectBuildings)
+            {
+                foreach (string stem in new[] { "bldg_area_avg", "baa" })
+                {
+                    string candidate = PREACT.Utility.ElmfireStems.Tif(inputs, stem);
+                    if (File.Exists(candidate)) { buildings = candidate; break; }
+                }
+                if (buildings == null) LogStep("The case has no building area layer, so there are no building cells to leave alone.");
+            }
+
+            LogStep($"{network.LaneCount} lanes against the case's {b.Stem}.tif"
+                + (buildings != null ? ", leaving building cells to the building spread model" : "") + "...");
+            PREACT.Utility.RoadFuelRasterizer.Result result = PREACT.Utility.RoadFuelRasterizer.Run(new PREACT.Utility.RoadFuelRasterizer.Options
+            {
+                FuelRasterPath = caseFuel,
+                OutputRasterPath = output,
+                Lanes = network.Lanes,
+                UtmOrigin = b.UtmOrigin,
+                UtmEpsg = b.UtmEpsg,
+                RoadFuelModel = b.RoadFuelModel,
+                RoadWidthMetres = b.WidthMetres,
+                BuildingAreaRasterPath = buildings,
+                OriginalSource = original,
+                Log = LogStep,
+            });
+            if (!result.Ok)
+            {
+                throw new Exception(result.Message);
+            }
+
+            //Into the case now: the next build would warp the same raster onto the same grid, so this is what it holds then too.
+            File.Copy(output, caseFuel, overwrite: true);
+            ctx.Set(i => i.WildfireModule.ElmfireInput.FuelModelFile = relative);
+
+            LogStep($"[ELMFIRE] FuelModelFile now names {relative}, and the case's {b.Stem}.tif is that raster. To undo it, name "
+                + $"{original} again and rebuild the fire case. If the domain or the padding changes, do that first and burn the "
+                + "roads again: the roads raster covers this grid only.");
+            if (result.IsletsBefore == result.IsletsAfter && result.PatchesBefore == result.PatchesAfter)
+            {
+                //Said plainly: a step that ran and changed nothing otherwise reads as a fix that worked.
+                LogStep("No change in connectivity: the roads were not what was splitting this fuel map. Consider undoing it.");
+            }
+            return Task.CompletedTask;
+        }
+
         /// <summary>
         /// Builds the ELMFIRE case: the rasters, the weather series and the namelist. With
         /// <paramref name="rebuildExisting"/> every layer is made again, as for a changed domain or cell size.
