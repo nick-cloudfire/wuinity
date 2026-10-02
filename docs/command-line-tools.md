@@ -155,6 +155,21 @@ run's trigger boundary takes the fire's own terrain either way.
 | `1` | The `.wui` is not there or its `[Simulation]`/`[ELMFIRE]` sections could not be read; the hours are out of range; a campaign is running; the build failed (`build-case failed: <message>`); or the finished case is not internally consistent (the rasters stay on disk to inspect). |
 | `2` | Bad arguments. |
 
+### `landfire` — LANDFIRE fuel and canopy for a scenario (US)
+
+```
+PREACTcli landfire --wui <file.wui> [--version closest|LF2016|LF2022|LF2023|LF2024|LF2025]
+                   [--email <you@example.org>] [--poll-seconds <n=20>] [--update-wui]
+```
+
+The GUI's fuels-step download (the same engine function): the release `[ELMFIRE] LandfireVersion` picks (or
+`--version`, which `--update-wui` also records), over the case's padded domain, split into
+`downloads/landfire/<Name>_<release>_<stem>.tif` with the canopy scaling flags their units call for, and the
+case's old fuel and canopy removed. LFPS asks for a contact e-mail: `--email`, else `LANDFIRE_EMAIL`, else the
+one the GUI keeps for this user. Without `--update-wui` the source-layer keys and flags are printed; with it they
+are written into the `.wui` and nothing else changes. Then run `build-case`. Exit 0 on success, 1 when the download
+or the split failed (LFPS's message is printed), 2 for a bad argument.
+
 ### `converge-trigger` — probabilistic trigger campaign
 
 Runs ELMFIRE realizations, each from its own ignition and weather; for every fire that reaches the WUI area, an

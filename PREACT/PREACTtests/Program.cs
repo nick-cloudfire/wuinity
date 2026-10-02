@@ -51,6 +51,7 @@ namespace PREACT.Tests
             FormatTests.Register(runner);
             EngineTests.Register(runner);
             CliTests.Register(runner);
+            LandfireCliTests.Register(runner);
             IntegrationTests.Register(runner);
             TriggerTests.Register(runner);
             PipelineTests.Register(runner);
