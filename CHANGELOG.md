@@ -1,5 +1,34 @@
 # Changelog
 
+## v1.1 (unreleased)
+
+### Tools and the standalone program
+
+- **Help > External tools and keys takes a path for each tool**: ELMFIRE, the GDAL tools, WindNinja, SUMO (its
+  folder or its `bin`) and PROJ's data. Each path is checked as it is typed, and must hold the program. The paths
+  are saved per user in `%APPDATA%\PREACT\tools.ini` (Linux: `$XDG_CONFIG_HOME` or `~/.config/PREACT/tools.ini`;
+  `PREACT_TOOLS_FILE` names another file). The engine, `PREACT.exe` and `PREACTcli` all read it, so campaigns use
+  the same tools as the GUI. The order is: the scenario's `[ELMFIRE]` key or the CLI option, then this setting,
+  then the automatic search. A saved path that no longer holds its program is skipped, and the window says so.
+- Each tool's **In use** line names the path and where it came from (the scenario, your setting, or the search).
+  It used to show the searched GDAL and WindNinja even when the scenario named others. After Save, ELMFIRE, GDAL,
+  WindNinja and PROJ apply at once; SUMO applies after a restart, and the window says so. Look again also searches
+  for GDAL again.
+- PROJ's data and SUMO can be set at all (they were read from `PROJ_DATA`/`PROJ_LIB` and `SUMO_HOME`/`PATH` only).
+  A SUMO from the settings also sets `SUMO_HOME` for the process. `PREACTcli` puts SUMO's `bin` at the end of
+  `PATH` on Windows, as the engine does, for the `gdal.dll` it holds.
+- A GDAL library that cannot be loaded no longer stops WUInity from starting. The console and the tools window say
+  what to set.
+- **Standalone build**: `build-player.ps1` builds `dist\WUInity\WUInity.exe` with Unity in batch mode (editor script
+  `Assets/WUInity/Editor/PlayerBuild.cs`, also under the menu WUInity > Build standalone player). Beside the player
+  it puts `PREACT\` (PREACT.exe and PREACTcli), `elmfire\` (elmfire.exe, impi.dll and the fuel tables), `docs\` and a
+  README. A build finds ELMFIRE, its fuel tables, PREACTcli and the docs relative to itself. See
+  [Distribution](docs/distribution.md).
+- The GUI font moved to `Assets/StreamingAssets/Fonts/`; it was read from `Assets/` on disk, which a player does not
+  have. Without the font the GUI uses Dear ImGui's own instead of failing.
+- A fire case built in a standalone player gets the OpenTopography key the GUI shows. The key is built into the
+  player, and the engine used to look for it on disk.
+
 ## v1.0
 
 The first versioned release of WUInity / PREACT. It is compared here with the code as it stood before the

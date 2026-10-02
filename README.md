@@ -56,8 +56,8 @@ its folder.
 | **Windows (x64)** | everything | The GUI and the full pipeline are supported on Windows. The engine and CLI also run head-less on Linux — see [Building](docs/building.md#linux). |
 | **.NET 8 SDK** | building | <https://dotnet.microsoft.com/download/dotnet/8.0> |
 | **Unity 6000.3.15f1** | the GUI | The version in `WUInity/ProjectSettings/ProjectVersion.txt`. |
-| **SUMO 1.22**, installed with extras | traffic, and the engine's native GDAL | <https://eclipse.dev/sumo/>. `SUMO_HOME` set, or its `bin` on `PATH`. |
-| **GDAL command-line tools** | ELMFIRE | `gdal_translate`, `gdalinfo`, `gdalsrsinfo`. A QGIS or OSGeo4W install provides them; they are found automatically. |
+| **SUMO 1.22**, installed with extras | traffic, and the engine's native GDAL | <https://eclipse.dev/sumo/>. `SUMO_HOME` set, its `bin` on `PATH`, or its folder set under Help > External tools and keys. |
+| **GDAL command-line tools** | ELMFIRE | `gdal_translate`, `gdalinfo`, `gdalsrsinfo`. A QGIS or OSGeo4W install provides them; they are found automatically, or set their folder under Help > External tools and keys. |
 | **ELMFIRE, built from the submodule at a7fb9d6** | every fire | That commit adds `DUMP_MIDFLAME_WINDSPEED`, which every run now asks for. An older `elmfire.exe` refuses every run. See [Building ELMFIRE](docs/building.md#building-elmfire). |
 | **WindNinja** (`WindNinja_cli`) | terrain-resolved wind | Without it the wind is one value over the whole domain; a campaign refuses to start unless told to accept that. |
 | **OpenTopography API key** | the fire case's DEM | Free from <https://opentopography.org>. |
@@ -97,10 +97,18 @@ Results go to `Examples\NFDRS4_Behave\Roxborough\_output\`. A campaign from the 
 PREACT\PREACTcli\bin\Release\net8.0\PREACTcli.exe converge-trigger --wui D:\cases\mati\mati.wui --max 200
 ```
 
+WUInity as a program that runs without Unity, `dist\WUInity\WUInity.exe` with PREACT and ELMFIRE beside it
+(close the Unity editor first; see [Distribution](docs/distribution.md)):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\build-player.ps1
+```
+
 ## Documentation
 
 - [Getting started](docs/getting-started.md) — the GUI's thirteen workflow steps, end to end.
 - [Building](docs/building.md) — the build scripts, what goes where, ELMFIRE, Linux.
+- [Distribution](docs/distribution.md) — the standalone program (`build-player.ps1`): what ships, what to install, where the tools and keys are found.
 - [The `.wui` input file format](docs/input-file-format.md) — every section and key.
 - [ELMFIRE cases](docs/elmfire-cases.md) — how a fire case is built and run.
 - [Trigger campaigns](docs/trigger-campaigns.md) — the probabilistic trigger boundary.

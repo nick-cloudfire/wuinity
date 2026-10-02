@@ -39,7 +39,9 @@
     Use the engine, PREACT.exe and PREACTcli as they are built, without running build.ps1 first.
 
 .PARAMETER SkipPlayer
-    Keep the player already in -Output and only replace what is copied beside it (after an engine change).
+    Keep the player already in -Output and only replace what is copied beside it: PREACT\, elmfire\, docs\ (after
+    building ELMFIRE again, say). Not after an engine change: the player carries its own copy of the engine, and
+    the script warns when that copy is not the engine PREACT\ now gets.
 
 .PARAMETER Development
     A development player (Unity's Development Build: a console window and stack traces with line numbers).
@@ -317,6 +319,15 @@ foreach ($f in @(Get-ChildItem -LiteralPath $nativeFrom -Recurse -File -Filter '
     $copied++
 }
 Write-Host "  $copied DLLs into $nativeTo"
+if ($SkipPlayer) {
+    $inPlayer = [System.IO.Path]::Combine($managed, 'PREACTcore.dll')
+    $built = [System.IO.Path]::Combine($UnityEngineDir, 'PREACTcore.dll')
+    if ((Test-Path -LiteralPath $inPlayer) -and
+        (Get-FileHash -LiteralPath $inPlayer -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $built -Algorithm SHA256).Hash) {
+        Warn ('the player''s engine (WUInity_Data\Managed\PREACTcore.dll) is not the one just copied into PREACT\, so the ' +
+              'visualizer and the campaigns it starts would run different engines. Run this again without -SkipPlayer.')
+    }
+}
 $plugins = [System.IO.Path]::Combine($PlayerData, 'Plugins', 'x86_64')
 foreach ($wrap in @('gdal_wrap.dll', 'ogr_wrap.dll', 'osr_wrap.dll', 'NFDRS4core.dll')) {
     if (-not (Test-Path -LiteralPath ([System.IO.Path]::Combine($plugins, $wrap)))) {

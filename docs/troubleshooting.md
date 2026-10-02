@@ -14,6 +14,9 @@ looked for; start there when something external is missing.
 | `BUILD FAILED: the Unity engine folder is incomplete: the files above have a .meta but were not built.` | The engine's output set changed without its `.meta` files. If you removed an output on purpose, delete its `.meta` too. |
 | Unity: `CS0246: The type or namespace name 'PREACT' could not be found`, or old behaviour after a pull | The engine DLLs are not committed. Close Unity, run `build.ps1`, open Unity again. A Debug build of `PREACTcore` does not update the Unity folder; only the Release build the script makes does. |
 | ELMFIRE's `make_windows.bat` fails to link with `lld-link` errors | Install the "Desktop development with C++" workload (MSVC and the Windows SDK). |
+| `BUILD FAILED: a Unity editor has WUInity open (WUInity\Temp\UnityLockfile is in use). …` (`build-player.ps1`) | Close the Unity editor; batch mode cannot open a project another editor has open. |
+| `BUILD FAILED: Unity 6000.3.15f1 was not found (looked for …).` (`build-player.ps1`) | Pass `-Unity <path to Unity.exe>`, or set `UNITY_EXE`. |
+| `BUILD FAILED: Unity exited with 1 and …\WUInity.exe was not built; …` (`build-player.ps1`) | The lines above it are the compiler errors and Unity's own failure lines from `dist\WUInity-build.log`. A project that compiles in the editor builds here too. |
 
 Details: [Building](building.md).
 
@@ -21,7 +24,7 @@ Details: [Building](building.md).
 
 | Symptom or message | Fix |
 |---|---|
-| The map is blank; External tools says `Mapbox token: not valid. The map tiles cannot be loaded.` | Put a Mapbox token in `WUInity/Assets/Resources/Mapbox/MapboxConfiguration.txt`. Only the map background needs it. |
+| The map is blank; External tools says `Mapbox token: not valid. The map tiles cannot be loaded.` | Put a Mapbox token in `WUInity/Assets/Resources/Mapbox/MapboxConfiguration.txt`. Only the map background needs it. A standalone build has the token it was built with: build it again ([Distribution](distribution.md#keys)). |
 | `No OpenTopography API key.` (step 5, which it blocks) | Copy `OpenTopographyConfigurationTemplate.txt` to `OpenTopographyConfiguration.txt` in `WUInity/Assets/Resources/OpenTopography/` and paste your key in, or set `OPENTOPOGRAPHY_API_KEY`. Help > External tools and keys takes one for the current session. |
 | `… so one has to be downloaded - but no OpenTopography key was found, and no local DEM covering the padded domain was given. …` (case build, `build-case`) | The same key; or pass a DEM covering the coordinates it prints with `build-case --dem`. |
 | `OpenTopography DEM download failed after N attempts.` | The cause is in the lines before it (`DEM download failed: …`). A `401` or `403` status means the key was refused; anything else is the service or the network, so try again later. |
@@ -46,13 +49,15 @@ Details: [Building](building.md).
 
 | Message | Fix |
 |---|---|
-| `SUMO was not found (SUMO_HOME, or a folder on PATH); building the network needs its netconvert.` / `netconvert could not be found. …` | Install SUMO 1.22 and set `SUMO_HOME`, or put its `bin` on `PATH`; then Help > External tools and keys > Look again. |
+| `SUMO was not found (SUMO_HOME, or a folder on PATH); building the network needs its netconvert.` / `netconvert could not be found. …` | Install SUMO 1.22 and set `SUMO_HOME`, or put its `bin` on `PATH`, then Help > External tools and keys > Look again. Or set SUMO's folder in that window, save, and restart WUInity. |
 | `WorldPop has no <country> data for <year>; using <year> instead (the closest available). …` | Information only. |
 | `Outside the US there is no fuel download here: name a fuel model raster of your own, …` | LANDFIRE covers the US only. Name your own fuel raster under Fuels, canopy and buildings > Source layers. |
 | `The LANDFIRE (LFPS) job <id> failed: …` / `… did not finish within N minutes.` | LANDFIRE's service; try again later. |
 | `No canopy: it is filled with zeros, so the fire is surface fire only - no crown fire.` | Add canopy rasters (LANDFIRE in the US), or accept a surface fire. |
-| `No WindNinja: the case gets one wind value for the whole domain, so a trigger boundary comes out circular.` | Install WindNinja, or set `WINDNINJA_CLI` to the executable (`WindNinja_cli.exe`, `WindNinja_cli` on Linux), or `[ELMFIRE] WindNinjaExe`. Then rebuild the case's weather. |
-| `No GDAL command-line tools were found. ELMFIRE shells out to them, and fails its own DEM check without them.` | Install QGIS or OSGeo4W (found by themselves), or set `[ELMFIRE] PathToGdal` to a folder holding `gdal_translate`. |
+| `No WindNinja: the case gets one wind value for the whole domain, so a trigger boundary comes out circular.` | Install WindNinja, or set its path under Help > External tools and keys (`WindNinja_cli.exe`, `WindNinja_cli` on Linux), or set `WINDNINJA_CLI`. Then rebuild the case's weather. |
+| `No GDAL command-line tools were found. ELMFIRE shells out to them, and fails its own DEM check without them.` | Install QGIS or OSGeo4W (found by themselves), or set a folder holding `gdal_translate` under Help > External tools and keys. |
+| Help > External tools and keys: `The saved path is not used: <path> is not there.` / `… holds no <program> …` | The saved path does not hold the program any more (moved, uninstalled), so the automatic search is used instead. Correct the field or clear it, and Save. |
+| `GDAL's library could not be loaded (…). The engine loads gdal.dll from SUMO's bin folder: …` (when WUInity or PREACT starts) | Install SUMO 1.22, or set its folder under Help > External tools and keys (or in `%APPDATA%\PREACT\tools.ini`), and start again. Until then no raster can be read or written. |
 | `The areas were painted on a W x H grid (…); the fire grid … is …` (step 6) | The painting belongs to another grid. Use **Move painting onto the fire-case grid** in step 6; it writes a new file. |
 | `The painted areas in <file> are W x H cells, but the fire-case grid is … so there is no telling which ground they were painted on. …` (a build) | As above: move the painting in step 6, or repaint on the case grid. The same refusal, with how the grids differ (`starts 300 m west of the grid the painting was made on`), is given for a painting of the right size whose record puts it elsewhere. |
 | `… STOPPED: The case build was stopped while its weather was being made: no wind was written …` | You pressed Stop (or quit) during the build. Nothing is half-written: no wind, not even a uniform field, and the scenario is unchanged. Build again; it carries on from what the stopped build kept. |
@@ -65,7 +70,7 @@ A run that cannot compute its fire stops with `ELMFIRE did not produce a fire: <
 
 | Reason | Fix |
 |---|---|
-| `ELMFIRE cannot run: [ELMFIRE] ElmfireExe is not set and there is no ThirdParty/elmfire/build/windows/bin/elmfire.exe above …` | Build ELMFIRE with `make_windows.bat` ([Building ELMFIRE](building.md#building-elmfire)), or set `ElmfireExe`. |
+| `ELMFIRE cannot run: [ELMFIRE] ElmfireExe is not set and there is no ThirdParty/elmfire/build/windows/bin/elmfire.exe above …` | Build ELMFIRE with `make_windows.bat` ([Building ELMFIRE](building.md#building-elmfire)), or set its path under Help > External tools and keys. A standalone build without `elmfire\` needs the latter. |
 | `… this elmfire build predates DUMP_MIDFLAME_WINDSPEED; rebuild it from the ELMFIRE-WUINITY submodule (a7fb9d6 or later) …` | Rebuild ELMFIRE from the submodule. |
 | `There is no ELMFIRE case at <folder>. Turn BuildCase on, or build one …` | Build the case (step 5, or `PREACTcli build-case`). |
 | `The namelist … names rasters that are not on the case grid, so ELMFIRE cannot run it: …` | Build the case again: it re-cuts every raster the namelists name onto the grid. |
@@ -79,7 +84,7 @@ A run that cannot compute its fire stops with `ELMFIRE did not produce a fire: <
 
 | Message | Fix |
 |---|---|
-| `Could not start SUMO, aborting. …` mentioning `libsumocs` | SUMO's `bin` is not found: set `SUMO_HOME` or add it to `PATH`. On Linux, see [the SUMO glue](building.md#regenerating-the-sumo-c-glue-on-linux). |
+| `Could not start SUMO, aborting. …` mentioning `libsumocs` | SUMO's `bin` is not found: set `SUMO_HOME`, add it to `PATH`, or set SUMO's folder under Help > External tools and keys and restart WUInity. On Linux, see [the SUMO glue](building.md#regenerating-the-sumo-c-glue-on-linux). |
 | `Could not start SUMO. …` | `[SUMO] ConfigurationFile` does not lead to a `.sumocfg`; the rest of the message says what it found. Build the network in step 2, or correct the path. |
 | `The SUMO network is projected in EPSG:A but the simulation measures in EPSG:B. …` | The network was built for another area or zone. Rebuild it from the scenario (step 2, **Rebuild everything**). |
 | `N of the first M cars could not be put into SUMO (…), so the evacuation would run without them. Stopping the run.` | If it adds `The C# bindings … do not match this SUMO's libsumocs`, use the SUMO 1.22 the bindings were made for (Windows) or regenerate them (Linux). If it says most had no route, the network does not cover the population and the destinations. |
@@ -120,6 +125,6 @@ each needs, are in [Trigger campaigns](trigger-campaigns.md#before-you-start). T
 |---|---|
 | `The type initializer for 'OSGeo.OSR.OsrPINVOKE' threw an exception.` (or `…GdalPINVOKE…`), with `Unable to load shared library '…_wrap' or one of its dependencies` beneath it | GDAL 3.10 (`libgdal.so.36`) is not on `LD_LIBRARY_PATH`. `PREACTcli` says so as `ERROR: <command> stopped on an unexpected error: …` and exits 1; `PREACTcli --help` works without it. |
 | `Unable to find an entry point named '?' in shared library 'libsumocs'` | The committed SUMO bindings are for Windows. [Regenerate them](building.md#regenerating-the-sumo-c-glue-on-linux) in a local copy. |
-| No WindNinja found although it is installed | The search looks for `WindNinja_cli` on `PATH` and under `/opt/WindNinja`, `/usr/local/WindNinja` and `~/WindNinja`, and names where it looked. Set `WINDNINJA_CLI` to the executable, or pass `--windninja`. |
+| No WindNinja found although it is installed | The search looks for `WindNinja_cli` on `PATH` and under `/opt/WindNinja`, `/usr/local/WindNinja` and `~/WindNinja`, and names where it looked. Name it in `~/.config/PREACT/tools.ini` (`WindNinjaExe = …`), set `WINDNINJA_CLI` to the executable, or pass `--windninja`. |
 
 The Linux setup is in [Building: Linux](building.md#linux).

@@ -302,7 +302,7 @@ and keeps its default.
 | Key | Type | Default | Notes |
 |---|---|---|---|
 | `CaseDirectory` | folder | `elmfire` | Holds `inputs/`, `outputs/`, `scratch/`, `climatology/` and the namelist. |
-| `ElmfireExe` | path | the repository's build | `WUInity/Assets/ThirdParty/elmfire/build/windows/bin/elmfire.exe` (`build/linux/bin/elmfire` on Linux). Must be built from a7fb9d6 or later. |
+| `ElmfireExe` | path | found | The ELMFIRE saved under Help > External tools and keys, else `elmfire/` beside a standalone build, else the repository's build `WUInity/Assets/ThirdParty/elmfire/build/windows/bin/elmfire.exe` (`build/linux/bin/elmfire` on Linux). Must be built from a7fb9d6 or later. A path here wins over all of them, so leave it empty in a scenario you share. |
 | `NamelistTemplate` | path | – | A namelist to run as it is, instead of the one generated from `[ElmfireNamelist]`. Looked for in the case folder, then beside the `.wui`. Only the stop time, `PATH_TO_GDAL`, the weather band keys (fitted to the case's `ws.tif`), the required outputs and the fuel tables are written into it. |
 | `SimulationTstopHours` | hours | `8` | How long the fire burns, 1 to 240; independent of the evacuation's end. The GUI gives a new scenario its time window (at least 24 h). A legacy `SimulationTstopSeconds` is read (÷ 3600) when this key is absent. |
 | `CellSizeMetres` | metres | `30` | Case grid resolution. |
@@ -310,8 +310,8 @@ and keeps its default.
 | `ReuseExistingOutput` | bool | `true` | Reuse the case's `outputs/` when the namelist, the executable and every input are the same by content as the run that wrote them. |
 | `BuildCase` | bool | `false` | Build the case before each run. The GUI's Build fire case does it on demand instead. |
 | `RebuildExistingLayers` | bool | `false` | Replace every layer the case already has (re-warp sources, redraw the weather). Canopy with no source named is refilled with zeros. |
-| `PathToGdal` | folder | found | GDAL tools for ELMFIRE (`gdal_translate`, `gdalinfo`, `gdalsrsinfo`). Found on `PATH`, in QGIS, OSGeo4W or `SUMO_HOME`. |
-| `WindNinjaExe` | path | found | `WINDNINJA_CLI`, `PATH`, `C:\WindNinja`, Program Files (on Linux `WindNinja_cli` on `PATH`, `/opt/WindNinja`, `/usr/local/WindNinja`, `~/WindNinja`). |
+| `PathToGdal` | folder | found | GDAL tools for ELMFIRE (`gdal_translate`, `gdalinfo`, `gdalsrsinfo`). The folder saved under Help > External tools and keys, else found on `PATH`, in QGIS, OSGeo4W or `SUMO_HOME`. |
+| `WindNinjaExe` | path | found | The WindNinja saved under Help > External tools and keys, else `WINDNINJA_CLI`, `PATH`, `C:\WindNinja`, Program Files (on Linux `WindNinja_cli` on `PATH`, `/opt/WindNinja`, `/usr/local/WindNinja`, `~/WindNinja`). |
 | `CanopyDatasetFolder` | folder | – | The FIRE-RES pan-European canopy rasters (`panEu_canopyCover.tif`, `panEu_canopyHeight.tif`, `panEu_cbh.tif`, `panEu_cbd.tif`), for any canopy layer not named below. Real units: the LANDFIRE scaling flags are forced off. |
 
 **Source layers.** Fuel, canopy and buildings have no global download, so they are named here. Any CRS and
