@@ -14,6 +14,8 @@
 - `case_sources.txt` records what the weather was made for (`WeatherStart`, `WeatherHours`, `WeatherSeed`,
   `WeatherDay`); a build for another start hour makes the weather again, and step 5 says so.
 - Step 5 no longer reports every case's weather one band short (it asked for ceil(hours) + 1 bands).
+- The ELMFIRE settings (Fire behaviour, and the fire duration, cell size and padding) show two decimals, and the exact
+  value in the tooltip when that rounds it; nothing is rounded in the scenario or the namelist.
 
 ## v1.0
 

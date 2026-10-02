@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using ImGuiNET;
 using UnityEngine;
 
@@ -266,6 +267,37 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 ImGui.SetTooltip(tooltip);
             }
             return changed;
+        }
+
+        /// <summary>
+        /// A double shown to <paramref name="decimals"/> decimals - only shown: the value is not rounded. ImGui writes a
+        /// value back only when its text is edited, so opening a panel changes nothing, and the scenario and the namelist
+        /// keep what was there to full precision. The tooltip gives the exact value when the field rounds it.
+        /// </summary>
+        /// <remarks>
+        /// For the ELMFIRE settings, where the default six decimals flooded every field (0.011364, 12.598056,
+        /// 900000000.000000). A value too small to show in that many decimals is shown to three significant figures, so
+        /// EMBER_GR's 0.001 does not read as "0.00", which looks like switched off.
+        /// </remarks>
+        public static bool Real(string label, ref double value, string tooltip, int decimals)
+        {
+            bool changed = ImGui.InputDouble(label, ref value, 0.0, 0.0, DisplayFormat(value, decimals));
+            if (ImGui.IsItemHovered())
+            {
+                string exact = value.ToString("G9", CultureInfo.InvariantCulture);
+                bool rounded = !double.TryParse(value.ToString("F" + decimals, CultureInfo.InvariantCulture), NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out double shown) || shown != value;
+                string text = rounded ? (tooltip == null ? "" : tooltip + "\n") + "Exact value: " + exact : tooltip;
+                if (!string.IsNullOrEmpty(text)) ImGui.SetTooltip(text);
+            }
+            return changed;
+        }
+
+        /// <summary>The printf format <see cref="Real(string, ref double, string, int)"/> shows <paramref name="value"/> with.</summary>
+        public static string DisplayFormat(double value, int decimals)
+        {
+            double smallest = 0.5 * Math.Pow(10.0, -decimals);
+            return value != 0.0 && Math.Abs(value) < smallest ? "%.3g" : "%." + decimals.ToString(CultureInfo.InvariantCulture) + "f";
         }
 
         /// <summary>An int.</summary>
