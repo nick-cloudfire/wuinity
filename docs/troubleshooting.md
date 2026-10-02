@@ -58,6 +58,7 @@ Details: [Building](building.md).
 | `… STOPPED: The case build was stopped while its weather was being made: no wind was written …` | You pressed Stop (or quit) during the build. Nothing is half-written: no wind, not even a uniform field, and the scenario is unchanged. Build again; it carries on from what the stopped build kept. |
 | `The painted ignition area is newer than the case's ignition_mask.tif: apply it to the case.` | Step 6 > **Apply to case**. |
 | `… holds a painted WUI area (N cells), which is no longer used …` / `… holds a painted initial ignition (N cells) …` | An older painting. The WUI area is the evacuation groups (step 9); the initial ignition became an ignition point (save the scenario to keep it). Saving the painted areas again drops both. |
+| `Group <name>: its mask is W x H, not on the fire grid (…). It is used where it lies, …` (step 9) | The group was painted on an earlier grid (the case was re-cut since). Nothing is wrong with its households or the WUI area, which read the mask where it lies; only painting cannot continue from it. **Repaint** it on the fire grid if you want to edit it. |
 | `a trigger campaign is running (…) and every one of its realizations reads this case's rasters, …` | A case build is refused while a campaign of this scenario runs. Wait for it, or cancel it. |
 
 ## Running a fire (ELMFIRE)

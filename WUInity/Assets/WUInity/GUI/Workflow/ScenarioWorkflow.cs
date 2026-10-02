@@ -1298,11 +1298,18 @@ namespace WUInity.Workflow
                         RasterInfo mask = Raster(g.MaskFile);
                         //Masks are written in simulation space (the grid's corner minus the UTM origin), which is
                         //the frame EvacuationGroup.LoadMask reads them in.
-                        if (mask == null || !PaintGrid.SameGrid(mask, origin.x, origin.y))
+                        if (mask == null)
                         {
-                            s.Error($"Group {g.Name}: its mask is " + (mask == null ? "unreadable" : $"{mask.Width} x {mask.Height}")
-                                + $", not on the fire grid ({PaintGrid.Width} x {PaintGrid.Height}). Paint it again.",
-                                WorkflowAction.PaintGroups, "Repaint");
+                            s.Error($"Group {g.Name}: its mask {g.MaskFile} cannot be read. Paint it again.", WorkflowAction.PaintGroups, "Repaint");
+                        }
+                        else if (!PaintGrid.SameGrid(mask, origin.x, origin.y))
+                        {
+                            //Not an error any more: a group's area is read where it lies, on whatever grid it was painted
+                            //(EvacuationGroupArea), for its households, the case's wui_area.tif and k-PERIL alike. Only
+                            //the painter cannot carry on from it.
+                            s.Warn($"Group {g.Name}: its mask is {mask.Width} x {mask.Height}, not on the fire grid ({PaintGrid.Width} x "
+                                + $"{PaintGrid.Height}). It is used where it lies, for its households and the WUI area, but painting "
+                                + "it starts from nothing: Repaint to edit it on the fire grid.", WorkflowAction.PaintGroups, "Repaint");
                         }
                     }
                 }

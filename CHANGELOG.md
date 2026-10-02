@@ -39,6 +39,9 @@
   **Save group areas** is enabled only when something was painted since the last save, and a stroke over cells
   that already hold what it paints no longer counts as unsaved, so a save no longer writes (and logs) every group
   mask twice.
+- Workflow step 9 no longer calls a group mask on another grid than the fire grid an error (which blocked a run): the
+  group's households and the WUI area read the mask where it lies. It is a warning that painting the group starts
+  from nothing on the fire grid.
 
 ## v1.0
 
