@@ -16,6 +16,7 @@ namespace PREACT.Tests
             runner.Add("osm: every server failing throws with what each said, and writes nothing (an earlier file is kept)", OsmFailureWritesNothing);
             runner.Add("osm: a 200 that Overpass cut short (runtime error remark) is not data; one with no roads stops at once", OsmPartialAnswers);
             runner.Add("osm: Overpass's error page is reported as its sentence, and the query asks for roads in the box", OsmMessagesAndQuery);
+            RegisterTerrain(runner);
         }
 
         // ------------------------------------------------------------------ OSM

@@ -31,20 +31,59 @@ namespace PREACT.Tools
         public const string DemTypeSrtm30 = "SRTMGL1";
         public const string DemTypeSrtm90 = "SRTMGL3";
 
+        /// <summary>For the tests: a stub server instead of OpenTopography.</summary>
+        internal static string BaseUrlOverride;
+
+        /// <summary>The DEM's pixel in degrees: one arc-second for the 30 m products, three for the 90 m ones.</summary>
+        public static double PixelDegrees(string demType)
+        {
+            switch ((demType ?? string.Empty).ToUpperInvariant())
+            {
+                case DemTypeCopernicus30:
+                case DemTypeSrtm30:
+                case "NASADEM":
+                case "AW3D30":
+                case "SRTMGL1_E":
+                    return 1.0 / 3600.0;
+                default:
+                    return 3.0 / 3600.0;
+            }
+        }
+
         /// <summary>
-        /// Downloads a DEM covering [lowerLeftLatLon, upperRightLatLon] to <paramref name="outputPath"/>
-        /// (a GeoTIFF). <paramref name="lowerLeftLatLon"/>/<paramref name="upperRightLatLon"/> follow
-        /// this codebase's (lat, lon) = (x, y) `Vector2d` convention.
+        /// The box actually asked for: [lowerLeftLatLon, upperRightLatLon] grown to cover the UTM grid cut from it
+        /// (<see cref="DownloadArea.CoverUtmGrid"/>) and four DEM pixels more on every side.
         /// </summary>
-        public static async Task Download(Vector2d lowerLeftLatLon, Vector2d upperRightLatLon, string apiKey, string outputPath, string demType = DemTypeCopernicus30)
+        /// <remarks>
+        /// The service snaps the request to its pixel lattice and can come up a fraction of a pixel short - 0.0002 degrees
+        /// on Auburn2's east side, which the case build reported as a DEM smaller than its padded domain - and the UTM
+        /// grid's corners reach past a lat/lon box by hundreds of metres away from the zone's central meridian.
+        /// </remarks>
+        public static (Vector2d LowerLeft, Vector2d UpperRight) RequestBounds(Vector2d lowerLeftLatLon, Vector2d upperRightLatLon,
+            string demType = DemTypeCopernicus30, int utmEpsg = 0)
+        {
+            return DownloadArea.CoverUtmGrid(lowerLeftLatLon, upperRightLatLon, utmEpsg, 4.0 * PixelDegrees(demType));
+        }
+
+        /// <summary>
+        /// Downloads a DEM covering [lowerLeftLatLon, upperRightLatLon], with the margin <see cref="RequestBounds"/> adds,
+        /// to <paramref name="outputPath"/> (a GeoTIFF). <paramref name="lowerLeftLatLon"/>/<paramref name="upperRightLatLon"/>
+        /// follow this codebase's (lat, lon) = (x, y) `Vector2d` convention; <paramref name="utmEpsg"/> is the zone the DEM
+        /// will be warped into (0: the zone of the box's centre).
+        /// </summary>
+        public static async Task Download(Vector2d lowerLeftLatLon, Vector2d upperRightLatLon, string apiKey, string outputPath,
+            string demType = DemTypeCopernicus30, int utmEpsg = 0)
         {
             if (string.IsNullOrEmpty(apiKey))
             {
                 throw new ArgumentException("An OpenTopography API key is required.", nameof(apiKey));
             }
 
-            string url = BuildUrl(lowerLeftLatLon, upperRightLatLon, apiKey, demType);
+            (Vector2d southWest, Vector2d northEast) = RequestBounds(lowerLeftLatLon, upperRightLatLon, demType, utmEpsg);
+            string url = BuildUrl(southWest, northEast, apiKey, demType);
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath)));
+            Engine.Message(null, Engine.LogType.Log, FormattableString.Invariant(
+                $"The DEM is asked for {southWest.x:F4},{southWest.y:F4} to {northEast.x:F4},{northEast.y:F4}: the area and a margin, so the UTM grid cut from it is covered to its corners."));
 
             Exception lastError = null;
             for (int attempt = 1; attempt <= MaxRetries; ++attempt)
@@ -84,7 +123,7 @@ namespace PREACT.Tools
             string north = upperRightLatLon.x.ToString(CultureInfo.InvariantCulture);
             string east = upperRightLatLon.y.ToString(CultureInfo.InvariantCulture);
 
-            return $"{BaseUrl}?demtype={demType}&south={south}&north={north}&west={west}&east={east}" +
+            return $"{BaseUrlOverride ?? BaseUrl}?demtype={demType}&south={south}&north={north}&west={west}&east={east}" +
                    $"&outputFormat=GTiff&API_Key={Uri.EscapeDataString(apiKey)}";
         }
     }

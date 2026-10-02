@@ -860,15 +860,13 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
             LogStep("Using the OpenTopography key from " + ctx.OpenTopographyKeySource + ".");
 
-            //Asked for with a margin. A latitude/longitude box is not a rectangle in UTM, so the bounding box
-            //the warp clips to reaches beyond the corners of what was downloaded - and GDAL fills what the
-            //source does not cover with zero, which beside a hillside reads as a cliff.
-            const double marginDegrees = 0.005;
-            Vector2d paddedLowerLeft = new Vector2d(ctx.LowerLeft.x - marginDegrees, ctx.LowerLeft.y - marginDegrees);
-            Vector2d paddedUpperRight = new Vector2d(ctx.UpperRight.x + marginDegrees, ctx.UpperRight.y + marginDegrees);
-
+            //The downloader asks for a margin of its own: a latitude/longitude box is not a rectangle in UTM, so the
+            //bounding box the warp clips to reaches beyond the corners of what was downloaded - and GDAL fills what the
+            //source does not cover with zero, which beside a hillside reads as a cliff. The fixed 0.005 degrees this used
+            //to add fell short of the grid's corners by about 15 m on Auburn2, two degrees from its zone's meridian.
             string downloaded = ctx.InRootForWriting(ScenarioFiles.DemDownload(ctx.Name));
-            await PREACT.Tools.OpenTopographyDownloader.Download(paddedLowerLeft, paddedUpperRight, ctx.OpenTopographyKey, downloaded, ctx.DemType);
+            await PREACT.Tools.OpenTopographyDownloader.Download(ctx.LowerLeft, ctx.UpperRight, ctx.OpenTopographyKey, downloaded,
+                ctx.DemType, ctx.UtmEpsg);
 
             LogStep("Warping the DEM into the simulation's UTM zone...");
 
