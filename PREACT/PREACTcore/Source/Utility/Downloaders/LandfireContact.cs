@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using PREACT.Utility;
 
 namespace PREACT.Tools
 {
@@ -7,28 +8,34 @@ namespace PREACT.Tools
     /// The contact e-mail LANDFIRE's product service asks every request for.
     /// </summary>
     /// <remarks>
-    /// Personal, so never in the scenario (a <c>.wui</c> is meant to be shared): kept per user, beside the user's other
-    /// WUInity settings, and read by the GUI and the command line alike. It used to be a hard-coded address belonging
-    /// to one of the original developers, which every user's jobs were then filed under.
+    /// Personal, so never in the scenario (a <c>.wui</c> is meant to be shared): kept per user, in the one per-user
+    /// settings file every program of the platform reads (<see cref="ToolPaths.SettingsFile"/>, <c>tools.ini</c>, beside
+    /// the tool paths), and read by the GUI and the command line alike. It used to be a hard-coded address belonging to
+    /// one of the original developers, which every user's jobs were then filed under.
     ///
     /// Looked for in this order: the caller's own value (a command-line option), the <c>LANDFIRE_EMAIL</c> environment
-    /// variable, then the per-user file <see cref="SettingsPath"/>.
+    /// variable, then the settings file. The first v1.1 builds kept it in a file of its own,
+    /// <c>%APPDATA%\WUInity\user-settings.txt</c> (<see cref="LegacySettingsPath"/>); an e-mail found there is moved into
+    /// the settings file the first time one is looked for, and removed from the old file.
     /// </remarks>
     public static class LandfireContact
     {
         public const string Variable = "LANDFIRE_EMAIL";
 
-        private const string Key = "LandfireEmail";
+        private const string LegacyKey = "LandfireEmail";
 
-        /// <summary>For the tests, which must not touch the real user's settings.</summary>
-        internal static string SettingsPathOverride;
+        /// <summary>For the tests, which must not touch the real user's old settings.</summary>
+        internal static string LegacySettingsPathOverride;
 
-        /// <summary>The per-user file, a <c>Key=Value</c> text file: %APPDATA%\WUInity\user-settings.txt on Windows.</summary>
-        public static string SettingsPath
+        /// <summary>The per-user settings file the e-mail is kept in: <see cref="ToolPaths.SettingsFile"/>.</summary>
+        public static string SettingsPath => ToolPaths.SettingsFile;
+
+        /// <summary>Where the first v1.1 builds kept it, a <c>Key=Value</c> file: %APPDATA%\WUInity\user-settings.txt on Windows.</summary>
+        public static string LegacySettingsPath
         {
             get
             {
-                if (!string.IsNullOrEmpty(SettingsPathOverride)) return SettingsPathOverride;
+                if (!string.IsNullOrEmpty(LegacySettingsPathOverride)) return LegacySettingsPathOverride;
                 string root = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
                 if (string.IsNullOrEmpty(root))
                 {
@@ -54,7 +61,7 @@ namespace PREACT.Tools
                 return fromEnvironment.Trim();
             }
 
-            string fromFile = ReadSetting(SettingsPath, Key);
+            string fromFile = Saved();
             if (IsPlausible(fromFile))
             {
                 source = SettingsPath;
@@ -65,19 +72,21 @@ namespace PREACT.Tools
             return null;
         }
 
-        /// <summary>The e-mail kept in the per-user file, or empty.</summary>
+        /// <summary>The e-mail kept in the per-user settings file (moved there from the old file first, once), or empty.</summary>
         public static string Saved()
         {
-            return ReadSetting(SettingsPath, Key) ?? string.Empty;
+            string saved = ToolPaths.LandfireEmail;
+            if (string.IsNullOrWhiteSpace(saved)) saved = MigrateLegacy();
+            return saved ?? string.Empty;
         }
 
-        /// <summary>Keeps <paramref name="email"/> in the per-user file (empty removes it). False when it could not be written.</summary>
+        /// <summary>Keeps <paramref name="email"/> in the per-user settings file (empty removes it). False when it could not be written.</summary>
         public static bool Save(string email, out string problem)
         {
             problem = null;
             try
             {
-                WriteSetting(SettingsPath, Key, (email ?? string.Empty).Trim());
+                ToolPaths.SaveLandfireEmail((email ?? string.Empty).Trim());
                 return true;
             }
             catch (Exception e)
@@ -85,6 +94,63 @@ namespace PREACT.Tools
                 problem = e.Message;
                 return false;
             }
+        }
+
+        private static readonly object _migrationLock = new object();
+        private static string _legacyLookedAt;
+
+        /// <summary>
+        /// The e-mail the old <c>user-settings.txt</c> holds, moved into the settings file and removed from the old one
+        /// (the file itself goes when nothing else is left in it). Looked at once per process and file: an e-mail cleared
+        /// later is not brought back. When the settings file cannot be written the old e-mail is still returned, for this
+        /// session, and the old file is left as it is.
+        /// </summary>
+        internal static string MigrateLegacy()
+        {
+            string legacy = LegacySettingsPath;
+            lock (_migrationLock)
+            {
+                if (string.Equals(_legacyLookedAt, legacy, StringComparison.Ordinal)) return null;
+                _legacyLookedAt = legacy;
+            }
+
+            string old = ReadSetting(legacy, LegacyKey);
+            if (!IsPlausible(old)) return null;
+            old = old.Trim();
+
+            try
+            {
+                ToolPaths.SaveLandfireEmail(old);
+            }
+            catch (Exception)
+            {
+                return old;
+            }
+
+            try
+            {
+                WriteSetting(legacy, LegacyKey, string.Empty);
+                bool empty = true;
+                foreach (string line in File.ReadAllLines(legacy))
+                {
+                    string t = line.Trim();
+                    if (t.Length > 0 && !t.StartsWith("#")) empty = false;
+                }
+                if (empty) File.Delete(legacy);
+            }
+            catch (Exception)
+            {
+                //Moved, and only the old copy is left behind; the settings file is read first from now on.
+            }
+
+            Engine.Message(null, Engine.LogType.Log, $"The LANDFIRE e-mail was moved from {legacy} into {ToolPaths.SettingsFile}.");
+            return old;
+        }
+
+        /// <summary>For the tests: look at the old file again.</summary>
+        internal static void ForgetMigration()
+        {
+            lock (_migrationLock) _legacyLookedAt = null;
         }
 
         /// <summary>Something that can be an address: text, one @, a dot after it, no spaces.</summary>

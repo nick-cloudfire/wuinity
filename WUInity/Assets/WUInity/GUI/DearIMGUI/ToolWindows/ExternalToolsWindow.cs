@@ -153,6 +153,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             ImGui.SeparatorText("Keys");
             DrawOpenTopographyKey();
+            DrawLandfireEmail();
 
             if (t.MapboxTokenValid == true)
             {
@@ -474,6 +475,27 @@ namespace Assets.WUInity.GUI.DearIMGUI
         /// it survives restarts, and it is gitignored - so when it is doing its job no field is drawn. A box
         /// that is always there invites pasting a credential into somewhere it will be lost.
         /// </remarks>
+        /// <summary>
+        /// The LANDFIRE contact e-mail: kept in the same per-user file as the tool paths, and edited where it is used (the
+        /// fuels step), so this only says what the LANDFIRE step will send.
+        /// </summary>
+        private static void DrawLandfireEmail()
+        {
+            string kept = ScenarioDataSteps.LandfireEmail.Trim();
+            if (PREACT.Tools.LandfireContact.IsPlausible(kept))
+            {
+                Fields.Ok("LANDFIRE e-mail: " + kept + ", kept for your user in " + ToolPaths.SettingsFile + ".");
+            }
+            else if (PREACT.Tools.LandfireContact.IsPlausible(System.Environment.GetEnvironmentVariable(PREACT.Tools.LandfireContact.Variable)))
+            {
+                Fields.Ok("LANDFIRE e-mail: from " + PREACT.Tools.LandfireContact.Variable + ".");
+            }
+            else
+            {
+                ImGui.TextDisabled("LANDFIRE e-mail: none yet. The LANDFIRE download asks for it (Fuels, canopy and buildings > Get them).");
+            }
+        }
+
         public static void DrawOpenTopographyKey()
         {
             string source = ScenarioDataSteps.OpenTopographyApiKeySource;

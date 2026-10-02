@@ -40,6 +40,11 @@ namespace PREACT.Utility
     /// The file is re-read when it changes on disk, so a save from the GUI reaches the resolvers of the running
     /// process at once, and a hand edit reaches them on the next lookup. Thread-safe.
     /// </para>
+    /// <para>
+    /// It also keeps the one per-user value that is not a tool path: the contact e-mail LANDFIRE's product service
+    /// asks for (<see cref="LandfireEmail"/>, under <c>[User]</c>), which is personal and so never in a scenario either.
+    /// One settings file per user, for every program.
+    /// </para>
     /// </remarks>
     public static class ToolPaths
     {
@@ -186,12 +191,15 @@ namespace PREACT.Utility
         }
 
         /// <summary>
-        /// Writes <paramref name="settings"/> to <see cref="SettingsFile"/>, creating its folder, and makes them the
-        /// settings in force for this process. Throws when the file cannot be written.
+        /// Writes the tool paths of <paramref name="settings"/> to <see cref="SettingsFile"/>, creating its folder, and
+        /// makes them the settings in force for this process. Throws when the file cannot be written.
         /// </summary>
         /// <remarks>
         /// Written beside the target and moved over it, so a reader in another process (a campaign's PREACT.exe
         /// starting at that moment) sees the old file or the new one, never half of one.
+        ///
+        /// The LANDFIRE e-mail is kept as the file holds it: it has its own <see cref="SaveLandfireEmail"/>, and the
+        /// tools window saves a copy it loaded when it opened, which would otherwise put back an e-mail changed since.
         /// </remarks>
         public static void Save(Settings settings)
         {
@@ -199,40 +207,74 @@ namespace PREACT.Utility
 
             lock (_lock)
             {
-                string path = SettingsFile;
-                string folder = Path.GetDirectoryName(Path.GetFullPath(path));
-                if (!string.IsNullOrEmpty(folder))
-                {
-                    Directory.CreateDirectory(folder);
-                }
-
-                Settings cleaned = settings.Cleaned();
-                string temporary = path + ".tmp";
-                File.WriteAllText(temporary, cleaned.Write(), new UTF8Encoding(false));
-                if (File.Exists(path))
-                {
-                    try
-                    {
-                        File.Replace(temporary, path, null);
-                    }
-                    catch (Exception e) when (e is PlatformNotSupportedException || e is IOException || e is UnauthorizedAccessException)
-                    {
-                        //A file system without an atomic replace (some network shares, Mono off Windows).
-                        File.Copy(temporary, path, true);
-                        File.Delete(temporary);
-                    }
-                }
-                else
-                {
-                    File.Move(temporary, path);
-                }
-
-                _cached = cleaned;
-                _cachedPath = path;
-                Stamp(path, out _cachedWriteTime, out _cachedLength);
-                _readError = null;
-                ++_version;
+                Settings merged = settings.Clone();
+                merged.LandfireEmail = Current().LandfireEmail;
+                Write(merged);
             }
+        }
+
+        /// <summary>
+        /// The LANDFIRE contact e-mail kept in the settings file, or empty. <c>PREACT.Tools.LandfireContact</c> resolves
+        /// the one to send (an explicit value and <c>LANDFIRE_EMAIL</c> come first).
+        /// </summary>
+        public static string LandfireEmail
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return Clean(Current().LandfireEmail);
+                }
+            }
+        }
+
+        /// <summary>Keeps <paramref name="email"/> in the settings file (empty removes it), and nothing else changes. Throws when it cannot be written.</summary>
+        public static void SaveLandfireEmail(string email)
+        {
+            lock (_lock)
+            {
+                Settings s = Current().Clone();
+                s.LandfireEmail = email ?? string.Empty;
+                Write(s);
+            }
+        }
+
+        /// <summary>Writes <paramref name="settings"/> as they are and makes them the ones in force. Under the lock.</summary>
+        private static void Write(Settings settings)
+        {
+            string path = SettingsFile;
+            string folder = Path.GetDirectoryName(Path.GetFullPath(path));
+            if (!string.IsNullOrEmpty(folder))
+            {
+                Directory.CreateDirectory(folder);
+            }
+
+            Settings cleaned = settings.Cleaned();
+            string temporary = path + ".tmp";
+            File.WriteAllText(temporary, cleaned.Write(), new UTF8Encoding(false));
+            if (File.Exists(path))
+            {
+                try
+                {
+                    File.Replace(temporary, path, null);
+                }
+                catch (Exception e) when (e is PlatformNotSupportedException || e is IOException || e is UnauthorizedAccessException)
+                {
+                    //A file system without an atomic replace (some network shares, Mono off Windows).
+                    File.Copy(temporary, path, true);
+                    File.Delete(temporary);
+                }
+            }
+            else
+            {
+                File.Move(temporary, path);
+            }
+
+            _cached = cleaned;
+            _cachedPath = path;
+            Stamp(path, out _cachedWriteTime, out _cachedLength);
+            _readError = null;
+            ++_version;
         }
 
         /// <summary>The cached settings, re-read when the file named, its time or its size changed. Under the lock.</summary>
@@ -606,6 +648,12 @@ namespace PREACT.Utility
 
             private readonly string[] _values = { string.Empty, string.Empty, string.Empty, string.Empty, string.Empty };
 
+            //The per-user value that is not a tool path, under [User].
+            private const string LandfireEmailKey = "LandfireEmail";
+
+            /// <summary>The contact e-mail LANDFIRE downloads send; empty when none is kept.</summary>
+            public string LandfireEmail { get; set; } = string.Empty;
+
             //Keys this version does not know, kept so a newer version's settings survive a save by this one.
             private readonly List<KeyValuePair<string, string>> _other = new List<KeyValuePair<string, string>>();
 
@@ -627,6 +675,7 @@ namespace PREACT.Utility
                 {
                     copy._values[i] = Clean(copy._values[i]);
                 }
+                copy.LandfireEmail = Clean(copy.LandfireEmail);
                 return copy;
             }
 
@@ -634,11 +683,12 @@ namespace PREACT.Utility
             {
                 var copy = new Settings();
                 Array.Copy(_values, copy._values, _values.Length);
+                copy.LandfireEmail = LandfireEmail;
                 copy._other.AddRange(_other);
                 return copy;
             }
 
-            /// <summary>The same tool values once cleaned (unknown keys aside).</summary>
+            /// <summary>The same tool values once cleaned (the e-mail and unknown keys aside: what the tools window edits).</summary>
             public bool SameAs(Settings other)
             {
                 if (other == null) return false;
@@ -674,6 +724,10 @@ namespace PREACT.Utility
                     {
                         s._values[index] = value;
                     }
+                    else if (string.Equals(key, LandfireEmailKey, StringComparison.OrdinalIgnoreCase))
+                    {
+                        s.LandfireEmail = value;
+                    }
                     else
                     {
                         s._other.Add(new KeyValuePair<string, string>(key, value));
@@ -685,8 +739,9 @@ namespace PREACT.Utility
             internal string Write()
             {
                 var b = new StringBuilder();
-                b.AppendLine("; PREACT external tools, one file per user. Read by WUInity, PREACT and PREACTcli; written by");
-                b.AppendLine("; WUInity's Help > External tools and keys, and fine to edit by hand.");
+                b.AppendLine("; PREACT settings for this user: the external tools and the LANDFIRE e-mail. Read by WUInity, PREACT");
+                b.AppendLine("; and PREACTcli; written by WUInity (Help > External tools and keys; the fuels step's LANDFIRE");
+                b.AppendLine("; e-mail), and fine to edit by hand.");
                 b.AppendLine("; A path here is used instead of the automatic search. A scenario's [ELMFIRE] ElmfireExe, PathToGdal");
                 b.AppendLine("; or WindNinjaExe, and PREACTcli's --elmfire, --gdal or --windninja, still come first.");
                 b.AppendLine("; Leave a value empty to have the tool found automatically.");
@@ -700,6 +755,10 @@ namespace PREACT.Utility
                 {
                     b.AppendLine(kv.Key + " = " + kv.Value);
                 }
+                b.AppendLine("[User]");
+                b.AppendLine("; LANDFIRE: the contact e-mail every LANDFIRE download sends (LFPS asks for one; LANDFIRE_EMAIL and");
+                b.AppendLine("; PREACTcli landfire --email come first). Personal, so never in a scenario.");
+                b.AppendLine(LandfireEmailKey + " = " + Clean(LandfireEmail));
                 return b.ToString();
             }
         }

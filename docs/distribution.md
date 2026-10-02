@@ -144,10 +144,15 @@ GdalBin = C:\Program Files\QGIS 3.40.4\bin
 WindNinjaExe =
 Sumo = C:\Program Files (x86)\Eclipse\Sumo
 ProjData = C:\Program Files\QGIS 3.40.4\share\proj
+[User]
+LandfireEmail = you@example.org
 ```
 
 Lines starting with `;` or `#` are comments. Quotes around a value are removed. Keys this version does not know
-are kept when the window saves.
+are kept when the window saves. The same file keeps the **LANDFIRE contact e-mail** (`[User] LandfireEmail`),
+entered in the fuels step (Fuels, canopy and buildings > Get them); `LANDFIRE_EMAIL` and `PREACTcli landfire --email`
+come before it. An e-mail an earlier v1.1 build kept in `%APPDATA%\WUInity\user-settings.txt` is moved into this
+file the first time it is needed.
 
 ## Keys
 
@@ -172,7 +177,7 @@ the map stays blank without a Mapbox token, and everything else works.
 
 | File | Where |
 |---|---|
-| Tool paths | `%APPDATA%\PREACT\tools.ini` |
+| Tool paths and the LANDFIRE e-mail | `%APPDATA%\PREACT\tools.ini` |
 | Window layout (`imgui.ini`) | The working folder: the program's folder when it is started from Explorer. Put the folder somewhere you can write to (not `C:\Program Files`), or the layout is not kept. |
 | Unity's log (`Player.log`) | `%USERPROFILE%\AppData\LocalLow\Lund University\WUInity (PREACT)\` |
 | Scenarios, cases, campaigns | Their own folders, as in the editor. |

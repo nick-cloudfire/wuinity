@@ -135,8 +135,9 @@ scenario's UTM zone, for the release `[ELMFIRE] LandfireVersion` picks:
 These are what LFPS serves (its product list, October 2026); there is no LF2019–LF2021 fuel. A release includes
 the disturbances of its year, so for a historic fire choose the release before it: a later one already has the
 burn scar. LFPS asks every request for a contact e-mail: yours, typed under Fuels, canopy and buildings > Get them
-and kept for your user in `user-settings.txt` (`%APPDATA%\WUInity\` on Windows, `~/.config/WUInity/` on Linux),
-or `LANDFIRE_EMAIL`. It is never written into the scenario.
+and kept for your user in the settings file the tool paths are in (`%APPDATA%\PREACT\tools.ini` on Windows,
+`~/.config/PREACT/tools.ini` on Linux; [Distribution](distribution.md#the-settings-file)), or `LANDFIRE_EMAIL`. It is
+never written into the scenario.
 
 The result is one multi-band GeoTIFF. Its bands are found by the descriptions LFPS gives them
 (`LF2024_FBFM40_CONUS`, ...) and their units by its `.aux.xml` (`Meters * 10`, `Kilograms per cubic meter * 100`,

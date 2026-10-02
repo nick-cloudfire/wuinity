@@ -16,7 +16,7 @@ namespace PREACT.Tests
             runner.Add("landfire: the real Auburn2 LFPS zip, from a stub LFPS, becomes Int16 fbfm40 and cc/ch/cbh/cbd with the flags its units call for", LandfireRealZip);
             runner.Add("landfire: a submit that fails once is retried, a failed job says LFPS's message, a cut-off zip is fetched again", LandfireFailures);
             runner.Add("landfire: band descriptions in every LFPS form, units from the aux.xml, unlabelled bands by request order", LandfireBands);
-            runner.Add("landfire: the contact e-mail is the user's (explicit, LANDFIRE_EMAIL, per-user file), never the old hard-coded one", LandfireContactEmail);
+            runner.Add("landfire: the contact e-mail is the user's (explicit, LANDFIRE_EMAIL, tools.ini; the old user-settings.txt moved once), never the old hard-coded one", LandfireContactEmail);
             runner.Add("landfire: [ELMFIRE] LandfireVersion is read, normalised, kept and written; a bad value keeps closest", LandfireVersionKey);
         }
 
@@ -311,7 +311,10 @@ namespace PREACT.Tests
 
                 //No e-mail anywhere: refused before anything is asked.
                 string saved = Environment.GetEnvironmentVariable(LandfireContact.Variable);
-                LandfireContact.SettingsPathOverride = Path.Combine(scratch, "no-settings.txt");
+                string toolsBefore = Environment.GetEnvironmentVariable(ToolPaths.FileVariable);
+                Environment.SetEnvironmentVariable(ToolPaths.FileVariable, Path.Combine(scratch, "no-tools.ini"));
+                LandfireContact.LegacySettingsPathOverride = Path.Combine(scratch, "no-settings.txt");
+                LandfireContact.ForgetMigration();
                 try
                 {
                     Environment.SetEnvironmentVariable(LandfireContact.Variable, null);
@@ -328,7 +331,9 @@ namespace PREACT.Tests
                 }
                 finally
                 {
-                    LandfireContact.SettingsPathOverride = null;
+                    LandfireContact.LegacySettingsPathOverride = null;
+                    LandfireContact.ForgetMigration();
+                    Environment.SetEnvironmentVariable(ToolPaths.FileVariable, toolsBefore);
                     Environment.SetEnvironmentVariable(LandfireContact.Variable, saved);
                 }
 
@@ -494,32 +499,67 @@ namespace PREACT.Tests
         {
             string scratch = TempFolder("preact-lfmail-");
             string saved = Environment.GetEnvironmentVariable(LandfireContact.Variable);
-            LandfireContact.SettingsPathOverride = Path.Combine(scratch, "WUInity", "user-settings.txt");
+            string toolsBefore = Environment.GetEnvironmentVariable(ToolPaths.FileVariable);
+            string tools = Path.Combine(scratch, "PREACT", "tools.ini");
+            string legacy = Path.Combine(scratch, "WUInity", "user-settings.txt");
+            Environment.SetEnvironmentVariable(ToolPaths.FileVariable, tools);
+            LandfireContact.LegacySettingsPathOverride = legacy;
+            LandfireContact.ForgetMigration();
             try
             {
                 Environment.SetEnvironmentVariable(LandfireContact.Variable, null);
                 Assert.True(LandfireContact.Resolve(null, out string source) == null && source == null, "none anywhere");
-                Assert.True(LandfireContact.MissingMessage.Contains(LandfireContact.Variable), "the message says where one goes");
+                Assert.True(LandfireContact.MissingMessage.Contains(LandfireContact.Variable) && LandfireContact.MissingMessage.Contains(tools),
+                    "the message says where one goes: " + LandfireContact.MissingMessage);
 
-                File.WriteAllText(Path.Combine(scratch, "other.txt"), "");
-                Directory.CreateDirectory(Path.GetDirectoryName(LandfireContact.SettingsPathOverride));
-                File.WriteAllLines(LandfireContact.SettingsPathOverride, new[] { "# kept", "ElmfireExe=C:/elmfire.exe" });
+                //Kept in the one per-user settings file, beside the tool paths, which stay as they are.
+                var tool = new ToolPaths.Settings();
+                tool.Set(ToolPaths.Tool.Elmfire, "/opt/elmfire/bin/elmfire");
+                ToolPaths.Save(tool);
+                Assert.Equal(tools, LandfireContact.SettingsPath, "the settings file is tools.ini");
                 Assert.True(LandfireContact.Save("  nick@cloudfire.example  ", out _), "saved");
-                string[] lines = File.ReadAllLines(LandfireContact.SettingsPathOverride);
-                Assert.True(lines.Contains("ElmfireExe=C:/elmfire.exe") && lines.Contains("LandfireEmail=nick@cloudfire.example"),
-                    "the other settings are kept: " + string.Join(" | ", lines));
+                string[] lines = File.ReadAllLines(tools);
+                Assert.True(lines.Contains("ElmfireExe = /opt/elmfire/bin/elmfire") && lines.Contains("LandfireEmail = nick@cloudfire.example"),
+                    "the tool paths are kept: " + string.Join(" | ", lines));
                 Assert.Equal("nick@cloudfire.example", LandfireContact.Resolve(null, out source), "from the file");
-                Assert.Equal(LandfireContact.SettingsPathOverride, source, "and says so");
+                Assert.Equal(tools, source, "and says so");
+
+                //The tools window saves the copy it loaded before the e-mail was set: the e-mail survives.
+                tool.Set(ToolPaths.Tool.Gdal, "/usr/bin");
+                ToolPaths.Save(tool);
+                Assert.Equal("nick@cloudfire.example", ToolPaths.LandfireEmail, "a save of the tool paths keeps the e-mail");
+                Assert.Equal("/usr/bin", ToolPaths.Load().Get(ToolPaths.Tool.Gdal), "and saves the paths");
 
                 Environment.SetEnvironmentVariable(LandfireContact.Variable, "env@example.org");
                 Assert.Equal("env@example.org", LandfireContact.Resolve(null, out source), "the environment before the file");
                 Assert.Equal("cli@example.org", LandfireContact.Resolve("cli@example.org", out source), "an explicit one first");
                 Assert.Equal("env@example.org", LandfireContact.Resolve("not an address", out source), "a bad explicit one is passed over");
+                Environment.SetEnvironmentVariable(LandfireContact.Variable, null);
 
-                Assert.True(LandfireContact.Save("", out _) && !File.ReadAllLines(LandfireContact.SettingsPathOverride).Any(l => l.StartsWith("LandfireEmail")),
+                Assert.True(LandfireContact.Save("", out _) && ToolPaths.LandfireEmail == "" && LandfireContact.Resolve(null, out _) == null,
                     "an empty one removes it");
                 Assert.True(!LandfireContact.IsPlausible("a@b") && !LandfireContact.IsPlausible("a b@c.d") && LandfireContact.IsPlausible("a.b@c.de"),
                     "plausible addresses");
+
+                //The first v1.1 builds' user-settings.txt: its e-mail is moved into tools.ini, and the old file goes.
+                Directory.CreateDirectory(Path.GetDirectoryName(legacy));
+                File.WriteAllLines(legacy, new[] { "# WUInity settings for this user. Not part of any scenario.", "LandfireEmail=old@example.org" });
+                LandfireContact.ForgetMigration();
+                Assert.Equal("old@example.org", LandfireContact.Resolve(null, out source), "the old file's e-mail is used");
+                Assert.Equal(tools, source, "from tools.ini, where it was moved");
+                Assert.True(ToolPaths.LandfireEmail == "old@example.org" && !File.Exists(legacy), "and the old file, holding nothing else, is gone");
+
+                //An old file holding something else keeps it; only the e-mail goes.
+                LandfireContact.Save("", out _);
+                File.WriteAllLines(legacy, new[] { "# kept", "Other=1", "LandfireEmail=x@example.org" });
+                LandfireContact.ForgetMigration();
+                Assert.Equal("x@example.org", LandfireContact.Saved(), "moved");
+                Assert.Equal("# kept|Other=1", string.Join("|", File.ReadAllLines(legacy)), "the rest of the old file is left");
+
+                //Looked at once: an e-mail cleared later is not brought back from an old file.
+                File.WriteAllLines(legacy, new[] { "LandfireEmail=again@example.org" });
+                LandfireContact.Save("", out _);
+                Assert.Equal("", LandfireContact.Saved(), "the old file is not read again");
 
                 //The address the downloader used to send for everyone is nowhere in the engine.
                 string repo = Program.FindRepositoryRoot();
@@ -533,7 +573,9 @@ namespace PREACT.Tests
             }
             finally
             {
-                LandfireContact.SettingsPathOverride = null;
+                LandfireContact.LegacySettingsPathOverride = null;
+                LandfireContact.ForgetMigration();
+                Environment.SetEnvironmentVariable(ToolPaths.FileVariable, toolsBefore);
                 Environment.SetEnvironmentVariable(LandfireContact.Variable, saved);
                 try { Directory.Delete(scratch, true); } catch { }
             }

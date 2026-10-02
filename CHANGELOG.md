@@ -19,8 +19,9 @@
   exist). Chosen in Fuels, canopy and buildings. Layers are named `<Name>_<release>_<stem>.tif`, so
   `case_sources.txt` records the release; `<Name>_<release>_landfire.txt` records the request. The case's old fuel
   and canopy are removed so the next build uses the new ones. FCCS is no longer downloaded.
-- **LANDFIRE e-mail**: your own, entered under Fuels, canopy and buildings and kept per user
-  (`user-settings.txt`), or `LANDFIRE_EMAIL`; no longer a developer's hard-coded address.
+- **LANDFIRE e-mail**: your own, entered under Fuels, canopy and buildings and kept per user in the tool settings
+  file (`tools.ini`, `[User] LandfireEmail`), or `LANDFIRE_EMAIL`; no longer a developer's hard-coded address. An
+  e-mail an early v1.1 build kept in `%APPDATA%\WUInity\user-settings.txt` is moved into `tools.ini` once.
 - **Area of interest**: a double click, or a second corner on the first or on the same edge, is not taken as the
   second corner; the pick says why and waits.
 - **DEM**: OpenTopography is asked for a margin that covers the UTM grid to its corners (Auburn2's padded domain
