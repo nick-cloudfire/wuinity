@@ -53,7 +53,10 @@ namespace PREACTcli.Campaigns
         public string IgnitionMaskStem = ElmfireStems.IgnitionMask;
         public int IgnitableCells = -1;
 
-        /// <summary>The case's wui_area.tif, or null; with its centroid for aiming the wind.</summary>
+        /// <summary>
+        /// The WUI area every realization protects - the case's wui_area.tif (the evacuation groups' union), or the
+        /// scenario's own [kPERIL] WuiAreaFile - with its centroid for aiming the wind. Set by the time a campaign runs.
+        /// </summary>
         public string WuiAreaFile;
         public double WuiCentreX, WuiCentreY;
         public int WuiCells;

@@ -129,6 +129,21 @@ namespace PREACT.Utility
             public string PaintedMasksPath;
             public string PaintedMasksGridPath;
 
+            /// <summary>
+            /// The scenario's evacuation groups' areas, whose union the case keeps as <c>wui_area.tif</c>: the WUI area
+            /// k-PERIL protects and a trigger campaign aims its wind at and checks its fires against. An empty list means
+            /// the scenario has none, and a <c>wui_area.tif</c> an earlier build left is removed; null (a bare API call
+            /// that says nothing about groups) leaves the case's WUI area as it is.
+            /// </summary>
+            /// <remarks>
+            /// The groups were already what the trigger boundary tab offered k-PERIL; a second, separately painted WUI
+            /// area in Fire areas was what the case wrote, and the two could protect different ground.
+            /// </remarks>
+            public List<Evacuation.EvacuationGroupArea> EvacuationGroupAreas;
+
+            /// <summary>The frame <see cref="EvacuationGroupAreas"/> are in: the scenario's simulation coordinates.</summary>
+            public Input.SimulationData Simulation;
+
             /// <summary>Where the case is written. Must be empty or <see cref="Force"/> must be set.</summary>
             public string OutputDirectory;
 
@@ -289,8 +304,12 @@ namespace PREACT.Utility
             /// <summary>Where a hand-edited namelist was set aside before regenerating, or null.</summary>
             public string KeptNamelistPath;
 
-            /// <summary>The exported painted WUI area, for k-PERIL's WuiAreaFile; null if none was painted.</summary>
+            /// <summary>The case's WUI area, the union of the evacuation groups; null when it has none.</summary>
             public string WuiAreaFile;
+
+            /// <summary>The groups the WUI area was made from (comma-separated), and how many cells of the grid it covers.</summary>
+            public string WuiAreaGroups;
+            public int WuiAreaCells;
 
             /// <summary>
             /// Where the scenario's painting was placed from when that was not the case grid - "the landscape raster
@@ -546,6 +565,11 @@ namespace PREACT.Utility
             //Run before the ignition-mask default below, so a painted ignition area is used rather
             //than being overwritten by the ignite-anywhere fallback.
             ApplyPaintedMasks(o, result, inputs, grid, previousGridDirectory, Log);
+
+            //---------------------------------------------------------------- 5c'. WUI area
+            //The evacuation groups, together, on this grid - written on every build, since it is derived (like the
+            //terrain) and the groups may have been painted again since the last one.
+            WriteWuiArea(o, result, inputs, grid, Log);
 
             //---------------------------------------------------------------- 5d. Ignition points
             //After the painted masks, because an explicitly placed point supersedes the centroid of a
@@ -1226,6 +1250,8 @@ namespace PREACT.Utility
                 ElmfireStems.Dem, ElmfireStems.Slope, ElmfireStems.Aspect, ElmfireStems.Adj, ElmfireStems.Phi,
             };
             foreach (string stem in ElmfireStems.Weather) derived.Add(stem);
+            //Made from the evacuation groups on the new grid, not carried from the old one.
+            if (o.EvacuationGroupAreas != null) derived.Add(ElmfireStems.WuiArea);
 
             foreach (string path in Directory.GetFiles(previous, "*.tif"))
             {
@@ -1760,6 +1786,14 @@ namespace PREACT.Utility
                     lines.Add("CanopyDatasetFolder=" + o.CanopyDatasetFolder);
                 }
 
+                //Which groups the WUI area is, so the GUI can tell a wui_area.tif made from today's groups from one made
+                //from other groups, or by an older build from a painted WUI area.
+                if (result.WuiAreaFile != null)
+                {
+                    lines.Add(WuiAreaGroupsKey + "=" + result.WuiAreaGroups);
+                    lines.Add(WuiAreaCellsKey + "=" + result.WuiAreaCells.ToString(CultureInfo.InvariantCulture));
+                }
+
                 if (!string.IsNullOrWhiteSpace(o.LocalDemPath))
                 {
                     lines.Add("LocalDemPath=" + o.LocalDemPath);
@@ -1962,16 +1996,10 @@ namespace PREACT.Utility
         }
 
         /// <summary>
-        /// Writes a template covering only what the builder can actually guarantee. It is a
-        /// starting point, not a tuned scenario: the doc's contract is that "the user will
-        /// fine-tune the ELMFIRE input template; this pipeline only has to produce grid-aligned
-        /// inputs and invoke the runner". Per-realization keys (weather stems, SEED, ignition)
-        /// are left for the campaign driver (PREACTcli converge-trigger) to patch in.
-        /// </summary>
-        /// <summary>
-        /// Brings masks painted in Unity into the case: the random-ignition area becomes <c>ignition_mask.tif</c>,
-        /// the WUI area becomes <c>wui_area.tif</c> (what k-PERIL's <c>WuiAreaFile</c> points at), and a painted
-        /// initial ignition becomes an explicit <c>X_IGN</c>/<c>Y_IGN</c> point in the namelist.
+        /// Brings masks painted in Unity into the case: the random-ignition area becomes <c>ignition_mask.tif</c>, and a
+        /// painted initial ignition becomes an explicit <c>X_IGN</c>/<c>Y_IGN</c> point in the namelist. A painted WUI
+        /// area is not used any more - the case's WUI area is the evacuation groups' (<see cref="WriteWuiArea"/>) - and
+        /// is only noted.
         /// </summary>
         /// <remarks>
         /// <para>
@@ -1979,8 +2007,9 @@ namespace PREACT.Utility
         /// recognised by its dimensions: the case grid first (the grid of record, which the GUI paints on once the
         /// case exists), then the grid this build replaced, then the landscape raster (legacy: paintings made
         /// before the case had a grid). A painting that matches none of them is refused and the build fails -
-        /// placing it on a grid of the wrong shape shears it into a different community, and silently skipping it
-        /// left the case with no WUI area and the campaign failing hundreds of realizations later.
+        /// placing it on a grid of the wrong shape shears it into a different area, and silently skipping it
+        /// left the case without the ignition area the campaign draws from. A painting with nothing the case uses
+        /// (only a WUI area) is not placed at all, so it cannot fail a build.
         /// </para>
         /// <para>
         /// A painted mask that is entirely empty is treated as "not painted" rather than as "ignite nowhere" - an
@@ -1999,6 +2028,17 @@ namespace PREACT.Utility
             }
 
             PaintedMaskExporter.Masks masks = PaintedMaskExporter.Load(o.PaintedMasksPath);
+            if (masks.Any(masks.WuiArea))
+            {
+                log($"  painted: the painting's WUI area ({masks.Count(masks.WuiArea)} cells) is not used - the WUI area is the "
+                    + "evacuation groups' (workflow step 9) - and is left out.");
+            }
+
+            if (!masks.Any(masks.RandomIgnition) && !masks.Any(masks.InitialIgnition))
+            {
+                return;
+            }
+
             var misplaced = new List<string>();
             MasterGrid painted = ResolvePaintedGrid(masks, grid, previousGridDirectory, o.PaintedMasksGridPath,
                                      out string paintedOn, misplaced);
@@ -2015,7 +2055,7 @@ namespace PREACT.Utility
                     + (misplaced.Count > 0 ? " (" + string.Join("; ", misplaced) + ")" : "")
                     + ", so there is no telling which ground they were painted on. Move the painting onto the fire-case "
                     + "grid (the GUI's workflow step 6 offers it when it knows the grid it was painted on) or repaint the "
-                    + "ignition and WUI areas on it, then build again.");
+                    + "ignition area on it, then build again.");
             }
 
             if (!ReferenceEquals(painted, grid)) result.PaintingOffCaseGrid = paintedOn;
@@ -2032,21 +2072,67 @@ namespace PREACT.Utility
                 log($"  painted: ignition area -> ignition_mask.tif ({masks.Count(masks.RandomIgnition)} painted cells).");
             }
 
-            if (masks.Any(masks.WuiArea))
-            {
-                string wui = ElmfireStems.Tif(inputs, ElmfireStems.WuiArea);
-                PaintedMaskExporter.Export(masks.WuiArea, masks, painted, grid, wui);
-                if (!result.Written.Contains(ElmfireStems.WuiArea)) result.Written.Add(ElmfireStems.WuiArea);
-                result.WuiAreaFile = wui;
-                log($"  painted: WUI area -> wui_area.tif ({masks.Count(masks.WuiArea)} painted cells).");
-            }
-
             if (masks.Any(masks.InitialIgnition) &&
                 PaintedMaskExporter.TryGetIgnitionPoint(masks.InitialIgnition, masks, painted, grid, out double ix, out double iy))
             {
                 result.Ignitions.Add(new PlacedIgnition { X = ix, Y = iy, TimeSeconds = 0.0 });
                 log($"  painted: initial ignition -> X_IGN/Y_IGN ({ix:F1}, {iy:F1}), random ignition disabled.");
             }
+        }
+
+        /// <summary>The manifest keys the WUI area's groups and cell count are recorded under.</summary>
+        public const string WuiAreaGroupsKey = "WuiAreaGroups", WuiAreaCellsKey = "WuiAreaCells";
+
+        /// <summary>
+        /// Writes the case's WUI area, <c>wui_area.tif</c>: 1 where a cell's centre is in any evacuation group's area
+        /// (<see cref="Options.EvacuationGroupAreas"/>), 0 elsewhere. Without a group that has an area, the case has no
+        /// WUI area, and one an earlier build wrote is removed - it would be the WUI area of groups the scenario no
+        /// longer has, or the painted one this replaces.
+        /// </summary>
+        private static void WriteWuiArea(Options o, Result result, string inputs, MasterGrid grid, Action<string> log)
+        {
+            if (o.EvacuationGroupAreas == null) return;
+
+            string path = ElmfireStems.Tif(inputs, ElmfireStems.WuiArea);
+            int cells = 0;
+            bool[] union = null;
+            if (o.EvacuationGroupAreas.Count > 0 && o.Simulation != null)
+            {
+                union = Evacuation.EvacuationGroupArea.Rasterize(o.EvacuationGroupAreas, grid, o.Simulation, out cells);
+            }
+
+            if (cells == 0)
+            {
+                string why = o.EvacuationGroupAreas.Count == 0
+                    ? "no evacuation group has an area (paint the groups, workflow step 9)"
+                    : $"the evacuation groups ({Evacuation.EvacuationGroupArea.Names(o.EvacuationGroupAreas)}) cover no cell of the case grid";
+                bool removed = false;
+                foreach (string f in new[] { path, path + ".aux.xml" })
+                {
+                    try { if (File.Exists(f)) { File.Delete(f); removed |= f == path; } } catch (IOException) { }
+                }
+                log("  WUI area: none - " + why + (removed ? "; the wui_area.tif an earlier build wrote was removed." : "."));
+                result.Fallbacks.Add("WUI area: none, " + why);
+                return;
+            }
+
+            int ncols = grid.Header.Ncols, nrows = grid.Header.Nrows;
+            var data = new float[ncols, nrows];
+            for (int y = 0; y < nrows; ++y)
+            {
+                for (int x = 0; x < ncols; ++x)
+                {
+                    data[x, y] = union[x + y * ncols] ? 1f : 0f;
+                }
+            }
+            GeoTiffRasterWriter.WriteBand(grid, data, path);
+
+            if (!result.Written.Contains(ElmfireStems.WuiArea)) result.Written.Add(ElmfireStems.WuiArea);
+            result.WuiAreaFile = path;
+            result.WuiAreaGroups = Evacuation.EvacuationGroupArea.Names(o.EvacuationGroupAreas);
+            result.WuiAreaCells = cells;
+            double km2 = cells * grid.Header.CellSize * grid.Header.CellSize / 1e6;
+            log($"  WUI area: the evacuation group(s) {result.WuiAreaGroups} -> wui_area.tif ({cells} cells, {km2:0.00} km2).");
         }
 
         /// <summary>

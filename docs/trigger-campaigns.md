@@ -15,7 +15,9 @@ starts the same command.
 A campaign checks all of this before its first fire and stops with the reason if anything is missing:
 
 - a **built ELMFIRE case** with a fuel raster, an ignition mask with at least one ignitable cell, and
-  `wui_area.tif` (built from the painted WUI area — step 6);
+  `wui_area.tif`, which the build makes from the evacuation groups (step 9) and which has to be their union as
+  they are now — a campaign on a case built before the groups were last painted is refused, saying so (or, with
+  `WuiAreaSource=Raster`, the scenario's own `WuiAreaFile`);
 - the base scenario's **trigger boundary** on: `[TriggerBufferModule] Enabled=true`, `Module=kPERIL`, with
   `WuiAreaSource` `Raster` or `EvacuationGroupsCombined` (`EvacuationGroupsSeparate` gives one boundary per group,
   which a campaign cannot aggregate);
@@ -90,7 +92,8 @@ Realization *i* (7-digit id, `0000001` for the first) runs in `realizations/<id>
    MidflameWindSpeedFile` = its `mfws`, `FirelineIntensityFile` = its `flin` (or cleared) and `FuelModelFile` = the
    case fuel it burned (or cleared) - never the base scenario's own - `[kPERIL] WindDirectionFile` = its own
    `wd.tif`, `WindSpeedFile` cleared,
-   `WindBandSeconds` = the template's `DT_METEOROLOGY`, `WuiAreaFile` = the case's, `[Landscape]` = the case's
+   `WindBandSeconds` = the template's `DT_METEOROLOGY`, `WuiAreaSource=Raster` with `WuiAreaFile` = the WUI area
+   step 7 checked (the case's `wui_area.tif`), `[Landscape]` = the case's
    dem/slp/asp (k-PERIL's slope and aspect then cover the whole fire grid), and `[Simulation] RandomSeed` = seed +
    2 000 000 + *i*. Its outputs are moved into `preact/`, and a copy of the scenario it ran, with paths
    rebased so it opens where it is, is kept as `preact_scenario.wui`. Exit 0 with a boundary file is *ok*;

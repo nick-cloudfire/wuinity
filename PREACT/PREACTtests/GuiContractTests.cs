@@ -321,8 +321,8 @@ namespace PREACT.Tests
                 Assert.True(why != null && why.Contains("300 m east"), "the resampler's grid says it is elsewhere: " + why);
 
                 //A painting saved with the record, as the painter now saves it.
-                var data = new Input.WildfireData { WuiArea = new bool[g.Header.Ncols * g.Header.Nrows] };
-                for (int i = 500; i < 540; ++i) data.WuiArea[i] = true;
+                var data = new Input.WildfireData { RandomIgnition = new bool[g.Header.Ncols * g.Header.Nrows] };
+                for (int i = 500; i < 540; ++i) data.RandomIgnition[i] = true;
                 string gfi = Path.Combine(c.Folder, "painted.gfi");
                 GraphicalFireInput.SaveGraphicalFireInput(gfi, data, g.Header.Ncols, g.Header.Nrows, painted);
 
@@ -361,8 +361,8 @@ namespace PREACT.Tests
                     Epsg = g.Epsg,
                 };
                 WriteRectangular(rect, rectangular);
-                var small = new Input.WildfireData { WuiArea = new bool[400] };
-                small.WuiArea[210] = true;
+                var small = new Input.WildfireData { RandomIgnition = new bool[400] };
+                small.RandomIgnition[210] = true;
                 string legacy = Path.Combine(c.Folder, "legacy.gfi");
                 GraphicalFireInput.SaveGraphicalFireInput(legacy, small, 20, 20);
                 ElmfireCaseBuilder.Options o = c.Options(caseDir, 150.0, new List<string>());

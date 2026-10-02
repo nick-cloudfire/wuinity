@@ -15,6 +15,255 @@ namespace PREACT.Tests
             runner.Add("builder: a case without a fuel model is refused before its DEM, weather or WindNinja", NoFuelRefusedFirst);
             runner.Add("weather: rebuilding only the weather changes the five rasters and the namelist's time and band keys, nothing else", RebuildWeatherOnly);
             runner.Add("cli: build-case --weather-only rebuilds the weather and records only the [Weather] keys", CliWeatherOnly);
+            runner.Add("wui: the case's wui_area.tif is the union of the evacuation groups, by mask and by shapefile; a painted one is left out", WuiAreaIsTheGroups);
+            runner.Add("wui: the groups are placed on a case grid in another UTM zone than the simulation's", WuiAreaAcrossZones);
+            runner.Add("wui: [kPERIL] protects the groups unless it names a mask of its own", KperilSourceDefaults);
+            runner.Add("campaign: refused when the case's wui_area.tif is not the groups' union, accepted when it is", CampaignChecksWuiArea);
+        }
+
+        // ------------------------------------------------------------------ the WUI area
+
+        /// <summary>A mask group in simulation coordinates: 5 x 5 cells of 30 m, 60 to 210 m east and north of the origin.</summary>
+        private static void WriteWestMask(string path, int from = 2, int to = 6)
+        {
+            var header = new AscRaster.Header { Ncols = 10, Nrows = 10, XllCorner = 0.0, YllCorner = 0.0, CellSize = 30.0, NoDataValue = -9999 };
+            var data = new float[10, 10];
+            for (int x = from; x <= to; ++x) for (int y = from; y <= to; ++y) data[x, y] = 1f;
+            AscRaster.Write(data, header, path);
+        }
+
+        private static bool InWest(double sx, double sy, int from = 2, int to = 6)
+        {
+            int x = (int)System.Math.Floor(sx / 30.0), y = (int)System.Math.Floor(sy / 30.0);
+            return x >= from && x <= to && y >= from && y <= to;
+        }
+
+        /// <summary>A shapefile group: the square from <paramref name="lo"/> to <paramref name="hi"/> m east and north of the origin, in WGS84.</summary>
+        private static void WriteSquareShapefile(string path, Input.SimulationData simulation, double lo, double hi)
+        {
+            OSGeo.OGR.Ogr.RegisterAll();
+            using (OSGeo.OGR.Driver driver = OSGeo.OGR.Ogr.GetDriverByName("ESRI Shapefile"))
+            using (OSGeo.OGR.DataSource ds = driver.CreateDataSource(path, new string[0]))
+            using (var wgs84 = new OSGeo.OSR.SpatialReference(string.Empty))
+            {
+                wgs84.ImportFromEPSG(4326);
+                OSGeo.OGR.Layer layer = ds.CreateLayer("east", wgs84, OSGeo.OGR.wkbGeometryType.wkbPolygon, new string[0]);
+                var ring = new OSGeo.OGR.Geometry(OSGeo.OGR.wkbGeometryType.wkbLinearRing);
+                foreach ((double x, double y) in new[] { (lo, lo), (hi, lo), (hi, hi), (lo, hi), (lo, lo) })
+                {
+                    Math.Vector2d latLon = simulation.GetWGS84FromSimulationPosition(new Math.Vector2d(x, y));
+                    ring.AddPoint_2D(latLon.y, latLon.x);
+                }
+                var polygon = new OSGeo.OGR.Geometry(OSGeo.OGR.wkbGeometryType.wkbPolygon);
+                polygon.AddGeometry(ring);
+                using (var feature = new OSGeo.OGR.Feature(layer.GetLayerDefn()))
+                {
+                    feature.SetGeometry(polygon);
+                    layer.CreateFeature(feature);
+                }
+                ds.FlushCache();
+            }
+        }
+
+        /// <summary>Two groups: west by a painted mask, east by a shapefile.</summary>
+        private static string ScenarioWithGroups(PipelineTests.SyntheticCase c, params string[] extra)
+        {
+            WriteWestMask(Path.Combine(c.Folder, "evac_group_west.asc"));
+            var simulation = new Input.SimulationData(new Math.Vector2d(PipelineTests.SyntheticCase.Lat, PipelineTests.SyntheticCase.Lon));
+            WriteSquareShapefile(Path.Combine(c.Folder, "east.shp"), simulation, 900.0, 1200.0);
+            return c.WriteScenario("case", 150.0, new[]
+            {
+                "", "[EvacuationGroup]", "Name=west", "MaskFile=evac_group_west.asc", "Destinations=out", "ResponseCurves=standard",
+                "", "[EvacuationGroup]", "Name=east", "ShapeFile=east.shp", "Destinations=out", "ResponseCurves=standard",
+            }.Concat(extra).ToArray());
+        }
+
+        /// <summary>The scenario's build, as the GUI and build-case make it, offline.</summary>
+        private static ElmfireCaseBuilder.Result BuildFrom(PipelineTests.SyntheticCase c, Input.PREACTInput input, List<string> log,
+            string painted = null)
+        {
+            string caseDir = Path.Combine(c.Folder, "case");
+            ElmfireCaseBuilder.Options o = ElmfireCoupling.CreateBuildOptions(input, input.WildfireModule.ElmfireInput, caseDir,
+                m => { lock (log) log.Add(m); });
+            o.LocalDemPath = c.DemPath;
+            o.Weather.UseClimatology = false;
+            o.Weather.WindNinjaExe = Path.Combine(c.Folder, "no-windninja-here");
+            if (painted != null) o.PaintedMasksPath = painted;
+            return ElmfireCaseBuilder.Build(o).GetAwaiter().GetResult();
+        }
+
+        /// <summary>
+        /// Nick: "Why can I paint the trigger boundary WUI area in Fire areas ... when the trigger boundary menu depends on
+        /// the evacuation groups (as it should)?" The case's WUI area is now the groups' union, cell for cell where a cell's
+        /// centre is in a group: a painted mask in simulation coordinates and a WGS84 shapefile alike. A painted WUI area is
+        /// left out with a note, and a scenario without groups has no WUI area - an earlier one is removed.
+        /// </summary>
+        private static void WuiAreaIsTheGroups()
+        {
+            using (var c = new PipelineTests.SyntheticCase())
+            {
+                string wui = ScenarioWithGroups(c);
+                Input.PREACTInput input = Input.PREACTInput.LoadFromDisk(wui, out bool _);
+                Assert.Equal(2, input.Evacuation.EvacuationGroupInputs.Count, "both groups are read");
+
+                var log = new List<string>();
+                ElmfireCaseBuilder.Result r = BuildFrom(c, input, log);
+                string inputs = Path.Combine(c.Folder, "case", "inputs");
+                string wuiArea = ElmfireStems.Tif(inputs, ElmfireStems.WuiArea);
+                Assert.True(r.WuiAreaFile == wuiArea && File.Exists(wuiArea), "the build writes wui_area.tif: " + string.Join(" | ", log));
+
+                MasterGrid g = MasterGrid.FromRasterFile(wuiArea);
+                float[,] mask = AscRaster.ReadGeoTiff(wuiArea, out AscRaster.Header _, out bool ok);
+                Assert.True(ok, "it reads back");
+                Math.Vector2d origin = input.Simulation.Data.UTMOrigin;
+                int west = 0, east = 0, wrong = 0, marked = 0;
+                for (int x = 0; x < g.Header.Ncols; ++x)
+                {
+                    for (int y = 0; y < g.Header.Nrows; ++y)
+                    {
+                        double sx = g.XMin + (x + 0.5) * 30.0 - origin.x, sy = g.YMin + (y + 0.5) * 30.0 - origin.y;
+                        bool w = InWest(sx, sy), e = sx > 900.0 && sx < 1200.0 && sy > 900.0 && sy < 1200.0;
+                        if (w) ++west;
+                        if (e) ++east;
+                        bool set = mask[x, y] > 0.5f;
+                        if (set) ++marked;
+                        if (set != (w || e)) ++wrong;
+                    }
+                }
+                Assert.True(west > 0 && east > 0, $"both groups cover cells of the case grid (west {west}, east {east})");
+                Assert.Equal(0, wrong, $"every cell is the union of the groups ({marked} marked, {west + east} expected)");
+                Assert.Equal(west + east, r.WuiAreaCells, "and the build counts them");
+                Assert.True(log.Any(l => l.Contains("WUI area: the evacuation group(s) west,east -> wui_area.tif")), "it says which groups");
+                Assert.True(File.ReadAllLines(Path.Combine(c.Folder, "case", ElmfireCaseBuilder.SourceManifestName))
+                    .Contains(ElmfireCaseBuilder.WuiAreaGroupsKey + "=west,east"), "and records them");
+                Assert.True(ElmfireCoupling.CaseKeysForScenario(input.RootFolder, Path.Combine(c.Folder, "case"), "synthetic", r)
+                    .All(k => k.Section != "kPERIL"), "no [kPERIL] key is recorded: k-PERIL reads the groups themselves");
+
+                //A painting with a WUI area (every cell) changes nothing about it, and says so once.
+                var painting = new Input.WildfireData { WuiArea = new bool[g.Header.Ncols * g.Header.Nrows] };
+                for (int i = 0; i < painting.WuiArea.Length; ++i) painting.WuiArea[i] = true;
+                string gfi = Path.Combine(c.Folder, "painted_fire_areas.gfi");
+                GraphicalFireInput.SaveGraphicalFireInput(gfi, painting, g.Header.Ncols, g.Header.Nrows);
+                string before = ElmfireFingerprint.HashFile(wuiArea);
+                log.Clear();
+                BuildFrom(c, input, log, gfi);
+                Assert.Equal(before, ElmfireFingerprint.HashFile(wuiArea), "the painted WUI area is not the case's");
+                Assert.Equal(1, log.Count(l => l.Contains($"the painting's WUI area ({painting.WuiArea.Length} cells) is not used")),
+                    "it is noted once: " + string.Join(" | ", log));
+
+                //One group fewer, then none.
+                input.Evacuation.EvacuationGroupInputs.Remove("east");
+                ElmfireCaseBuilder.Result westOnly = BuildFrom(c, input, new List<string>());
+                Assert.Equal(west, westOnly.WuiAreaCells, "without east it is west's cells");
+                input.Evacuation.EvacuationGroupInputs.Clear();
+                log.Clear();
+                ElmfireCaseBuilder.Result none = BuildFrom(c, input, log);
+                Assert.True(none.WuiAreaFile == null && !File.Exists(wuiArea), "with no group the case has no WUI area");
+                Assert.True(log.Any(l => l.Contains("WUI area: none - no evacuation group has an area")
+                                         && l.Contains("the wui_area.tif an earlier build wrote was removed")), "and says so");
+            }
+        }
+
+        /// <summary>
+        /// Mati sits on 24 E: a case is cut in its padded centre's zone, which can be the next one over from the corner's.
+        /// The groups (simulation coordinates, in the corner's zone) land on the same ground either way.
+        /// </summary>
+        private static void WuiAreaAcrossZones()
+        {
+            using (var c = new PipelineTests.SyntheticCase())
+            {
+                string mask = Path.Combine(c.Folder, "evac_group_west.asc");
+                WriteWestMask(mask, 0, 9);
+                var simulation = new Input.SimulationData(new Math.Vector2d(PipelineTests.SyntheticCase.Lat, PipelineTests.SyntheticCase.Lon));
+                var group = new Evacuation.EvacuationGroupInput { Name = "west", MaskFile = mask };
+                Evacuation.EvacuationGroupArea area = Evacuation.EvacuationGroupArea.Load(group, c.Folder, simulation, out string problem, out bool _);
+                Assert.True(problem == null && area.HasArea && !area.IsEmpty, "the mask reads: " + problem);
+
+                //The same 600 m around the area in both zones, at 10 m.
+                MasterGrid Around(string epsg)
+                {
+                    Assert.True(CrsTransform.TryWgs84To(epsg, PipelineTests.SyntheticCase.Lat, PipelineTests.SyntheticCase.Lon,
+                        out double x0, out double y0), "corner in " + epsg);
+                    return new MasterGrid
+                    {
+                        Header = new AscRaster.Header { Ncols = 60, Nrows = 60, CellSize = 10, CellSizeY = 10, XllCorner = x0 - 150.0, YllCorner = y0 - 150.0 },
+                        Epsg = epsg,
+                    };
+                }
+
+                bool[] own = Evacuation.EvacuationGroupArea.Rasterize(new[] { area }, Around("EPSG:32634"), simulation, out int ownCells);
+                bool[] next = Evacuation.EvacuationGroupArea.Rasterize(new[] { area }, Around("EPSG:32635"), simulation, out int nextCells);
+                Assert.Equal(900, ownCells, "300 x 300 m at 10 m in the simulation's own zone");
+                Assert.True(System.Math.Abs(nextCells - ownCells) <= 0.1 * ownCells,
+                    $"about the same area through a zone change ({nextCells} vs {ownCells} cells)");
+                Assert.True(own.Length == next.Length, "(two grids of one size)");
+            }
+        }
+
+        /// <summary>No source and no file: the groups combined. A WuiAreaFile with no source: that mask, as it always was.</summary>
+        private static void KperilSourceDefaults()
+        {
+            Input.kPERILInput Parse(params string[] keys)
+            {
+                string[] lines = new[] { "[kPERIL]" }.Concat(keys).ToArray();
+                return Input.kPERILInput.Parse(lines, 0, Path.GetTempPath(), out bool _);
+            }
+
+            Assert.Equal(Input.kPERILInput.WuiAreaSources.EvacuationGroupsCombined, Parse("OutputName=b").WuiAreaSource,
+                "a scenario that names neither protects the groups");
+            Assert.Equal(Input.kPERILInput.WuiAreaSources.Raster, Parse("WuiAreaFile=own_wui.tif").WuiAreaSource,
+                "one that names a mask reads it");
+            Assert.Equal(Input.kPERILInput.WuiAreaSources.EvacuationGroupsSeparate, Parse("WuiAreaSource=EvacuationGroupsSeparate").WuiAreaSource,
+                "and a source given is the source");
+            Assert.Equal(Input.kPERILInput.WuiAreaSources.EvacuationGroupsCombined, new Input.kPERILInput().WuiAreaSource,
+                "a new trigger boundary protects the groups");
+        }
+
+        /// <summary>
+        /// Every realization protects the case's wui_area.tif and is checked against it; a campaign on one that is not the
+        /// groups' union (repainted since, or an older build's painted WUI area) would answer for other ground.
+        /// </summary>
+        private static void CampaignChecksWuiArea()
+        {
+            using (var c = new PipelineTests.SyntheticCase())
+            {
+                string wui = ScenarioWithGroups(c, "", "[TriggerBufferModule]", "Enabled=true", "Module=kPERIL", "", "[kPERIL]",
+                    "WuiAreaSource=EvacuationGroupsCombined");
+                Input.PREACTInput input = Input.PREACTInput.LoadFromDisk(wui, out bool _);
+                BuildFrom(c, input, new List<string>());
+                //The table the build copies from ELMFIRE's source tree, which a checkout without the submodule lacks.
+                string table = Path.Combine(c.Folder, "case", "inputs", ElmfireStems.FuelModelTable);
+                if (!File.Exists(table)) File.WriteAllText(table, "# a stand-in fuel model table\n");
+
+                (PREACTcli.Campaigns.Campaign Campaign, string Said) Inspect()
+                {
+                    TextWriter error = Console.Error, output = Console.Out;
+                    var captured = new StringWriter();
+                    try
+                    {
+                        Console.SetError(captured);
+                        Console.SetOut(TextWriter.Null);
+                        return (PREACTcli.Campaigns.CampaignSetup.Resolve(PREACTcli.Campaigns.CampaignOptions.Parse(
+                            new[] { "--wui", wui, "--inspect" })), captured.ToString());
+                    }
+                    finally
+                    {
+                        Console.SetError(error);
+                        Console.SetOut(output);
+                    }
+                }
+
+                (PREACTcli.Campaigns.Campaign ready, string said) = Inspect();
+                string caseWui = ElmfireStems.Tif(Path.Combine(c.Folder, "case", "inputs"), ElmfireStems.WuiArea);
+                Assert.True(ready != null && ready.WuiAreaFile == caseWui && ready.WuiCells > 0,
+                    "a case built from the groups is accepted, protecting its wui_area.tif: " + said);
+
+                //The west group painted again, bigger, and the case not built again.
+                WriteWestMask(Path.Combine(c.Folder, "evac_group_west.asc"), 1, 8);
+                (PREACTcli.Campaigns.Campaign stale, string why) = Inspect();
+                Assert.True(stale == null && why.Contains("is not the WUI area of the scenario's evacuation groups")
+                            && why.Contains("Build the case again"), "a stale one is refused, saying what to do: " + why);
+            }
         }
 
         /// <summary>Every file of a case by content, without the five weather rasters (and GDAL's .aux.xml beside any raster).</summary>

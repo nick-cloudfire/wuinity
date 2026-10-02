@@ -211,8 +211,11 @@ namespace PREACTcli.Campaigns
             //stand in for it.
             Set("kPERIL", "WindSpeedFile", string.Empty);
             Set("kPERIL", "WindBandSeconds", c.SecondsPerBand.ToString("R", CultureInfo.InvariantCulture));
-            if (c.WuiAreaFile != null && c.WuiAreaSource == "Raster")
+            //Exactly the cells the realization's fire was checked against (the groups' union, or the scenario's own mask),
+            //rather than the groups rasterised again on the imported fire's grid.
+            if (c.WuiAreaFile != null)
             {
+                Set("kPERIL", "WuiAreaSource", nameof(PREACT.Input.kPERILInput.WuiAreaSources.Raster));
                 Set("kPERIL", "WuiAreaFile", CampaignLayout.RelativeForWui(c.ScenarioDir, c.WuiAreaFile));
             }
             Set("kPERIL", "OutputName", outputName);

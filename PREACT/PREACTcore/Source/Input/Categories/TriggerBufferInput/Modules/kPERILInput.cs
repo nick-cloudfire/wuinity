@@ -14,16 +14,18 @@ namespace PREACT.Input
     public class kPERILInput
     {
         /// <summary>
-        /// Where the area k-PERIL protects comes from.
+        /// Where the area k-PERIL protects - the WUI area - comes from: the evacuation groups.
         ///
-        /// Raster reads <see cref="WuiAreaFile"/>. The two group options rasterise the evacuation
-        /// groups' own polygons onto the fire grid instead, which keeps the area being protected and
-        /// the area being evacuated as one definition rather than two that can drift apart.
+        /// The two group options rasterise the evacuation groups' own areas (painted masks or shapefiles) onto the fire
+        /// grid, which keeps the area being protected and the area being evacuated as one definition. Combined unions
+        /// every group into a single boundary: one answer for the whole community; it is also what the case build writes
+        /// as <c>wui_area.tif</c> and a campaign protects. Separate computes a boundary per group, which is what you want
+        /// when the groups evacuate on different orders or to different destinations, because each then has its own
+        /// required egress time and so its own trigger.
         ///
-        /// Combined unions every group into a single boundary: one answer for the whole community.
-        /// Separate computes a boundary per group, which is what you want when the groups evacuate
-        /// on different orders or to different destinations, because each then has its own required
-        /// egress time and so its own trigger.
+        /// Raster reads <see cref="WuiAreaFile"/>, a mask of the user's own on the fire grid; with none named it is the
+        /// groups combined. The WUI area used to be painted separately (Fire areas) and read from here, which let it
+        /// protect ground the groups did not evacuate.
         /// </summary>
         public enum WuiAreaSources { Raster, EvacuationGroupsCombined, EvacuationGroupsSeparate }
 
@@ -37,8 +39,8 @@ namespace PREACT.Input
         public string OutputName = DefaultOutputName;
 
         public const string DefaultOutputName = "trigger_boundary";
-        public string WuiAreaFile = string.Empty; //.asc mask, 1 = protected WUI cell
-        public WuiAreaSources WuiAreaSource = WuiAreaSources.Raster;
+        public string WuiAreaFile = string.Empty; //.asc or .tif mask, 1 = protected WUI cell
+        public WuiAreaSources WuiAreaSource = WuiAreaSources.EvacuationGroupsCombined;
 
         /// <summary>
         /// Wind speed raster in MILES PER HOUR, used by k-PERIL <b>only when the fire brings no midflame wind of
@@ -150,23 +152,32 @@ namespace PREACT.Input
                 newInput.OutputName = DefaultOutputName;
             }
 
-            //optional: defaults to reading the raster below, which is how existing scenarios behave.
+            //Optional. Without it a scenario that names a WuiAreaFile reads that mask, as it always did, and one that names
+            //none protects the evacuation groups.
             nameOfInput = nameof(WuiAreaSource);
+            bool sourceGiven = false;
             if (inputToParse.TryGetValue(nameOfInput, out userInput))
             {
                 if (Enum.TryParse(userInput, true, out WuiAreaSources parsedSource))
                 {
                     newInput.WuiAreaSource = parsedSource;
+                    sourceGiven = true;
                 }
                 else
                 {
                     PREACTInput.CouldNotInterpretInputMessage(nameOfInput, userInput);
                 }
             }
+            if (!sourceGiven)
+            {
+                newInput.WuiAreaSource = inputToParse.TryGetValue(nameof(WuiAreaFile), out string named) && named.Length > 0
+                    ? WuiAreaSources.Raster
+                    : WuiAreaSources.EvacuationGroupsCombined;
+            }
 
-            //A mask marking the WUI area to protect (1 = WUI); the case build writes elmfire/inputs/wui_area.tif and
-            //points this at it. Read whatever the source, so a scenario switched to groups keeps it when saved;
-            //only a raster source needs it, since the group options derive the area instead.
+            //A mask of the user's own marking the WUI area to protect (1 = WUI). Read whatever the source, so a scenario
+            //switched to groups keeps it when saved; only a raster source reads it, and without one it protects the
+            //evacuation groups - so its absence is not a problem to report.
             bool needed = newInput.WuiAreaSource == WuiAreaSources.Raster;
             nameOfInput = nameof(WuiAreaFile);
             if (inputToParse.TryGetValue(nameOfInput, out userInput) && userInput.Length > 0)
@@ -177,13 +188,6 @@ namespace PREACT.Input
                 {
                     Engine.Message(null, Engine.LogType.Warning, nameOfInput + " was specified but not found: " + userInput);
                 }
-            }
-            else if (needed && !PREACTInput.ReadingSwitchedOffSection)
-            {
-                //Only when the boundary is on: a scenario with k-PERIL switched off (every shipped example) said this
-                //on every load.
-                Engine.Message(null, Engine.LogType.Warning, nameOfInput + " was not specified; k-PERIL needs a WUI area to "
-                    + "compute a trigger boundary. Building the ELMFIRE case writes one from the painted WUI area.");
             }
 
             success = ok;

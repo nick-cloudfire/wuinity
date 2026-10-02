@@ -62,9 +62,6 @@ namespace PREACT.Utility
             public double SecondsPerBand = 3600.0;
             public int StartBand = 1;
 
-            /// <summary>The case's painted WUI area on the fire grid, relative to the root; empty when it has none.</summary>
-            public string WuiAreaFile = string.Empty;
-
             /// <summary>
             /// The terrain the fire burned on - the run namelist's DEM, slope and aspect rasters, on the fire grid - relative
             /// to the root; empty when one of them is not there.
@@ -110,9 +107,10 @@ namespace PREACT.Utility
         /// <para>
         /// Contract C1: on success the passed scenario is updated in place so that the case's <c>dem.tif</c> is the
         /// grid of record for everything else - <c>[Landscape] ElevationFile/SlopeFile/AspectFile</c> become the
-        /// case's <c>dem/slp/asp.tif</c>, and <c>[kPERIL] WuiAreaFile</c> the case's <c>wui_area.tif</c> when the
-        /// build wrote one. Paths relative to the scenario folder, with forward slashes. The weather anchor and
-        /// archive are recorded too. The caller saves the scenario (and reloads the landscape it displays).
+        /// case's <c>dem/slp/asp.tif</c>. Paths relative to the scenario folder, with forward slashes. The weather
+        /// anchor and archive are recorded too. The caller saves the scenario (and reloads the landscape it displays).
+        /// The case's <c>wui_area.tif</c> is not recorded: it is the evacuation groups' union, which k-PERIL reads from
+        /// the groups themselves.
         /// </para>
         /// <para>
         /// A <see cref="ElmfireRunner.CancelAll"/> while it builds kills the WindNinja solve under way, starts no
@@ -207,11 +205,6 @@ namespace PREACT.Utility
                     case "Landscape|AspectFile":
                         if (input.Landscape != null) input.Landscape.AspectFile = key.Value;
                         break;
-                    case "kPERIL|WuiAreaFile":
-                        if (input.TriggerBufferModule?.kPERILInput == null) break;
-                        input.TriggerBufferModule.kPERILInput.WuiAreaFile = key.Value;
-                        log?.Invoke("  trigger boundary: [kPERIL] WuiAreaFile is now " + key.Value + ".");
-                        break;
                     case "Weather|WeatherAnchorDateTime":
                         if (input.Weather == null) break;
                         input.Weather.WeatherAnchorDateTime = built.Weather.BandAnchor;
@@ -235,8 +228,7 @@ namespace PREACT.Utility
 
         /// <summary>
         /// What a case build records in the scenario it was built for (contract C1): <c>[Landscape]
-        /// ElevationFile/SlopeFile/AspectFile</c> = the case's <c>dem/slp/asp.tif</c>, <c>[kPERIL] WuiAreaFile</c> = its
-        /// <c>wui_area.tif</c> when it wrote one, and <c>[Weather] WeatherAnchorDateTime</c> (and <c>WeatherFile</c>, the
+        /// ElevationFile/SlopeFile/AspectFile</c> = the case's <c>dem/slp/asp.tif</c>, and <c>[Weather] WeatherAnchorDateTime</c> (and <c>WeatherFile</c>, the
         /// case's ERA5 archive) when its weather was drawn from a historical day. Paths relative to
         /// <paramref name="rootFolder"/>, with forward slashes, in section order.
         /// </summary>
@@ -254,11 +246,6 @@ namespace PREACT.Utility
             Add("Landscape", "ElevationFile", Relative(rootFolder, ElmfireStems.Tif(inputs, ElmfireStems.Dem)));
             Add("Landscape", "SlopeFile", Relative(rootFolder, ElmfireStems.Tif(inputs, ElmfireStems.Slope)));
             Add("Landscape", "AspectFile", Relative(rootFolder, ElmfireStems.Tif(inputs, ElmfireStems.Aspect)));
-
-            if (!string.IsNullOrEmpty(built.WuiAreaFile))
-            {
-                Add("kPERIL", "WuiAreaFile", Relative(rootFolder, built.WuiAreaFile));
-            }
 
             //Recorded like every other data step records the path it produced. Building happens long before any
             //run, so without the day here the connection between the fire's weather and the reported weather would
@@ -492,12 +479,6 @@ namespace PREACT.Utility
             result.StartBand = (int)ReadDouble(runLines, ElmfireNamelistKeys.MonteCarloGroup, ElmfireNamelistKeys.MeteorologyBandStart, 1.0);
             if (result.StartBand < 1) result.StartBand = 1;
 
-            string wuiArea = ElmfireStems.Tif(inputs, ElmfireStems.WuiArea);
-            if (File.Exists(wuiArea))
-            {
-                result.WuiAreaFile = Relative(input.RootFolder, wuiArea);
-            }
-
             //The terrain the fire ran on, for k-PERIL's slope term: the case's own dem/slp/asp, on the fire grid by
             //construction, where the scenario's [Landscape] may still be the DEM it was drawn on (mati.wui's 616x590
             //covers 64 % of the padded fire grid) - which a campaign realization never used (e2e N7).
@@ -673,7 +654,7 @@ namespace PREACT.Utility
         /// <remarks>
         /// One place, so the two front ends cannot build different cases from the same <c>.wui</c> - the CLI used to
         /// read the scenario with its own parser and ignored the stop time, the cell size, the padding and the
-        /// painted areas, so a CLI-built case had no <c>wui_area.tif</c> and the wrong band count.
+        /// painted areas, so a CLI-built case had no WUI area and the wrong band count.
         /// </remarks>
         public static ElmfireCaseBuilder.Options CreateBuildOptions(PREACTInput input, ElmfireInput settings,
             string caseDir, Action<string> log)
@@ -757,9 +738,15 @@ namespace PREACT.Utility
                 options.CandidateDemPaths.Add(landscapeDem);
             }
 
-            //Painted masks, when the scenario has them: the ignition area becomes the ignition mask and the WUI
-            //area is written out for k-PERIL. The landscape raster is only the legacy grid for a painting made
-            //before the case existed (contract C2); the builder checks the case grid first.
+            //The WUI area: the evacuation groups' areas, whose union the case keeps as wui_area.tif - what k-PERIL protects
+            //and a campaign aims its wind at. Read here, so the GUI, a run and build-case write the same one.
+            options.Simulation = input.Simulation.Data;
+            options.EvacuationGroupAreas = Evacuation.EvacuationGroupArea.LoadAll(input.Evacuation?.EvacuationGroupInputs?.Values,
+                input.RootFolder, input.Simulation.Data, log);
+
+            //Painted masks, when the scenario has them: the ignition area becomes the ignition mask. The landscape raster
+            //is only the legacy grid for a painting made before the case existed (contract C2); the builder checks the
+            //case grid first.
             if (!string.IsNullOrEmpty(input.WildfireModule.GraphicalFireInputFile))
             {
                 options.PaintedMasksPath = PREACTInput.ResolvePath(input.RootFolder, input.WildfireModule.GraphicalFireInputFile);

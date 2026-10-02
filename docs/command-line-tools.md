@@ -120,8 +120,7 @@ hours, not seconds). Pass --hours.`).
 When it finishes it prints the grid, the layers written, carried from an old grid, kept, missing or defaulted,
 the fuel stem, the ignitions, every fallback, the namelist (and any hand-edited one it set aside), and the
 weather day drawn. Then the keys that point the scenario at the case, which the GUI's build sets itself -
-`[Landscape] ElevationFile/SlopeFile/AspectFile` (the case's `dem/slp/asp.tif`), `[kPERIL] WuiAreaFile` (when a
-WUI area was painted) and `[Weather] WeatherAnchorDateTime` and `WeatherFile` (when the weather was drawn from a
+`[Landscape] ElevationFile/SlopeFile/AspectFile` (the case's `dem/slp/asp.tif`) and `[Weather] WeatherAnchorDateTime` and `WeatherFile` (when the weather was drawn from a
 historical day) - only those the `.wui` does not already say. **Without `--update-wui` the `.wui` is not touched**,
 and they are printed as they go into the file, one block per section:
 
@@ -134,9 +133,6 @@ run build-case again with --update-wui, which writes exactly these and changes n
 ElevationFile=elmfire/inputs/dem.tif
 SlopeFile=elmfire/inputs/slp.tif
 AspectFile=elmfire/inputs/asp.tif
-
-[kPERIL]
-WuiAreaFile=elmfire/inputs/wui_area.tif
 ```
 
 With `--update-wui` they are written and listed (`Recorded in mati.wui (--update-wui; nothing else in it
@@ -226,7 +222,8 @@ Before the first realization it checks, and stops with exit 1 and the reason, wh
 missing or has no k-PERIL boundary; `[kPERIL] WuiAreaSource=EvacuationGroupsSeparate` (one boundary per group
 cannot be aggregated per realization); the template, inputs folder, ELMFIRE, GDAL tools or PREACT cannot be
 found; the template names no fuel raster, or rasters that are not on the case grid; the ignition mask is missing
-or has no positive cell; `wui_area.tif` is missing or empty while it is needed; there is no fuel model table;
+or has no positive cell; `wui_area.tif` is missing, empty or not the union of the scenario's evacuation groups as
+they are now (build the case again); there is no fuel model table;
 WindNinja is missing without `--allow-uniform-weather`; the ERA5 archive cannot be fetched or has no day with a
 non-zero FWI; or a path ELMFIRE will see from a realization contains a space.
 

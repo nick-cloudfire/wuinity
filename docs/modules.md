@@ -80,7 +80,7 @@ which a fire reaches a WUI cell within the WRSET. Inputs:
 | Wind speed | The fire's own midflame wind (ELMFIRE's `mfws`, ft/min ÷ 88 = mi/h). Without one, `[kPERIL] WindSpeedFile` used as midflame, with a warning. |
 | Wind direction | The fire's own weather (`wd.tif`), each cell taking the band covering the time the fire reached it. |
 | Slope and aspect | The terrain the fire burned on: for an ELMFIRE run, the case's `dem/slp/asp.tif` its namelist names (the fire grid, so 100 % covered), whatever `[Landscape]` says; otherwise `[Landscape]` (a campaign realization's is the case's). Missing cells count as flat. |
-| WUI area | `[kPERIL] WuiAreaFile`, the case's `wui_area.tif`, the painted WUI area, or the evacuation groups' areas (`WuiAreaSource`). |
+| WUI area | The evacuation groups' areas (`WuiAreaSource`): their union, or one per group; or a mask of your own, `[kPERIL] WuiAreaFile` with `WuiAreaSource=Raster`. |
 | Required egress time | The run's WRSET, in minutes. |
 
 No boundary is computed for a WUI area the fire never reached, or when no car arrived.

@@ -16,6 +16,16 @@
 - Step 5 no longer reports every case's weather one band short (it asked for ceil(hours) + 1 bands).
 - The ELMFIRE settings (Fire behaviour, and the fire duration, cell size and padding) show two decimals, and the exact
   value in the tooltip when that rounds it; nothing is rounded in the scenario or the namelist.
+- **The WUI area is the evacuation groups.** The case build writes `wui_area.tif` as the union of the groups' areas
+  (painted masks or shapefiles) on every build; a painted WUI area in the `.gfi` is left out with a note. k-PERIL
+  protects the groups (`WuiAreaSource` now defaults to `EvacuationGroupsCombined`; `Raster` reads a `WuiAreaFile` of
+  your own, and without one is the groups combined) and no longer falls back to a painted mask. The build no longer
+  records `[kPERIL] WuiAreaFile`.
+- A campaign checks that the case's `wui_area.tif` is the groups' union as they are now, and refuses a stale one;
+  every realization protects that file and a fire that does not reach it counts as not threatened, whatever the
+  `WuiAreaSource` (it was checked for `Raster` only, so an unreached combined-groups realization counted as failed).
+- Evacuation groups from a shapefile keep their rings apart (holes and multipolygons were joined into one outline)
+  and are read in the layer's CRS.
 
 ## v1.0
 

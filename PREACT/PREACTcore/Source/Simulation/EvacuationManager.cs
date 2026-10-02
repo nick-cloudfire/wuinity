@@ -660,56 +660,6 @@ namespace PREACT.Evacuation
         }
 
         /// <summary>
-        /// Works out which areas k-PERIL should protect, one entry per boundary to compute.
-        /// </summary>
-        /// <summary>
-        /// The painted WUI area, but only if it was painted on the grid k-PERIL is about to compute on.
-        ///
-        /// Checked because the two can legitimately differ: the masks are painted on whatever grid the
-        /// scenario had at the time, and changing the landscape - swapping a 27.6 m DEM for a 30 m one, say
-        /// - changes the fire grid under them. Indexed as x + y*xCount against the wrong width, a mask
-        /// silently marks a sheared, offset region as the community to protect, and the trigger boundary
-        /// that comes out looks perfectly plausible. Refused with a reason instead.
-        /// </summary>
-        private bool[] PaintedWuiArea(Simulation simulation, int xCount, int yCount)
-        {
-            bool[] painted = _input.WildfireModule.Data.WuiArea;
-            if (painted == null)
-            {
-                return null;
-            }
-
-            if (painted.Length == xCount * yCount)
-            {
-                //The right size is not the right ground when the painting records where it was made: the same rule as
-                //the case build's, against the fire grid's own corner (unknown, (0, 0), for a module that has none).
-                GraphicalFireInput.PaintedGrid recorded = _input.WildfireModule.Data.PaintedGrid;
-                WildfireModule fire = simulation.Hazards.Wildfire;
-                Math.Vector2d origin = fire != null ? fire.GetGridOriginUtm() : Math.Vector2d.zero;
-                string elsewhere = recorded != null && (origin.x != 0.0 || origin.y != 0.0)
-                    ? recorded.DescribeMismatch(origin.x, origin.y, fire.GetCellSizeX(), fire.GetGridEpsgCode())
-                    : null;
-                if (elsewhere == null)
-                {
-                    return painted;
-                }
-
-                Engine.Message(simulation, Engine.LogType.SimulationError,
-                    $"The painted WUI area is the fire grid's size, but it was painted on {recorded.Describe()} and the fire grid "
-                    + elsewhere + ", so it cannot be used here - move the painting onto the fire grid (the GUI's workflow step "
-                    + "6), or set [kPERIL] WuiAreaFile to a mask on this grid.");
-                return null;
-            }
-
-            Math.Vector2int cells = _input.WildfireModule.Data.PaintedCellCount;
-            Engine.Message(simulation, Engine.LogType.SimulationError,
-                $"The painted WUI area covers {cells.x} x {cells.y} cells but the fire grid is {xCount} x {yCount}. "
-                + "It was painted against a different landscape, so it cannot be used here - repaint it, or set "
-                + "[kPERIL] WuiAreaFile to a mask on this grid.");
-            return null;
-        }
-
-        /// <summary>
         /// Whether the fire reached any cell of a WUI area within the simulated period, and how many.
         ///
         /// Any cell, not all of them: a fire that reaches the edge of a community is a fire that community
@@ -741,42 +691,53 @@ namespace PREACT.Evacuation
             return burnedCells > 0;
         }
 
+        /// <summary>
+        /// Works out which areas k-PERIL should protect, one entry per boundary to compute.
+        /// </summary>
+        /// <remarks>
+        /// The WUI area is the evacuation groups: their union for <c>EvacuationGroupsCombined</c> (and for <c>Raster</c>
+        /// with no <c>WuiAreaFile</c>), one area per group for <c>EvacuationGroupsSeparate</c>. The one other source is a
+        /// mask of the user's own named as <c>[kPERIL] WuiAreaFile</c>, used as it is and refused - not replaced - when it
+        /// is not on the fire grid. A painted WUI area used to be the fallback, a second definition of the community that
+        /// could disagree with the groups being evacuated; the case's <c>wui_area.tif</c> is the groups' union, so a
+        /// scenario an older build pointed at it reads the same cells once the case is built again.
+        /// </remarks>
         private List<WuiAreaRun> BuildWuiAreaRuns(Simulation simulation, int xCount, int yCount)
         {
             var runs = new List<WuiAreaRun>();
             kPERILInput peril = _input.TriggerBufferModule.kPERILInput;
 
-            if (peril.WuiAreaSource == kPERILInput.WuiAreaSources.Raster)
+            if (peril.WuiAreaSource == kPERILInput.WuiAreaSources.Raster && !string.IsNullOrEmpty(peril.WuiAreaFile))
             {
-                //An explicit mask when given; otherwise the fire case's own wui_area.tif, which the case builder
-                //exported from the painting onto the fire grid; only then the painting itself. The case's mask was
-                //never handed over, so an ELMFIRE run with a painted WUI area fell through to the painting, which
-                //is on the landscape grid (616 x 590 on Mati against the fire's 566 x 541) and was refused - two
-                //log lines after the builder had written the right mask.
-                string caseWuiArea = simulation.Hazards.Wildfire.FireWeather?.WuiAreaFile;
                 bool[] wuiArea = LoadWuiAreaMask(peril.WuiAreaFile, _input.RootFolder, xCount, yCount);
-                if (wuiArea == null && !string.IsNullOrEmpty(caseWuiArea))
+                if (wuiArea == null)
                 {
-                    wuiArea = LoadWuiAreaMask(caseWuiArea, _input.RootFolder, xCount, yCount);
-                    if (wuiArea != null)
-                    {
-                        Engine.Message(simulation, Engine.LogType.Log,
-                            "WUI area: the fire case's own " + System.IO.Path.GetFileName(caseWuiArea) + ".");
-                    }
+                    Engine.Message(simulation, Engine.LogType.SimulationError,
+                        $"[kPERIL] WuiAreaFile names {peril.WuiAreaFile}, which could not be used on the fire grid "
+                        + $"({xCount} x {yCount}; the warning above says why). Clear it to protect the evacuation groups, or "
+                        + "point it at a mask on the fire grid.");
+                    return runs;
                 }
-                wuiArea = wuiArea ?? PaintedWuiArea(simulation, xCount, yCount);
-                if (wuiArea != null)
-                {
-                    runs.Add(new WuiAreaRun { WuiArea = wuiArea, Label = "wui" });
-                }
+
+                Engine.Message(simulation, Engine.LogType.Log, "WUI area: [kPERIL] WuiAreaFile, "
+                    + System.IO.Path.GetFileName(peril.WuiAreaFile) + ".");
+                runs.Add(new WuiAreaRun { WuiArea = wuiArea, Label = "wui" });
                 return runs;
             }
 
             if (_evacuationGroups == null || _evacuationGroups.Length == 0)
             {
-                Engine.Message(simulation, Engine.LogType.SimulationError, "WuiAreaSource is set to evacuation groups, but the scenario has none.");
+                Engine.Message(simulation, Engine.LogType.SimulationError, "The WUI area k-PERIL protects is the evacuation "
+                    + "groups' area, and the scenario has no evacuation group.");
                 return runs;
             }
+
+            if (peril.WuiAreaSource == kPERILInput.WuiAreaSources.Raster)
+            {
+                Engine.Message(simulation, Engine.LogType.Log, "WUI area: the evacuation groups, combined (WuiAreaSource=Raster "
+                    + "names no WuiAreaFile).");
+            }
+
 
             bool separate = peril.WuiAreaSource == kPERILInput.WuiAreaSources.EvacuationGroupsSeparate;
             bool[] combined = separate ? null : new bool[xCount * yCount];

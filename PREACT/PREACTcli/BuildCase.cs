@@ -354,7 +354,8 @@ namespace PREACTcli
         {
             Console.WriteLine("  PREACTcli build-case --wui <scenario.wui> [--out <case dir>] [options]");
             Console.WriteLine("      Builds the scenario's ELMFIRE case exactly as the GUI's Build fire case does: the domain, cell size,");
-            Console.WriteLine("      padding, fire duration, source layers, ignition points and painted areas all come from the .wui.");
+            Console.WriteLine("      padding, fire duration, source layers, ignition points, the painted ignition area and the evacuation");
+            Console.WriteLine("      groups (whose union is the case's WUI area, wui_area.tif) all come from the .wui.");
             Console.WriteLine("      --out <dir>        where to build (default: the scenario's [ELMFIRE] CaseDirectory)");
             Console.WriteLine("      --hours <h>        fire duration, 1-240 h (default: [ELMFIRE] SimulationTstopHours)");
             Console.WriteLine("      --cellsize <m>     --padding <m>      override [ELMFIRE] CellSizeMetres / PaddingMetres");
@@ -369,7 +370,7 @@ namespace PREACTcli
             Console.WriteLine("                         and the draw below, and nothing else: no layer is warped or re-cut, and elmfire.data");
             Console.WriteLine("                         keeps every key but its time base and weather band keys (source-layer flags are ignored)");
             Console.WriteLine("      --update-wui       point the scenario at the case, as the GUI's build does: write [Landscape] Elevation/");
-            Console.WriteLine("                         Slope/AspectFile, [kPERIL] WuiAreaFile and the [Weather] anchor into the .wui");
+            Console.WriteLine("                         Slope/AspectFile and the [Weather] anchor into the .wui");
             Console.WriteLine("                         (only those keys; without it they are printed)");
             Console.WriteLine("      baseline weather (ERA5 climatology -> WindNinja -> Nelson):");
             Console.WriteLine("      --weather-archive <csv>        the ERA5 archive (default <case>/climatology/<Name>_era5_hourly.csv)");

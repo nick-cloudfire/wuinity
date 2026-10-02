@@ -69,7 +69,11 @@ used to fail only in its validation, after the DEM, the ERA5 archive and minutes
    removes the marker.
 6. **Canopy** layers nobody supplied are written as zeros: ELMFIRE refuses to start without them, and zero means
    surface fire only — no crown fire. The build says so.
-7. **Painted areas** become `ignition_mask.tif`, `wui_area.tif` and an explicit ignition ([below](#painted-areas)).
+7. **Painted areas**: the ignition area becomes `ignition_mask.tif` ([below](#painted-areas)).
+   **The WUI area**, `wui_area.tif`, is the union of the evacuation groups' areas — their painted masks or
+   shapefiles — on the case grid: 1 where a cell's centre is in a group. It is written by every build (it is
+   derived, like the terrain), with the groups and the cell count in `case_sources.txt` (`WuiAreaGroups`,
+   `WuiAreaCells`); a scenario without a group that has an area gets none, and an old `wui_area.tif` is removed.
 8. **Ignition points** (`[IgnitionPoint]`) are measured in the case's CRS. One outside the grid is dropped and
    reported with both coordinates — never moved to the edge, which would start a fire nobody asked for.
 9. **The ignition mask**: without a painted or named one, an all-ones mask (ignite anywhere). It is then
@@ -88,8 +92,7 @@ used to fail only in its validation, after the DEM, the ERA5 archive and minutes
     plausible fire of the wrong ground. A case that fails is left on disk to inspect, and not run.
 
 A build from the GUI then writes onto the scenario (save it to keep them): `[Landscape] ElevationFile`,
-`SlopeFile` and `AspectFile` become the case's `dem/slp/asp.tif`, `[kPERIL] WuiAreaFile` becomes
-`elmfire/inputs/wui_area.tif` when the build wrote one, and `[Weather] WeatherFile` and `WeatherAnchorDateTime`
+`SlopeFile` and `AspectFile` become the case's `dem/slp/asp.tif`, and `[Weather] WeatherFile` and `WeatherAnchorDateTime`
 point at the archive and the day the weather was drawn from. `build-case` prints these keys instead of writing
 them.
 
@@ -104,7 +107,7 @@ them.
 | `cc`, `ch`, `cbh`, `cbd` | `Canopy*File`, else `CanopyDatasetFolder` (FIRE-RES), else zeros | |
 | `bldg_area_avg`, `bldg_separation_distance`, `bldg_nonburnable_frac`, `bldg_footprint_frac`, `bldg_fuel_model` | `Building*File` | The building spread model is switched on only with all five (the external pipeline's `baa`, `ssd`, `nbf_h`, `ff_h`, `bfm_h` are recognised too). |
 | `ignition_mask` | the painted ignition area, else `IgnitionMaskFile`, else all ones | Restricted to burnable fuel. |
-| `wui_area` | the painted WUI area | What k-PERIL protects. |
+| `wui_area` | the evacuation groups (union of their masks or shapefiles) | What k-PERIL protects and a campaign aims at. Never carried from an old grid: made again on the new one. |
 | `barriers` | `BarriersFile` | `USE_BARRIERS` is written on only when there is one. |
 | `sdi`, `erc`, `pyromes`, `land_value`, `population_density`, `real_estate_value` | the matching `[ELMFIRE]` key | Nothing produces these; each switch that needs one is written on only when the case has it. |
 | `ws`, `wd`, `m1`, `m10`, `m100` | the weather chain | |
