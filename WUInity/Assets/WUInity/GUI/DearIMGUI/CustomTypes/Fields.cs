@@ -76,6 +76,12 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 set(string.Empty);
             }
             ImGui.SameLine();
+            if (ImGui.Button("Paste###paste" + label))
+            {
+                string pasted = Clipboard();
+                if (pasted.Length > 0) set(Normalise(pasted));
+            }
+            ImGui.SameLine();
 
             string value = get() ?? string.Empty;
             if (ImGui.InputText(label, ref value, 256))
@@ -107,6 +113,12 @@ namespace Assets.WUInity.GUI.DearIMGUI
             if (ImGui.Button("Clear###clearf" + label))
             {
                 set(string.Empty);
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("Paste###pastef" + label))
+            {
+                string pasted = Clipboard();
+                if (pasted.Length > 0) set(Normalise(pasted));
             }
             ImGui.SameLine();
 
@@ -308,6 +320,18 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 ImGui.SetTooltip(tooltip);
             }
             return changed;
+        }
+
+        /// <summary>
+        /// The system clipboard's text, trimmed of whitespace and surrounding quotes (Explorer's "Copy as path"
+        /// adds them), or empty.
+        /// </summary>
+        public static string Clipboard()
+        {
+            string text;
+            try { text = GUIUtility.systemCopyBuffer; }
+            catch { return string.Empty; }
+            return (text ?? string.Empty).Trim().Trim('"').Trim();
         }
 
         public static string Normalise(string path)

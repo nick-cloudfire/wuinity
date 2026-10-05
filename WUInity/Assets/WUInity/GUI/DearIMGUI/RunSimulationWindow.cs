@@ -245,6 +245,41 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 if (ImGui.Button("Live output")) LiveOutputWindow.Open();
                 ImGui.SameLine();
                 if (ImGui.Button("Console")) ConsoleWindow.Open();
+                ImGui.SameLine();
+                ElmfireLogButton();
+            }
+        }
+
+        /// <summary>
+        /// The case's <c>elmfire.log</c>: ELMFIRE's own output (both streams) for the last single run, which is
+        /// where the cause of an "elmfire exited N" lies. Opened in the system's text viewer; disabled until a run
+        /// has written one.
+        /// </summary>
+        private static void ElmfireLogButton()
+        {
+            string log = ElmfireLogPath();
+            bool have = log != null && System.IO.File.Exists(log);
+            ImGui.BeginDisabled(!have);
+            if (ImGui.Button("ELMFIRE log")) MainMenuBar.OpenInFileManager(log);
+            ImGui.EndDisabled();
+            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            {
+                ImGui.SetTooltip(have ? log : "No elmfire.log in the fire case yet: ELMFIRE has not run for this scenario.");
+            }
+        }
+
+        private static string ElmfireLogPath()
+        {
+            PREACT.Input.PREACTInput input = ScenarioSession.Input;
+            PREACT.Input.ElmfireInput elmfire = input?.WildfireModule?.ElmfireInput;
+            if (input == null || elmfire == null) return null;
+            try
+            {
+                return System.IO.Path.Combine(PREACT.Utility.ElmfireCoupling.CaseDirectoryPath(input.RootFolder, elmfire), "elmfire.log");
+            }
+            catch
+            {
+                return null;
             }
         }
 
@@ -288,6 +323,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             ImGui.SameLine();
             if (ImGui.Button("Live output")) LiveOutputWindow.Open();
+            ImGui.SameLine();
+            ElmfireLogButton();
         }
 
         //The model words each blocker "Step N (Title): ..."; anything else is the run's own row.

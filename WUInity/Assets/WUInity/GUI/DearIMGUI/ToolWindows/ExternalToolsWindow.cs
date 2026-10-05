@@ -230,6 +230,17 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 value = string.Empty;
             }
             ImGui.SameLine();
+            //Ctrl+V does not reach every ImGui field through Unity's input; the button reads the system clipboard directly.
+            if (ImGui.Button("Paste"))
+            {
+                string pasted = Fields.Clipboard();
+                if (!string.IsNullOrEmpty(pasted))
+                {
+                    value = pasted;
+                    _edit.Set(tool, value);
+                }
+            }
+            ImGui.SameLine();
             ImGui.SetNextItemWidth(-1f);
             if (ImGui.InputText("##path", ref value, 1024))
             {
