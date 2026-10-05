@@ -387,6 +387,14 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 if (ImGui.MenuItem("Markers", string.Empty, markers, visualizer != null)) { visualizer.SetMarkersVisible(!markers); }
                 Tooltip("The destinations (in their colours) and the ignition points (white).");
 
+                ImGui.Separator();
+                if (ImGui.MenuItem("Fire case inputs...", string.Empty, MapLayersWindow.IsOpen)) { MapLayersWindow.Open(); }
+                Tooltip("The fire case's input rasters - fuel model, canopy, terrain, weather by band, masks, buildings - and the "
+                    + "LANDFIRE source layers, one at a time on the map with a legend.");
+                bool input = MapLayersWindow.IsShowing;
+                if (ImGui.MenuItem("Input layer overlay", string.Empty, input, input)) { MapLayersWindow.Hide(); }
+                Tooltip(input ? "Hides the input raster (Fire case inputs puts one up)." : "No input raster is on the map (Fire case inputs).");
+
                 bool result = ResultsWindow.IsShowing;
                 if (ImGui.MenuItem("Result overlay", string.Empty, result, result)) { ResultsWindow.Hide(); }
                 Tooltip(result ? "Hides the result raster (Results > Show on map puts one up)." : "No result is on the map (Results > Show on map).");
@@ -394,6 +402,13 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 ImGui.EndMenu();
             }
             Tooltip(ScenarioSession.HasInput ? null : "No scenario is open.");
+
+            bool probe = PointInfoTool.IsActive;
+            if (ImGui.MenuItem("Point info", string.Empty, probe, ScenarioSession.HasInput)) { PointInfoTool.SetActive(!probe); }
+            Tooltip(ScenarioSession.HasInput
+                ? "Click the map to see where that is (lat/lon, UTM, case grid cell) and every fire case input there, with the "
+                  + "last run's arrival time and trigger boundary. Escape stops."
+                : "No scenario is open.");
 
             ImGui.Separator();
             if (ImGui.MenuItem("Console", string.Empty, ConsoleWindow.IsOpen)) { ConsoleWindow.Toggle(); }

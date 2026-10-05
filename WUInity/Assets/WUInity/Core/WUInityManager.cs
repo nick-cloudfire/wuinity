@@ -1331,6 +1331,12 @@ namespace WUInity
         private System.Action<PREACT.Math.Vector2d> _onClick;
         private System.Action _onPickCancelled;
 
+        /// <summary>A position or an area of interest is being picked on the map, so a click there is the pick's.</summary>
+        public bool IsPicking { get => _pickingPos || _pickingBoundingBox; }
+
+        /// <summary>The scenario's own map (UTM, simulation coordinates) is the one on screen, not the world map.</summary>
+        public bool IsUTMMapShown { get => _utmMap != null && _utmMap.gameObject.activeSelf; }
+
         /// <summary>True while the map is waiting for a click (a position, or the corners of an area).</summary>
         public void PickBoundingBoxOnMap(System.Action<PREACT.Math.Vector2d[]> clicks, System.Action cancelled = null)
         {

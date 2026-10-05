@@ -260,11 +260,31 @@ The menus hold the same actions as the workflow, grouped the same way:
 | **Evacuation** | Modules (pedestrian, traffic), Destinations, Response curves, Demographics, Evacuation groups, Paint group areas. |
 | **Run** | Run simulation (F5), Pause / Resume, Stop, Trigger campaign (opens at any time, to set one up or to watch and cancel the one running). |
 | **Results** | Live output; Show on map (fire arrival, trigger boundary, trigger and burn probability, arrival p10/p50/p90, evacuation groups, the case's WUI area, Hide result); Results of the last run and campaign; Open output folder. |
-| **View** | Map layers (population density, road network, fire grid outline, markers, result overlay), Console, Clear console, Theme, Reset window layout. |
+| **View** | Map layers (population density, road network, fire grid outline, markers, Fire case inputs, input layer overlay, result overlay), Point info, Console, Clear console, Theme, Reset window layout. |
 | **Help** | Getting started, Troubleshooting, External tools and keys, About. |
 
 Scenario > Check scenario parses the scenario as it stands, unsaved edits included, and files what it finds
 under the workflow's steps — the same check a run makes when it loads the file.
+
+**View > Map layers > Fire case inputs** lists the fire case's input rasters that exist — the fuel model the
+namelist runs (and a plain `fbfm40`/`fbfm13` beside it), canopy cover, height, base height and bulk density,
+elevation, slope, aspect, wind speed and direction and the 1/10/100-h moistures (a band at a time, with the
+band's time from `DT_METEOROLOGY`), the ignition mask, `wui_area`, the building layers — and the LANDFIRE
+source layers a download left in `downloads/landfire` (`<Name>_<release>_<stem>.tif`). Pick one to draw it on
+the scenario's map, under any result overlay, at the opacity set above the list. Fuel models are drawn in
+LANDFIRE's standard colours with a legend of the codes present (code, label, name, share of cells);
+quantities on a dark-to-light ramp with their range in real units — the namelist's `CC_IN_PERCENT`,
+`CH_TIMES_10`, `CBH_TIMES_10`, `CBD_TIMES_100`, `WS_IN_KPH`, `WS_AT_10M` and `DEAD_MC_IN_PERCENT` decide what
+the stored numbers mean (a source layer's, its download's `_landfire.txt`); aspect and wind direction on a
+cyclic ramp; masks in one colour. A raster larger than 1024 cells a side is drawn decimated (the legend says
+so), and one in another CRS than the scenario's UTM zone is not drawn.
+
+**View > Point info** (also a checkbox in that window) reads the map where it is clicked: latitude and
+longitude, UTM, the case grid's column and row (0-based from the north-west, as QGIS shows them), and every
+input raster's value at that cell — the fuel model by code and name, canopy in real units, terrain, the
+weather at the band the map layers window shows, the masks — plus the last run's time of arrival and trigger
+boundary when there are any. Hover a row for the file, its cell and the stored value. A click that pans the
+map, or lands on a window, is not taken; Escape or closing the panel ends the tool.
 
 ## Two distinctions worth knowing
 

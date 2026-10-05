@@ -222,6 +222,18 @@ namespace Assets.WUInity.GUI.DearIMGUI
             return false;
         }
 
+        /// <summary>
+        /// The newest result raster of <paramref name="kind"/> (the last run's time of arrival, its trigger boundary), or
+        /// null - for the point info, which reads one cell of it. The listing is the one this window keeps (one directory
+        /// read every few seconds at most).
+        /// </summary>
+        public static string NewestRasterPath(Kind kind)
+        {
+            RescanIfStale();
+            Entry newest = _entries.Find(e => e.Kind == kind && e.IsRaster);
+            return newest?.Path;
+        }
+
         public static bool HasAny(Kind kind, string nameContains = null)
         {
             RescanIfStale();

@@ -45,6 +45,14 @@ namespace WUInity.Visualization
             Mask,
         }
 
+        //View > Map layers > Fire case inputs: one input raster (fuel, canopy, terrain, weather, a mask) on a plane of its
+        //own, between the painted areas' plane (1 m) and the result overlay (2 m), so a result reads against its inputs.
+        //Its pixels arrive coloured (PREACT.Visualization.MapLayers.LayerColoring, on a worker); this only uploads them.
+        private GameObject _inputPlane;
+        private MeshRenderer _inputRenderer;
+        private Vector2d _inputPlaneSize, _inputPlaneOffset;
+        private Texture2D _inputTexture;
+
         public FireDomainVisualizerUnity(Transform parent)
         {
             _lcpDomainPlane = new GameObject("WildfireDomain");
@@ -57,6 +65,61 @@ namespace WUInity.Visualization
             _rasterPlane.transform.position += 2f * Vector3.up;
             _rasterPlane.isStatic = true;
             _rasterPlane.SetActive(false);
+
+            _inputPlane = new GameObject("InputLayerOverlay");
+            _inputPlane.transform.parent = parent;
+            _inputPlane.transform.position += 1.5f * Vector3.up;
+            _inputPlane.isStatic = true;
+            _inputPlane.SetActive(false);
+        }
+
+        public bool IsInputLayerVisible { get => _inputPlane != null && _inputPlane.activeSelf; }
+
+        /// <summary>
+        /// Shows an input layer: <paramref name="rgba"/> is <paramref name="width"/> x <paramref name="height"/> RGBA32 bytes,
+        /// row 0 at the south, stretched over <paramref name="size"/> metres from the south-west corner
+        /// <paramref name="originOffset"/> in simulation coordinates. The texture is replaced (and the old one destroyed)
+        /// only when its size changes; the same size is written into in place.
+        /// </summary>
+        public bool DisplayInputLayer(byte[] rgba, int width, int height, Vector2d size, Vector2d originOffset)
+        {
+            if (rgba == null || width <= 0 || height <= 0 || rgba.Length != width * height * 4)
+            {
+                return false;
+            }
+
+            if (_inputRenderer == null || DomainVisualizerUnity.NeedNewPlane(_inputPlaneSize, size, _inputPlaneOffset, originOffset))
+            {
+                _inputRenderer = DomainVisualizerUnity.CreateDomainPlane(_inputPlane, _inputRenderer, size, originOffset);
+                _inputPlaneSize = size;
+                _inputPlaneOffset = originOffset;
+            }
+
+            if (DomainVisualizerUnity.NeedNewTexture(new Vector2int(width, height), _inputTexture))
+            {
+                if (_inputTexture != null) Object.Destroy(_inputTexture);
+                _inputTexture = new Texture2D(width, height, TextureFormat.RGBA32, false);
+                _inputTexture.filterMode = FilterMode.Point;
+                _inputTexture.wrapMode = TextureWrapMode.Clamp;
+            }
+
+            _inputTexture.LoadRawTextureData(rgba);
+            _inputTexture.Apply(false);
+            _inputRenderer.material.mainTexture = _inputTexture;
+            _inputPlane.SetActive(true);
+            return true;
+        }
+
+        /// <summary>Takes the input layer off the map and frees its texture.</summary>
+        public void HideInputLayer()
+        {
+            if (_inputPlane != null) _inputPlane.SetActive(false);
+            if (_inputRenderer != null) _inputRenderer.material.mainTexture = null;
+            if (_inputTexture != null)
+            {
+                Object.Destroy(_inputTexture);
+                _inputTexture = null;
+            }
         }
 
         public bool IsRasterVisible { get => _rasterPlane != null && _rasterPlane.activeSelf; }

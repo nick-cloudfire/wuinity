@@ -128,6 +128,16 @@
   have. Without the font the GUI uses Dear ImGui's own instead of failing.
 - A fire case built in a standalone player gets the OpenTopography key the GUI shows. The key is built into the
   player, and the engine used to look for it on disk.
+### Map layers and point info
+
+- **View > Map layers > Fire case inputs**: the case's input rasters (fuel, canopy, terrain, weather by band, masks,
+  buildings) and the LANDFIRE source layers, one at a time on the map with an opacity and a legend. FBFM40 and FBFM13
+  in LANDFIRE's standard colours (taken from LANDFIRE's LF2024/LF2022 legends; GR9, which LANDFIRE maps nowhere, has
+  a GR-family colour of ours); quantities in real units under the namelist's scaling flags; aspect and wind direction
+  on a cyclic ramp. Read and coloured on a worker, cached by file and write time, decimated above 1024 cells a side.
+- **View > Point info**: click the map for lat/lon, UTM, the case grid cell and every input raster's value there, with
+  the last run's time of arrival and trigger boundary. Escape stops it.
+
 ### k-PERIL
 
 - **k-PERIL is a submodule** (`PREACT/ThirdParty/kPERIL`, [nick-cloudfire/kPERIL](https://github.com/nick-cloudfire/kPERIL)),
