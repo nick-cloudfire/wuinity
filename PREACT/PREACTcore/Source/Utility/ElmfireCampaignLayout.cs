@@ -29,10 +29,10 @@ namespace PREACT.Utility
         public const double MinFireHours = 1.0;
 
         /// <summary>
-        /// The longest fire anything here will ask ELMFIRE for, ten days. The real Mati campaign ran 2000 h
-        /// (<c>SIMULATION_TSTOP = 7200000</c>): every spreading fire had burned the whole domain within two days and
-        /// then crept for weeks, costing 7-21 h per realization instead of minutes, and ELMFIRE's stall exit
-        /// fired in only 5 of 20.
+        /// The longest fire with hourly weather (a single run, or a historical-day campaign), ten days: every hour is
+        /// a weather band and a WindNinja solve. Campaigns with one-band weather run until the fire stops instead
+        /// (<see cref="UntilStoppedHours"/>). The 2000 h Mati campaign that set this cost 7-21 h per realization
+        /// because ELMFIRE's stall exit fired in only 5 of 20 - an ember-tracker bug, fixed in ELMFIRE 16f306f.
         /// </summary>
         public const double MaxFireHours = 240.0;
 
@@ -56,19 +56,100 @@ namespace PREACT.Utility
         /// <summary>The namelist's SIMULATION_TSTOP for a fire of <paramref name="hours"/>: the only place seconds appear.</summary>
         public static double TstopSeconds(double hours) => hours * 3600.0;
 
+        // ------------------------------------------------------------------ campaign fires that run until they stop
+
+        /// <summary>
+        /// A campaign's fire duration that means "until the fire stops by itself": ELMFIRE's stall exit ends each
+        /// run once nothing moves any more, so no duration has to be guessed. Only with one weather band per
+        /// realization (the default fitted weather), which ELMFIRE holds for the whole run; hourly weather has to
+        /// cover the run band by band, so it keeps a duration in hours.
+        /// </summary>
+        /// <remarks>
+        /// It needs an ELMFIRE with the ember-tracker fix (ELMFIRE-WUINITY 16f306f): before it, an ember that blew to
+        /// the domain edge was never retired, the stall exit waited for it forever, and a Mati realization ran to its
+        /// wall-clock limit at 1162 h of fire instead of stopping at 100 h. Such a run is reported as failed (wall
+        /// clock), not folded in as a finished fire.
+        /// </remarks>
+        public const double UntilStoppedHours = 0.0;
+
+        public static bool IsUntilStopped(double hours) => hours == UntilStoppedHours;
+
+        /// <summary>
+        /// The SIMULATION_TSTOP sent when the fire runs until it stops: one year, far past any fire that spreads
+        /// and well inside ELMFIRE's own cap (a 32-bit count of seconds). Never reached in practice.
+        /// </summary>
+        public const double UntilStoppedTstopHours = 8760.0;
+
+        /// <summary>Wall-clock limit per ELMFIRE run when the fire runs until it stops: four hours (a Mati fire takes 7 min).</summary>
+        public const double UntilStoppedMaxRuntimeSeconds = 4.0 * 3600.0;
+
+        /// <summary>
+        /// The range of the per-cell arrival-time histogram when the fire runs until it stops, in hours. Arrivals
+        /// after it share the last bin, so a percentile that falls there is reported as this many hours - never
+        /// later than the truth. On Mati 99 % of the burned area is reached by 66 h.
+        /// </summary>
+        public const double UntilStoppedStatisticsHours = 96.0;
+
+        /// <summary>The SIMULATION_TSTOP of a campaign realization, in seconds.</summary>
+        public static double CampaignTstopSeconds(double hours) =>
+            TstopSeconds(IsUntilStopped(hours) ? UntilStoppedTstopHours : hours);
+
+        /// <summary>How a campaign's fire duration reads to a user: "until the fire stops" or "72 h".</summary>
+        public static string DescribeFireDuration(double hours) => IsUntilStopped(hours)
+            ? "until the fire stops"
+            : hours.ToString("0.##", CultureInfo.InvariantCulture) + " h";
+
+        /// <summary>
+        /// Null when <paramref name="hours"/> is a fire duration a campaign can run with this weather, else why not.
+        /// One band per realization: until the fire stops, or any duration of at least an hour up to
+        /// <see cref="UntilStoppedTstopHours"/>. Hourly (historical-day) weather: <see cref="ValidateFireHours"/>,
+        /// because every hour of fire is a weather band and a WindNinja solve.
+        /// </summary>
+        public static string ValidateCampaignHours(double hours, bool singleBandWeather)
+        {
+            if (IsUntilStopped(hours))
+            {
+                return singleBandWeather
+                    ? null
+                    : "historical-day weather has one band per hour of fire, so it needs a duration in hours; "
+                      + "running until the fire stops needs the fitted (one-band) weather";
+            }
+
+            if (!singleBandWeather) return ValidateFireHours(hours);
+
+            if (double.IsNaN(hours) || double.IsInfinity(hours)) return "the fire duration is not a number";
+            if (hours < MinFireHours || hours > UntilStoppedTstopHours)
+            {
+                return $"the fire duration is {hours.ToString("0.##", CultureInfo.InvariantCulture)} h; it has to be "
+                       + $"between {MinFireHours:0} and {UntilStoppedTstopHours:0} hours (it is hours, not seconds)";
+            }
+            return null;
+        }
+
         /// <summary>
         /// A wall-clock limit for one ELMFIRE run, in seconds (MAX_RUNTIME): two minutes per simulated hour, at least
         /// an hour. A 72 h Mati fire takes about six minutes on one core, so this only stops a run that is not
         /// going to finish - and a stopped run is reported as failed rather than aggregated as a short fire.
         /// </summary>
-        public static double DefaultMaxRuntimeSeconds(double hours) => System.Math.Max(3600.0, 120.0 * hours);
+        public static double DefaultMaxRuntimeSeconds(double hours) => IsUntilStopped(hours)
+            ? UntilStoppedMaxRuntimeSeconds
+            : System.Math.Max(3600.0, 120.0 * hours);
 
         /// <summary>
         /// Width of the per-cell arrival-time histogram bins for a fire of <paramref name="hours"/>: one hour up to
         /// 96 h, then whole hours so there are never more than about 96 bins (a 240 h fire gets 3 h bins). The bins
         /// used to be one hour whatever the duration, which at the 2000 h real campaign meant 1.2 GB of counters.
         /// </summary>
-        public static double StatisticsBinSeconds(double hours) => 3600.0 * System.Math.Max(1.0, System.Math.Ceiling(hours / 96.0));
+        public static double StatisticsBinSeconds(double hours) =>
+            3600.0 * System.Math.Max(1.0, System.Math.Ceiling(StatisticsHours(hours) / 96.0));
+
+        /// <summary>
+        /// The range of the arrival-time histogram, in seconds: the fire's duration, or
+        /// <see cref="UntilStoppedStatisticsHours"/> when it runs until it stops.
+        /// </summary>
+        public static double StatisticsDurationSeconds(double hours) => TstopSeconds(StatisticsHours(hours));
+
+        private static double StatisticsHours(double hours) => IsUntilStopped(hours) ? UntilStoppedStatisticsHours : hours;
 
         // ------------------------------------------------------------------ folders
 

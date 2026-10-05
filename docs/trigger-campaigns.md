@@ -45,7 +45,7 @@ step runs.
 | Parallel realizations (0 = half the cores) | `--parallel` | 0 |
 | Consecutive stable realizations | `--streak` | 20 |
 | Per-decile tolerance (%) | `--tolerance` (as a fraction) | 2 |
-| Fire duration (hours) | `--hours` | 72, clamped to 1–240; the window shows the resulting `SIMULATION_TSTOP` and wall-clock limit, and warns above 168 h |
+| Run each fire until it stops by itself / Fire duration (hours) | `--hours until-stopped` / `--hours <h>` | until it stops (fitted weather); 72 h, 1–240, with historical-day weather |
 | Draw each parameter from a fitted distribution | off: `--historical-day-weather` | on |
 | Days per year in the fitted pool | `--candidate-days-per-year` | 10 |
 | Draw live fuel moisture too | off: `--no-live-fuel-moisture` | on |
@@ -79,7 +79,7 @@ Realization *i* (7-digit id, `0000001` for the first) runs in `realizations/<id>
 5. **Namelist.** The campaign's snapshot of the template (`template.data`) with: `SEED` = seed + *i*, one
    ensemble member, the ignition, every directory relative to the realization folder, the realization's own
    weather and band count (`NUM_METEOROLOGY_TIMES` = its bands, `METEOROLOGY_BAND_START` = `STOP` = 1 - the same
-   fit a single run makes on the case's weather), the drawn live fuel moisture, `SIMULATION_TSTOP` = hours × 3600,
+   fit a single run makes on the case's weather), the drawn live fuel moisture, `SIMULATION_TSTOP` = hours × 3600 (8760 h when the fire runs until it stops),
    `MAX_RUNTIME` = the wall-clock limit, and the five required outputs. The fuel tables are the campaign's own
    copies; a template that runs the building spread model without a building fuel table gets ELMFIRE's own
    `building_fuel_models.csv`, or the campaign is refused up front.
@@ -251,8 +251,9 @@ cell burned.
 burned the cell (**conditional on burning**; nodata where none did). Read them with the burn probability: a cell
 with a 5 % burn probability and an early p10 is threatened rarely but fast. The low percentiles are the
 conservative ones — p10 is when the fire arrives in the fastest tenth of the fires that arrive at all.
-Percentiles come from an hourly histogram (coarser bins above 96 h of fire, 3 h at 240 h) and are reported at the
-bin's lower edge, so never later than the truth.
+Percentiles come from an hourly histogram (coarser bins above 96 h of fire, 3 h at 240 h; up to 96 h when the fire
+runs until it stops, later arrivals sharing the last bin) and are reported at the bin's lower edge, so never later
+than the truth.
 
 All rasters are ESRI ASCII on the fire grid with a `.prj` beside them, and open in QGIS. In the GUI, Results >
 Show on map draws them.
@@ -266,13 +267,16 @@ parallel slot, and on 60–200 realizations for a stable map.
 - **`--parallel`** defaults to half the logical cores. SUMO dominates the wall clock and needs several GB per
   realization: a 7 GB machine ran out of memory with two at once (exit 137, recorded as failed). Size it by memory
   first.
-- **`--hours`** defaults to 72. A realization only counts if its fire reaches the community, ignitions come from the
-  whole domain, and the distant ones decide how far out the boundary sits; a fire cut short counts as "did not
-  threaten" and the boundary comes out too tight. Much longer is waste: the pre-v1 campaign ran 2000 h fires that
-  had burned the whole domain within two days and then crept for weeks, costing 7–21 h per realization. The limit
-  is 240 h.
-- **`--max-runtime-minutes`** defaults to 2 minutes per hour of fire, at least 60 (144 min for 72 h). It only stops a
-  fire that is not going to finish.
+- **`--hours`** defaults to `until-stopped` with fitted (one-band) weather: `SIMULATION_TSTOP` is a year and
+  ELMFIRE's stall exit ends each run when the front stops moving and no ember is in flight. No duration has to be
+  guessed, and no fire is cut short and counted as "did not threaten". Mati realization 13 stops at 100 h after 7 min.
+  This needs an ELMFIRE with the ember-tracker fix (ELMFIRE-WUINITY 16f306f): before it, an ember that blew to the
+  domain edge was never retired, the stall exit never fired with spotting on, and the same fire ran to its wall-clock
+  limit (the pre-v1 2000 h campaign took 7–21 h per realization this way). A number of hours still works (1 to 8760).
+  Historical-day weather has one band per hour of fire, so it needs hours: 72 by default, 1 to 240.
+- **`--max-runtime-minutes`** defaults to 240 when the fire runs until it stops, else 2 minutes per hour of fire, at
+  least 60 (144 min for 72 h). It only stops a fire that is not going to finish; that realization counts as failed.
+  If every realization fails this way, the ELMFIRE build predates the fix above.
 - **Historical-day weather** costs one WindNinja solve per hour of fire per realization (about six minutes for
   72 h), and holds more weather bands in memory.
 - **Disk**: each realization keeps its rasters, weather, logs and PREACT outputs — tens of MB. `scratch/` can be

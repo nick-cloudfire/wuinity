@@ -38,8 +38,12 @@ namespace PREACTcli.Campaigns
         public string ElmfireInputs;
         public string PathToGdal;
 
-        /// <summary>Hours of fire per realization (contract C6: hours at every interface; seconds in the namelist).</summary>
-        public double Hours = CampaignLayout.DefaultFireHours;
+        /// <summary>
+        /// Hours of fire per realization (contract C6: hours at every interface; seconds in the namelist), or
+        /// <see cref="CampaignLayout.UntilStoppedHours"/>: until the fire stops, the default with one-band weather.
+        /// Historical-day weather defaults to <see cref="CampaignLayout.DefaultFireHours"/>.
+        /// </summary>
+        public double Hours = double.NaN;
 
         /// <summary>Wall-clock limit per ELMFIRE run in minutes; 0 means <see cref="CampaignLayout.DefaultMaxRuntimeSeconds"/>.</summary>
         public double MaxRuntimeMinutes;
@@ -95,10 +99,13 @@ namespace PREACTcli.Campaigns
                 .Value("--gdal", v => o.PathToGdal = v)
                 .Value("--hours", v =>
                 {
-                    if (!double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out double h))
-                        throw new ArgumentException($"--hours takes a number of hours, not '{v}'.");
-                    string problem = CampaignLayout.ValidateFireHours(h);
-                    if (problem != null) throw new ArgumentException("--hours: " + problem + ".");
+                    if (string.Equals(v, UntilStoppedArgument, StringComparison.OrdinalIgnoreCase))
+                    {
+                        o.Hours = CampaignLayout.UntilStoppedHours;
+                        return;
+                    }
+                    if (!double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out double h) || h <= 0)
+                        throw new ArgumentException($"--hours takes a number of hours or '{UntilStoppedArgument}', not '{v}'.");
                     o.Hours = h;
                 })
                 .Double("--max-runtime-minutes", v => o.MaxRuntimeMinutes = v, 1.0, 100000.0)
@@ -147,8 +154,19 @@ namespace PREACTcli.Campaigns
             {
                 throw new ArgumentException("--climatology-to is before --climatology-from.");
             }
+
+            bool singleBand = o.WeatherSampling == WeatherRasterPipeline.SamplingMode.FittedDistributions;
+            if (double.IsNaN(o.Hours))
+            {
+                o.Hours = singleBand ? CampaignLayout.UntilStoppedHours : CampaignLayout.DefaultFireHours;
+            }
+            string problem = CampaignLayout.ValidateCampaignHours(o.Hours, singleBand);
+            if (problem != null) throw new ArgumentException("--hours: " + problem + ".");
             return o;
         }
+
+        /// <summary>The <c>--hours</c> value for a fire that runs until it stops.</summary>
+        public const string UntilStoppedArgument = "until-stopped";
 
         public static void PrintUsage()
         {
@@ -157,7 +175,9 @@ namespace PREACTcli.Campaigns
             Console.WriteLine("      (PREACT.exe), and aggregates the boundaries into a probability raster until every decile");
             Console.WriteLine("      of it moves by less than --tolerance for --streak consecutive realizations.");
             Console.WriteLine("      Everything goes to <scenario>/_output/campaign_<name>_<settings hash>/.");
-            Console.WriteLine("      [--hours <h=72>]              hours of fire per realization, 1 to 240");
+            Console.WriteLine("      [--hours <h|until-stopped>]   fire per realization: until it stops by itself (the default),");
+            Console.WriteLine("                                    or a number of hours; historical-day weather needs hours (1 to 240,");
+            Console.WriteLine("                                    default 72)");
             Console.WriteLine("      [--seed <n=12345>] [--start <n=1>] [--streak <n=20>] [--tolerance <fraction=0.02>]");
             Console.WriteLine("      [--parallel <n=cores/2>] [--preact <PREACT.exe>] [--out <copy of the probability raster>]");
             Console.WriteLine("      [--resume]                    reuse the realizations of a campaign with exactly these settings;");
@@ -166,7 +186,8 @@ namespace PREACTcli.Campaigns
             Console.WriteLine("      [--inspect]                   say whether such a campaign exists and what it would reuse, then exit");
             Console.WriteLine("      The ELMFIRE case, template and executable come from the scenario's [ELMFIRE] section; override:");
             Console.WriteLine("      [--elmfire <exe>] [--elmfire-template <namelist>] [--elmfire-inputs <folder>] [--gdal <bin>]");
-            Console.WriteLine("      [--max-runtime-minutes <m>]   wall-clock limit per ELMFIRE run (default 2 min per hour of fire, >= 60)");
+            Console.WriteLine("      [--max-runtime-minutes <m>]   wall-clock limit per ELMFIRE run (default 240 until the fire stops,");
+            Console.WriteLine("                                    else 2 min per hour of fire, >= 60)");
             Console.WriteLine("      Weather: every realization draws its own, into its own folder. By default each parameter is drawn");
             Console.WriteLine("      from a normal fitted to the worst fire-weather days on record (one band, one WindNinja solve),");
             Console.WriteLine("      with dead fuel moisture from the drawn air (Simard) and live fuel moisture resampled from the");

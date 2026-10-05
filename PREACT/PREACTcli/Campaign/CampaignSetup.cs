@@ -261,7 +261,7 @@ namespace PREACTcli.Campaigns
             s["fuel_table.sha256"] = ElmfireFingerprint.HashFile(c.FuelTableSource);
             s["building_table.sha256"] = c.BuildingTableSource == null ? "(none)" : ElmfireFingerprint.HashFile(c.BuildingTableSource);
             s["elmfire.sha256"] = ElmfireFingerprint.HashFile(c.ElmfireExe);
-            s["hours"] = o.Hours.ToString("R", CultureInfo.InvariantCulture);
+            s["hours"] = CampaignLayout.IsUntilStopped(o.Hours) ? CampaignOptions.UntilStoppedArgument : o.Hours.ToString("R", CultureInfo.InvariantCulture);
             s["max_runtime_s"] = o.MaxRuntimeSeconds.ToString("R", CultureInfo.InvariantCulture);
             s["seed"] = o.Seed.ToString(CultureInfo.InvariantCulture);
             s["weather.mode"] = o.WeatherSampling.ToString();
@@ -523,7 +523,7 @@ namespace PREACTcli.Campaigns
                 WindNinjaMesh = o.WindNinjaMesh,
                 SimulationStartDateTime = c.StartDateTime,
                 StartTimeZone = c.TimeZone,
-                SimulationTstopSeconds = CampaignLayout.TstopSeconds(o.Hours),
+                SimulationTstopSeconds = CampaignLayout.CampaignTstopSeconds(o.Hours),
                 SecondsPerBand = c.SecondsPerBand,
                 MaxBands = 0,
                 Sampling = o.WeatherSampling,
@@ -608,7 +608,7 @@ namespace PREACTcli.Campaigns
             Console.WriteLine($"Weather: {pool.Count} candidate days from {Path.GetFileName(c.ArchivePath)}; "
                               + (o.WeatherSampling == WeatherRasterPipeline.SamplingMode.FittedDistributions
                                   ? "each realization draws one value per parameter from normals fitted to them (one band, one WindNinja solve)"
-                                  : $"each realization replays one of them, {System.Math.Ceiling(CampaignLayout.TstopSeconds(o.Hours) / c.SecondsPerBand):F0} hourly bands (one WindNinja solve each) and Nelson")
+                                  : $"each realization replays one of them, {System.Math.Ceiling(CampaignLayout.CampaignTstopSeconds(o.Hours) / c.SecondsPerBand):F0} hourly bands (one WindNinja solve each) and Nelson")
                               + (c.WindNinjaExe != null ? ", WindNinja " + Path.GetFileName(c.WindNinjaExe) + "." : ", NO WindNinja: uniform wind (--allow-uniform-weather)."));
             return true;
         }

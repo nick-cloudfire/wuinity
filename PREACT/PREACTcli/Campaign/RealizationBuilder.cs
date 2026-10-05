@@ -258,8 +258,12 @@ namespace PREACTcli.Campaigns
                 string stop = run.Message ?? string.Empty;
                 int at = stop.IndexOf("early: ", StringComparison.Ordinal);
                 if (at >= 0) stop = stop.Substring(at + "early: ".Length);
+                string before = CampaignLayout.IsUntilStopped(o.Hours)
+                    ? "before the fire stopped (if every realization does this, the ELMFIRE build predates the "
+                      + "ember-tracker fix, 16f306f, and its stall exit never fires with spotting on)"
+                    : $"before the fire's {o.Hours:0.##} h were up";
                 return Settle(outcome, dir, record, $"ELMFIRE hit its wall-clock limit ({o.MaxRuntimeSeconds / 60.0:0} min, "
-                                                    + $"--max-runtime-minutes) before the fire's {o.Hours:0.##} h were up, so "
+                                                    + $"--max-runtime-minutes) {before}, so "
                                                     + "the fire is incomplete and the realization counts as failed ("
                                                     + stop.Trim() + ")");
             }
@@ -354,7 +358,7 @@ namespace PREACTcli.Campaigns
             }
 
             Set(ElmfireNamelistKeys.TimeControlGroup, ElmfireNamelistKeys.SimulationTstop,
-                CampaignLayout.TstopSeconds(o.Hours).ToString("0.0", CultureInfo.InvariantCulture));
+                CampaignLayout.CampaignTstopSeconds(o.Hours).ToString("0.0", CultureInfo.InvariantCulture));
             Set(ElmfireNamelistKeys.SimulatorGroup, ElmfireNamelistKeys.MaxRuntime,
                 o.MaxRuntimeSeconds.ToString("0.0", CultureInfo.InvariantCulture));
 

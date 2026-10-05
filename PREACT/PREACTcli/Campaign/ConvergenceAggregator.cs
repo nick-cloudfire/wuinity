@@ -279,7 +279,7 @@ namespace PREACTcli.Campaigns
                 if (statistics == null)
                 {
                     double hours = _c.Options.Hours;
-                    statistics = new EnsembleFireStatistics(toaHeader, CampaignLayout.TstopSeconds(hours),
+                    statistics = new EnsembleFireStatistics(toaHeader, CampaignLayout.StatisticsDurationSeconds(hours),
                         CampaignLayout.StatisticsBinSeconds(hours));
                 }
 

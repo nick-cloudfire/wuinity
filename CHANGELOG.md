@@ -4,6 +4,12 @@
 
 ### Behaviour that changes (read before comparing with v1.0)
 
+- **Campaign fires run until they stop by themselves** (fitted weather, the default): `--hours until-stopped`,
+  `SIMULATION_TSTOP` a year, wall-clock limit 4 h; the 240 h cap stays only for hourly (historical-day) weather and
+  single runs. Needs ELMFIRE 16f306f (ELMFIRE-WUINITY), which retires ember trackers that reach the domain edge: before
+  it the stall exit never fired with spotting on. Mati realization 13: 100.5 h / 7 min instead of the wall-clock limit
+  at 1162 h, arrival times identical. Arrival-time percentiles then cover 96 h (later arrivals reported as 96 h).
+
 - **The WUI area is the evacuation groups**, for the case's `wui_area.tif`, k-PERIL and a campaign; a painted WUI area
   is no longer used (see "Case build and fire areas").
 - **A fuel raster that is not Int16 is converted or refused** (D1); a fire on one used to burn nothing, exit 0.

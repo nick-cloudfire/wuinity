@@ -157,7 +157,7 @@ namespace PREACTcli
             Console.WriteLine($"  scenario  {c.BaseWuiPath}");
             Console.WriteLine($"  template  {c.TemplatePath}");
             Console.WriteLine($"  inputs    {c.InputsDir} (fuel {c.FuelStem})");
-            Console.WriteLine($"  fire      {o.Hours:0.##} h per realization (SIMULATION_TSTOP = {CampaignLayout.TstopSeconds(o.Hours):0} s), "
+            Console.WriteLine($"  fire      {CampaignLayout.DescribeFireDuration(o.Hours)} per realization (SIMULATION_TSTOP = {CampaignLayout.CampaignTstopSeconds(o.Hours):0} s), "
                               + $"wall-clock limit {o.MaxRuntimeSeconds / 60.0:0} min");
             Console.WriteLine($"  ignition  drawn from {c.IgnitionMaskStem}.tif ({c.IgnitableCells} cells with a positive weight)"
                               + (o.WindToWui ? $", wind aimed at the WUI area centroid ({c.WuiCentreX:F0}, {c.WuiCentreY:F0}; {c.WuiCells} cells)" : ""));

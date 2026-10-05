@@ -50,6 +50,14 @@ namespace Assets.WUInity.GUI.DearIMGUI
         /// <summary>Hours of fire per realization (contract C6: hours wherever a person sees it).</summary>
         private static int _hours = (int)CampaignLayout.DefaultFireHours;
 
+        /// <summary>Run each fire until ELMFIRE's stall exit ends it; one-band (fitted) weather only.</summary>
+        private static bool _untilStopped = true;
+
+        private static bool UntilStopped => _untilStopped && _fittedWeather;
+
+        /// <summary>The fire duration as the CLI takes it: hours, or <see cref="CampaignLayout.UntilStoppedHours"/>.</summary>
+        private static double CampaignHours => UntilStopped ? CampaignLayout.UntilStoppedHours : _hours;
+
         private static bool _fittedWeather = true;
         private static int _candidateDaysPerYear = 10;
         private static bool _fitLiveFuelMoisture = true;
@@ -412,12 +420,32 @@ namespace Assets.WUInity.GUI.DearIMGUI
         }
 
         /// <summary>
-        /// The fire duration in hours, held to what the CLI accepts, with what it turns into beside it.
+        /// The fire duration: until the fire stops (one-band weather), or hours held to what the CLI accepts, with
+        /// what it turns into beside it.
         /// </summary>
         private static void DrawHours()
         {
+            if (_fittedWeather)
+            {
+                ImGui.Checkbox("Run each fire until it stops by itself", ref _untilStopped);
+            }
+
+            if (UntilStopped)
+            {
+                double limitHours = CampaignLayout.UntilStoppedMaxRuntimeSeconds / 3600.0;
+                Fields.Hint("ELMFIRE ends each run when the fire front stops moving and no ember is in flight, so",
+                            "no duration has to be guessed (a Mati fire stops at about 100 h, 7 min of wall clock).",
+                            $"SIMULATION_TSTOP is set to {CampaignLayout.UntilStoppedTstopHours:0} h; a run still going after {limitHours:0} h of",
+                            "wall clock is stopped and counted as failed. Arrival-time percentiles in 1 h bins up to",
+                            $"{CampaignLayout.UntilStoppedStatisticsHours:0} h; later arrivals are reported as {CampaignLayout.UntilStoppedStatisticsHours:0} h.",
+                            "Needs ELMFIRE with the ember-tracker fix (16f306f): before it, the stall exit never fired",
+                            "with spotting on and every run went to the wall-clock limit.");
+                return;
+            }
+
+            int max = _fittedWeather ? (int)CampaignLayout.UntilStoppedTstopHours : (int)CampaignLayout.MaxFireHours;
             ImGui.InputInt("Fire duration (hours)", ref _hours);
-            _hours = Mathf.Clamp(_hours, (int)CampaignLayout.MinFireHours, (int)CampaignLayout.MaxFireHours);
+            _hours = Mathf.Clamp(_hours, (int)CampaignLayout.MinFireHours, max);
 
             double tstop = CampaignLayout.TstopSeconds(_hours);
             double limitMinutes = CampaignLayout.DefaultMaxRuntimeSeconds(_hours) / 60.0;
@@ -428,17 +456,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
             Fields.Hint($"SIMULATION_TSTOP = {tstop.ToString("0", CultureInfo.InvariantCulture)} s; each ELMFIRE run is stopped",
                         $"after {limitMinutes:0} min of wall clock and counted as failed; {bands};",
-                        $"arrival-time percentiles in {binHours:0} h bins.",
-                        "",
-                        $"{CampaignLayout.DefaultFireHours:0} h is the default: ignitions are drawn from the whole domain, and",
-                        "the distant ones decide how far out the boundary sits. A fire that has not reached",
-                        "the WUI area by then counts as not threatening it.");
-
-            if (_hours > 168)
-            {
-                Fields.Warn("More than a week of fire: a spreading fire has usually burned the domain long before,",
-                            "and every realization then costs many times longer for the same boundary.");
-            }
+                        $"arrival-time percentiles in {binHours:0} h bins. A fire that stops earlier ends the run",
+                        "earlier. A fire that has not reached the WUI area by the end counts as not threatening it.",
+                        _fittedWeather ? "" : $"Hourly weather is limited to {CampaignLayout.MaxFireHours:0} h (one WindNinja solve per hour).");
         }
 
         private static void DrawWeather()
@@ -898,7 +918,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             if (string.IsNullOrEmpty(_baseWui) || !File.Exists(_baseWui)) return "Base .wui not found: set its path.";
             if (!string.IsNullOrEmpty(_templateOverride) && !File.Exists(_templateOverride)) return "The other namelist is not there.";
             if (!string.IsNullOrEmpty(_inputsOverride) && !Directory.Exists(_inputsOverride)) return "The other inputs folder is not there.";
-            return CampaignLayout.ValidateFireHours(_hours);
+            return CampaignLayout.ValidateCampaignHours(CampaignHours, _fittedWeather);
         }
 
         /// <summary>
@@ -910,7 +930,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
             string I(int v) => v.ToString(CultureInfo.InvariantCulture);
 
             var a = new List<string> { "converge-trigger", "--wui", _baseWui };
-            a.Add("--hours"); a.Add(I(_hours));
+            a.Add("--hours");
+            a.Add(UntilStopped ? "until-stopped" : I(_hours));
             if (!_fittedWeather) a.Add("--historical-day-weather");
             if (_fittedWeather)
             {

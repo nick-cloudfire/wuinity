@@ -358,6 +358,24 @@ namespace PREACT.Tests
             Refused("a flag without its value", "needs a value", "--wui", "a.wui", "--max");
             Refused("no --wui", "--wui is required", "--max", "4");
             Refused("no --max", "--max is required", "--wui", "a.wui");
+
+            //Fire duration: one-band weather runs until the fire stops unless told otherwise; hourly weather needs hours.
+            CampaignOptions untilStopped = CampaignOptions.Parse(new[] { "--wui", "a.wui", "--max", "4" });
+            Assert.True(CampaignLayout.IsUntilStopped(untilStopped.Hours), "fitted weather: until the fire stops by default");
+            Assert.Near(CampaignLayout.UntilStoppedMaxRuntimeSeconds, untilStopped.MaxRuntimeSeconds, 0.0, "its wall-clock limit");
+            Assert.Near(8760.0 * 3600.0, CampaignLayout.CampaignTstopSeconds(untilStopped.Hours), 0.0, "its SIMULATION_TSTOP");
+            Assert.Near(96.0 * 3600.0, CampaignLayout.StatisticsDurationSeconds(untilStopped.Hours), 0.0, "its histogram range");
+            Assert.Near(3600.0, CampaignLayout.StatisticsBinSeconds(untilStopped.Hours), 0.0, "in hour bins");
+            Assert.True(CampaignLayout.IsUntilStopped(CampaignOptions.Parse(
+                new[] { "--wui", "a.wui", "--max", "4", "--hours", "until-stopped" }).Hours), "--hours until-stopped");
+            Assert.Near(500.0, CampaignOptions.Parse(new[] { "--wui", "a.wui", "--max", "4", "--hours", "500" }).Hours, 0.0,
+                "fitted weather: no 240 h cap");
+            Assert.Near(CampaignLayout.DefaultFireHours, CampaignOptions.Parse(
+                new[] { "--wui", "a.wui", "--max", "4", "--historical-day-weather" }).Hours, 0.0, "historical days: 72 h by default");
+            Refused("historical days until the fire stops", "historical-day weather",
+                "--wui", "a.wui", "--max", "4", "--historical-day-weather", "--hours", "until-stopped");
+            Refused("historical days past 240 h", "240", "--wui", "a.wui", "--max", "4", "--historical-day-weather", "--hours", "500");
+            Refused("zero hours", "until-stopped", "--wui", "a.wui", "--max", "4", "--hours", "0");
         }
 
         private static void LatestCampaign()
