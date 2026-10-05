@@ -65,6 +65,7 @@ namespace PREACT.Tests
             RoadFuelTests.Register(runner);
             CaseBuildTests.Register(runner);
             ToolPathsTests.Register(runner);
+            MapLayerTests.Register(runner);
 
             if (examples)
             {

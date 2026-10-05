@@ -54,7 +54,7 @@ namespace PREACT.Utility
         /// <summary>
         /// The EPSG code of a GDAL dataset's projection, or 0 if it has none or cannot be identified.
         /// </summary>
-        private static int GetEpsgCode(OSGeo.GDAL.Dataset dataset)
+        internal static int GetEpsgCode(OSGeo.GDAL.Dataset dataset)
         {
             string wkt = dataset.GetProjectionRef();
             if (string.IsNullOrEmpty(wkt))
