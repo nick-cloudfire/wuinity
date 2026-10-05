@@ -259,8 +259,7 @@ namespace PREACTcli.Campaigns
                 int at = stop.IndexOf("early: ", StringComparison.Ordinal);
                 if (at >= 0) stop = stop.Substring(at + "early: ".Length);
                 string before = CampaignLayout.IsUntilStopped(o.Hours)
-                    ? "before the fire stopped (if every realization does this, the ELMFIRE build predates the "
-                      + "ember-tracker fix, 16f306f, and its stall exit never fires with spotting on)"
+                    ? "before the fire stopped"
                     : $"before the fire's {o.Hours:0.##} h were up";
                 return Settle(outcome, dir, record, $"ELMFIRE hit its wall-clock limit ({o.MaxRuntimeSeconds / 60.0:0} min, "
                                                     + $"--max-runtime-minutes) {before}, so "
@@ -361,6 +360,20 @@ namespace PREACTcli.Campaigns
                 CampaignLayout.CampaignTstopSeconds(o.Hours).ToString("0.0", CultureInfo.InvariantCulture));
             Set(ElmfireNamelistKeys.SimulatorGroup, ElmfireNamelistKeys.MaxRuntime,
                 o.MaxRuntimeSeconds.ToString("0.0", CultureInfo.InvariantCulture));
+
+            //A fire that runs until it stops runs without spotting. ELMFIRE's stall exit waits for every ember to
+            //land, and spotting is what keeps the slow tail going: on Mati realization 13 the run without it stops
+            //at 100 h with 42,034 acres (spotting on: 42,091 acres, still burning a cell now and then at 258 h).
+            //The ember outputs go with it: without spotting their arrays are never allocated and ELMFIRE aborts
+            //inside MPI_Reduce (see ElmfireNamelistBuilder).
+            if (CampaignLayout.IsUntilStopped(o.Hours))
+            {
+                Set(CampaignLayout.SpottingGroup, "ENABLE_SPOTTING", ".FALSE.");
+                foreach (string output in CampaignLayout.EmberOutputs)
+                {
+                    Set(ElmfireNamelistKeys.OutputsGroup, output, ".FALSE.");
+                }
+            }
 
             return ElmfireNamelistKeys.ForceRequiredOutputs(lines);
         }

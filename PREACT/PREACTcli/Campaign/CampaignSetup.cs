@@ -262,6 +262,7 @@ namespace PREACTcli.Campaigns
             s["building_table.sha256"] = c.BuildingTableSource == null ? "(none)" : ElmfireFingerprint.HashFile(c.BuildingTableSource);
             s["elmfire.sha256"] = ElmfireFingerprint.HashFile(c.ElmfireExe);
             s["hours"] = CampaignLayout.IsUntilStopped(o.Hours) ? CampaignOptions.UntilStoppedArgument : o.Hours.ToString("R", CultureInfo.InvariantCulture);
+            if (CampaignLayout.IsUntilStopped(o.Hours)) s["elmfire.spotting"] = "off (until the fire stops)";
             s["max_runtime_s"] = o.MaxRuntimeSeconds.ToString("R", CultureInfo.InvariantCulture);
             s["seed"] = o.Seed.ToString(CultureInfo.InvariantCulture);
             s["weather.mode"] = o.WeatherSampling.ToString();

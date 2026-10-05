@@ -433,13 +433,12 @@ namespace Assets.WUInity.GUI.DearIMGUI
             if (UntilStopped)
             {
                 double limitHours = CampaignLayout.UntilStoppedMaxRuntimeSeconds / 3600.0;
-                Fields.Hint("ELMFIRE ends each run when the fire front stops moving and no ember is in flight, so",
-                            "no duration has to be guessed (a Mati fire stops at about 100 h, 7 min of wall clock).",
+                Fields.Hint("ELMFIRE ends each run when the fire front stops moving, so no duration has to be",
+                            "guessed (a Mati fire stops at about 100 h, 7 min of wall clock). Spotting is off in this",
+                            "mode: embers keep the slow tail of a fire going long after it has burned what it will.",
                             $"SIMULATION_TSTOP is set to {CampaignLayout.UntilStoppedTstopHours:0} h; a run still going after {limitHours:0} h of",
                             "wall clock is stopped and counted as failed. Arrival-time percentiles in 1 h bins up to",
-                            $"{CampaignLayout.UntilStoppedStatisticsHours:0} h; later arrivals are reported as {CampaignLayout.UntilStoppedStatisticsHours:0} h.",
-                            "Needs ELMFIRE with the ember-tracker fix (16f306f): before it, the stall exit never fired",
-                            "with spotting on and every run went to the wall-clock limit.");
+                            $"{CampaignLayout.UntilStoppedStatisticsHours:0} h; later arrivals are reported as {CampaignLayout.UntilStoppedStatisticsHours:0} h.");
                 return;
             }
 

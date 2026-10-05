@@ -270,13 +270,15 @@ parallel slot, and on 60–200 realizations for a stable map.
 - **`--hours`** defaults to `until-stopped` with fitted (one-band) weather: `SIMULATION_TSTOP` is a year and
   ELMFIRE's stall exit ends each run when the front stops moving and no ember is in flight. No duration has to be
   guessed, and no fire is cut short and counted as "did not threaten". Mati realization 13 stops at 100 h after 7 min.
-  This needs an ELMFIRE with the ember-tracker fix (ELMFIRE-WUINITY 16f306f): before it, an ember that blew to the
-  domain edge was never retired, the stall exit never fired with spotting on, and the same fire ran to its wall-clock
-  limit (the pre-v1 2000 h campaign took 7–21 h per realization this way). A number of hours still works (1 to 8760).
+  **Spotting is off in this mode** (`ENABLE_SPOTTING` and the ember outputs are set to `.FALSE.` in every
+  realization's namelist): the stall exit waits for every ember to land, and with spotting the same fire crept on to
+  258 h for 0.14 % more area (42,091 against 42,034 acres) - and, in an ELMFIRE without the ember-tracker fix
+  (ELMFIRE-WUINITY 16f306f), never stopped at all, which is how the pre-v1 2000 h campaign took 7–21 h per
+  realization. A number of hours still works (1 to 8760) and keeps the template's spotting.
   Historical-day weather has one band per hour of fire, so it needs hours: 72 by default, 1 to 240.
 - **`--max-runtime-minutes`** defaults to 240 when the fire runs until it stops, else 2 minutes per hour of fire, at
   least 60 (144 min for 72 h). It only stops a fire that is not going to finish; that realization counts as failed.
-  If every realization fails this way, the ELMFIRE build predates the fix above.
+
 - **Historical-day weather** costs one WindNinja solve per hour of fire per realization (about six minutes for
   72 h), and holds more weather bands in memory.
 - **Disk**: each realization keeps its rasters, weather, logs and PREACT outputs — tens of MB. `scratch/` can be

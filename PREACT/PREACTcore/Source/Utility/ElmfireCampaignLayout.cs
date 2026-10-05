@@ -65,10 +65,10 @@ namespace PREACT.Utility
         /// cover the run band by band, so it keeps a duration in hours.
         /// </summary>
         /// <remarks>
-        /// It needs an ELMFIRE with the ember-tracker fix (ELMFIRE-WUINITY 16f306f): before it, an ember that blew to
-        /// the domain edge was never retired, the stall exit waited for it forever, and a Mati realization ran to its
-        /// wall-clock limit at 1162 h of fire instead of stopping at 100 h. Such a run is reported as failed (wall
-        /// clock), not folded in as a finished fire.
+        /// These realizations run without spotting (<see cref="SpottingGroup"/>). The stall exit waits for every
+        /// ember to land; with spotting on, an ELMFIRE without the ember-tracker fix never stopped (an ember at the
+        /// domain edge was never retired), and with the fix the fire still crept on to 258 h for 0.14 % more area.
+        /// A run that reaches the wall-clock limit is reported as failed, not folded in as a finished fire.
         /// </remarks>
         public const double UntilStoppedHours = 0.0;
 
@@ -89,6 +89,20 @@ namespace PREACT.Utility
         /// later than the truth. On Mati 99 % of the burned area is reached by 66 h.
         /// </summary>
         public const double UntilStoppedStatisticsHours = 96.0;
+
+        /// <summary>
+        /// The namelist group a fire that runs until it stops switches spotting off in. Those campaign realizations
+        /// run without spotting: the stall exit waits for every ember to land, and spotting keeps the slow tail going.
+        /// </summary>
+        public const string SpottingGroup = "SPOTTING";
+
+        /// <summary>The &amp;OUTPUTS flags that need spotting: without it their arrays are never allocated.</summary>
+        public static readonly string[] EmberOutputs =
+        {
+            "DUMP_SPOTTING_OUTPUTS", "ACCUMULATE_EMBER_FLUX", "DUMP_EMBER_FLUX", "DUMP_EMBER_IGNITION",
+            "DUMP_EMBER_FLUX_TRANSIENT", "DUMP_TOTAL_DFC_RECEIVED", "DUMP_TOTAL_RAD_RECEIVED", "DUMP_TRANSIENT_DFC",
+            "DUMP_TRANSIENT_RAD", "DUMP_HRR_TRANSIENT",
+        };
 
         /// <summary>The SIMULATION_TSTOP of a campaign realization, in seconds.</summary>
         public static double CampaignTstopSeconds(double hours) =>
