@@ -99,8 +99,13 @@ namespace PREACT.Utility
         /// What decides this run's result (see <see cref="ElmfireFingerprint"/>). Recorded after a successful run.
         /// Null disables reuse.
         /// </param>
+        /// <param name="timestep">
+        /// Called with every "Current Timestep" line ELMFIRE prints, on the process's output thread, as it runs (the
+        /// campaign's live status). The lines still go to <c>elmfire.log</c> as before. Null: not called.
+        /// </param>
         public static Result Run(string elmfireExe, string runDir, string runId, string[] namelistLines,
-                                 bool reuse, TextWriter log, string gdalBinDir = null, string fingerprint = null)
+                                 bool reuse, TextWriter log, string gdalBinDir = null, string fingerprint = null,
+                                 Action<ElmfireTimestep> timestep = null)
         {
             var result = new Result();
             var clock = Stopwatch.StartNew();
@@ -146,7 +151,8 @@ namespace PREACT.Utility
             File.WriteAllLines(result.NamelistPath, namelistLines);
 
             log?.WriteLine($"[{runId}] running ELMFIRE...");
-            int exit = RunProcess(elmfireExe, runDir, "outputs/" + RunNamelistName, gdalBinDir, generation, out string stderrTail);
+            int exit = RunProcess(elmfireExe, runDir, "outputs/" + RunNamelistName, gdalBinDir, generation, timestep,
+                out string stderrTail);
             result.Elapsed = clock.Elapsed;
 
             if (ElmfireProcesses.CancelledSince(generation))
@@ -541,7 +547,7 @@ namespace PREACT.Utility
         /// is kept for the failure message. Registered with <see cref="ElmfireProcesses"/> so a cancel reaches it.
         /// </summary>
         private static int RunProcess(string exe, string runDir, string dataFileName, string gdalBinDir, long generation,
-                                      out string stderrTail)
+                                      Action<ElmfireTimestep> timestep, out string stderrTail)
         {
             var psi = new ProcessStartInfo
             {
@@ -569,7 +575,15 @@ namespace PREACT.Utility
                     lock (sync) log.WriteLine(line);
                 }
 
-                p.OutputDataReceived += (_, e) => Write(e.Data);
+                p.OutputDataReceived += (_, e) =>
+                {
+                    Write(e.Data);
+                    if (timestep != null && ElmfireTimestep.TryParse(e.Data, out ElmfireTimestep step))
+                    {
+                        //A watcher's failure is not the fire's.
+                        try { timestep(step); } catch { }
+                    }
+                };
                 p.ErrorDataReceived += (_, e) =>
                 {
                     if (e.Data == null) return;

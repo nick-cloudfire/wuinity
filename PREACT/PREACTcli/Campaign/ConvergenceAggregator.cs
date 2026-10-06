@@ -61,6 +61,8 @@ namespace PREACTcli.Campaigns
             bool converged = false;
             var previousArea = new double?[Deciles.Length];
             var pending = new List<Task<RealizationOutcome>>();
+            CampaignMonitor monitor = _c.Monitor;
+            monitor?.SetPhase(CampaignStatus.PhaseRunning);
 
             while (true)
             {
@@ -68,6 +70,7 @@ namespace PREACTcli.Campaigns
                 {
                     int index = o.Start + launched;
                     ++launched;
+                    monitor?.SetLaunched(launched);
                     pending.Add(Task.Factory.StartNew(() => RealizationBuilder.Run(_c, index, Stopping),
                         CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default));
                 }
@@ -170,6 +173,7 @@ namespace PREACTcli.Campaigns
                 //it was, and a row of zeros for it made the GUI's table drop to nothing after each one (e2e F6).
                 EmitProgressJson(result.Id, status, nOk, nNotThreatened, nFailed, streak, o.Streak, converged,
                     status == CampaignLayout.StatusOk ? area : null, delta);
+                monitor?.SetCounts(launched, completed, nOk, nNotThreatened, nFailed, nReused, streak, converged);
 
                 if (converged && pending.Count > 0 && !_stopping)
                 {
@@ -185,6 +189,7 @@ namespace PREACTcli.Campaigns
 
             if (ChildProcessGuard.IsCancelled)
             {
+                if (monitor != null) monitor.Message = $"cancelled after {completed} realization(s) ({nOk} boundaries); --resume continues it";
                 Console.Error.WriteLine($"Cancelled after {completed} realization(s) ({nOk} boundaries). Nothing is lost: "
                                         + "--resume continues this campaign.");
                 return 3;
@@ -193,8 +198,14 @@ namespace PREACTcli.Campaigns
             string truncated = DescribeTruncated(nTruncated, completed, o.MaxRuntimeSeconds);
             if (truncated != null) Console.Error.WriteLine("WARNING: " + truncated);
 
+            monitor?.SetPhase(CampaignStatus.PhaseAggregating);
             if (insideCount == null || nOk == 0)
             {
+                if (monitor != null)
+                {
+                    monitor.Message = $"no realization produced a usable trigger boundary ({nNotThreatened} fire(s) never "
+                                      + $"reached the WUI area, {nFailed} failed)";
+                }
                 Console.Error.WriteLine($"ERROR: no realization produced a usable trigger boundary ({nNotThreatened} fire(s) "
                                         + $"never reached the WUI area, {nFailed} failed); nothing to aggregate. See "
                                         + Path.Combine(_c.Folder, CampaignLayout.RealizationsCsv) + ".");
@@ -204,6 +215,7 @@ namespace PREACTcli.Campaigns
 
             if (!converged)
             {
+                if (monitor != null) monitor.Message = $"reached --max {o.MaxRealizations} realizations without converging";
                 Console.Error.WriteLine($"WARNING: reached --max {o.MaxRealizations} realizations ({nOk} boundaries) without "
                                         + "converging; the probability raster is not yet stable.");
             }

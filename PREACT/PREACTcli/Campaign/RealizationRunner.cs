@@ -71,7 +71,8 @@ namespace PREACTcli.Campaigns
 
                 Console.WriteLine($"[{id}] running evacuation + k-PERIL...");
                 long generation = ElmfireProcesses.Generation;
-                int exit = RunProcess(c.PreactExe, tempWui, logPath);
+                int exit = RunProcess(c.PreactExe, tempWui, logPath,
+                    c.Monitor == null ? null : (Action<string>)(line => ReportProgress(c.Monitor, index, line)));
                 if (ElmfireProcesses.CancelledSince(generation))
                 {
                     cancelled = true;
@@ -284,7 +285,47 @@ namespace PREACTcli.Campaigns
         /// --parallel width would bury the campaign's own lines. Registered with <see cref="ElmfireProcesses"/> so a
         /// cancel kills it (and SUMO with it) along with the fires.
         /// </summary>
-        private static int RunProcess(string exe, string wuiPath, string logPath)
+        /// <summary>
+        /// What a line of PREACT.exe's output says about how far the evacuation has got: its clock (the
+        /// <see cref="CampaignLayout.SimulationTimeTag"/> lines), or the step it has reached.
+        /// </summary>
+        internal static void ReportProgress(CampaignMonitor monitor, int index, string line)
+        {
+            if (TryParseSimulationTime(line, out double seconds, out double end))
+            {
+                monitor.EvacuationTime(index, seconds, end);
+                return;
+            }
+
+            string step = DescribeStep(line);
+            if (step != null) monitor.Detail(index, step);
+        }
+
+        /// <summary><c>SIM_TIME 3600 of 86400 s</c>: the evacuation's clock and its end, in seconds.</summary>
+        internal static bool TryParseSimulationTime(string line, out double seconds, out double end)
+        {
+            seconds = end = -1.0;
+            if (line == null || !line.StartsWith(CampaignLayout.SimulationTimeTag, StringComparison.Ordinal)) return false;
+
+            string[] parts = line.Substring(CampaignLayout.SimulationTimeTag.Length).Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length < 1 || !double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out seconds)) return false;
+            if (parts.Length >= 3 && parts[1] == "of") double.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out end);
+            return true;
+        }
+
+        /// <summary>The step of PREACT.exe's run a line of its log marks the start of, or null.</summary>
+        internal static string DescribeStep(string line)
+        {
+            if (string.IsNullOrEmpty(line)) return null;
+            if (line.Contains("Reading input file")) return "reading the scenario";
+            if (line.Contains("Loading net-file")) return "loading the road network";
+            if (line.Contains("Traffic module SUMO initiated") || line.Contains("AscFire started")) return "evacuating";
+            if (line.Contains("Starting calculation of trigger buffer")) return "k-PERIL boundary";
+            if (line.Contains("Simulation done.")) return "writing results";
+            return null;
+        }
+
+        private static int RunProcess(string exe, string wuiPath, string logPath, Action<string> progress = null)
         {
             var psi = new ProcessStartInfo
             {
@@ -309,7 +350,14 @@ namespace PREACTcli.Campaigns
                     lock (sync) log.WriteLine(line);
                 }
 
-                p.OutputDataReceived += (_, e) => Write(e.Data);
+                p.OutputDataReceived += (_, e) =>
+                {
+                    Write(e.Data);
+                    if (progress != null && e.Data != null)
+                    {
+                        try { progress(e.Data); } catch { }
+                    }
+                };
                 p.ErrorDataReceived += (_, e) => Write(e.Data);
 
                 p.Start();

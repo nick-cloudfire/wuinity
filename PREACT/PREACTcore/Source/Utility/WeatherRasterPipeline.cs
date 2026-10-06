@@ -320,6 +320,12 @@ namespace PREACT.Utility
             public Action<string> Log;
 
             /// <summary>
+            /// Told which stage the run is entering - "drawing the weather", "WindNinja", "WindNinja band 3 of 72", "fuel
+            /// moisture" - for a progress display (the campaign's live status). Null: not told.
+            /// </summary>
+            public Action<string> Stage;
+
+            /// <summary>
             /// Asked before every WindNinja solve and between the stages; once it answers true the run stops and
             /// returns with <see cref="Result.Cancelled"/>, having written no wind. Null never stops.
             /// </summary>
@@ -397,6 +403,7 @@ namespace PREACT.Utility
         {
             void Log(string m) => o.Log?.Invoke(m);
             var result = new Result();
+            o.Stage?.Invoke("drawing the weather");
 
             //---------------------------------------------------------------- climatology
             List<HourlyWeatherRow> rows = null;
@@ -500,10 +507,12 @@ namespace PREACT.Utility
             if (drawn.HasValue)
             {
                 //Not Nelson: it integrates real antecedent hours and a drawn realization has none.
+                o.Stage?.Invoke("fuel moisture");
                 WriteEquilibriumMoisture(o, result, bandTimes.Count, drawn.Value, Log);
             }
             else
             {
+                o.Stage?.Invoke("fuel moisture (Nelson)");
                 RunNelson(o, result, bandTimes, rows, day, Log);
             }
 
@@ -918,6 +927,8 @@ namespace PREACT.Utility
                     //then does what it does - the field it returns is not uniform, it is this direction bent by
                     //the terrain, which is the point of forcing it here rather than writing wd.tif afterwards.
                     double bandDir = o.ForceWindDirectionDeg ?? (row?.WindDirection ?? windDir);
+
+                    o.Stage?.Invoke(bandTimes.Count > 1 ? $"WindNinja band {b + 1} of {bandTimes.Count}" : "WindNinja");
 
                     WindNinjaRunner.Result wn = WindNinjaRunner.Run(
                         o.WindNinjaExe, dem, o.Grid, o.InputsDirectory,

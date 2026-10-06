@@ -241,7 +241,7 @@ namespace PREACT.Utility
         private static DateTime LastWritten(string folder)
         {
             DateTime at = Directory.GetLastWriteTimeUtc(folder);
-            foreach (string name in new[] { ManifestFile, ConvergenceCsv, LiveProbabilityRaster, ProbabilityRaster })
+            foreach (string name in new[] { ManifestFile, StatusFile, ConvergenceCsv, LiveProbabilityRaster, ProbabilityRaster })
             {
                 string path = Path.Combine(folder, name);
                 if (File.Exists(path))
@@ -406,6 +406,12 @@ namespace PREACT.Utility
         public const string ProbabilityRaster = "trigger_probability.asc";
         public const string LiveProbabilityRaster = "trigger_probability_live.asc";
         public const string RealizationsCsv = "realizations.csv";
+
+        /// <summary>What the campaign is doing now (<see cref="CampaignStatus"/>), rewritten about once a second while it runs.</summary>
+        public const string StatusFile = "status.json";
+
+        /// <summary>Everything the campaign CLI printed, appended run after run (a resume adds to it).</summary>
+        public const string CampaignLogFile = "campaign.log";
         public const string WeatherDistributionsCsv = "weather_distributions.csv";
         public const string WeatherRealizationsCsv = "weather_realizations.csv";
         public const string EnsemblePrefix = "ensemble";
@@ -457,6 +463,12 @@ namespace PREACT.Utility
         /// and how many realizations it would reuse.
         /// </summary>
         public const string InspectTag = "CAMPAIGN_INSPECT ";
+
+        /// <summary>
+        /// PREACT.exe's evacuation progress, <c>SIM_TIME &lt;seconds&gt; of &lt;end seconds&gt;</c>, printed every few
+        /// seconds of wall clock while a simulation runs, for the campaign's status (<see cref="CampaignStatus"/>).
+        /// </summary>
+        public const string SimulationTimeTag = "SIM_TIME ";
 
         /// <summary>Realization outcome categories, in the CSV and PROGRESS_JSON.</summary>
         public const string StatusOk = "ok";

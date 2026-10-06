@@ -79,7 +79,10 @@ namespace PREACT
 
             EngineTask engineTask = new EngineTask(numberOfRuns, simulationIndexOffset);
             Ran = true;
-            await _engine.RunSimulations(engineTask);
+            using (new Timer(_ => PrintSimulationTime(), null, SimulationTimePeriodMs, SimulationTimePeriodMs))
+            {
+                await _engine.RunSimulations(engineTask);
+            }
 
             if (!_engine.LastRunSucceeded)
             {
@@ -87,6 +90,36 @@ namespace PREACT
                 return ExitRunFailed;
             }
             return ExitSuccess;
+        }
+
+        /// <summary>How often the simulation's clock is printed while it runs, in milliseconds of wall clock.</summary>
+        private const int SimulationTimePeriodMs = 5000;
+
+        private double _lastPrintedTime = -1.0;
+
+        /// <summary>
+        /// <c>SIM_TIME &lt;seconds&gt; of &lt;end seconds&gt;</c> while a simulation runs and its clock has moved: what
+        /// a trigger campaign shows as the evacuation's progress (its log otherwise states the time only when a
+        /// module has something to say, which during the SUMO run can be minutes apart).
+        /// </summary>
+        private void PrintSimulationTime()
+        {
+            try
+            {
+                Simulation simulation = _engine.Simulation;
+                if (simulation == null || simulation.State != Simulation.SimulationState.Running || simulation.Time == null) return;
+
+                double now = simulation.Time.SimulationTime;
+                if (now == _lastPrintedTime) return;
+                _lastPrintedTime = now;
+                Console.WriteLine(Utility.CampaignLayout.SimulationTimeTag
+                                  + now.ToString("0", System.Globalization.CultureInfo.InvariantCulture) + " of "
+                                  + simulation.Time.SimulationEndTime.ToString("0", System.Globalization.CultureInfo.InvariantCulture) + " s");
+            }
+            catch
+            {
+                //A progress line is never worth a run.
+            }
         }
 
         public void NewLogMessage(string message)

@@ -42,6 +42,7 @@ namespace PREACTcli.Campaigns
             string id = CampaignLayout.RealizationId(index);
             var outcome = new RealizationOutcome { Index = index, Id = id };
             string dir = c.RealizationDir(id);
+            c.Monitor?.Begin(index);
 
             try
             {
@@ -62,6 +63,10 @@ namespace PREACTcli.Campaigns
                 Console.Error.WriteLine($"[{id}] failed: {outcome.Message}");
                 TryRecordFailure(dir, outcome.Message);
                 return outcome;
+            }
+            finally
+            {
+                c.Monitor?.End(index);
             }
         }
 
@@ -130,6 +135,7 @@ namespace PREACTcli.Campaigns
 
             if (stopping()) { outcome.Cancelled = true; return outcome; }
 
+            c.Monitor?.Stage(index, RealizationProgress.StageEvacuation, "starting PREACT");
             bool ok = RealizationRunner.Run(c, index, id, dir, record, out string message, out bool cancelled);
             if (cancelled || stopping())
             {
@@ -165,6 +171,8 @@ namespace PREACTcli.Campaigns
             CampaignOptions o = c.Options;
 
             // ---- ignition, and the bearing from it to the WUI area
+            CampaignMonitor monitor = c.Monitor;
+            monitor?.Stage(index, RealizationProgress.StageWeather, "drawing the ignition");
             double? windFrom = null;
             if (o.WindToWui)
             {
@@ -199,6 +207,7 @@ namespace PREACTcli.Campaigns
             //A stop (convergence, cancel) starts no further WindNinja band for this realization, instead of one band
             //after another for the rest of its series until the stage ended.
             per.Cancelled = stopping;
+            if (monitor != null) per.Stage = stage => monitor.Detail(index, stage);
 
             WeatherRasterPipeline.Result weather = WeatherRasterPipeline.Run(per).GetAwaiter().GetResult();
             if (stopping()) { outcome.Cancelled = true; return false; }
@@ -221,7 +230,9 @@ namespace PREACTcli.Campaigns
 
             // ---- ELMFIRE
             string[] lines = BuildNamelist(c, index, dir, weatherDir, record, weather);
-            ElmfireRunner.Result run = ElmfireRunner.Run(c.ElmfireExe, dir, id, lines, reuse: false, Console.Out, c.GdalBin);
+            monitor?.Stage(index, RealizationProgress.StageElmfire, "starting");
+            ElmfireRunner.Result run = ElmfireRunner.Run(c.ElmfireExe, dir, id, lines, reuse: false, Console.Out, c.GdalBin,
+                timestep: monitor == null ? null : (Action<ElmfireTimestep>)(step => monitor.ElmfireTimestep(index, step)));
             if (run.Cancelled || stopping())
             {
                 outcome.Cancelled = true;

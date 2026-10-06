@@ -39,6 +39,10 @@ namespace PREACTcli
 
             ChildProcessGuard.Install(o.CancelOnStdinClose);
 
+            //Copied into the campaign folder's campaign.log once the folder is known; the answer to --inspect is only
+            //for whoever asked.
+            if (!o.Inspect) CampaignLog.Install();
+
             Campaign c = CampaignSetup.Resolve(o);
             if (c == null) return 1;
 
@@ -103,22 +107,55 @@ namespace PREACTcli
                     return 1;
                 }
 
-                if (match) WarnIfPreactChanged(existing, c);
-
-                if (!o.ResumeOnly)
-                {
-                    if (!CampaignSetup.PrepareWeather(c)) return 1;
-                    WriteSnapshots(c);
-                }
-
-                if (!match) CampaignManifest.Write(c);
-                if (!o.ResumeOnly) CampaignReports.WriteWeatherDistributions(c);
-
+                //Only once the lock is held: the folder's status and log belong to the campaign that owns it.
+                CampaignLog.Attach(c.Folder);
+                //Before the weather is prepared, which can take minutes: a window watching the campaign finds its
+                //folder - and the status file saying it is being set up - from the start.
                 Console.WriteLine(CampaignLayout.CampaignDirTag + c.Folder);
-                PrintSummary(c, match);
-
-                return new ConvergenceAggregator(c).Run();
+                using (c.Monitor = new CampaignMonitor(c))
+                {
+                    int code = 1;
+                    try
+                    {
+                        code = RunLocked(c, match, existing);
+                        return code;
+                    }
+                    catch (Exception e)
+                    {
+                        c.Monitor.Message = e.GetType().Name + ": " + e.Message;
+                        throw;
+                    }
+                    finally
+                    {
+                        if (code != 0 && ChildProcessGuard.IsCancelled) code = 3;
+                        c.Monitor.Finish(code, c.Monitor.Message);
+                        CampaignLog.Close();
+                    }
+                }
             }
+        }
+
+        private static int RunLocked(Campaign c, bool match, CampaignManifest existing)
+        {
+            CampaignOptions o = c.Options;
+            if (match) WarnIfPreactChanged(existing, c);
+
+            if (!o.ResumeOnly)
+            {
+                if (!CampaignSetup.PrepareWeather(c))
+                {
+                    c.Monitor.Message = "the campaign's weather could not be prepared (see the log)";
+                    return 1;
+                }
+                WriteSnapshots(c);
+            }
+
+            if (!match) CampaignManifest.Write(c);
+            if (!o.ResumeOnly) CampaignReports.WriteWeatherDistributions(c);
+
+            PrintSummary(c, match);
+
+            return new ConvergenceAggregator(c).Run();
         }
 
         /// <summary>

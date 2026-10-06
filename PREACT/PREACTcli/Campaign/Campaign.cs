@@ -85,6 +85,9 @@ namespace PREACTcli.Campaigns
         public SortedDictionary<string, string> Information = new SortedDictionary<string, string>(StringComparer.Ordinal);
 
         public string SettingsHash;
+
+        /// <summary>The live status of the running campaign (status.json); null for --inspect.</summary>
+        public CampaignMonitor Monitor;
         public string Folder;
         public string RealizationsDir;
 
