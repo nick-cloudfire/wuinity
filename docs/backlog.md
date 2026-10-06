@@ -73,4 +73,4 @@ The CHANGELOG's v1.1 section has the details of each.
   ([distribution.md](distribution.md)).
 
 ### Repository
-- **`RoadFuelRasterizer`** from `local-aug-wip` — ported, as the fuels step's optional "Burn roads into the fuel".
+- **`RoadFuelRasterizer`** from `local-aug-wip` — ported; now applied by the case build when `[ELMFIRE] RoadsCarryFire` is on and the fuel has no FireDX road cells.

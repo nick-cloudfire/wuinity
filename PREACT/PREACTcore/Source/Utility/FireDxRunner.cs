@@ -523,6 +523,9 @@ namespace PREACT.Utility
             env["PYTHONPATH"] = package + separator + shim + (string.IsNullOrEmpty(existing) ? string.Empty : separator + existing);
             env["PYTHONUNBUFFERED"] = "1";
             env["PYTHONIOENCODING"] = "utf-8";
+            //No __pycache__ written into FireDX's source: it is a submodule under the Unity project's Assets, which Unity
+            //would import, and a checkout git would report as modified.
+            env["PYTHONDONTWRITEBYTECODE"] = "1";
             //tqdm's bars, one line each instead of carriage returns.
             env["TQDM_MININTERVAL"] = "5";
 

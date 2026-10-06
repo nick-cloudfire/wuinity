@@ -49,10 +49,23 @@
   second corner; the pick says why and waits.
 - **DEM**: OpenTopography is asked for a margin that covers the UTM grid to its corners (Auburn2's padded domain
   was 0.0002 deg short, and its grid corners about 500 m beyond the box asked for).
-- **Burn roads into the fuel** (optional, step 4): Nick's road-to-fuel conversion (RoadFuelRasterizer), burning the
-  SUMO lanes into the case's fuel as GR1 where it is non-burnable, with the islet counts before and after. When the
-  scenario names no fuel layer, the case's own is copied to `downloads/<Name>_fbfm40_original.tif` first, which the
-  roads raster then records, so it can be undone.
+- **Roads carry fire** (optional, step 4, `[ELMFIRE] RoadsCarryFire`): every case build gives the fuel's road cells
+  GR1 (101; 1 for Anderson 13) - after FireDX exactly its pavement and road cells (256), its building cells (91) left
+  alone; otherwise the SUMO lanes where the fuel is non-burnable (Nick's RoadFuelRasterizer). Applied to the fuel as
+  warped, so it survives rebuilds and campaigns get it; unticking restores the fuel at the next build. The build logs
+  the burnable patches, islets and how much of the WUI area the ignition's fuel patch reaches, before and after, and
+  `case_sources.txt` records it. Replaces the one-shot **Burn roads into the fuel**, which rewrote `FuelModelFile`.
+  On Auburn2 with FireDX layers (synthetic footprints) the ignition point sits on a road cell: 0 cells burned in 6 h
+  without it, 842 (all in the WUI area) with it.
+- **Prepare buildings (FireDX)** (optional, step 4; `PREACTcli firedx`): FireDX (a private, proprietary submodule at
+  `WUInity/Assets/ThirdParty/firedx`, never shipped) makes the five building layers from footprints and splits the
+  FBFM40 urban class into buildings (91) and pavement/roads (256), into `downloads/firedx/`; the step names them as the
+  fuel and building source layers and switches the building spread model on. FireDX's own attribute join only works
+  in California, online; the **basic** path (auto elsewhere) works anywhere, offline with a footprints file. Missing
+  Python modules and unreachable hosts are named before any work. `BuildingAreaFile` is `baa_m.tif`: ELMFIRE's
+  `BLDG_AREA` is a plan dimension in m. FireDX's `building_fuel_models.csv` goes into the case with its codes.
+- Fuel 256 and 90-100 are non-burnable wherever the build checks fuel (the ignition mask, ignition points), as in
+  ELMFIRE; FireDX's pavement used to count as burnable there.
 - The "names no SUMO configuration" warning is given once, not on every destination click; the map rereads the
   network after the roads step builds it.
 - `Spatial/Maps/OverpassClient.cs` is removed: nothing used it once the OSM download got its own Overpass client.
@@ -103,6 +116,10 @@
   from nothing on the fire grid.
 
 ### Tools and the standalone program
+
+- Help > External tools and keys, and `tools.ini`, take **FireDX's Python** (`FireDxPython`; else a conda environment
+  named `firedx`) and **source** (`FireDxPackage`; else the submodule). `build-player.ps1` fails if FireDX's package
+  ends up in the output: it is proprietary and is not distributed ([Distribution](docs/distribution.md#firedx)).
 
 - **Help > External tools and keys takes a path for each tool**: ELMFIRE, the GDAL tools, WindNinja, SUMO (its
   folder or its `bin`) and PROJ's data. Each path is checked as it is typed, and must hold the program. The paths

@@ -407,11 +407,25 @@ $readme = @(
     '  SUMO 1.22                    traffic, and the GDAL library (gdal.dll) the engine loads from its bin',
     '  QGIS or OSGeo4W              GDAL''s command-line tools, which ELMFIRE runs',
     '  WindNinja                    terrain-resolved wind (without it a case gets one wind for the whole domain)',
+    '  FireDX (optional)            building layers from footprints; proprietary, so never shipped here: a clone of',
+    '                               it and a conda environment for it, named under Help > External tools and keys',
     '',
     'Help > External tools and keys shows which of each is used and where it was found, and takes a path for each.',
     'Those paths are saved per user in %APPDATA%\PREACT\tools.ini, which PREACT.exe and PREACTcli read too.'
 )
 Set-Content -LiteralPath ([System.IO.Path]::Combine($Output, 'README.txt')) -Value $readme -Encoding UTF8
+
+# ------------------------------------------------------------------ FireDX stays out
+# FireDX (WUInity\Assets\ThirdParty\firedx, a submodule) is proprietary - "Proprietary License, Copyright (c) 2025 Maria
+# Faye Theodori" - and may not be redistributed with WUInity. Nothing above copies it and Unity puts no .py into a player,
+# so this only checks that it stayed that way: any copy of its package in the output fails the build.
+Step 'FireDX is not in the output'
+$fireDx = @(Get-ChildItem -LiteralPath $Output -Recurse -Force -File -Filter 'generate.py' -ErrorAction SilentlyContinue |
+            Where-Object { (Split-Path -Leaf (Split-Path -Parent $_.FullName)) -eq 'firedx' })
+if ($fireDx.Count -gt 0) {
+    Fail ("FireDX's source ended up in the standalone build ($($fireDx[0].FullName)). FireDX is proprietary and is not shipped: " +
+          'remove it from the output and from whatever copied it there.')
+}
 
 # ------------------------------------------------------------------ done
 $size = (Get-ChildItem -LiteralPath $Output -Recurse -Force -File | Measure-Object -Property Length -Sum).Sum

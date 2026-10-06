@@ -139,9 +139,11 @@ density.
   layers > Get them** choose the release (`closest` to the scenario's year by default; an earlier one for a
   historic fire) and enter your contact e-mail, which LANDFIRE asks every request for (kept for your user, not
   in the scenario).
-- Optional: **Burn roads into the fuel** burns the SUMO network into the case's fuel as GR1 where the fuel is
-  non-burnable, for fuel maps whose roads cut burnable ground into islands. It needs the fire case and the SUMO
-  network; see [ELMFIRE cases](elmfire-cases.md#where-the-layers-come-from).
+- Optional: **Prepare buildings (FireDX)** makes the five building layers from building footprints and splits the
+  fuel's urban class into buildings and roads. It needs FireDX (a private submodule) and a Python environment for it,
+  named under Help > External tools and keys; see [ELMFIRE cases](elmfire-cases.md#where-the-layers-come-from).
+- Optional: **Roads carry fire** gives the fuel's road cells grass (GR1) at every build of the case, so a fire is not
+  stopped by every road: FireDX's road cells when it has run, otherwise the SUMO network's lanes.
 - **Elsewhere**: **Source layers** takes a fuel model raster of your own, in any CRS — coded as Scott & Burgan 40,
   or Anderson 13 with `FuelModelStandard` set to match — and optional canopy rasters.
 

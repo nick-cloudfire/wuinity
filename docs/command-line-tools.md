@@ -170,6 +170,25 @@ one the GUI keeps for this user in `tools.ini` (`[User] LandfireEmail`). Without
 are written into the `.wui` and nothing else changes. Then run `build-case`. Exit 0 on success, 1 when the download
 or the split failed (LFPS's message is printed), 2 for a bad argument.
 
+### `firedx` — building layers from FireDX
+
+```
+PREACTcli firedx --wui <file.wui> [--fire-year <year>|scenario] [--footprints <file>]
+                 [--attributes auto|california|basic] [--python <python>] [--firedx <folder>] [--update-wui]
+```
+
+The GUI's Prepare buildings (FireDX) (the same engine function, `FireDxRunner`): FireDX run on the scenario's FBFM40 fuel
+source (`[ELMFIRE] FuelModelFile`, else the case's `fbfm40.tif`) into `downloads/firedx/`. `--footprints` uses a file
+instead of downloading them; `--attributes` picks FireDX's own US/California join or the basic path that works anywhere
+(auto: by where the area is); `--fire-year` leaves out buildings built later (`scenario`: the scenario's start year).
+Python: `--python`, else `FireDxPython` in `tools.ini`, else a conda environment named `firedx`; FireDX: `--firedx`, else
+`FireDxPackage`, else the submodule. FireDX's output is printed and kept in `downloads/firedx/firedx.log`; Ctrl+C stops
+it. Without `--update-wui` the keys are printed; with it `FuelModelFile`, `FuelModelStandard`, the five `Building*File`
+keys and `[ElmfireNamelist] USE_BLDG_SPREAD_MODEL=true` are written into the `.wui` and the case's old fuel and building
+layers are moved to `inputs/_replaced/`. Then run `build-case`. Exit 0 on success, 1 when FireDX could not run or failed
+(the message says why: no Python, missing modules, no network, outside California, no buildings), 2 for a bad argument,
+130 when stopped. See [ELMFIRE cases](elmfire-cases.md#where-the-layers-come-from).
+
 ### `converge-trigger` — probabilistic trigger campaign
 
 Runs ELMFIRE realizations, each from its own ignition and weather; for every fire that reaches the WUI area, an

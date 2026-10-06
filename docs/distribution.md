@@ -146,6 +146,8 @@ GdalBin = C:\Program Files\QGIS 3.40.4\bin
 WindNinjaExe =
 Sumo = C:\Program Files (x86)\Eclipse\Sumo
 ProjData = C:\Program Files\QGIS 3.40.4\share\proj
+FireDxPython = C:\Users\you\miniconda3\envs\firedx\python.exe
+FireDxPackage =
 [User]
 LandfireEmail = you@example.org
 ```
@@ -155,6 +157,29 @@ are kept when the window saves. The same file keeps the **LANDFIRE contact e-mai
 entered in the fuels step (Fuels, canopy and buildings > Get them); `LANDFIRE_EMAIL` and `PREACTcli landfire --email`
 come before it. An e-mail an earlier v1.1 build kept in `%APPDATA%\WUInity\user-settings.txt` is moved into this
 file the first time it is needed.
+
+## FireDX
+
+[FireDX](https://github.com/ma-th/firedx), which makes the building layers ([ELMFIRE cases](elmfire-cases.md#where-the-layers-come-from)),
+is **proprietary** ("Proprietary License, Copyright (c) 2025 Maria Faye Theodori") and a private repository. It is a git
+submodule at `WUInity/Assets/ThirdParty/firedx`, like ELMFIRE, and **is never part of a standalone build**: nothing copies
+it, Unity puts no Python into a player, and `build-player.ps1` fails if a copy of its package (`firedx\generate.py`) turns
+up in the output anyway. Do not add it to a distribution, a zip or `docs\`.
+
+- **Checking it out** needs access to the repository: `git submodule update --init WUInity/Assets/ThirdParty/firedx`.
+  Without it the submodule folder is empty, everything else works, and Prepare buildings (FireDX) says so.
+- **Its Python**: a conda environment from FireDX's `environment.yml` (`conda env create -f environment.yml` in the FireDX
+  folder, which names it `firedx`). FireDX is run from its source with `PYTHONPATH`, so it need not be installed into the
+  environment. PREACT's own small driver (`preact_firedx.py`, GPL, inside `PREACTcore.dll`) is written beside the output.
+- **A standalone build** finds no submodule beside it: name a FireDX clone (`FireDxPackage`) and the environment's Python
+  (`FireDxPython`) under Help > External tools and keys.
+
+| Tool | Automatic search |
+|---|---|
+| FireDX Python | a conda environment named `firedx`: the active one (`CONDA_PREFIX`), then `envs\firedx` under `CONDA_EXE`'s install, `MAMBA_ROOT_PREFIX`, and `miniconda3`, `anaconda3`, `miniforge3`, `mambaforge`, `micromamba`, `.conda` in your profile, `%LOCALAPPDATA%` and `%ProgramData%` |
+| FireDX source | `WUInity/Assets/ThirdParty/firedx` above the program or the working folder |
+
+Both take effect at the next run. In the ini they are `[Tools] FireDxPython` and `FireDxPackage`.
 
 ## Keys
 

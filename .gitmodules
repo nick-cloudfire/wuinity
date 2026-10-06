@@ -11,3 +11,7 @@
 [submodule "PREACT/ThirdParty/kPERIL"]
 	path = PREACT/ThirdParty/kPERIL
 	url = https://github.com/nick-cloudfire/kPERIL.git
+[submodule "WUInity/Assets/ThirdParty/firedx"]
+	path = WUInity/Assets/ThirdParty/firedx
+	url = https://github.com/ma-th/firedx.git
+	branch = main

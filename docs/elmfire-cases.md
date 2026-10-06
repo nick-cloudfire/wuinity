@@ -156,16 +156,64 @@ the next build (not a rebuild) warps the new ones (save the scenario to keep it 
 file names, and so in `case_sources.txt`. It refuses a domain outside the US; a failed job is reported with LFPS's
 message, and network errors are retried.
 
-**Roads in the fuel (optional).** A fuel map marks roads, and the town around them, non-burnable, which can cut
-burnable ground into islands an ignition never grows out of. **Burn roads into the fuel** (step 4, or Fuels,
-canopy and buildings) burns the SUMO network's lanes into the case's `fbfm40` (or `fbfm13`) as fuel model 101
-(GR1; 1 for Anderson 13), only where the fuel is non-burnable (91–99), has data, and no building model owns the
-cell. It keeps the result as `downloads/<Name>_fbfm40_roads101.tif`, names it as `FuelModelFile` and puts it in the
-case, and reports the burnable patches and single-cell islets before and after: if they do not change, the roads
-were not the problem. GR1 does spread fire, slowly, so this changes the physics. A scenario that names no
-`FuelModelFile` has only the case's own `fbfm40.tif`, so that is copied first to `downloads/<Name>_fbfm40_original.tif`.
-To undo it, name the original layer again (the roads raster records it as `ROADS_BURNED_FROM`) and rebuild; after a
-domain or padding change, do that first and burn the roads again.
+**Buildings from FireDX (optional).** [FireDX](https://github.com/ma-th/firedx) (Maria Theodori's building data
+engine; a private repository and a proprietary licence, so a git submodule at `WUInity/Assets/ThirdParty/firedx` that
+is never shipped, see [Distribution](distribution.md#firedx)) makes the five building layers from building footprints.
+Step 4's **Prepare buildings (FireDX)** (also Fuels, canopy and buildings > Buildings > From FireDX, and
+`PREACTcli firedx`) runs it on the scenario's FBFM40 fuel source: `[ELMFIRE] FuelModelFile` on LANDFIRE's grid, not the
+case's resampled copy, so all six layers are warped onto the case grid the same way at the next build (a scenario that
+names no fuel layer uses the case's `fbfm40.tif`; FireDX's own output, or a raster the roads were burned into, leads back
+to the fuel it was made from). It writes into `downloads/firedx/`:
+
+| File | Becomes | What |
+|---|---|---|
+| `fbfm40b.tif` | `FuelModelFile` | the fuel with LANDFIRE's urban class 91 split: cells with a building stay **91**, the rest (pavement, roads) become **256**, which ELMFIRE does not burn; a cell a footprint reaches into also becomes 91 |
+| `baa_m.tif` | `BuildingAreaFile` | the mean building **plan dimension in m** (the square root of the mean footprint area). ELMFIRE's `BLDG_AREA` is the Hamada model's "average building plan dimension, m" (`elmfire_spread_rate.f90`; constant default 20), so not `baa_m2.tif` |
+| `ssd_min.tif` | `BuildingSeparationFile` | the minimum separation to the next building, m (999 for a building alone) |
+| `nbf.tif`, `ff.tif` | `BuildingNonBurnableFractionFile`, `BuildingFootprintFractionFile` | the fire-resistant share and the footprint share of each cell |
+| `bfm.tif` | `BuildingFuelModelFile` | FireDX's building fuel models 1-7, with FireDX's `building_fuel_models.csv` (its codes are not those of ELMFIRE's default table; the build puts it into the case) |
+| `buildings_data.geojson`, `firedx.log`, `firedx_sources.txt` | | the buildings with their attributes, everything FireDX printed, and what the run was made from |
+
+The step also switches `[ElmfireNamelist] USE_BLDG_SPREAD_MODEL` on (it reaches the namelist when the case has all five
+layers), and moves the case's fuel and building layers to `inputs/_replaced/<stem>.before-firedx.tif` so the next build
+warps the new ones. Footprints are downloaded (Microsoft's global ML footprints and OpenStreetMap) unless a file is given
+(GeoJSON, GeoPackage, shapefile). Attributes, **Attributes** in the panel or `--attributes`:
+
+- **california**: FireDX's own join, the USACE National Structure Inventory (occupancy, year built, stories) and CAL FIRE's
+  fire hazard severity zones. It needs the network, and has data only in California: outside the US the inventory
+  returns nothing and FireDX stops ("Could not infer feature type for run job"); in the US outside California the hazard
+  zone query returns nothing and FireDX stops too.
+- **basic**: FireDX's footprints, its area and separation metrics and its building fuel models, with every building
+  taken as residential and nothing joined. Works anywhere, and offline with a footprints file.
+- **auto** (default): california when the area's centre is in California, basic elsewhere.
+
+**Hindcast** (or `--fire-year <year|scenario>`) leaves out buildings built after the year, where the attributes say when
+a building was built (the inventory does; footprints alone do not, and the log says so). Before any work the step checks
+that FireDX's Python has its modules (it names the missing ones) and that the hosts the chosen path downloads from answer
+(it names them, and the ways round: a footprints file, the basic path); a stop ends the Python process. Python comes from
+Help > External tools and keys (`FireDxPython`), else a conda environment named `firedx` (FireDX's `environment.yml`
+makes one); FireDX's source from `FireDxPackage`, else the submodule. FireDX is run from its source (`PYTHONPATH`), so the
+environment needs FireDX's dependencies only, not FireDX installed.
+
+**Roads carry fire (optional).** A fuel map marks roads, and the town around them, non-burnable, so a road network cuts
+burnable ground into pieces and a fire can stall at the first road on its way into the community. With
+**Roads carry fire** ticked (step 4, Fuels, canopy and buildings, the Fire input tab; `[ELMFIRE] RoadsCarryFire=true`)
+every build of the case gives the road cells fuel model **101** (GR1; **1** for Anderson 13):
+
+- after FireDX, exactly its **256** cells (urban without a building); the **91** building cells stay buildings;
+- otherwise the SUMO network's lanes, burned into the cells they cross where the fuel is non-burnable and has data,
+  leaving the cells the building area layer marks alone (one cell wide);
+- with neither, nothing changes and the build says why.
+
+It is applied to the fuel as warped from its source, so it survives a rebuild and a campaign's cases carry it. The fuel
+before the roads is kept as `inputs/_roads/<stem>.tif`; the next build restores it, so unticking gives the case its fuel
+back exactly. `case_sources.txt` records `RoadsCarryFire`, the method (`firedx-256` or `sumo-lanes`), the cells changed
+and the connectivity, and the build log says it: the burnable patches, single-cell islets and the largest patch's share,
+and how much of the WUI area the patch an ignition point sits in reaches, before and after (with the building spread
+model on, building cells count as carrying fire). If nothing changes, the roads were not what split this fuel map. GR1
+spreads fire, slowly, and at 30 m a road cell is wider than the road: a modelling choice, not a bookkeeping fix. Cells
+coded 256 and 90-100 count as non-burnable everywhere the build checks fuel (ignition mask, ignition points), as in
+ELMFIRE.
 
 **FIRE-RES (Europe).** Point `[ELMFIRE] CanopyDatasetFolder` at a folder holding `panEu_canopyCover.tif`,
 `panEu_canopyHeight.tif`, `panEu_cbh.tif` and `panEu_cbd.tif`; each case is clipped out of them. These are in
