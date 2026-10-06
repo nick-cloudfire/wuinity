@@ -383,7 +383,7 @@ namespace WUInity.Workflow
                 case WorkflowAction.PreparePopulation:
                 case WorkflowAction.RedoPopulation:
                 case WorkflowAction.DownloadLandfire:
-                case WorkflowAction.BurnRoadsIntoFuel:
+                case WorkflowAction.PrepareBuildingsFireDx:
                 case WorkflowAction.BuildFireCase:
                 case WorkflowAction.RebuildFireCase:
                 case WorkflowAction.RebuildWeather:
@@ -746,14 +746,48 @@ namespace WUInity.Workflow
                 s.Secondary.Add(landfire);
             }
 
-            //Optional: the roads burned into the case's fuel (Nick's road-fuel conversion), once both exist.
-            var roads = new StepAction(WorkflowAction.BurnRoadsIntoFuel, "Burn roads into the fuel",
-                "Optional. Burns the SUMO network's lanes into the case's fuel as a spreadable fuel model (GR1), where the fuel is "
-                + "non-burnable, so roads stop cutting burnable ground into islands. Settings under Source layers.");
-            if (caseFuel == null) roads.Disable("Build the fire case first (step 5): the roads are burned into its fuel.");
-            else if (!_files.Exists(Abs(ScenarioFiles.SumoConfig)) && !_files.Exists(Abs(ScenarioFiles.SumoNetwork)))
-                roads.Disable("Blocked by step 2 (Roads): needs the SUMO network.");
+            //Optional: FireDX's building layers, made from the FBFM40 fuel (its urban 91 split into buildings and roads).
+            bool fireDxNamed = !string.IsNullOrEmpty(e.FuelModelFile)
+                               && e.FuelModelFile.Replace('\\', '/').StartsWith(PREACT.Utility.FireDxRunner.Folder + "/", StringComparison.OrdinalIgnoreCase);
+            var fireDx = new StepAction(WorkflowAction.PrepareBuildingsFireDx, fireDxNamed ? "Prepare buildings again (FireDX)" : "Prepare buildings (FireDX)",
+                "Optional. Runs FireDX on the FBFM40 fuel: building footprints (downloaded, or a file of your own) become the five "
+                + "building layers of ELMFIRE's building spread model, and the fuel's urban class (91) is split into buildings (91) and "
+                + "pavement and roads (256, non-burnable). Names them as the source layers; the next build of the fire case warps them in. "
+                + "Settings under Source layers.");
+            if (!_ctx.Tools.HaveFireDxPython) fireDx.Disable("No Python for FireDX: create FireDX's conda environment (named firedx) or name its "
+                + "python under Help > External tools and keys.");
+            else if (!_ctx.Tools.HaveFireDx) fireDx.Disable("No FireDX source: check out the submodule " + PREACT.Utility.FireDxRunner.SubmodulePath
+                + " (a private repository) or name the folder under Help > External tools and keys.");
+            else if (e.FuelModelStandard == ElmfireInput.FuelModelStandards.FBFM13) fireDx.Disable("FireDX needs FBFM40 fuel (its urban class 91); this scenario's is Anderson 13.");
+            else if (!fuelSource && caseFuel != "fbfm40.tif") fireDx.Disable("No FBFM40 fuel to run it on: get LANDFIRE's fuels first, or name a fuel raster.");
+            s.Secondary.Add(fireDx);
+            if (fireDxNamed && effectiveBuildings == 5)
+            {
+                s.Info("Buildings from FireDX (" + PREACT.Utility.FireDxRunner.Folder + "): the fuel's pavement and roads are 256, which ELMFIRE "
+                       + "does not burn" + (e.RoadsCarryFire ? ", and the build makes them GR1 (roads carry fire)." : "; tick Roads carry fire to let a fire cross them."));
+            }
+
+            //Roads carry fire: one setting, applied by every build of the case (FireDX's 256 cells, else the SUMO lanes).
+            bool sumo = _files.Exists(Abs(ScenarioFiles.SumoConfig)) || _files.Exists(Abs(ScenarioFiles.SumoNetwork));
+            var roads = new StepAction(WorkflowAction.ToggleRoadsCarryFire, "Roads carry fire (fuel " + (e.FuelModelStandard == ElmfireInput.FuelModelStandards.FBFM13 ? "1" : "101") + ")",
+                "Gives the road cells of the fuel a spreadable fuel model (GR1) at every build of the fire case, so fires are not stopped "
+                + "by every road on their way into the community: FireDX's pavement and road cells (256) when the fuel has them - its "
+                + "building cells stay buildings - otherwise the SUMO network's lanes where the fuel is non-burnable. Unticking gives the "
+                + "case its fuel back at the next build. [ELMFIRE] RoadsCarryFire.") { Checked = e.RoadsCarryFire };
             s.Secondary.Add(roads);
+            if (e.RoadsCarryFire && !fireDxNamed && !sumo)
+            {
+                s.Warn("Roads carry fire is on, but there are no roads to give fuel to: no FireDX layers (256 cells) and no SUMO network "
+                       + "(step 2). The build will leave the fuel as it is.", WorkflowAction.PrepareBuildingsFireDx, "Prepare buildings (FireDX)");
+            }
+            string applied = _files.Exists(Abs(_case + "/" + PREACT.Utility.ElmfireCaseBuilder.SourceManifestName))
+                ? ManifestValue(Abs(_case + "/" + PREACT.Utility.ElmfireCaseBuilder.SourceManifestName), "RoadsCarryFire")
+                : null;
+            if (applied != null && (applied == "on") != e.RoadsCarryFire)
+            {
+                s.Info("Roads carry fire is " + (e.RoadsCarryFire ? "on" : "off") + " but the fire case was built with it " + applied
+                       + ": build the fire case (step 5) for it to take effect.");
+            }
 
             if (_files.Exists(Abs(_case + "/" + PREACT.Utility.ElmfireCaseBuilder.SourceManifestName)))
             {

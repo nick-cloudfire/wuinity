@@ -47,7 +47,8 @@ namespace WUInity.Workflow
 
         OpenSourceLayers,
         DownloadLandfire,
-        BurnRoadsIntoFuel,
+        PrepareBuildingsFireDx,
+        ToggleRoadsCarryFire,
         ReadSourcesFromCase,
         OpenImportedFire,
 
@@ -91,6 +92,9 @@ namespace WUInity.Workflow
 
         /// <summary>Why it is disabled, naming the blocking step, or (when enabled) what it does.</summary>
         public string Tooltip = string.Empty;
+
+        /// <summary>Set for a setting rather than a deed: drawn as a check box ticked when true, which the action toggles.</summary>
+        public bool? Checked;
 
         public StepAction(WorkflowAction id, string label, string tooltip = null)
         {

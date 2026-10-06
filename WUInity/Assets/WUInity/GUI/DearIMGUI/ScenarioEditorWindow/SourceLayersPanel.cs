@@ -100,7 +100,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             Fields.Hint("Which standard the raster holds, and so whether it becomes fbfm40.tif or fbfm13.tif.",
                         "Scott & Burgan 40 is what LANDFIRE and the global products ship.");
 
-            DrawRoadsInFuel(input);
+            DrawRoadsCarryFire(input);
 
             ImGui.SeparatorText("Canopy");
 
@@ -142,6 +142,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
 
             ImGui.SeparatorText("Buildings");
+            DrawFireDx(input);
             Fields.Path("BuildingAreaFile", () => elmfire.BuildingAreaFile, v => elmfire.BuildingAreaFile = v,
                 filter: FileBrowser.geoTiffFilter);
             Fields.Path("BuildingSeparationFile", () => elmfire.BuildingSeparationFile, v => elmfire.BuildingSeparationFile = v,
@@ -177,8 +178,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
             }
             else
             {
-                Fields.Hint("All five set, so USE_BLDG_SPREAD_MODEL comes on. Put building_fuel_models.csv",
-                            "beside the case with the case builder's copy step.");
+                Fields.Hint("All five set, so USE_BLDG_SPREAD_MODEL comes on (when it is ticked under Fire behaviour).",
+                            "A building_fuel_models.csv beside the building fuel model raster (FireDX writes one) goes into the case.");
             }
 
             ImGui.SeparatorText("Other");
@@ -211,55 +212,70 @@ namespace Assets.WUInity.GUI.DearIMGUI
         }
 
         /// <summary>
-        /// The optional road burn: the SUMO network's lanes burned into the fire case's fuel as a spreadable fuel model.
-        /// Placed under the fuel because it changes the fuel, and works on what the case build made of it.
+        /// [ELMFIRE] RoadsCarryFire: a setting every build of the case applies to its fuel. Placed under the fuel because it
+        /// changes the fuel the case is built with.
         /// </summary>
-        private static void DrawRoadsInFuel(PREACTInput input)
+        private static void DrawRoadsCarryFire(PREACTInput input)
         {
-            if (!ImGui.TreeNode("Burn roads into the fuel (optional)###RoadsInFuel"))
+            ElmfireInput e = input.WildfireModule.ElmfireInput;
+            int model = e.FuelModelStandard == ElmfireInput.FuelModelStandards.FBFM13 ? 1 : 101;
+            bool on = e.RoadsCarryFire;
+            if (ImGui.Checkbox($"Roads carry fire (fuel {model})###RoadsCarryFire", ref on))
+            {
+                ScenarioDataSteps.SetRoadsCarryFire(on);
+            }
+            Fields.Hint("A fuel map marks roads, with the town around them, non-burnable, so a fire can stall at the first road",
+                        $"on its way into the community. Ticked, every build of the fire case gives the road cells fuel model {model}:",
+                        "after FireDX exactly its pavement and road cells (256) - its building cells (91) stay buildings - otherwise",
+                        "the SUMO network's lanes where the fuel is non-burnable. The build logs the burnable patches and how much of",
+                        "the WUI area the ignition's patch reaches, before and after. Unticked, the next build restores the fuel.");
+            if (on)
+            {
+                Fields.Caution($"Fuel model {model} spreads fire (slowly): this changes the physics, it is not a bookkeeping fix.");
+            }
+        }
+
+        /// <summary>FireDX: the building layers and the split urban class, from the FBFM40 fuel and building footprints.</summary>
+        private static void DrawFireDx(PREACTInput input)
+        {
+            if (!ImGui.TreeNode("From FireDX (building footprints)###FireDx"))
             {
                 return;
             }
 
-            int model = ScenarioDataSteps.EffectiveRoadFuelModel(input);
-            Fields.Hint("A fuel map marks roads, and the town around them, non-burnable, which can cut burnable ground into",
-                        "islands an ignition never grows out of. This burns the SUMO network's lanes into the fire case's",
-                        $"fuel as fuel model {model}, only where the fuel is non-burnable (91-99) and no building model owns",
-                        "the cell. It reports the islets before and after: if they match, the roads were not the problem.");
+            Fields.Hint("FireDX turns building footprints into the five layers below, on the fuel's grid, and splits the fuel's",
+                        "urban class (91) into buildings (91) and pavement and roads (256). Footprints are downloaded (Microsoft's",
+                        "global footprints and OpenStreetMap) unless a file is given; without the network, give one.");
+            Fields.Path("Footprints file (optional)", () => ScenarioDataSteps.FireDxFootprints, v => ScenarioDataSteps.FireDxFootprints = v,
+                filter: new[] { ".geojson", ".json", ".gpkg", ".shp", ".gdb" });
+            ImGui.SetNextItemWidth(220f);
+            Fields.Choice("Attributes###FireDxAttributes", ref ScenarioDataSteps.FireDxAttributes, FireDxAttributeNames,
+                "Auto: FireDX's own attribute join where it has data (California), basic elsewhere. California: the USACE "
+                + "National Structure Inventory and CAL FIRE's hazard zones (online). Basic: every building residential, anywhere.");
+            ImGui.Checkbox($"Hindcast: leave out buildings built after {input.Simulation.StartDateTime.Year}###FireDxYear", ref ScenarioDataSteps.FireDxBeforeScenarioYear);
 
-            ImGui.SetNextItemWidth(120f);
-            int chosen = ScenarioDataSteps.RoadFuelModel;
-            if (ImGui.InputInt("Road fuel model (0: GR1 = 101, or 1 for Anderson 13)###RoadFuelModel", ref chosen))
+            string why = ScenarioDataSteps.WhyNotFireDx(input);
+            ImGui.BeginDisabled(why != null || ScenarioSession.IsBusy);
+            if (ImGui.Button("Prepare buildings (FireDX)###RunFireDx"))
             {
-                ScenarioDataSteps.RoadFuelModel = Math.Max(0, chosen);
-            }
-
-            ImGui.SetNextItemWidth(120f);
-            double width = ScenarioDataSteps.RoadWidthMetres;
-            if (ImGui.InputDouble("Road width, m (0: one cell)###RoadWidth", ref width))
-            {
-                ScenarioDataSteps.RoadWidthMetres = Math.Max(0.0, width);
-            }
-
-            ImGui.Checkbox("Leave building cells to the building spread model###RoadsProtectBuildings", ref ScenarioDataSteps.ProtectBuildingCells);
-
-            ImGui.BeginDisabled(ScenarioSession.IsBusy);
-            if (ImGui.Button("Burn roads into the fuel###BurnRoads"))
-            {
-                ScenarioDataSteps.BurnRoadsIntoFuel();
+                ScenarioDataSteps.PrepareBuildingsFireDx();
             }
             ImGui.EndDisabled();
-            if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            if (why != null)
             {
-                ImGui.SetTooltip("Needs the fire case (step 5) and the SUMO network (step 2). Writes "
-                    + ScenarioFiles.DownloadsFolder + "/<name>_fbfm40_roads" + model + ".tif, names it as FuelModelFile and puts it "
-                    + "in the case. The original layer is kept - the scenario's FuelModelFile, or, when it names none, a copy of "
-                    + "the case's own as " + ScenarioFiles.DownloadsFolder + "/<name>_fbfm40_original.tif - and the new raster "
-                    + "records which it was.");
+                ImGui.PushTextWrapPos(0f);
+                Fields.Caution(why);
+                ImGui.PopTextWrapPos();
             }
-            Fields.Caution($"Fuel model {model} spreads fire (slowly): this changes the physics, it is not a bookkeeping fix.");
+            else if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip("Writes " + PREACT.Utility.FireDxRunner.Folder + "/ (fbfm40b, baa_m, ssd_min, nbf, ff, bfm, FireDX's "
+                                 + "building_fuel_models.csv and firedx.log) and names them as FuelModelFile and the five building layers.");
+            }
             ImGui.TreePop();
         }
+
+        private static readonly string[] FireDxAttributeNames = Enum.GetNames(typeof(PREACT.Utility.FireDxRunner.AttributePath));
 
         /// <summary>The LANDFIRE releases offered, "closest" first; labels and the values they write.</summary>
         private static readonly string[] LandfireReleaseValues = BuildReleaseValues();

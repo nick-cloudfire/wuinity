@@ -148,6 +148,16 @@ namespace Assets.WUInity.GUI.DearIMGUI
                                    + ", PROJ_LIB = " + (string.IsNullOrEmpty(t.ProjLib) ? "(not set)" : t.ProjLib));
             }
 
+            ImGui.SeparatorText("Buildings (optional)");
+            ToolRow(ToolPaths.Tool.FireDxPython, "FireDX Python", false, t.FireDxPython, null,
+                PREACT.Utility.FireDxRunner.PythonSearchDescription,
+                "Prepare buildings (FireDX) cannot run: the building layers have to come from elsewhere, or not at all. Create "
+                + "FireDX's environment with conda env create -f environment.yml in the FireDX folder (it is named firedx).");
+            ToolRow(ToolPaths.Tool.FireDx, "FireDX source", true, t.FireDx, null,
+                "the submodule " + PREACT.Utility.FireDxRunner.SubmodulePath + " of this checkout",
+                "Prepare buildings (FireDX) cannot run. FireDX is a private repository and is not shipped with WUInity: check out "
+                + "the submodule (git submodule update --init " + PREACT.Utility.FireDxRunner.SubmodulePath + ") or name a clone here.");
+
             ImGui.Separator();
             DrawSaveRow();
 

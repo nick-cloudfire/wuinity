@@ -446,7 +446,16 @@ namespace Assets.WUInity.GUI.DearIMGUI
         {
             bool enabled = action.Enabled && !(ScenarioSession.EditingLocked && WorkflowService.ChangesScenario(action.Id));
             ImGui.BeginDisabled(!enabled);
-            bool pressed = small ? ImGui.SmallButton(action.Label + "###act") : ImGui.Button(action.Label + "###act");
+            bool pressed;
+            if (action.Checked.HasValue)
+            {
+                bool ticked = action.Checked.Value;
+                pressed = ImGui.Checkbox(action.Label + "###act", ref ticked);
+            }
+            else
+            {
+                pressed = small ? ImGui.SmallButton(action.Label + "###act") : ImGui.Button(action.Label + "###act");
+            }
             ImGui.EndDisabled();
 
             if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))

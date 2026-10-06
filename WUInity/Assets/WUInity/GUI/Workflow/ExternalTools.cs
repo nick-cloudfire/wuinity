@@ -67,6 +67,10 @@ namespace WUInity.Workflow
         public ToolStatus Sumo = new ToolStatus();
         public ToolStatus Proj = new ToolStatus();
 
+        /// <summary>FireDX: the Python it runs with, and its source folder (the submodule, or the user's).</summary>
+        public ToolStatus FireDxPython = new ToolStatus();
+        public ToolStatus FireDx = new ToolStatus();
+
         /// <summary>The settings file this process reads, and why it could not be read (empty when it could).</summary>
         public string SettingsFile = string.Empty;
         public string SettingsReadError = string.Empty;
@@ -105,6 +109,8 @@ namespace WUInity.Workflow
         public bool HaveWindNinja => !string.IsNullOrEmpty(WindNinjaExe);
         public bool HaveSumo => !string.IsNullOrEmpty(SumoBin);
         public bool HaveOpenTopographyKey => !string.IsNullOrEmpty(OpenTopographyKeySource);
+        public bool HaveFireDxPython => FireDxPython.Found;
+        public bool HaveFireDx => FireDx.Found;
     }
 
     /// <summary>
@@ -152,6 +158,7 @@ namespace WUInity.Workflow
             Try(() => ProbeWindNinja(s.WindNinja, scenarioRoot, windNinjaOverride), s);
             Try(() => ProbeSumo(s.Sumo, engine), s);
             Try(() => ProbeProj(s.Proj, engine), s);
+            Try(() => ProbeFireDx(s.FireDxPython, s.FireDx), s);
 
             s.ElmfireExe = s.Elmfire.InUse;
             s.GdalBin = s.Gdal.InUse;
@@ -249,6 +256,17 @@ namespace WUInity.Workflow
                 string[] next = ToolPaths.ProjSearchPaths(out _, out _);
                 t.AfterRestart = string.Join(Path.PathSeparator.ToString(), next);
             }
+        }
+
+        /// <summary>FireDX's Python and source, as FireDxRunner finds them: the user's setting, else the automatic search.</summary>
+        private static void ProbeFireDx(ToolStatus python, ToolStatus package)
+        {
+            Setting(python, ToolPaths.Tool.FireDxPython);
+            python.InUse = FireDxRunner.FindPython(out ToolPaths.Source pythonSource) ?? string.Empty;
+            python.Source = pythonSource;
+            Setting(package, ToolPaths.Tool.FireDx);
+            package.InUse = FireDxRunner.FindPackage(out ToolPaths.Source packageSource) ?? string.Empty;
+            package.Source = packageSource;
         }
 
         /// <summary>A scenario-relative path made absolute, as the campaign window and the CLI do.</summary>

@@ -222,7 +222,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 case WorkflowAction.RedoPopulation:
                 case WorkflowAction.UseGeneratedPopulation:
                 case WorkflowAction.DownloadLandfire:
-                case WorkflowAction.BurnRoadsIntoFuel:
+                case WorkflowAction.PrepareBuildingsFireDx:
+                case WorkflowAction.ToggleRoadsCarryFire:
                 case WorkflowAction.ReadSourcesFromCase:
                 case WorkflowAction.BuildFireCase:
                 case WorkflowAction.RebuildFireCase:
@@ -329,7 +330,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
 
                 case WorkflowAction.OpenSourceLayers: SourceLayersPanel.Open(); break;
                 case WorkflowAction.DownloadLandfire: ScenarioDataSteps.DownloadLandfireFuels(); break;
-                case WorkflowAction.BurnRoadsIntoFuel: ScenarioDataSteps.BurnRoadsIntoFuel(); break;
+                case WorkflowAction.PrepareBuildingsFireDx: ScenarioDataSteps.PrepareBuildingsFireDx(); break;
+                case WorkflowAction.ToggleRoadsCarryFire: ScenarioDataSteps.SetRoadsCarryFire(!input.WildfireModule.ElmfireInput.RoadsCarryFire); break;
                 case WorkflowAction.ReadSourcesFromCase: SourceLayersPanel.ReadSourcesFromCase(input); break;
                 case WorkflowAction.OpenImportedFire: SettingsPageWindow.Open(SettingsPage.FireModel); break;
 
