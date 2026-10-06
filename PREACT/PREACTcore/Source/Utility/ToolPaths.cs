@@ -14,8 +14,9 @@ using System.Text;
 namespace PREACT.Utility
 {
     /// <summary>
-    /// The per-user tool paths: where ELMFIRE, GDAL's command-line tools, WindNinja, SUMO and PROJ's data are on
-    /// this machine, when the automatic search does not find them or finds the wrong one.
+    /// The per-user tool paths: where ELMFIRE, GDAL's command-line tools, WindNinja, SUMO, PROJ's data and FireDX (its
+    /// Python environment and its source) are on this machine, when the automatic search does not find them or finds
+    /// the wrong one.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -59,6 +60,12 @@ namespace PREACT.Utility
             WindNinja,
             Sumo,
             Proj,
+
+            /// <summary>The Python of an environment holding FireDX's dependencies (FireDX's conda environment.yml).</summary>
+            FireDxPython,
+
+            /// <summary>The FireDX source folder: the one holding the <c>firedx</c> package (<c>firedx/generate.py</c>).</summary>
+            FireDx,
         }
 
         /// <summary>Where the path a tool is used from came from.</summary>
@@ -77,7 +84,7 @@ namespace PREACT.Utility
             Automatic,
         }
 
-        public static readonly Tool[] AllTools = { Tool.Elmfire, Tool.Gdal, Tool.WindNinja, Tool.Sumo, Tool.Proj };
+        public static readonly Tool[] AllTools = { Tool.Elmfire, Tool.Gdal, Tool.WindNinja, Tool.Sumo, Tool.Proj, Tool.FireDxPython, Tool.FireDx };
 
         private static readonly object _lock = new object();
         private static Settings _cached;
@@ -551,11 +558,13 @@ namespace PREACT.Utility
                 case Tool.Gdal: return "gdal_translate" + exe;
                 case Tool.WindNinja: return "WindNinja_cli" + exe;
                 case Tool.Sumo: return "sumo" + exe;
+                case Tool.FireDxPython: return "python" + exe;
+                case Tool.FireDx: return Path.Combine("firedx", "generate.py");
                 default: return "proj.db";
             }
         }
 
-        /// <summary>The key a tool is saved under in the settings file: ElmfireExe, GdalBin, WindNinjaExe, Sumo, ProjData.</summary>
+        /// <summary>The key a tool is saved under in the settings file: ElmfireExe, GdalBin, WindNinjaExe, Sumo, ProjData, FireDxPython, FireDxPackage.</summary>
         public static string KeyOf(Tool tool)
         {
             return Settings.KeyOf(tool);
@@ -581,6 +590,8 @@ namespace PREACT.Utility
                 case Tool.Gdal: return $"the folder holding GDAL's command-line tools ({ExpectedFile(tool)}), e.g. a QGIS or OSGeo4W bin";
                 case Tool.WindNinja: return $"WindNinja's command-line solver ({ExpectedFile(tool)}), or the folder holding it";
                 case Tool.Sumo: return $"SUMO's install folder (SUMO_HOME) or its bin folder (holding {ExpectedFile(tool)})";
+                case Tool.FireDxPython: return $"the Python of a conda environment with FireDX's dependencies ({ExpectedFile(tool)}), or the environment's folder";
+                case Tool.FireDx: return "the FireDX source folder, the one holding the firedx package (firedx" + Path.DirectorySeparatorChar + "generate.py)";
                 default: return "PROJ's data folder, the one holding proj.db (a QGIS or OSGeo4W share\\proj)";
             }
         }
@@ -678,6 +689,38 @@ namespace PREACT.Utility
                     return null;
                 }
 
+                case Tool.FireDxPython:
+                    if (isFile)
+                    {
+                        string name = Path.GetFileNameWithoutExtension(full);
+                        if (!name.StartsWith("python", StringComparison.OrdinalIgnoreCase) || name.StartsWith("pythonw", StringComparison.OrdinalIgnoreCase)
+                            || (OnWindows && !full.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)))
+                        {
+                            return $"{Path.GetFileName(full)} is not a Python interpreter; give {expected}.";
+                        }
+                        normalised = full;
+                        return null;
+                    }
+                    //A conda environment holds python.exe at its root on Windows and bin/python elsewhere; a venv, Scripts\python.exe.
+                    normalised = FirstFile(full, expected, "bin", "Scripts");
+                    return normalised != null ? null : $"{full} holds no {expected} (nor its bin or Scripts).";
+
+                case Tool.FireDx:
+                {
+                    //The folder above the package, whichever level was picked: the clone, the package, or generate.py itself.
+                    string folder = isFile ? Path.GetDirectoryName(full) : full;
+                    foreach (string candidate in new[] { folder, Path.GetDirectoryName(folder) })
+                    {
+                        if (string.IsNullOrEmpty(candidate)) continue;
+                        if (File.Exists(Path.Combine(candidate, "firedx", "generate.py")))
+                        {
+                            normalised = candidate.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                            return null;
+                        }
+                    }
+                    return $"{folder} holds no {expected}, so it is not FireDX's source folder.";
+                }
+
                 default:
                 {
                     string folder = isFile ? Path.GetDirectoryName(full) : full;
@@ -764,7 +807,7 @@ namespace PREACT.Utility
         public sealed class Settings
         {
             //The keys, in the order they are written. Read case-insensitively.
-            private static readonly string[] Keys = { "ElmfireExe", "GdalBin", "WindNinjaExe", "Sumo", "ProjData" };
+            private static readonly string[] Keys = { "ElmfireExe", "GdalBin", "WindNinjaExe", "Sumo", "ProjData", "FireDxPython", "FireDxPackage" };
 
             private static readonly string[] Comments =
             {
@@ -773,9 +816,11 @@ namespace PREACT.Utility
                 "WindNinja: WindNinja_cli.exe, or the folder holding it.",
                 "SUMO: its install folder (SUMO_HOME) or its bin. Read when WUInity or PREACT starts.",
                 "PROJ: the folder holding proj.db, for the engine's GDAL (instead of PROJ_DATA / PROJ_LIB).",
+                "FireDX: the python(.exe) of a conda environment with FireDX's dependencies (its environment.yml).",
+                "FireDX: its source folder (holding firedx/generate.py); empty uses the submodule WUInity/Assets/ThirdParty/firedx.",
             };
 
-            private readonly string[] _values = { string.Empty, string.Empty, string.Empty, string.Empty, string.Empty };
+            private readonly string[] _values = { string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty };
 
             //The per-user value that is not a tool path, under [User].
             private const string LandfireEmailKey = "LandfireEmail";

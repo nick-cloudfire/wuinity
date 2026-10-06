@@ -179,6 +179,27 @@ namespace PREACT.Input
         public string LandfireVersion = PREACT.Tools.LandfireVersions.Closest;
 
         /// <summary>
+        /// Roads carry fire: the case build gives the road cells of the fuel a spreadable fuel model - GR1 (101), or 1 for an
+        /// FBFM13 case - so a fire is not stopped by every road on its way into the community. Off by default.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// In a LANDFIRE fuel map roads are part of the non-burnable urban class, so a road network cuts the burnable fuel
+        /// into pieces, and a fire that should reach the community can stall at the first road. Which cells are roads:
+        /// after FireDX, exactly its 256 cells (urban 91 without a building: pavement and roads) - the 91 building cells stay
+        /// buildings; without FireDX, the SUMO network's lanes, burned into the non-burnable cells they cross
+        /// (<see cref="PREACT.Utility.RoadFuelRasterizer"/>), leaving the cells the building layers mark alone.
+        /// </para>
+        /// <para>
+        /// Applied by every build, to the fuel as warped from its source, so it survives a rebuild and a campaign's cases
+        /// carry it; turned off, the next build gives the case its fuel back unchanged (the case keeps the fuel as it was
+        /// before the roads under <c>inputs/_roads/</c> while this is on). <c>case_sources.txt</c> records what was done.
+        /// GR1 is sparse grass: it spreads fire, slowly, and at 30 m a road cell is wider than the road - a modelling choice.
+        /// </para>
+        /// </remarks>
+        public bool RoadsCarryFire = false;
+
+        /// <summary>
         /// A folder holding the FIRE-RES pan-European canopy rasters, supplying whichever of the four canopy
         /// layers below are not named individually.
         /// </summary>
@@ -521,6 +542,7 @@ namespace PREACT.Input
             ReadBool(inputToParse, nameof(ReuseExistingOutput), ref newInput.ReuseExistingOutput);
             ReadBool(inputToParse, nameof(BuildCase), ref newInput.BuildCase);
             ReadBool(inputToParse, nameof(RebuildExistingLayers), ref newInput.RebuildExistingLayers);
+            ReadBool(inputToParse, nameof(RoadsCarryFire), ref newInput.RoadsCarryFire);
 
             return newInput;
         }

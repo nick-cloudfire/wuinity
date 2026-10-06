@@ -259,6 +259,25 @@ namespace PREACT.Utility
             /// that counts its bands have to follow it.
             /// </remarks>
             public Func<bool> Cancelled;
+
+            /// <summary>
+            /// <c>[ELMFIRE] RoadsCarryFire</c>: give the fuel's road cells a spreadable fuel model (GR1, 101; 1 for FBFM13) -
+            /// FireDX's 256 cells when the fuel has them, else the lanes of <see cref="SumoConfigurationPath"/>'s network.
+            /// Off gives the case its fuel back as it was before the roads. See <see cref="ApplyRoadsCarryFire"/>.
+            /// </summary>
+            public bool RoadsCarryFire;
+
+            /// <summary>The fuel model roads get; 0 is by the fuel's standard (101, or 1 for FBFM13).</summary>
+            public int RoadFuelModel;
+
+            /// <summary>The SUMO configuration whose network's lanes are the roads when the fuel has no FireDX road cells.</summary>
+            public string SumoConfigurationPath;
+
+            /// <summary>
+            /// The building fuel model table that goes with the building fuel model raster (FireDX's, beside its bfm.tif),
+            /// put into a case that has none; ELMFIRE's default table otherwise.
+            /// </summary>
+            public string BuildingFuelModelTableSource;
         }
 
         /// <summary>Throws the stop <see cref="Options.Cancelled"/> asked for, saying where the build stopped.</summary>
@@ -335,6 +354,9 @@ namespace PREACT.Utility
 
             /// <summary>What the history-based weather chain actually managed to use, and where it fell back.</summary>
             public WeatherRasterPipeline.Result Weather;
+
+            /// <summary>What <see cref="Options.RoadsCarryFire"/> did, for <see cref="SourceManifestName"/>: key to value.</summary>
+            public readonly List<KeyValuePair<string, string>> Roads = new List<KeyValuePair<string, string>>();
 
             /// <summary>
             /// What the case's weather was made for (recorded in case_sources.txt): this build's when it made the weather,
@@ -593,6 +615,11 @@ namespace PREACT.Utility
             //---------------------------------------------------------------- 5d. Ignition points
             ApplyIgnitionPoints(o, result, grid, Log);
 
+            //---------------------------------------------------------------- 5e. Roads carry fire
+            //After the fuel is final for this build and before anything reads its burnable cells (the ignition checks and
+            //the mask below); after the WUI area and the ignitions, so it can say whether the roads were what kept them apart.
+            ApplyRoadsCarryFire(o, result, inputs, grid, Log);
+
             //---------------------------------------------------------------- 6. Ignition mask
             //Only generated when the user did not supply one: an all-ones mask lets ELMFIRE's
             //RANDOM_IGNITIONS place a fire anywhere in the domain, which is the neutral default.
@@ -667,6 +694,14 @@ namespace PREACT.Utility
             EnsureFuelModelTable(inputs, o.ElmfireExe, Log);
             if (o.Namelist != null && o.Namelist.USE_BLDG_SPREAD_MODEL)
             {
+                //The table the building fuel model codes were assigned with (FireDX's), before ELMFIRE's default.
+                string table = Path.Combine(inputs, ElmfireStems.BuildingFuelModelTable);
+                if (!File.Exists(table) && !string.IsNullOrEmpty(o.BuildingFuelModelTableSource) && File.Exists(o.BuildingFuelModelTableSource))
+                {
+                    File.Copy(o.BuildingFuelModelTableSource, table);
+                    Log($"  building fuel table: {ElmfireStems.BuildingFuelModelTable} copied from {o.BuildingFuelModelTableSource}, the table "
+                        + "the building fuel model raster's codes were assigned with.");
+                }
                 EnsureBuildingFuelModelTable(inputs, ElmfireStems.BuildingFuelModelTable, o.ElmfireExe, Log);
             }
 
@@ -1415,6 +1450,7 @@ namespace PREACT.Utility
         {
             if (o.Namelist == null || !o.Namelist.USE_BLDG_SPREAD_MODEL) return null;
             if (File.Exists(Path.Combine(inputs, ElmfireStems.BuildingFuelModelTable))) return null;
+            if (!string.IsNullOrEmpty(o.BuildingFuelModelTableSource) && File.Exists(o.BuildingFuelModelTableSource)) return null;
             foreach (string f in o.CopyFiles)
             {
                 if (string.Equals(Path.GetFileName(f ?? string.Empty), ElmfireStems.BuildingFuelModelTable, StringComparison.OrdinalIgnoreCase)
@@ -2017,6 +2053,12 @@ namespace PREACT.Utility
                     lines.Add("LocalDemPath=" + o.LocalDemPath);
                 }
 
+                //[ELMFIRE] RoadsCarryFire, and what it did to the fuel.
+                foreach (KeyValuePair<string, string> kv in result.Roads)
+                {
+                    lines.Add(kv.Key + "=" + kv.Value);
+                }
+
                 lines.Add("");
                 lines.Add("# stem = source raster it was warped from");
 
@@ -2507,6 +2549,190 @@ namespace PREACT.Utility
             result.Ignitions.AddRange(placed);
         }
 
+        /// <summary>Where a case keeps its fuel as it was before the roads were given a fuel model, under <c>inputs/</c>.</summary>
+        public const string RoadsFolder = "_roads";
+
+        /// <summary>
+        /// <c>[ELMFIRE] RoadsCarryFire</c>: gives the fuel's road cells a spreadable fuel model, or - turned off - gives the
+        /// case its fuel back as it was before.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Every build starts from the fuel without roads: one this build warped from its source is that already, and one
+        /// it kept is restored from <c>inputs/_roads/&lt;stem&gt;.tif</c>, which holds the fuel as it was the last time roads were
+        /// applied (re-cut onto the grid when the grid changed). With the setting on, that copy is made again and the roads
+        /// are applied to the fuel; with it off, nothing more happens, so unticking undoes it exactly.
+        /// </para>
+        /// <para>
+        /// Which cells are roads: after FireDX, the fuel's 256 cells - LANDFIRE's urban 91 where FireDX found no building,
+        /// i.e. pavement and roads - and nothing else; the 91 building cells stay buildings. Without them, the SUMO network's
+        /// lanes, burned into the non-burnable cells they cross (<see cref="RoadFuelRasterizer"/>), leaving the cells the
+        /// building area layer marks alone. Without either, nothing changes and the build says so.
+        /// </para>
+        /// </remarks>
+        private static void ApplyRoadsCarryFire(Options o, Result result, string inputs, MasterGrid grid, Action<string> log)
+        {
+            string[] template = ReadTemplate(o.TemplateNamelistPath);
+            string stem = ElmfireStems.FuelStem(template, inputs) ?? ResolveStem(result, ElmfireStems.Fuel);
+            if (stem == null) return;
+            bool standard = Array.IndexOf(ElmfireStems.Fuel, stem) >= 0;
+
+            string fuel = ElmfireStems.Tif(inputs, stem);
+            string kept = Path.Combine(inputs, RoadsFolder, stem + ".tif");
+            bool fresh = result.Written.Contains(stem) && !result.Reused.Contains(stem) && !result.Carried.Contains(stem);
+
+            //1. Back to the fuel without roads.
+            if (File.Exists(kept))
+            {
+                if (fresh || !File.Exists(fuel))
+                {
+                    log($"  roads: {stem}.tif was made from its source by this build, so the copy kept before the roads "
+                        + $"(inputs/{RoadsFolder}/{stem}.tif) is out of date; removed.");
+                }
+                else if (IsOnGrid(kept, grid))
+                {
+                    File.Copy(kept, fuel, true);
+                    log($"  roads: {stem}.tif restored as it was before the roads (inputs/{RoadsFolder}/{stem}.tif).");
+                }
+                else
+                {
+                    RecutInto(o, result, grid, stem, kept, fuel, log);
+                    log($"  roads: {stem}.tif restored as it was before the roads, re-cut onto this grid.");
+                }
+                try { File.Delete(kept); } catch (IOException) { }
+                if (File.Exists(fuel + ".aux.xml")) { try { File.Delete(fuel + ".aux.xml"); } catch (IOException) { } }
+            }
+
+            if (!o.RoadsCarryFire)
+            {
+                result.Roads.Add(new KeyValuePair<string, string>("RoadsCarryFire", "off"));
+                return;
+            }
+            result.Roads.Add(new KeyValuePair<string, string>("RoadsCarryFire", "on"));
+
+            if (!standard || !File.Exists(fuel))
+            {
+                string why = $"roads carry fire: the namelist runs its own fuel raster ('{stem}'), not the case's fbfm40/fbfm13, so the "
+                             + "roads were not given a fuel model";
+                result.Fallbacks.Add(why);
+                result.Roads.Add(new KeyValuePair<string, string>("RoadsCarryFireMethod", "none (the namelist names its own fuel)"));
+                log("  WARNING " + why + ".");
+                return;
+            }
+
+            int roadModel = o.RoadFuelModel > 0 ? o.RoadFuelModel : stem == "fbfm13" ? 1 : 101;
+            float[,] before = AscRaster.ReadGeoTiff(fuel, out AscRaster.Header _, out bool ok);
+            if (!ok || before == null) throw new Exception("Could not read " + fuel + " to give its roads a fuel model.");
+            int nx = before.GetLength(0), ny = before.GetLength(1);
+
+            long pavement = 0;
+            foreach (float v in before) if (v == 256f) ++pavement;
+
+            Directory.CreateDirectory(Path.GetDirectoryName(kept));
+            float[,] after;
+            string method;
+            if (pavement > 0)
+            {
+                method = "firedx-256";
+                after = (float[,])before.Clone();
+                for (int x = 0; x < nx; ++x)
+                {
+                    for (int y = 0; y < ny; ++y)
+                    {
+                        if (after[x, y] == 256f) after[x, y] = roadModel;
+                    }
+                }
+                File.Copy(fuel, kept, true);
+                RoadFuelRasterizer.WriteInt16Like(kept, after, fuel, kept, roadModel);
+                log($"  roads: {pavement} pavement and road cells (FireDX's 256: urban without a building) set to fuel model {roadModel}; "
+                    + "the building cells (91) are left to the building spread model.");
+            }
+            else
+            {
+                SumoNetworkGeometry network = string.IsNullOrEmpty(o.SumoConfigurationPath) || o.Simulation == null
+                    ? null
+                    : SumoNetworkGeometry.Load(o.SumoConfigurationPath, o.Simulation.UTMOrigin);
+                if (network == null || network.LaneCount == 0)
+                {
+                    string why = "roads carry fire is on, but the fuel has no FireDX road cells (256; run Prepare buildings (FireDX)) and "
+                                 + (string.IsNullOrEmpty(o.SumoConfigurationPath) ? "the scenario has no SUMO network" : "no lanes could be read from "
+                                    + o.SumoConfigurationPath) + " to find the roads with (build it in step 2, Roads), so the fuel was not changed";
+                    result.Fallbacks.Add(why);
+                    result.Roads.Add(new KeyValuePair<string, string>("RoadsCarryFireMethod", "none (no FireDX road cells, no SUMO network)"));
+                    log("  WARNING " + why + ".");
+                    return;
+                }
+
+                string buildings = new[] { "bldg_area_avg", "baa" }.Select(s => ElmfireStems.Tif(inputs, s)).FirstOrDefault(File.Exists);
+                string burned = Path.Combine(inputs, RoadsFolder, stem + ".roads.tif");
+                RoadFuelRasterizer.Result r = RoadFuelRasterizer.Run(new RoadFuelRasterizer.Options
+                {
+                    FuelRasterPath = fuel,
+                    OutputRasterPath = burned,
+                    Lanes = network.Lanes,
+                    UtmOrigin = o.Simulation.UTMOrigin,
+                    UtmEpsg = o.Simulation.UtmEpsgCode,
+                    RoadFuelModel = roadModel,
+                    BuildingAreaRasterPath = buildings,
+                    OriginalSource = kept,
+                });
+                if (!r.Ok)
+                {
+                    string why = "roads carry fire: the SUMO lanes could not be burned into the fuel (" + r.Message + "), so it was not changed";
+                    result.Fallbacks.Add(why);
+                    result.Roads.Add(new KeyValuePair<string, string>("RoadsCarryFireMethod", "none (" + r.Message + ")"));
+                    log("  WARNING " + why + ".");
+                    return;
+                }
+                method = "sumo-lanes";
+                File.Copy(fuel, kept, true);
+                File.Copy(burned, fuel, true);
+                try { File.Delete(burned); } catch (IOException) { }
+                pavement = r.Changed;
+                after = AscRaster.ReadGeoTiff(fuel, out AscRaster.Header _, out bool _);
+                log($"  roads: {network.LaneCount} SUMO lanes: {r.Changed} of {r.RoadCells} road cells set to fuel model {roadModel} "
+                    + $"({r.SkippedBurnable} already burnable, {r.SkippedBuildings} left to the building spread model, {r.SkippedNoData} without fuel data).");
+            }
+
+            result.Roads.Add(new KeyValuePair<string, string>("RoadsCarryFireMethod", method));
+            result.Roads.Add(new KeyValuePair<string, string>("RoadsCarryFireFuelModel", roadModel.ToString(CultureInfo.InvariantCulture)));
+            result.Roads.Add(new KeyValuePair<string, string>("RoadsCarryFireCells", pavement.ToString(CultureInfo.InvariantCulture)));
+            result.Roads.Add(new KeyValuePair<string, string>("RoadsCarryFireKept", "inputs/" + RoadsFolder + "/" + stem + ".tif"));
+
+            //Whether it connected anything: the patches of cells that carry fire, and how much of the WUI area the
+            //ignitions' patches reach, before and after.
+            if (after != null && after.GetLength(0) == nx && after.GetLength(1) == ny)
+            {
+                bool buildingsBurn = o.Namelist != null && o.Namelist.USE_BLDG_SPREAD_MODEL
+                                     && new[] { "bldg_area_avg", "bldg_separation_distance", "bldg_nonburnable_frac", "bldg_footprint_frac", "bldg_fuel_model" }
+                                         .All(s => File.Exists(ElmfireStems.Tif(inputs, s)));
+                Func<float, bool> carries = v => ElmfireStems.IsBurnable(v, o.NonBurnableFuelCodes) || (buildingsBurn && v == 91f);
+
+                float[,] wui = null;
+                if (result.WuiAreaFile != null && File.Exists(result.WuiAreaFile))
+                {
+                    wui = AscRaster.ReadGeoTiff(result.WuiAreaFile, out AscRaster.Header _, out bool wuiOk);
+                    if (!wuiOk) wui = null;
+                }
+                var cells = new List<(int X, int Y)>();
+                foreach (PlacedIgnition p in result.Ignitions)
+                {
+                    cells.Add(((int)System.Math.Floor((p.X - grid.XMin) / grid.Header.CellSize),
+                               (int)System.Math.Floor((p.Y - grid.YMin) / grid.Header.CellSize)));
+                }
+
+                FuelConnectivity.Stats was = FuelConnectivity.Measure(before, carries, wui, cells);
+                FuelConnectivity.Stats now = FuelConnectivity.Measure(after, carries, wui, cells);
+                string compared = FuelConnectivity.Compare(was, now);
+                log("  roads: " + compared + (buildingsBurn ? " (building cells, 91, counted as carrying fire: the building spread model is on)." : "."));
+                result.Roads.Add(new KeyValuePair<string, string>("RoadsCarryFireConnectivity", compared));
+                if (was.Patches == now.Patches && was.Islets == now.Islets && was.LargestPatch == now.LargestPatch)
+                {
+                    log("  roads: no change in connectivity - the roads were not what split this fuel map.");
+                }
+            }
+        }
+
         /// <summary>
         /// Says which ignition point lies on fuel that does not burn, and how far the nearest burnable cell is.
         /// </summary>
@@ -2549,7 +2775,7 @@ namespace PREACT.Utility
 
                 string where = $"{p.LatLon.x.ToString("F5", CultureInfo.InvariantCulture)},{p.LatLon.y.ToString("F5", CultureInfo.InvariantCulture)}";
                 string why = $"ignition point {where} lies on fuel {code.ToString("0", CultureInfo.InvariantCulture)} of {result.FuelStem}.tif, "
-                             + "which does not burn (0 and below, 91-99 urban/snow/agriculture/water/barren"
+                             + "which does not burn (0 and below, 91-99 urban/snow/agriculture/water/barren, 256 pavement and roads"
                              + (o.NonBurnableFuelCodes.Count > 0 ? ", " + string.Join("/", o.NonBurnableFuelCodes) : "")
                              + "), so a fire started there will not spread"
                              + (best < double.MaxValue

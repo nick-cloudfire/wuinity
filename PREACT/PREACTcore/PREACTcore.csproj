@@ -27,6 +27,12 @@
     <InternalsVisibleTo Include="PREACTtests" />
   </ItemGroup>
 
+  <!-- PREACT's own driver for FireDX (FireDxRunner writes it beside FireDX's output and runs it); not FireDX itself. -->
+  <ItemGroup>
+    <None Remove="Source\Utility\FireDxBootstrap.py" />
+    <EmbeddedResource Include="Source\Utility\FireDxBootstrap.py" LogicalName="PREACT.Utility.FireDxBootstrap.py" />
+  </ItemGroup>
+
   <ItemGroup>
     <Content Include="Source\Evacuation\Traffic\Modules\SUMO\Build_notes.txt" />
     <Content Include="Source\Evacuation\Traffic\Modules\SUMO\version_info.txt" />

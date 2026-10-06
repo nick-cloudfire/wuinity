@@ -24,6 +24,8 @@ namespace PREACTcli
                     return Guarded(args[0], () => WithNativeLibraries(() => BuildCase.Run(args[1..])));
                 case "landfire":
                     return Guarded(args[0], () => WithNativeLibraries(() => Landfire.Run(args[1..])));
+                case "firedx":
+                    return Guarded(args[0], () => WithNativeLibraries(() => FireDx.Run(args[1..])));
                 case "probabilistic-trigger":
                     Console.Error.WriteLine("probabilistic-trigger is gone: converge-trigger generates the realizations "
                                             + "with ELMFIRE and runs until the probability raster is stable.");
@@ -97,6 +99,7 @@ namespace PREACTcli
             Console.WriteLine("  PREACTcli global-gpw-to-pop --gpw <dir> --osm <file> --out <file> [--minhh <n>] [--maxhh <n>]");
             BuildCase.PrintUsage();
             Landfire.PrintUsage();
+            FireDx.PrintUsage();
             ConvergeTrigger.PrintUsage();
         }
 

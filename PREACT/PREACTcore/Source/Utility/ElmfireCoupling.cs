@@ -713,6 +713,30 @@ namespace PREACT.Utility
                 else if (!string.IsNullOrWhiteSpace(layer.Value)) options.UnresolvedSourceRasters[layer.Key] = layer.Value;
             }
 
+            //FireDX's building fuel model table, beside the building fuel model raster it goes with: ELMFIRE's default table
+            //numbers its models differently, so a case built from FireDX's raster needs FireDX's table.
+            if (options.UserRasters.TryGetValue("bldg_fuel_model", out string buildingModels))
+            {
+                string table = Path.Combine(Path.GetDirectoryName(buildingModels) ?? ".", ElmfireStems.BuildingFuelModelTable);
+                if (File.Exists(table)) options.BuildingFuelModelTableSource = table;
+            }
+
+            //Roads carry fire ([ELMFIRE] RoadsCarryFire): the SUMO network is where the roads are when the fuel has no FireDX
+            //road cells. Optional: without one the build says so.
+            options.RoadsCarryFire = settings.RoadsCarryFire;
+            if (settings.RoadsCarryFire && input.TrafficModule?.SumoInput != null)
+            {
+                try
+                {
+                    options.SumoConfigurationPath = SumoConfigurationLocator.Resolve(input.RootFolder,
+                        input.TrafficModule.SumoInput.ConfigurationFile, false, out bool _, out string _);
+                }
+                catch (Exception e)
+                {
+                    log?.Invoke("  roads: the SUMO configuration could not be found (" + e.Message + ").");
+                }
+            }
+
             //The same points the ignition editor placed, in WGS84. The builder measures them in the case's own CRS
             //once its grid exists.
             foreach (Wildfire.IgnitionPointInput point in input.WildfireModule.Data.IgnitionPoints)

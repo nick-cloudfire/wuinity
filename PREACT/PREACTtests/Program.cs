@@ -63,6 +63,7 @@ namespace PREACT.Tests
             DownloaderTests.Register(runner);
             AreaPickTests.Register(runner);
             RoadFuelTests.Register(runner);
+            FireDxTests.Register(runner);
             CaseBuildTests.Register(runner);
             ToolPathsTests.Register(runner);
             MapLayerTests.Register(runner);

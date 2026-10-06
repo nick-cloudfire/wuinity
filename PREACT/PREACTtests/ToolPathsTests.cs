@@ -260,6 +260,21 @@ namespace PREACT.Tests
                 Ok(ToolPaths.Tool.Proj, proj, Path.GetDirectoryName(proj), "PROJ: proj.db itself");
                 Refused(ToolPaths.Tool.Proj, Path.Combine(folder, "Sumo"), "holds no proj.db", "PROJ: a folder without it");
 
+                //FireDX: the Python of a conda environment (python.exe at its root on Windows, bin/python elsewhere), and its
+                //source folder at whichever level - the clone, the package, generate.py.
+                string python = Touch(folder, "miniconda3", "envs", "firedx", Windows ? "python.exe" : Path.Combine("bin", "python"));
+                string environment = Path.Combine(folder, "miniconda3", "envs", "firedx");
+                Ok(ToolPaths.Tool.FireDxPython, python, python, "FireDX Python: the interpreter");
+                Ok(ToolPaths.Tool.FireDxPython, environment, python, "FireDX Python: the environment's folder");
+                Refused(ToolPaths.Tool.FireDxPython, gdal, "is not a Python interpreter", "FireDX Python: another program");
+                Refused(ToolPaths.Tool.FireDxPython, Path.Combine(folder, "QGIS"), "holds no " + Exe("python"), "FireDX Python: a folder without one");
+                string generate = Touch(folder, "firedx-clone", "firedx", "generate.py");
+                string clone = Path.Combine(folder, "firedx-clone");
+                Ok(ToolPaths.Tool.FireDx, clone, clone, "FireDX: the clone");
+                Ok(ToolPaths.Tool.FireDx, Path.Combine(clone, "firedx"), clone, "FireDX: the package folder inside it");
+                Ok(ToolPaths.Tool.FireDx, generate, clone, "FireDX: generate.py itself");
+                Refused(ToolPaths.Tool.FireDx, Path.Combine(folder, "QGIS"), "is not FireDX's source folder", "FireDX: another folder");
+
                 Refused(ToolPaths.Tool.Gdal, Path.Combine("QGIS", "bin"), "is not a full path", "a relative path");
                 Refused(ToolPaths.Tool.Elmfire, Path.Combine(folder, "nowhere", Exe("elmfire")), "is not there", "a path that is not there");
             });
@@ -284,6 +299,8 @@ namespace PREACT.Tests
                 string windNinja = Touch(folder, "tools", "WindNinja", "bin", Exe("WindNinja_cli"));
                 string sumo = Touch(folder, "tools", "sumo", "bin", Exe("sumo"));
                 string proj = Touch(folder, "tools", "proj", "proj.db");
+                string python = Touch(folder, "tools", "firedx-env", Windows ? "python.exe" : Path.Combine("bin", "python"));
+                string fireDx = Path.GetDirectoryName(Path.GetDirectoryName(Touch(folder, "tools", "firedx", "firedx", "generate.py")));
 
                 var s = new ToolPaths.Settings();
                 s.Set(ToolPaths.Tool.Elmfire, elmfire);
@@ -291,7 +308,14 @@ namespace PREACT.Tests
                 s.Set(ToolPaths.Tool.WindNinja, Path.Combine(folder, "tools", "WindNinja"));
                 s.Set(ToolPaths.Tool.Sumo, Path.Combine(folder, "tools", "sumo"));
                 s.Set(ToolPaths.Tool.Proj, Path.GetDirectoryName(proj));
+                s.Set(ToolPaths.Tool.FireDxPython, Path.Combine(folder, "tools", "firedx-env"));
+                s.Set(ToolPaths.Tool.FireDx, fireDx);
                 ToolPaths.Save(s);
+                Assert.Equal(python, FireDxRunner.FindPython(out ToolPaths.Source pythonSource), "FireDX Python: the setting, made the interpreter's path");
+                Assert.True(pythonSource == ToolPaths.Source.UserSetting, "FireDX Python: from the setting");
+                Assert.Equal(fireDx, FireDxRunner.FindPackage(out _), "FireDX: the setting");
+                string reread = File.ReadAllText(file);
+                Assert.True(reread.Contains("FireDxPython = ") && reread.Contains("FireDxPackage = "), "both FireDX keys are written: " + reread);
 
                 Assert.Equal(elmfire, ElmfireCoupling.ResolveExecutable(null, null), "ELMFIRE: the setting before the search");
                 Assert.Equal(elmfire, ElmfireCoupling.ResolveExecutable(folder, ""), "ELMFIRE: an empty scenario key is no key");

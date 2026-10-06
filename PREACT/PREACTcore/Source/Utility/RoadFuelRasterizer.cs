@@ -40,8 +40,8 @@ namespace PREACT.Utility
     public static class RoadFuelRasterizer
     {
         /// <summary>Anderson/Scott FBFM40 non-burnable codes: urban, snow, agriculture, water, barren.</summary>
-        private const int FirstNonBurnableCode = 91;
-        private const int LastNonBurnableCode = 99;
+        private const int FirstNonBurnableCode = 90;
+        private const int LastNonBurnableCode = 100;
 
         public class Options
         {
@@ -374,7 +374,7 @@ namespace PREACT.Utility
         /// Writes <paramref name="fuel"/> (x east, y north from the south-west corner, as AscRaster reads it) as a
         /// single-band Int16 GeoTIFF with the georeferencing, projection and nodata of <paramref name="likePath"/>.
         /// </summary>
-        private static void WriteInt16Like(string likePath, float[,] fuel, string output, string burnedFrom, int roadFuelModel)
+        internal static void WriteInt16Like(string likePath, float[,] fuel, string output, string burnedFrom, int roadFuelModel)
         {
             int nx = fuel.GetLength(0), ny = fuel.GetLength(1);
             Gdal.AllRegister();
@@ -462,11 +462,12 @@ namespace PREACT.Utility
             return value > 0f;
         }
 
-        private static bool IsBurnable(float value)
+        internal static bool IsBurnable(float value)
         {
-            //Nodata is negative and 0 is "no fuel", so neither needs naming separately.
+            //Nodata is negative and 0 is "no fuel", so neither needs naming separately. 256 is FireDX's pavement and roads,
+            //which ELMFIRE does not burn (nor 90-100: elmfire_init.f90).
             int code = (int)System.Math.Round(value);
-            if (code <= 0) return false;
+            if (code <= 0 || code == 256) return false;
             return code < FirstNonBurnableCode || code > LastNonBurnableCode;
         }
 

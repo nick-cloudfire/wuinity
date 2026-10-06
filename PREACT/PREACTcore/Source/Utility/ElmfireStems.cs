@@ -216,7 +216,9 @@ namespace PREACT.Utility
         {
             if (float.IsNaN(code) || code <= 0f) return false;
             int c = (int)System.Math.Round(code);
-            if (c >= 91 && c <= 99) return false;
+            //ELMFIRE's own rule for its Rothermel spread (elmfire_init.f90): 90-100 and 256 do not burn. 256 is what FireDX
+            //makes of the urban cells without a building (pavement and roads), which ELMFIRE does not burn either.
+            if ((c >= 90 && c <= 100) || c == 256) return false;
             return extraNonBurnable == null ? c != 14 : !extraNonBurnable.Contains(c);
         }
 
