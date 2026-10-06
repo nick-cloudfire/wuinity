@@ -60,6 +60,8 @@ added to `_output/` itself.
 | `trigger_probability_live.asc` (+ `.prj`) | The same map after the latest boundary, rewritten as the campaign runs. |
 | `trigger_convergence.csv` | One row per boundary: `boundaries`, `realization_id`, `streak`, `area_p10` … `area_p100` (m² of cells at or above each decile), `delta_p10` … `delta_p100` (relative change from the previous row; empty where a decile has no baseline yet). |
 | `realizations.csv` | One row per realization completed this run, reused ones included: `realization`, `status` (`ok`, `not-threatened`, `failed`), `reused`, `message`, `fire_area_acres`, `elmfire_minutes`, `ignition_x`, `ignition_y` (case CRS), `wind_from_deg`, `mean_wind_10m_mph`, `dead_1h_pct`, `live_herbaceous_pct`, `live_woody_pct`, `evacuation_seed`. |
+| `status.json` | What the campaign is doing now: phase, counts, and each realization in flight with its stage and ELMFIRE timestep. Replaced whole about once a second while it runs; read by the Campaign monitor. Format in [Trigger campaigns](trigger-campaigns.md#the-campaign-monitor). |
+| `campaign.log` | Everything the CLI printed, appended run after run. |
 | `weather_distributions.csv` | The weather pool the realizations were drawn from and the distributions fitted to it. |
 | `weather_realizations.csv` | What each realization whose fire was used drew — temperature, humidity, 10 m wind speed and direction (and whether it was aimed or resampled), dead and live fuel moisture, evacuation seed — then the realized mean and standard deviation. |
 | `ensemble_burn_probability.asc` | Fraction of all completed fires in which the cell burned. |

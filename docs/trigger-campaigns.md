@@ -60,6 +60,57 @@ case, the Data menu) is disabled. **Cancel** closes the CLI's input, which stops
 15 s the window kills what is left. Quitting cancels a running campaign too. Finished realizations are always
 kept.
 
+### The campaign monitor
+
+Run > Campaign monitor (also **Campaign monitor...** in the campaign window, **Monitor** on workflow step 13, and
+**Show** in the workflow's "A campaign is running" line) shows the campaign as it runs, refreshed once a second. It
+opens by itself when a campaign starts from the GUI. It reads everything from the campaign folder, so it also shows
+a campaign started from a command line, one still running after the GUI was restarted, or one that has finished
+(**Latest campaign** picks the open scenario's running campaign, or else its newest).
+
+- **Overall**: the phase (setting up, running realizations, writing the results, done / done without converging,
+  failed, cancelled), how long it has run, a progress bar of finished realizations against `--max`, the counts
+  (boundaries, not threatened, failed, reused), and the streak against its target.
+- **In flight**: one row per realization running now — where it is and for how long:
+  - `weather: drawing the ignition`, `weather: WindNinja` (`WindNinja band 3 of 72` with hourly weather),
+    `weather: fuel moisture`;
+  - `ELMFIRE 37.5 h, 12,804 nodes (until it stops)` — the simulated time and the fire front's tracked nodes from
+    ELMFIRE's last "Current Timestep" line. A fire that runs until it stops has no meaningful end (its
+    `SIMULATION_TSTOP` is a year), so no percentage is shown; with a fixed duration it reads `37.5 of 72.0 h`;
+  - `evacuation: loading the road network`, then `evacuation 3.2 of 24.0 h (evacuating)` from PREACT.exe's clock,
+    then `k-PERIL boundary`.
+
+  A button opens the realization's `elmfire.log` or `preact.log` for the stage it is in.
+- **Probability field**: the decile areas after the latest boundary and how much each moved.
+- **Finished**: every finished realization, newest first, from `realizations.csv` — status, fire area, ELMFIRE
+  minutes, message — with buttons for its `elmfire.log`, `preact.log` and folder.
+- **Log**: the campaign's own output, the last 2000 lines (what the GUI captured from the process it started, or
+  else the tail of `campaign.log`). The main console only gets a line when a campaign starts, finishes, fails or is
+  cancelled.
+
+A campaign whose status has not changed for 10 s and whose lock nobody holds is shown as *stopped without
+finishing* (it was killed, or the machine went down); `--resume` continues it.
+
+**For scripts.** `status.json` in the campaign folder is what the monitor reads. The CLI replaces it whole (written
+beside it, then swapped in) about once a second while it runs, and once more when it ends:
+
+```json
+{ "version": 1, "phase": "running", "message": "", "pid": 4242,
+  "started": "2026-10-06T08:00:00.000Z", "updated": "2026-10-06T08:41:12.512Z",
+  "fireHours": 0, "maxRuntimeSeconds": 14400, "parallel": 4,
+  "max": 200, "launched": 9, "done": 5, "ok": 3, "notThreatened": 1, "failed": 1, "reused": 0,
+  "streak": 2, "streakTarget": 20, "converged": false,
+  "running": [ { "index": 7, "id": "0000007", "stage": "elmfire", "detail": "",
+                 "started": "...", "stageStarted": "...",
+                 "elmfireSeconds": 135000.0, "elmfireStopSeconds": 31536000.0, "trackedNodes": 12804,
+                 "evacuationSeconds": -1, "evacuationEndSeconds": -1 } ] }
+```
+
+`phase` is `setup`, `running`, `aggregating`, `done`, `failed` or `cancelled`; `stage` is `starting`, `weather`,
+`elmfire` or `evacuation`; `fireHours` 0 means until the fire stops; -1 means not known yet. `campaign.log` beside it
+holds everything the CLI printed, appended run after run (a resume adds to it). The `PROGRESS` lines on stdout are
+unchanged.
+
 ## One realization
 
 Realization *i* (7-digit id, `0000001` for the first) runs in `realizations/<id>/` of the campaign folder:

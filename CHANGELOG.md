@@ -158,6 +158,18 @@
 - **Wind and slope (D6)**: both vectors point where they push the fire, so an upslope wind adds to 0.06 x the slope
   (case 2c: 5.43 mi/h, was 3.03). The aspect k-PERIL derives from an elevation raster is a compass bearing.
 
+### Trigger campaigns
+
+- **Campaign monitor** (Run > Campaign monitor, step 13's **Monitor**): refreshed every second, it shows every
+  realization in flight and where it is - `weather: WindNinja`, `ELMFIRE 37.5 h, 12,804 nodes (until it stops)`,
+  `evacuation 3.2 of 24.0 h` - the finished ones newest first with buttons for their `elmfire.log` / `preact.log`,
+  the convergence, and the campaign's log. It reads the campaign folder, so it also follows a campaign started from a
+  command line or one already finished. The campaign's output no longer goes anywhere near the main console, which
+  gets one line when it starts and one when it ends. See [Trigger campaigns](docs/trigger-campaigns.md#the-campaign-monitor).
+- **`status.json` and `campaign.log`** in the campaign folder: the live status (phase, counts, each realization's stage
+  and ELMFIRE timestep), replaced whole about once a second, and everything the CLI printed. `PREACT.exe` prints
+  `SIM_TIME <s> of <end> s` every 5 s of a run, which the campaign reads as the evacuation's clock.
+
 ### Verification
 
 - **Verification cases** (`Verification/`, `verify.ps1`, `verify.sh`, [docs/verification.md](docs/verification.md)):
