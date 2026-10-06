@@ -147,7 +147,7 @@ namespace PREACTcli
                     if (result.RemovedCaseLayers.Count > 0)
                     {
                         Console.WriteLine("Build the case again (build-case) to warp them in: its old " + string.Join(", ", result.RemovedCaseLayers)
-                                          + " were moved to inputs/" + ElmfireCaseBuilder.ReplacedFolder + ".");
+                                          + (result.RemovedCaseLayers.Count == 1 ? " was" : " were") + " moved to inputs/" + ElmfireCaseBuilder.ReplacedFolder + ".");
                     }
                 }
                 Console.WriteLine("FireDX's log: " + result.LogFile);

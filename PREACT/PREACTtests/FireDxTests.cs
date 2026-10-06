@@ -16,6 +16,7 @@ namespace PREACT.Tests
         {
             runner.Add("roads carry fire: FireDX's 256 cells become 101 and its 91 stay, every build reapplies it, unticking restores the fuel", RoadsOnFireDxFuel);
             runner.Add("roads carry fire: without FireDX road cells or a SUMO network the build says so and leaves the fuel alone", RoadsWithoutRoads);
+            runner.Add("roads carry fire: without FireDX the SUMO lanes cross the non-burnable strip as GR1, joining the patches; unticking restores", RoadsFromSumoLanes);
             runner.Add("firedx: RoadsCarryFire and the FireDX tool keys round-trip; 256 and 90-100 are non-burnable, as in ELMFIRE", SettingsAndBurnable);
             runner.Add("firedx: the runner's command, environment and fuel source: its own output and roads lead back to the LANDFIRE fuel", RunnerCommand);
             runner.Add("firedx: no Python, missing modules, no network, no buildings and a stop are each reported for what they are", RunnerFailures);
@@ -154,6 +155,60 @@ namespace PREACT.Tests
                     "the build says why: " + string.Join(" | ", r.Fallbacks));
                 Assert.True(!File.Exists(Path.Combine(caseDir, "inputs", ElmfireCaseBuilder.RoadsFolder, "fbfm40.tif")), "and keeps no copy");
                 Assert.True((Manifest(caseDir, "RoadsCarryFireMethod") ?? string.Empty).StartsWith("none"), "recorded as none");
+            }
+        }
+
+        private static void RoadsFromSumoLanes()
+        {
+            using (var c = new PipelineTests.SyntheticCase())
+            {
+                //A one-lane network running north across the urban strip (91, source rows 45-49), in UTM 34N coordinates: with
+                //netOffset 0,0 a SUMO coordinate is the UTM one.
+                Assert.True(CrsTransform.TryWgs84To("EPSG:32634", PipelineTests.SyntheticCase.Lat, PipelineTests.SyntheticCase.Lon,
+                    out double x0, out double y0), "corner in UTM 34N");
+                double yll = System.Math.Floor(y0 - 1000.0);
+                string F(double v) => v.ToString("F2", CultureInfo.InvariantCulture);
+                string net = Path.Combine(c.Folder, "sumo", "test.net.xml");
+                Directory.CreateDirectory(Path.GetDirectoryName(net));
+                File.WriteAllText(net, "<net version=\"1.20\">\n"
+                    + "  <location netOffset=\"0.00,0.00\" convBoundary=\"0,0,1,1\" origBoundary=\"0,0,1,1\" projParameter=\"!\"/>\n"
+                    + "  <edge id=\"north\" from=\"a\" to=\"b\"><lane id=\"north_0\" index=\"0\" speed=\"13.9\" length=\"600\" shape=\""
+                    + $"{F(x0 + 760.0)},{F(yll + 1200.0)} {F(x0 + 760.0)},{F(yll + 1800.0)}\"/></edge>\n</net>\n");
+
+                PREACTInput input = PREACTInput.LoadFromDisk(c.WriteScenario("case", 150.0), out bool _);
+                string caseDir = Path.Combine(c.Folder, "case");
+                string fuel = Path.Combine(caseDir, "inputs", "fbfm40.tif");
+
+                var log = new List<string>();
+                ElmfireCaseBuilder.Build(c.Options(caseDir, 150.0, log)).GetAwaiter().GetResult();
+                float[,] plain = Read(fuel);
+
+                log.Clear();
+                ElmfireCaseBuilder.Options on = c.Options(caseDir, 150.0, log);
+                on.RoadsCarryFire = true;
+                on.SumoConfigurationPath = net;
+                on.Simulation = input.Simulation.Data;
+                ElmfireCaseBuilder.Build(on).GetAwaiter().GetResult();
+                float[,] roads = Read(fuel);
+                int changed = 0;
+                for (int x = 0; x < plain.GetLength(0); ++x)
+                {
+                    for (int y = 0; y < plain.GetLength(1); ++y)
+                    {
+                        if (plain[x, y] == roads[x, y]) continue;
+                        ++changed;
+                        Assert.True(plain[x, y] == 91f && roads[x, y] == 101f, $"only urban cells under the lane change, to GR1: ({x},{y}) {plain[x, y]} -> {roads[x, y]}");
+                    }
+                }
+                Assert.True(changed >= 4 && changed <= 8, "the lane crosses the 5-cell strip: " + changed + " cells");
+                Assert.Equal("sumo-lanes", Manifest(caseDir, "RoadsCarryFireMethod"), "by the SUMO lanes");
+                string connectivity = Manifest(caseDir, "RoadsCarryFireConnectivity") ?? string.Empty;
+                Assert.True(connectivity.StartsWith("burnable patches 2 -> 1"), "the strip split the fuel in two, the lane joins it: " + connectivity);
+
+                ElmfireCaseBuilder.Build(c.Options(caseDir, 150.0, log)).GetAwaiter().GetResult();
+                float[,] back = Read(fuel);
+                Assert.True(Enumerable.Range(0, back.GetLength(0)).All(x => Enumerable.Range(0, back.GetLength(1)).All(y => back[x, y] == plain[x, y])),
+                    "unticked: the fuel is what it was before");
             }
         }
 

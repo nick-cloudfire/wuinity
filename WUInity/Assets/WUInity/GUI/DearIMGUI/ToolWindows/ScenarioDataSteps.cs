@@ -1109,7 +1109,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
             LogStep("[ELMFIRE] FuelModelFile now names " + result.Layers[nameof(ElmfireInput.FuelModelFile)] + " and the five building layers "
                 + "FireDX's rasters in " + PREACT.Utility.FireDxRunner.Folder + "; the building spread model is on. Build the fire case (step 5) "
                 + "to warp them in" + (result.RemovedCaseLayers.Count > 0 ? " (the case's old " + string.Join(", ", result.RemovedCaseLayers)
-                                                                              + " were moved to inputs/" + PREACT.Utility.ElmfireCaseBuilder.ReplacedFolder + ")" : "")
+                                                                              + (result.RemovedCaseLayers.Count == 1 ? " was" : " were") + " moved to inputs/" + PREACT.Utility.ElmfireCaseBuilder.ReplacedFolder + ")" : "")
                 + ". FireDX's log: " + result.LogFile + ".");
             return Task.CompletedTask;
         }

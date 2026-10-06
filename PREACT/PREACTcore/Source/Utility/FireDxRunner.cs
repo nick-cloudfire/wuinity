@@ -833,8 +833,8 @@ namespace PREACT.Utility
                     return "FireDX could not be imported from " + (o.Package ?? "its folder") + ": " + (error ?? lastLines);
                 case 6:
                     return "FireDX's own attribute join only has data in California (the USACE National Structure Inventory covers the "
-                           + "USA, CAL FIRE's fire hazard severity zones California): " + (error ?? string.Empty) + ". Use the basic "
-                           + "attribute path, which takes every building as residential and works anywhere.";
+                           + "USA, CAL FIRE's fire hazard severity zones California), and this area's centre is not in California. Use the "
+                           + "basic attribute path, which takes every building as residential and works anywhere.";
                 case 7:
                     return "FireDX found no buildings: " + (error ?? "none in the area") + ".";
                 case 2:
@@ -1041,7 +1041,7 @@ namespace PREACT.Utility
 
             if (moved.Count > 0)
             {
-                log?.Invoke($"The fire case's {string.Join(", ", moved)} were moved to inputs/{ElmfireCaseBuilder.ReplacedFolder}, so the next "
+                log?.Invoke($"The fire case's old {string.Join(", ", moved)} {(moved.Count == 1 ? "was" : "were")} moved to inputs/{ElmfireCaseBuilder.ReplacedFolder}, so the next "
                             + "build of the fire case warps FireDX's layers instead; its terrain and weather are kept. Save the scenario to "
                             + "keep it naming them.");
             }
