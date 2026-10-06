@@ -2019,7 +2019,9 @@ namespace WUInity.Workflow
                 ? $"{Plural(conv.Rows, "boundary", "boundaries")} in {where}, streak {conv.Streak}" + (done ? "" : "; no final raster")
                 : "Not run";
 
-            //Whatever blocks a new campaign, its results can still be read.
+            //Whatever blocks a new campaign, its results can still be read, and a running one watched.
+            s.Secondary.Add(new StepAction(WorkflowAction.OpenCampaignMonitor, "Monitor",
+                "The running (or latest) campaign: every realization in flight, ELMFIRE's timestep, the finished ones and the log."));
             s.Secondary.Add(new StepAction(WorkflowAction.OpenResults, "Results"));
             return s;
         }

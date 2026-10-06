@@ -247,7 +247,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 ImGui.SameLine();
                 if (ImGui.SmallButton("Show###WfCampaignShow"))
                 {
-                    ProbabilisticTriggerWindow.Open();
+                    CampaignMonitorWindow.Open();
                 }
             }
             else if (ScenarioCheckWindow.Checking)

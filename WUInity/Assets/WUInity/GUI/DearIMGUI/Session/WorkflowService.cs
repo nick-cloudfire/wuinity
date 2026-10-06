@@ -434,6 +434,7 @@ namespace Assets.WUInity.GUI.DearIMGUI
                     //the campaign reads the .wui on disk, so that is when unsaved edits matter.
                     ProbabilisticTriggerWindow.Open();
                     break;
+                case WorkflowAction.OpenCampaignMonitor: CampaignMonitorWindow.Open(); break;
             }
         }
     }

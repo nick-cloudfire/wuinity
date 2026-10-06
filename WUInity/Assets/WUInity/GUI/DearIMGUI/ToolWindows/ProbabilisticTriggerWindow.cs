@@ -13,7 +13,9 @@ namespace Assets.WUInity.GUI.DearIMGUI
     /// <summary>
     /// Runs a trigger campaign, <c>PREACTcli converge-trigger</c>: ELMFIRE fires from ignitions drawn over the
     /// case, each with its own weather, one evacuation and k-PERIL trigger boundary per fire that reaches the
-    /// WUI area, aggregated into a probability raster until it stops moving. Mirrors the CLI's progress and log.
+    /// WUI area, aggregated into a probability raster until it stops moving. Its progress - every realization's stage,
+    /// ELMFIRE's timestep, the finished ones, the CLI's log - is shown in the Campaign monitor
+    /// (<see cref="CampaignMonitorWindow"/>); the main console gets only the campaign's start and end.
     /// </summary>
     /// <remarks>
     /// Only the command line is decided here. What a campaign reads (namelist, case inputs, executables, fuel
@@ -73,15 +75,15 @@ namespace Assets.WUInity.GUI.DearIMGUI
         private static string _gdalBin = string.Empty;
         private static string _scenarioTemplate = string.Empty;
 
-        // Live convergence state, parsed from the CLI's PROGRESS_JSON lines. Guarded by _sync because it is
-        // written on the process's output thread and read while drawing.
+        // Live convergence state, parsed from the CLI's PROGRESS_JSON lines for the status line. Guarded by _sync
+        // because it is written on the process's output thread and read while drawing. The monitor reads the rest
+        // from the campaign folder.
         private static int _nSuccess, _nNotThreatened, _nFailed, _streak;
         private static bool _converged;
-        private static double[] _deciles;
-        private static double[] _area;
-        private static double?[] _delta;
-        private static string _liveRasterPath;
         private static string _campaignDir;
+
+        /// <summary>Lines of the CLI's output kept for the monitor's log pane (it is also in the folder's campaign.log).</summary>
+        private const int MaxLogLines = CampaignMonitorWindow.MaxLogLines;
 
         private enum Phase { Idle, Inspecting, Confirm, Running, Cancelling }
 
@@ -388,28 +390,15 @@ namespace Assets.WUInity.GUI.DearIMGUI
             string overlay = _totalCount > 0 ? $"{_doneCount} / {_totalCount}" : (phase == Phase.Running ? "starting..." : "");
             ImGui.ProgressBar(p, new Vector2(-1, 0), overlay);
             ImGui.TextWrapped(_status);
+            DrawSummary();
 
-            DrawConvergence();
-
-            ImGui.SeparatorText("Log");
-            // Third argument is ImGuiChildFlags, not the bool 'border' of older bindings. The member for a
-            // bordered child was renamed across ImGui.NET versions (Border -> Borders), so the value is written
-            // numerically: it is 1 in both, and this file has to compile against whatever the uimgui package pins.
-            ImGui.BeginChild("prob_log", new Vector2(0, 220), (ImGuiChildFlags)1, ImGuiWindowFlags.HorizontalScrollbar);
-            lock (_sync)
+            if (ImGui.Button("Campaign monitor..."))
             {
-                // show the tail to keep the widget light on very long runs
-                int from = Mathf.Max(0, _log.Count - 500);
-                for (int i = from; i < _log.Count; ++i)
-                {
-                    ImGui.TextUnformatted(_log[i]);
-                }
+                CampaignMonitorWindow.Open();
             }
-            if (phase == Phase.Running || phase == Phase.Inspecting)
-            {
-                ImGui.SetScrollHereY(1.0f); // auto-scroll while running
-            }
-            ImGui.EndChild();
+            Fields.Hint("Every realization in flight - its weather, ELMFIRE's simulated hours and tracked nodes, the",
+                        "evacuation's clock - the finished ones, the convergence, and the campaign's log, refreshed",
+                        "every second. It also shows a campaign started from a command line, or one already finished.");
 
             ImGui.End();
 
@@ -611,30 +600,20 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 mode, false, initial, null, "Select", "Select");
         }
 
-        /// <summary>
-        /// Shows the convergence state the CLI reports, so the run can be judged while it is still going rather
-        /// than only from the CSV afterwards. Plain text rather than an ImGui table: the table API has moved
-        /// between ImGui.NET versions and this file has to compile against whatever the uimgui package pins.
-        /// </summary>
-        private static void DrawConvergence()
+        /// <summary>One line of counts and streak from the CLI's PROGRESS_JSON; the monitor has the rest.</summary>
+        private static void DrawSummary()
         {
-            double[] deciles, area;
-            double?[] delta;
             int nSuccess, nNotThreatened, nFailed, streak;
             bool converged;
-            string live, folder;
+            string folder;
 
             lock (_sync)
             {
-                deciles = _deciles;
-                area = _area;
-                delta = _delta;
                 nSuccess = _nSuccess;
                 nNotThreatened = _nNotThreatened;
                 nFailed = _nFailed;
                 streak = _streak;
                 converged = _converged;
-                live = _liveRasterPath;
                 folder = _campaignDir;
             }
 
@@ -642,31 +621,34 @@ namespace Assets.WUInity.GUI.DearIMGUI
             {
                 ImGui.TextWrapped("Campaign folder: " + folder);
             }
-
-            if (deciles == null || area == null)
+            if (nSuccess + nNotThreatened + nFailed > 0)
             {
-                return;
+                ImGui.Text($"{nSuccess} boundaries, {nNotThreatened} not threatened, {nFailed} failed    streak {streak} / {_streakTarget}"
+                           + (converged ? "    CONVERGED" : string.Empty));
             }
+        }
 
-            ImGui.SeparatorText("Convergence");
-            ImGui.Text($"{nSuccess} boundaries, {nNotThreatened} not threatened, {nFailed} failed    streak {streak} / {_streakTarget}"
-                       + (converged ? "    CONVERGED" : string.Empty));
-
-            ImGui.Text("  decile        area (m2)      change");
-            for (int i = 0; i < deciles.Length && i < area.Length; ++i)
+        /// <summary>The folder of the campaign started from this window (from its CAMPAIGN_DIR line), or null.</summary>
+        public static string CampaignFolder
+        {
+            get
             {
-                //a decile with no baseline yet is shown as "-" rather than 0%, because "has not moved" and "has
-                //nothing to move from" mean very different things for the streak
-                string change = (delta != null && i < delta.Length && delta[i].HasValue)
-                    ? (delta[i].Value * 100.0).ToString("F2") + " %"
-                    : "-";
-
-                ImGui.Text($"  P >= {deciles[i]:F1}   {area[i],14:N0}   {change,10}");
+                lock (_sync) return _campaignDir;
             }
+        }
 
-            if (!string.IsNullOrEmpty(live))
+        /// <summary>
+        /// Copies the output captured from the campaign process this window started into <paramref name="into"/>, when
+        /// that is the campaign in <paramref name="folder"/> (or the campaign has no folder yet). False when it is not.
+        /// </summary>
+        public static bool CopyLog(string folder, List<string> into)
+        {
+            lock (_sync)
             {
-                ImGui.TextWrapped("Live raster: " + live);
+                if (_log.Count == 0) return false;
+                if (!string.IsNullOrEmpty(_campaignDir) && !SamePath(_campaignDir, folder)) return false;
+                into.AddRange(_log);
+                return true;
             }
         }
 
@@ -676,15 +658,20 @@ namespace Assets.WUInity.GUI.DearIMGUI
             lock (_sync)
             {
                 _log.Add(line);
+                if (_log.Count > MaxLogLines) _log.RemoveRange(0, _log.Count - MaxLogLines);
             }
             ParseProgress(line);
         }
 
         private static void ParseProgress(string line)
         {
-            if (ParseProgressJson(line) || ParseTagged(line, CampaignLayout.ProgressRasterTag, v => _liveRasterPath = v)
-                || ParseTagged(line, CampaignLayout.CampaignDirTag, v => _campaignDir = v)
-                || ParseInspect(line))
+            if (line.StartsWith(CampaignLayout.ProgressRasterTag, StringComparison.Ordinal)) return;
+            if (ParseTagged(line, CampaignLayout.CampaignDirTag, v => _campaignDir = v))
+            {
+                CampaignMonitorWindow.Watch(line.Substring(CampaignLayout.CampaignDirTag.Length).Trim());
+                return;
+            }
+            if (ParseProgressJson(line) || ParseInspect(line))
             {
                 return;
             }
@@ -737,13 +724,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
                     if (TryGetInt(json, "streak", out int streak)) _streak = streak;
                     if (TryGetInt(json, "streakTarget", out int target) && target > 0) _streakTarget = target;
                     _converged = json.Contains("\"converged\":true");
-
-                    double[] deciles = GetArray(json, "deciles");
-                    double[] area = GetArray(json, "area");
-                    if (deciles != null) _deciles = deciles;
-                    if (area != null) _area = area;
-                    double?[] delta = GetNullableArray(json, "delta");
-                    if (delta != null) _delta = delta;
                 }
             }
             catch
@@ -807,49 +787,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 sb.Append(ch);
             }
             return sb.ToString();
-        }
-
-        private static string GetArrayBody(string json, string key)
-        {
-            string token = "\"" + key + "\":[";
-            int at = json.IndexOf(token, StringComparison.Ordinal);
-            if (at < 0) return null;
-
-            at += token.Length;
-            int end = json.IndexOf(']', at);
-            return end < 0 ? null : json.Substring(at, end - at);
-        }
-
-        private static double[] GetArray(string json, string key)
-        {
-            string body = GetArrayBody(json, key);
-            if (body == null) return null;
-
-            string[] parts = body.Split(',');
-            var result = new double[parts.Length];
-            for (int i = 0; i < parts.Length; ++i)
-            {
-                double.TryParse(parts[i].Trim(), NumberStyles.Any, CultureInfo.InvariantCulture, out result[i]);
-            }
-            return result;
-        }
-
-        /// <summary>As <see cref="GetArray"/>, but keeps JSON null distinct from 0 — the CLI uses null for a
-        /// decile that has no baseline to compare against yet.</summary>
-        private static double?[] GetNullableArray(string json, string key)
-        {
-            string body = GetArrayBody(json, key);
-            if (body == null) return null;
-
-            string[] parts = body.Split(',');
-            var result = new double?[parts.Length];
-            for (int i = 0; i < parts.Length; ++i)
-            {
-                string p = parts[i].Trim();
-                if (p == "null") { result[i] = null; continue; }
-                result[i] = double.TryParse(p, NumberStyles.Any, CultureInfo.InvariantCulture, out double v) ? (double?)v : null;
-            }
-            return result;
         }
 
         /// <summary>
@@ -970,10 +907,6 @@ namespace Assets.WUInity.GUI.DearIMGUI
             lock (_sync)
             {
                 _log.Clear();
-                _deciles = null;
-                _area = null;
-                _delta = null;
-                _liveRasterPath = null;
                 _campaignDir = null;
                 _nSuccess = 0;
                 _nNotThreatened = 0;
@@ -1033,7 +966,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
                 if (code != 0)
                 {
                     _phase = Phase.Idle;
-                    _status = "The campaign cannot start with these settings (see the log).";
+                    _status = "The campaign cannot start with these settings (the Campaign monitor's log says why).";
+                    CampaignMonitorWindow.Open();
                 }
                 else if (running)
                 {
@@ -1090,12 +1024,23 @@ namespace Assets.WUInity.GUI.DearIMGUI
             _totalCount = _max;
             _status = resume ? "Resuming..." : "Starting...";
 
+            //The campaign's own lines go to the monitor and campaign.log; the console gets its start and its end.
+            ToConsole(PREACT.Engine.LogType.Log, $"Trigger campaign {(resume ? "resumed" : "started")} for {Path.GetFileName(_baseWui)} "
+                                           + $"(up to {_max} realizations). Follow it in Run > Campaign monitor.");
+            CampaignMonitorWindow.Open();
+
             Launch(Arguments(false, resume), code =>
             {
                 bool converged;
-                lock (_sync) { converged = _converged; }
+                string folder;
+                lock (_sync)
+                {
+                    converged = _converged;
+                    folder = _campaignDir;
+                }
 
                 _phase = Phase.Idle;
+                string where = string.IsNullOrEmpty(folder) ? string.Empty : " (" + folder + ")";
                 switch (code)
                 {
                     case 0:
@@ -1105,16 +1050,26 @@ namespace Assets.WUInity.GUI.DearIMGUI
                         _status = converged
                             ? "Converged. The probability raster is in the campaign folder."
                             : "Reached the maximum without converging: the probability raster is not yet stable.";
+                        ToConsole(converged ? PREACT.Engine.LogType.Log : PREACT.Engine.LogType.Warning, "Trigger campaign: " + _status + where);
                         break;
                     case 3:
                         _status = "Cancelled. Finished realizations are kept; Run again offers to reuse them.";
+                        ToConsole(PREACT.Engine.LogType.Log, "Trigger campaign cancelled. " + where.Trim());
                         break;
                     default:
-                        _status = "The campaign stopped with exit code " + code + " (see the log).";
+                        _status = "The campaign stopped with exit code " + code + " (see the Campaign monitor's log).";
+                        ToConsole(PREACT.Engine.LogType.Warning, "Trigger campaign FAILED with exit code " + code
+                                                          + "; its log is in the Campaign monitor and in campaign.log" + where + ".");
                         break;
                 }
                 AppendLog(_status);
             });
+        }
+
+        /// <summary>One line in the main console; on the main thread, where Engine.Message calls back into the GUI.</summary>
+        private static void ToConsole(PREACT.Engine.LogType type, string message)
+        {
+            PreactGUI.Post(() => PREACT.Engine.Message(null, type, message));
         }
 
         private static void Launch(List<string> arguments, Action<int> exited)

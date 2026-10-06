@@ -289,6 +289,8 @@ namespace Assets.WUInity.GUI.DearIMGUI
             ImGui.Separator();
             Item("Trigger campaign...", WorkflowAction.OpenCampaign, WorkflowStepId.Campaign,
                 "One fire, evacuation and trigger boundary per realization, aggregated into a probability raster.");
+            Item("Campaign monitor...", WorkflowAction.OpenCampaignMonitor, WorkflowStepId.Campaign,
+                "The running (or latest) campaign: every realization in flight, ELMFIRE's timestep, the finished ones and the log.");
 
             ImGui.EndMenu();
         }

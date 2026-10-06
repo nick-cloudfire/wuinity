@@ -79,6 +79,7 @@ namespace WUInity.Workflow
         OpenRun,
         OpenResults,
         OpenCampaign,
+        OpenCampaignMonitor,
     }
 
     /// <summary>A button: what it does, what it says, and - when it cannot be pressed - why not.</summary>
